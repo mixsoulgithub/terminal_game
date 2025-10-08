@@ -1,0 +1,14 @@
+cmake_minimum_required(VERSION 3.10)
+project(Tetris)
+find_package(Curses REQUIRED)
+# target_link_libraries(Tetris ncurses)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+function(compile_it target_name srcs)
+    add_executable(${target_name} ${srcs})
+    target_include_directories(${target_name} PRIVATE ${CURSES_INCLUDE_DIRS})
+    target_link_libraries(${target_name} PRIVATE ${CURSES_LIBRARIES})
+endfunction()
+
+compile_it(Tetris src/main.cpp)
+compile_it(utf8 src/utf8.cpp)
