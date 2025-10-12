@@ -465,6 +465,8 @@ int main() {
             }
         }
         
+
+        
         // 绘制游戏
         clear();
         draw_board(&game);
