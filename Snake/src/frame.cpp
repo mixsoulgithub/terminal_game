@@ -21,7 +21,6 @@ auto Frame::flush_to_screen(World& world) {
     }
     return 0;
 }
-
     //detect if it is clash with other object
     //only sometimes it will check. 
     // template<typename Container>
