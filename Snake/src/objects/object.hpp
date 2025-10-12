@@ -2,7 +2,6 @@
 #include <vector>
 #include <string>
 #include <tuple>
-#include "../frame.hpp"
 
 struct Object{
     virtual void foo(){}//make it polymorphic in runtime.
@@ -10,4 +9,7 @@ struct Object{
     std::vector<std::string> outlook;
     std::vector<int> color;
 
+    auto& get_body();
+    auto& get_outlook();
+    auto& get_color();
 };

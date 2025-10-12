@@ -2,8 +2,11 @@
 #include <ncurses.h>
 #include <iostream>
 
-#include "snake.hpp"
-
+#include "frame.hpp"
+#include "objects/snake.hpp"
+#include "objects/food.hpp"
+#include "objects/scoreboard.hpp"
+#include "objects/world.hpp"
 
 int main() {
     setlocale(LC_ALL, ""); // 关键：设置区域，启用 UTF-8

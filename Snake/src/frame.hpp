@@ -19,13 +19,13 @@ class Frame{
 private:
 
 public:
-    Frame(const int H, const int W, const int OH, const int OW);
+    Frame(int H=30, int W=40, int OH=2, int OW=5);//todo: const
 
     auto flush_to_screen(World& world);//world is only one in most cases, so I don't want use xxx_ptr here.
 
     //detect if it is clash with other object
     //only sometimes it will check. 
-    auto check_collision(Object& it, World& world);
+    // auto check_collision(Object& it, World& world);
 
     //if all =1, return all as vector. if all =0, return first found.
     auto search(int all);
