@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 // 游戏区域尺寸
-#define BOARD_WIDTH 10
+#define BOARD_WIDTH 20
 #define BOARD_HEIGHT 20
 #define BOARD_OFFSET_X 5
 #define BOARD_OFFSET_Y 2

@@ -101,8 +101,12 @@ void draw_board(GameState *game) {
             if (game->board[y][x]) {
                 int color = game->board[y][x];
                 attron(COLOR_PAIR(color));
-                mvaddch(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x, '[');
-                mvaddch(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x + 1, ']');
+                // mvaddstr(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x, "▇");//▇ is thin in shell than here. and I can't find a better one in utf8.
+                mvaddch(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x , '#');
+                // mvaddstr(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x , "★");
+                // mvaddstr(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x , "口");//bug: out of frame, because '口' is double width in terminal.
+                // mvaddstr(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x, "■");// '■' is not better, big gap between lines.
+                // mvaddch(BOARD_OFFSET_Y + y, BOARD_OFFSET_X + x + 1, ']');
             } 
         }
     }
@@ -118,11 +122,7 @@ void draw_shape(GameState *game, int draw) {
                 
                 if (draw) {
                     attron(COLOR_PAIR(game->current_shape_type + 1));
-                    mvaddch(screen_y, screen_x, '[');
-                    mvaddch(screen_y, screen_x + 1, ']');
-                } else {
-                    mvaddch(screen_y, screen_x, ' ');
-                    mvaddch(screen_y, screen_x + 1, ' ');
+                    mvaddch(screen_y, screen_x, '#');
                 }
             }
         }
@@ -150,15 +150,11 @@ void draw_next_shape(GameState *game) {
     for (int y = 0; y < SHAPE_SIZE; y++) {
         for (int x = 0; x < SHAPE_SIZE; x++) {
             int screen_y = preview_y + y;
-            int screen_x = preview_x + x * 2;
+            int screen_x = preview_x + x;
             
             if (game->next_shape[y][x]) {
                 attron(COLOR_PAIR(game->next_shape_type + 1));
-                mvaddch(screen_y, screen_x, '[');
-                mvaddch(screen_y, screen_x + 1, ']');
-            } else {
-                mvaddch(screen_y, screen_x, ' ');
-                mvaddch(screen_y, screen_x + 1, ' ');
+                mvaddch(screen_y, screen_x, '#');
             }
         }
     }
@@ -370,11 +366,10 @@ void spawn_shape(GameState *game) {
 // 根据等级获取下落速度
 int get_drop_speed(GameState *game) {
     // 等级越高，速度越快（毫秒）
-    return 1000 - (game->level - 1) * 100;
+    return 100 - (game->level - 1) * 100;
     if (get_drop_speed(game) < 100) {
         return 100;  // 最小速度
     }
-    return get_drop_speed(game);
 }
 
 int main() {
@@ -385,7 +380,7 @@ int main() {
     noecho();
     curs_set(0);
     keypad(stdscr, TRUE);
-    timeout(0);
+    timeout(1);//this makes getch non-blocking, with 1ms delay.
     
     // 初始化颜色
     if (has_colors()) {
@@ -406,11 +401,11 @@ int main() {
     
     int ch;
     int paused = 0;
-    unsigned long last_drop_time = 0;
+    unsigned long last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
     
     // 主游戏循环
     while (!game.game_over) {
-        ch = getch();// timeout feature.
+        ch = getch();
         
         // 处理输入
         if (!paused) {
@@ -440,7 +435,7 @@ int main() {
                     break;
             }
             
-            // 自动下落
+            // 自动下落, *1000 是增加粒度.
             unsigned long current_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
             if (current_time - last_drop_time > get_drop_speed(&game)) {
                 move_shape(&game, 0, 1);
@@ -461,7 +456,7 @@ int main() {
                 }
                 draw_shape(&game, 1);
                 
-                last_drop_time = current_time;
+                last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
             }
         } else {
             // 暂停状态

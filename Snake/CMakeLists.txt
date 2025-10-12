@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(Tetris)
+project(Snake)
 set(CMAKE_CXX_STANDARD 17)
 find_package(Curses REQUIRED)
 # target_link_libraries(Tetris ncurses)
@@ -11,5 +11,7 @@ function(compile_it target_name srcs)
     target_link_libraries(${target_name} PRIVATE ${CURSES_LIBRARIES})
 endfunction()
 
-compile_it(Tetris src/main.cpp)
-compile_it(utf8 src/utf8.cpp)
+compile_it(Snake src/main.cpp)
+
+target_compile_options(Snake PUBLIC -g)
+
