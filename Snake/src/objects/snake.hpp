@@ -2,20 +2,18 @@
 #include "object.hpp"
 #include "world.hpp"
 
-class Snake: public Object{
-
-    typedef enum {
+typedef enum {
             UP=0b00,
             RIGHT=0b01,
             LEFT=0b10,
             DOWN=0b11
-    }DIRECT;
+}DIRECT;
 
+class Snake: public Object{
     public:
     DIRECT dir;
     
     Snake(int h, int w, const char* logo);
-    
 
     int refresh(World& world);
 

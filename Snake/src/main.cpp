@@ -1,7 +1,7 @@
 #include <memory>
 #include <ncurses.h>
 #include <iostream>
-
+#include <unistd.h>
 #include "frame.hpp"
 #include "objects/snake.hpp"
 #include "objects/food.hpp"
@@ -33,16 +33,19 @@ int main() {
     }
     
     Frame frame;
-    std::shared_ptr<Snake> snake = std::make_shared<Snake>(0, 0);
-    std::shared_ptr<Food> food = std::make_shared<Food>(5, 5);
+    std::shared_ptr<Snake> snake = std::make_shared<Snake>(0, 0, "@");
+    std::shared_ptr<Food> food = std::make_shared<Food>(5, 5, "*");
     ScoreBoard scoreboard;//计分板
     int ch;
     int paused = 0;
     unsigned long last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
     
+    World world;
+
     // 主游戏循环
     while (1) {
-        frame.flush_to_screen(std::vector<std::shared_ptr<Object>>({snake,food}));
+        // frame.flush_to_screen(std::vector<std::shared_ptr<Object>>({snake,food}));
+        frame.flush_to_screen(world);
         ch = getch();
         
         // 处理输入
@@ -51,13 +54,13 @@ int main() {
                 case 'q':
                 case 'Q':
                     attron(COLOR_PAIR(COLOR_WHITE));
-                    mvprintw(0, 0, "Game Over! Final Score: %d", scoreboard.score);
+                    mvprintw(0, 0, "Game Over! Final Score: %d", scoreboard.get_score());
                     timeout(-1);
                     getch();
                     endwin();
                     return 0;
                 case KEY_LEFT:
-                    snake.mov();
+                    snake->move(DIRECT::LEFT, world);
                     break;
                 case KEY_RIGHT:
                     
