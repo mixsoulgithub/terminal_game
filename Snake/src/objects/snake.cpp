@@ -1,5 +1,3 @@
-#pragma once
-
 #include "snake.hpp"
 
 // 游戏区域尺寸
@@ -44,16 +42,16 @@ int Snake::move(DIRECT new_dir, World& world){
     if(world.check_collision(*this)||check_collision()){
         return -1;
     }
-    auto foods=frame.search<Food>(1);//search food
-    if(foods.size()){
-        for(auto&& food:foods){
-            if(food->body[0]==;){
-                //eat food
-                frame.objs.erase(std::remove(frame.objs.begin(), frame.objs.end(), food), frame.objs.end());
-                return 1;
-            }
-        }
-    }
+    // auto foods=frame.search<Food>(1);//search food
+    // if(foods.size()){
+    //     for(auto&& food:foods){
+    //         if(food->body[0]==;){
+    //             //eat food
+    //             // frame.objs.erase(std::remove(frame.objs.begin(), frame.objs.end(), food), frame.objs.end());
+    //             return 1;
+    //         }
+    //     }
+    // }
     return 0;
 }
 

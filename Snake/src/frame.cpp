@@ -1,5 +1,6 @@
-#pragma once
 #include "frame.hpp"
+#include <cstdio>
+#include <vector>
 
 //一帧是由若干个图层组成的.不过按渲染顺序来. 逻辑和渲染分离.
 
@@ -12,10 +13,14 @@ Frame::Frame(int H,  int W,  int OH,  int OW):
 //show pixels on screen.
 bool Frame::flush_to_screen(World& world) {
     auto& objs=world.get_objects();//copy or move?
-    for(auto&& obj : objs){//template delays type, it's harder to find objs/obj typo.
-        int i=0;
-        for(auto [H,W]:obj.get_body()){
-            mvaddstr(OFFSET_H + H, OFFSET_W + W, (obj->outlook[i]).c_str());
+    for(auto&& obj : objs){//template delays type makes it's harder to find objs/obj typo.
+        auto& obj_body=obj.get_body();//no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
+        auto& obj_outlook=obj.get_outlook();
+        int len = obj_body.size();
+        for(int i=0; i<len; i++){
+            auto [H,W]=obj_body[i];
+            // std::printf("H: %d, W: %d, outlook: %s\n", H, W, (obj_outlook[i]).c_str());
+            mvaddstr(OFFSET_H + H, OFFSET_W + W, (obj_outlook[i]).c_str());
             i++;
         }
     }
@@ -48,18 +53,17 @@ bool Frame::flush_to_screen(World& world) {
     // }
 
     //if all =1, return all as vector. if all =0, return first found.
-    template<typename T>
-    auto search(int all){
-        std::vector<std::shared_ptr<T>> res;
-        for(auto&& obj : objs){
-            if(typeid(obj) == typeid(T)){
-                if(!all) return std::dynamic_pointer_cast<T>(obj);
-                res.emplace_back(std::dynamic_pointer_cast<T>(obj));//use obj to initialize shared_ptr<T>
-            }
+    int Frame::set_pixels(std::vector<std::tuple<int,int>>& body , std::vector<std::string>& pixels) {
+        int len=body.size();
+        for(int i=0; i<len; i++){
+            auto [h,w]=body[i];
+            set_pixel(h,w,pixels[i]);
         }
-        return res;
+        return 0;
     }
 
-    auto get_pixels(int h, int w, std::string& pixel) {
-        return pixels;
+    int Frame::set_pixel(int h, int w, std::string& pixel){
+        if(h<0 || h>=HEIGHT || w<0 || w>=WIDTH) return -1;
+        this->pixels[h][w]=pixel;
+        return 0;
     }

@@ -9,7 +9,7 @@ struct Object{
     std::vector<std::string> outlook;
     std::vector<int> color;
 
-    auto& get_body();
-    auto& get_outlook();
-    auto& get_color();
+    std::vector<std::tuple<int, int>>& get_body();
+    std::vector<std::string>& get_outlook();
+    std::vector<int>& get_color();
 };

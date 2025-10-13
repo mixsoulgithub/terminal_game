@@ -33,14 +33,16 @@ int main() {
     }
     
     Frame frame;
-    std::shared_ptr<Snake> snake = std::make_shared<Snake>(0, 0, "@");
-    std::shared_ptr<Food> food = std::make_shared<Food>(5, 5, "*");
+    Snake snake = Snake(0, 0, "@");
+    Food food = Food(5, 5, "*");
     ScoreBoard scoreboard;//计分板
     int ch;
     int paused = 0;
     unsigned long last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
     
     World world;
+    world.add_object(snake);
+    world.add_object(food);
 
     // 主游戏循环
     while (1) {
@@ -60,7 +62,7 @@ int main() {
                     endwin();
                     return 0;
                 case KEY_LEFT:
-                    snake->move(DIRECT::LEFT, world);
+                    
                     break;
                 case KEY_RIGHT:
                     
