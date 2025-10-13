@@ -11,7 +11,10 @@ function(compile_it target_name srcs)
     target_link_libraries(${target_name} PRIVATE ${CURSES_LIBRARIES})
 endfunction()
 
-compile_it(Snake src/main.cpp)
+file(GLOB_RECURSE SOURCES "*.cpp")
+file(GLOB_RECURSE HEADERS "*.h")
+
+compile_it(Snake ${SOURCES} ${HEADERS})
 
 target_compile_options(Snake PUBLIC -g)
 

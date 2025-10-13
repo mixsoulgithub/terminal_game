@@ -10,7 +10,7 @@ Frame::Frame(int H,  int W,  int OH,  int OW):
 
 
 //show pixels on screen.
-auto Frame::flush_to_screen(World& world) {
+bool Frame::flush_to_screen(World& world) {
     auto& objs=world.get_objects();//copy or move?
     for(auto&& obj : objs){//template delays type, it's harder to find objs/obj typo.
         int i=0;
@@ -19,7 +19,7 @@ auto Frame::flush_to_screen(World& world) {
             i++;
         }
     }
-    return 0;
+    return true;
 }
     //detect if it is clash with other object
     //only sometimes it will check. 

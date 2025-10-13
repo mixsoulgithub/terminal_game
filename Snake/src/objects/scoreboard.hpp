@@ -9,7 +9,7 @@ struct ScoreBoard:public Object{
 
     int flush();
     int flush(int x, int y);
-
+    int get_score() const { return score; }
     private:
         int score;
         int level;
