@@ -30,5 +30,6 @@ public:
     //if all =1, return all as vector. if all =0, return first found.
     auto search(int all);
 
-    auto get_pixels(int h, int w, std::string& pixel);
+    int set_pixels(std::vector<std::tuple<int,int>>& body , std::vector<std::string>& pixel);
+    int set_pixel(int h, int w, std::string& pixel);
 };
