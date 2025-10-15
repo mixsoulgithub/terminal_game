@@ -10,32 +10,31 @@
 
 int main() {
     setlocale(LC_ALL, ""); // 关键：设置区域，启用 UTF-8
-    // 初始化ncurses
-    initscr();
-    cbreak();
-    noecho();
-    curs_set(0);
-    keypad(stdscr, TRUE);
-    timeout(1);//this makes getch non-blocking, with 1ms delay.
+
+    initscr();              // 初始化ncurses
+    cbreak();               // 禁用行缓冲，字符立即可用（但保留信号控制字符）
+    noecho();               // 关闭输入字符的自动回显
+    curs_set(0);            // 隐藏光标（0=隐藏，1=正常，2=高亮）
+    keypad(stdscr, TRUE);   // 启用功能键（方向键、F1-F12等）的特殊编码
+    timeout(1);             // 设置getch()为非阻塞模式，超时时间为1毫秒
     
     // 初始化颜色
-    if (has_colors()) {
-        start_color();
+    if (has_colors())   // 检查终端是否支持颜色
+    {
+        start_color();  // 启用颜色功能
         //前景色, 背景色.
-        init_pair(COLOR_CYAN, COLOR_CYAN, COLOR_BLACK);
-        init_pair(COLOR_BLUE, COLOR_BLUE, COLOR_BLACK);
-        // init_pair(COLOR_ORANGE, COLOR_WHITE, COLOR_BLACK);  // 橙色用白色替代
-        init_pair(COLOR_YELLOW, COLOR_YELLOW, COLOR_BLACK);
-        init_pair(COLOR_GREEN, COLOR_GREEN, COLOR_BLACK);
-        // init_pair(COLOR_PURPLE, COLOR_MAGENTA, COLOR_BLACK);
-        init_pair(COLOR_RED, COLOR_RED, COLOR_BLACK);
-        init_pair(COLOR_WHITE, COLOR_WHITE, COLOR_BLACK);
+        init_pair(1, COLOR_CYAN, COLOR_BLACK);         // 定义颜色对1：青色前景，黑色背景
+        init_pair(2, COLOR_BLUE, COLOR_BLACK);         // 定义颜色对2：蓝色前景，黑色背景
+        init_pair(3, COLOR_YELLOW, COLOR_BLACK);     // 定义颜色对3：黄色前景，黑色背景
+        init_pair(4, COLOR_GREEN, COLOR_BLACK);       // 定义颜色对4：绿色前景，黑色背景
+        init_pair(5, COLOR_RED, COLOR_BLACK);           // 定义颜色对5：红色前景，黑色背景
+        init_pair(6, COLOR_WHITE, COLOR_BLACK);       // 定义颜色对6：白色前景，黑色背景
     }
     
     Frame frame;
     Snake snake = Snake(0, 0, "@");
     Food food = Food(5, 5, "*");
-    ScoreBoard scoreboard;//计分板
+    ScoreBoard scoreboard;  //计分板
     int ch;
     int paused = 0;
     unsigned long last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
@@ -46,13 +45,12 @@ int main() {
 
     // 主游戏循环
     while (1) {
-        // frame.flush_to_screen(std::vector<std::shared_ptr<Object>>({snake,food}));
-        frame.flush_to_screen(world);
         ch = getch();
-        
         // 处理输入
-        if (!paused) {
-            switch (ch) {
+        if (!paused)
+        {
+            switch (ch)
+            {
                 case 'q':
                 case 'Q':
                     attron(COLOR_PAIR(COLOR_WHITE));
@@ -81,14 +79,12 @@ int main() {
                     paused = 1;
                     break;
             }
-        
-        refresh();
-        usleep(10000);  // 10ms延迟，减少CPU使用
+            refresh();
+            usleep(10000);  // 10ms延迟，减少CPU使用
         }
+        
+        frame.flush_to_screen(world);
     }
-    
-    // 游戏结束显示
-    // refresh();
     
     timeout(-1);  // 阻塞等待按键
     getch();
