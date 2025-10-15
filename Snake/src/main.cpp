@@ -7,6 +7,9 @@
 #include "objects/food.hpp"
 #include "objects/scoreboard.hpp"
 #include "objects/world.hpp"
+#include "game.hpp"
+
+void processInput();
 
 int main() {
     setlocale(LC_ALL, ""); // 关键：设置区域，启用 UTF-8
@@ -31,59 +34,15 @@ int main() {
         init_pair(6, COLOR_WHITE, COLOR_BLACK);       // 定义颜色对6：白色前景，黑色背景
     }
     
-    Frame frame;
-    Snake snake = Snake(0, 0, "@");
-    Food food = Food(5, 5, "*");
-    ScoreBoard scoreboard;  //计分板
-    int ch;
-    int paused = 0;
     unsigned long last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
     
-    World world;
-    world.add_object(snake);
-    world.add_object(food);
+    Game game;
 
     // 主游戏循环
-    while (1) {
-        ch = getch();
-        // 处理输入
-        if (!paused)
-        {
-            switch (ch)
-            {
-                case 'q':
-                case 'Q':
-                    attron(COLOR_PAIR(COLOR_WHITE));
-                    mvprintw(0, 0, "Game Over! Final Score: %d", scoreboard.get_score());
-                    timeout(-1);
-                    getch();
-                    endwin();
-                    return 0;
-                case KEY_LEFT:
-                    
-                    break;
-                case KEY_RIGHT:
-                    
-                    break;
-                case KEY_UP:
-                    
-                    break;
-                case KEY_DOWN:
-                    
-                    break;
-                case ' ':
-                    
-                    break;
-                case 'p':
-                case 'P':
-                    paused = 1;
-                    break;
-            }
-            refresh();
-            usleep(10000);  // 10ms延迟，减少CPU使用
-        }
-        
-        frame.flush_to_screen(world);
+    while (game.getIsGameOver() == false) {
+        game.processInput();
+        game.update();
+        game.render();
     }
     
     timeout(-1);  // 阻塞等待按键
