@@ -22,7 +22,5 @@ protected:
     ScoreBoard m_scoreboard;
     Frame m_frame;
     World m_world;
-    Snake m_snake;
-    Food m_food;
 };
 

@@ -34,15 +34,12 @@ int main() {
         init_pair(6, COLOR_WHITE, COLOR_BLACK);       // 定义颜色对6：白色前景，黑色背景
     }
     
-    unsigned long last_drop_time = (unsigned long)clock() * 1000 / CLOCKS_PER_SEC;
-    
     Game game;
-
     // 主游戏循环
     while (game.getIsGameOver() == false) {
-        game.processInput();
         game.update();
         game.render();
+        game.processInput();
     }
     
     timeout(-1);  // 阻塞等待按键
