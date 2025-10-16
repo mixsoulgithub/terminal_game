@@ -3,13 +3,39 @@
 #include <string>
 #include <tuple>
 
-struct Object{
-    virtual void foo(){}//make it polymorphic in runtime.
-    std::vector<std::tuple<int, int>> body;
-    std::vector<std::string> outlook;
-    std::vector<int> color;
+using Outlook=std::tuple<std::string, int>;//pattern, color
 
-    std::vector<std::tuple<int, int>>& get_body();
-    std::vector<std::string>& get_outlook();
-    std::vector<int>& get_color();
+//Body 用于存储物体的每个部分的位置和外观
+struct Body{
+    std::tuple<int, int> location;
+    Outlook outlook;//花纹, pattern, 也就是字符. 以及颜色, 严格来讲是颜色对.
+
+    //重载了两份构造函数.
+    Body(int x, int y, std::string pattern, int color=0):
+        location(std::make_tuple(x,y)), outlook(std::make_tuple(pattern,color)){}
+
+    Body(int x, int y, Outlook& pattern_color):
+        location(std::make_tuple(x,y)), outlook(pattern_color){}
+    
+    //获取位置和外观. 由于这几个函数比较简单, 就直接内联在这里了.
+    std::tuple<int, int>& get_location(){ return location; }
+    Outlook& get_outlook(){ return outlook; }
+};
+
+struct Object{
+    
+    std::vector<Body> body;//一个物体由多个部分组成, 逻辑上是链表.
+    static Outlook default_outlook;//默认外观, 用于初始化物体的各个部分.
+
+    Outlook& get_default_outlook(){ return default_outlook; }
+
+    //提供一些操作 body 的接口.
+    std::vector<Body>& get_body();
+    Body& get_body(int i);
+    int set_body(int i, Body& body_part);
+    int delete_body(int i);
+    int insert_body(int i, Body& body_part);
+
+    Object(Outlook& default_outlook);//需要传入默认外观.
+    virtual void foo(){}//make it polymorphic in runtime.
 };
