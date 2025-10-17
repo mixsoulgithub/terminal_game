@@ -86,10 +86,10 @@ namespace Collision{
         COLLISION_TYPE ans=NONE;
         auto objs=world.get_objects();
         for(auto&& obj: objs){
-            if(std::addressof(obj)==std::addressof(snake)){
+            if(std::addressof(*obj)==std::addressof(snake)){
                 continue;
             }
-            COLLISION_TYPE tmp = check_collision(obj,snake);
+            COLLISION_TYPE tmp = check_collision(*obj,snake);
             if(tmp==UNSOLVABLE){
                 return UNSOLVABLE;
             }else if(tmp==SOLVABLE){

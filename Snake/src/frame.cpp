@@ -14,9 +14,9 @@ Frame::~Frame() {
 
 //show pixels on screen.
 bool Frame::flush_to_screen(World& world) {
-    auto& objs=world.get_objects();//copy or move?
+    auto objs=world.get_objects();//copy or move?
     for(auto&& obj : objs){//template delays type makes it's harder to find objs/obj typo.
-        auto& obj_body=obj.get_body();//no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
+        auto& obj_body=obj->get_body();//no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
         for(auto&& [location,outlook]:obj_body){
             auto [H,W]=location;
             auto [pattern,color]=outlook;

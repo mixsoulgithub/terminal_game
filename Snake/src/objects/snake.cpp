@@ -11,7 +11,7 @@ int Snake::DIRECT_STEP[4][2]{ //H, W
     {1,0}
 };
     
-Snake::Snake(int h, int w, Outlook& default_outlook, DIRECT dir):Object(default_outlook), dir(dir){
+Snake::Snake(int h, int w, const Outlook& default_outlook, DIRECT dir):Object(default_outlook), dir(dir){
     body.emplace_back(h, w, default_outlook);
 }
     

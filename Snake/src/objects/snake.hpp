@@ -12,7 +12,7 @@ typedef enum {
 class Snake: public Object{
     // the body of snake is tail->middle->head.
     public:
-    Snake(int h, int w, Outlook& default_outlook, DIRECT dir);
+    Snake(int h, int w, const Outlook& default_outlook, DIRECT dir);
 
     int refresh(World& world);
 
