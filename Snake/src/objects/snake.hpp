@@ -10,20 +10,19 @@ typedef enum {
 }DIRECT;
 
 class Snake: public Object{
+    // the body of snake is tail->middle->head.
     public:
-    DIRECT dir;
-    
-    Snake(int h, int w, const char* logo);
+    Snake(int h, int w, const Outlook& default_outlook, DIRECT dir);
 
     int refresh(World& world);
 
-    /*
-    * @return : -1 is game over, 0 is ok
-    */ 
-    int move(DIRECT new_dir, World& world);
+    int update_dir(DIRECT new_dir);
+    int move(World& world);
+    // int check_collision();
+    DIRECT get_dir();
 
-    int check_collision();
+    int grow(Outlook& outlook=default_outlook);//when eat something, snake will grow.
     private:
-
+        DIRECT dir;
         static int DIRECT_STEP[4][2];
 };

@@ -5,7 +5,6 @@
 
 struct Food:public Object{
     public:
-    const char* logo;
 
     Food(int x , int y, const char* logo);
 };

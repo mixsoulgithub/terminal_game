@@ -11,10 +11,10 @@ struct Body{
     Outlook outlook;//花纹, pattern, 也就是字符. 以及颜色, 严格来讲是颜色对.
 
     //重载了两份构造函数.
-    Body(int x, int y, std::string pattern, int color=0):
+    Body(int x, int y, const std::string pattern, const int color=0):
         location(std::make_tuple(x,y)), outlook(std::make_tuple(pattern,color)){}
 
-    Body(int x, int y, Outlook& pattern_color):
+    Body(int x, int y, const Outlook& pattern_color):
         location(std::make_tuple(x,y)), outlook(pattern_color){}
     
     //获取位置和外观. 由于这几个函数比较简单, 就直接内联在这里了.
@@ -36,6 +36,8 @@ struct Object{
     int delete_body(int i);
     int insert_body(int i, Body& body_part);
 
-    Object(Outlook& default_outlook);//需要传入默认外观.
+    Object(Outlook default_outlook);//需要传入默认外观.
+    // 由于很多地方要用:Object(Outlook(std::string(logo),1)), 所以不用左值引用了.
+    Object()=default;//给出默认构造函数. 此时default outloock为默认值. 见cpp文件.
     virtual void foo(){}//make it polymorphic in runtime.
 };
