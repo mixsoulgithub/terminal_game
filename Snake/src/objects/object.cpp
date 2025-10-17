@@ -1,7 +1,10 @@
 #include "object.hpp"
 #include <stdexcept>
+//静态成员变量必须在类外初始化.
 
-Object::Object(Outlook& outlook){
+Outlook Object::default_outlook=std::make_tuple(std::string(" "),1);
+
+Object::Object(Outlook outlook){
     default_outlook=outlook;
 }
 

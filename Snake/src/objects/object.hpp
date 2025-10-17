@@ -36,6 +36,8 @@ struct Object{
     int delete_body(int i);
     int insert_body(int i, Body& body_part);
 
-    Object(Outlook& default_outlook);//需要传入默认外观.
+    Object(Outlook default_outlook);//需要传入默认外观.
+    // 由于很多地方要用:Object(Outlook(std::string(logo),1)), 所以不用左值引用了.
+    Object()=default;//给出默认构造函数. 此时default outloock为默认值. 见cpp文件.
     virtual void foo(){}//make it polymorphic in runtime.
 };
