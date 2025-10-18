@@ -16,7 +16,7 @@ public:
     Frame(int h = 30, int w = 40, int oh = 2, int ow = 5);//todo: const
     ~Frame();
 
-    bool flush_to_screen(World& world);//world is only one in most cases, so I don't want use xxx_ptr here.
+    bool flush_to_screen(const World& world);//world is only one in most cases, so I don't want use xxx_ptr here.
 
     //detect if it is clash with other object
     //only sometimes it will check. 

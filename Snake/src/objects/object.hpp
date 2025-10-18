@@ -18,8 +18,8 @@ struct Body{
         location(std::make_tuple(x,y)), outlook(pattern_color){}
     
     //获取位置和外观. 由于这几个函数比较简单, 就直接内联在这里了.
-    std::tuple<int, int>& get_location(){ return location; }
-    Outlook& get_outlook(){ return outlook; }
+    const std::tuple<int, int>& get_location() const { return location; }
+    const Outlook& get_outlook() const { return outlook; }
 };
 
 struct Object{
@@ -30,8 +30,8 @@ struct Object{
     Outlook& get_default_outlook(){ return default_outlook; }
 
     //提供一些操作 body 的接口.
-    std::vector<Body>& get_body();
-    Body& get_body(int i);
+    const std::vector<Body>& get_body() const;
+    const Body& get_body(int i) const;
     int set_body(int i, Body& body_part);
     int delete_body(int i);
     int insert_body(int i, Body& body_part);
