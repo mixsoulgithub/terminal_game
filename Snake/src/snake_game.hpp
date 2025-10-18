@@ -7,11 +7,13 @@ class SnakeGame : public TerminalGame
 public:
     SnakeGame();
     ~SnakeGame();
+
+    virtual bool buildFromConfigFile(const std::string& configFilePath) override;
+protected:
     virtual void processInput() override;
     virtual void update() override;
     virtual void render() override;
 
-protected:
     // 这里存放蛇游戏特有的元素：暂停标志，分数，记分板等
     bool m_is_paused;
     int m_score;

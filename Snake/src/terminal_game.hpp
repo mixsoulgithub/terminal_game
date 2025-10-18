@@ -14,14 +14,18 @@ class TerminalGame
 public:
     TerminalGame();
     virtual ~TerminalGame();
+    bool initialize();
+    void run();
+    void shutdown();
 
+    virtual bool buildFromConfigFile(const std::string& configFilePath) = 0;
+protected:
+    bool initialize_ncurses();
     // 这里是游戏循环的三个核心步骤，派生类必须实现它们
     virtual void processInput() = 0;
     virtual void update() = 0;
     virtual void render() = 0;
 
-    bool getIsGameOver() const { return m_is_game_over; }
-protected:
     // 这里存放所有终端游戏都应该有的元素：游戏结束标志，游戏世界，渲染帧等
     bool m_is_game_over;
     Frame m_frame;

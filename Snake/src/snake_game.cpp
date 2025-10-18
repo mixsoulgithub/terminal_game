@@ -12,6 +12,12 @@ SnakeGame::~SnakeGame()
 
 }
 
+bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
+{
+    // 读取配置文件并初始化游戏参数
+    return true;
+}
+
 void SnakeGame::processInput()
 {
     int ch = getch();
