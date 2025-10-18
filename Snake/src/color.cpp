@@ -5,7 +5,8 @@ void init_all_colors(){
     {
         start_color();  // 启用颜色功能
         //前景色, 背景色.
-        init_pair(COLOR_WHITE_BLACK, COLOR_WHITE, COLOR_BLACK);         // 定义颜色对1：青色前景，黑色背景
+        init_pair(COLOR_WHITE_BLACK, COLOR_WHITE, COLOR_BLACK);         // 定义颜色对1：白色前景，黑色背景
+        init_pair(COLOR_WHITE_NONE, COLOR_WHITE, COLOR_BLACK); 
 
     }
 }
