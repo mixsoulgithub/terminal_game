@@ -1,24 +1,18 @@
 #include <unistd.h>
-#include <ncurses.h>
 
-#include "game.hpp"
+#include "snake_game.hpp"
 
-Game::Game():
-    m_is_paused(false),
-    m_is_game_over(false),
-    m_score(0),
-    m_world(),
-    m_scoreboard()
+SnakeGame::SnakeGame(): TerminalGame(), m_is_paused(false), m_score(0), m_scoreboard()
 {
     
 }
 
-Game::~Game()
+SnakeGame::~SnakeGame()
 {
 
 }
 
-void Game::processInput()
+void SnakeGame::processInput()
 {
     int ch = getch();
         // 处理输入
@@ -62,12 +56,12 @@ void Game::processInput()
         usleep(10000);  // 10ms延迟，减少CPU使用
 }
 
-void Game::update()
+void SnakeGame::update()
 {
     if(m_is_paused) return;
     m_world.update();
 }
-void Game::render()
+void SnakeGame::render()
 {
     m_frame.flush_to_screen(m_world);
 }

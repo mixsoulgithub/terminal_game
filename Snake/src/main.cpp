@@ -2,12 +2,13 @@
 #include <ncurses.h>
 #include <iostream>
 #include <unistd.h>
+
 #include "frame.hpp"
 #include "objects/snake.hpp"
 #include "objects/food.hpp"
 #include "objects/scoreboard.hpp"
 #include "objects/world.hpp"
-#include "game.hpp"
+#include "snake_game.hpp"
 
 void processInput();
 
@@ -34,12 +35,14 @@ int main() {
         init_pair(6, COLOR_WHITE, COLOR_BLACK);       // 定义颜色对6：白色前景，黑色背景
     }
     
-    Game game;
+    // 当新增游戏种类时，只需要将下面的 std::make_shared<SnakeGame>() 替换成 NewGameType 即可
+    std::shared_ptr<TerminalGame> game = std::make_shared<SnakeGame>();
+    
     // 主游戏循环
-    while (game.getIsGameOver() == false) {
-        game.update();
-        game.render();
-        game.processInput();
+    while (game->getIsGameOver() == false) {
+        game->update();
+        game->render();
+        game->processInput();
     }
     
     timeout(-1);  // 阻塞等待按键
