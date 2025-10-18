@@ -13,13 +13,17 @@ Frame::~Frame() {
 }
 
 //show pixels on screen.
-bool Frame::flush_to_screen(World& world) {
-    auto objs=world.get_objects();//copy or move?
-    for(auto&& obj : objs){//template delays type makes it's harder to find objs/obj typo.
-        auto& obj_body=obj->get_body();//no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
-        for(auto&& [location,outlook]:obj_body){
-            auto [H,W]=location;
-            auto [pattern,color]=outlook;
+bool Frame::flush_to_screen(const World& world)
+{
+    // 这里 get_objects 的返回值类型稳定，可以不使用 auto 自动推导
+    const std::vector<std::shared_ptr<Object>>& objs = world.get_objects();//copy or move?
+    for(const std::shared_ptr<Object>& obj : objs) //template delays type makes it's harder to find objs/obj typo.
+    {
+        const std::vector<Body>& obj_body = obj->get_body();//no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
+        for(auto&& [location, outlook] : obj_body)
+        {
+            auto [H, W] = location;
+            auto [pattern, color] = outlook;
             // std::printf("H: %d, W: %d, outlook: %s\n", H, W, (obj_outlook[i]).c_str());
             attron(color);
             mvaddstr(m_height + H, m_width + W, pattern.c_str());

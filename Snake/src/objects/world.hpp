@@ -10,7 +10,7 @@ public:
     ~World();
     void update();
     //return reference of objs
-    std::vector<std::shared_ptr<Object>> get_objects();//Function 'get_objects' with deduced return type cannot be used before it is defined, 用auto不行.
+    const std::vector<std::shared_ptr<Object>>& get_objects() const;//Function 'get_objects' with deduced return type cannot be used before it is defined, 用auto不行.
     //shared_ptr不用引用, 不过是多了一个引用计数而已, 开销不大. 且这样可以接受左值和右值, 更加灵活. 也不用完美转发的冗长代码.
 
     int add_object(std::shared_ptr<Object> obj);

@@ -17,7 +17,7 @@ void World::update()
     
 }
 
-std::vector<std::shared_ptr<Object>> World::get_objects() {
+const std::vector<std::shared_ptr<Object>>& World::get_objects() const {
     return m_objs;
 }
 
