@@ -1,0 +1,18 @@
+{
+    "snake": {
+        "symbol": "O",
+        "initial_length": 5,
+        "initial_speed": 200,
+        "initial_position": {"row": 5, "col": 5},
+        "initial_direction": "RIGHT"
+    },
+    
+    "food": {
+        "symbol": "*",
+        "points": [
+            {"row": 0, "col": 0},
+            {"row": 1, "col": 1},
+            {"row": 2, "col": 2}
+        ]
+    }
+}
