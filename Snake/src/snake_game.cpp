@@ -2,6 +2,7 @@
 #include <fstream>
 #include "tool/json.hpp"
 #include "snake_game.hpp"
+#include "color.hpp"
 
 SnakeGame::SnakeGame(): TerminalGame(), m_is_paused(false), m_score(0), m_scoreboard()
 {
@@ -74,7 +75,7 @@ void SnakeGame::processInput()
         {
             case 'q':
             case 'Q':
-                attron(COLOR_PAIR(6));  // 启用颜色对6：白色前景，黑色背景
+                attron(COLOR_PAIR(COLOR_WHITE_BLACK));  // 启用颜色：白色前景，黑色背景
                 // 在屏幕顶部显示游戏结束信息和最终分数
                 mvprintw(0, 0, "Game Over! Final Score: %d", m_scoreboard.get_score());
                 // 将输入模式改回阻塞模式（无限等待）
