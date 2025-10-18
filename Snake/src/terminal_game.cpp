@@ -20,7 +20,7 @@ bool TerminalGame::initialize()
     bool initialize_result = true;
 
     initialize_result &= initialize_ncurses();
-    initialize_result &= buildFromConfigFile("config.txt");
+    initialize_result &= buildFromConfigFile("../config/config.json");
 
     return initialize_result;
 }

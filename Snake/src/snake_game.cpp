@@ -1,5 +1,6 @@
 #include <unistd.h>
-
+#include <fstream>
+#include "tool/json.hpp"
 #include "snake_game.hpp"
 
 SnakeGame::SnakeGame(): TerminalGame(), m_is_paused(false), m_score(0), m_scoreboard()
@@ -15,6 +16,53 @@ SnakeGame::~SnakeGame()
 bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
 {
     // 读取配置文件并初始化游戏参数
+    nlohmann::json configJson;
+    
+    std::ifstream file(configFilePath);
+    if (!file.is_open())
+    {
+        return false;
+    }
+    file >> configJson;
+    file.close();
+
+    // 根据配置文件内容初始化游戏元素
+    // 例如，创建蛇和食物对象并添加到游戏世界中
+    /* Snake */
+    auto snake_element = configJson["snake"];
+    std::string snake_symbol = snake_element["symbol"];
+    int snake_length = snake_element["initial_length"];
+    int snake_speed = snake_element["initial_speed"];
+    auto snake_position = snake_element["initial_position"];
+    int w = snake_position["row"];
+    int h = snake_position["col"];
+    std::string snake_direction = snake_element["initial_direction"];
+    DIRECT dir = RIGHT; //default
+    if (snake_direction == "UP") {
+        dir = UP;
+    } else if (snake_direction == "DOWN") {
+        dir = DOWN;
+    } else if (snake_direction == "LEFT") {
+        dir = LEFT;
+    } else if (snake_direction == "RIGHT") {
+        dir = RIGHT;
+    }
+    Outlook snake_outlook = Outlook(snake_symbol, 2);
+    std::shared_ptr<Snake> snake = std::make_shared<Snake>(h, w, snake_outlook, dir);
+    m_world.add_object(snake);
+
+    /* Food */
+    auto food_element = configJson["food"];
+    std::string food_symbol = food_element["symbol"];
+    auto food_points = food_element["points"];
+    for (const auto& point : food_points) {
+        int x = point["row"];
+        int y = point["col"];
+
+        std::shared_ptr<Food> food = std::make_shared<Food>(x, y, food_symbol.c_str());
+        m_world.add_object(food);
+    }
+    
     return true;
 }
 

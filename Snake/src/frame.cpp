@@ -26,7 +26,7 @@ bool Frame::flush_to_screen(const World& world)
             auto [pattern, color] = outlook;
             // std::printf("H: %d, W: %d, outlook: %s\n", H, W, (obj_outlook[i]).c_str());
             attron(color);
-            mvaddstr(m_height + H, m_width + W, pattern.c_str());
+            mvaddstr(/*m_height + */H, /*m_width + */W, pattern.c_str());
         }
     }
     return true;
