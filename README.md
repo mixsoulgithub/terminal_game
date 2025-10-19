@@ -37,24 +37,16 @@ terminal_game
 
 ### 安装依赖 
 
+强烈推荐使用conda/mamba/micromamba管理环境. conda 是一个开源的包管理和环境管理系统，可以轻松地安装、运行和更新软件包及其依赖项，并能创建独立的项目环境，避免不同项目间的库版本冲突. micromamba是conda的麻雀虽小, 五脏俱全的替代品, 事实上, 它是完全静态链接的单个bin文件, 兼容性很好.  
 
-强烈推荐使用conda管理环境. Conda 是一个开源的包管理和环境管理系统，可以轻松地安装、运行和更新软件包及其依赖项，并能创建独立的项目环境，避免不同项目间的库版本冲突。 安装教程 https://www.anaconda.com/docs/getting-started/miniconda/install
+以下脚本可以一键安装micromamba, 并配置环境.
 
-安装完成后, 配置环境如下
 ```bash
-conda create --name terminal_game
-conda activate terminal_game
-conda install gcc>=11.3.0 #如果系统gcc满足要求可跳过
-conda install cmake>=3.10.0 #如果系统cmake满足要求可跳过
-conda install ncurses=6.5
+source set_env.sh
+#gcc或cmake的相应版本一般都满足要求,如果缺少, 可以手动安装. 参见set_env.sh的注释. 
+# micromamba install -c conda-forge <package>[=<version>=<built-hash>] -y 
 ```
 
-如果不想使用conda, 可以按如下配置. 
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install build-essential cmake libncurses5-dev
-```
 ## 构建说明
 
 ```bash
@@ -86,7 +78,7 @@ cmake --build .
 
 ## 特性
 
-- 跨平台支持 (Linux, macOS)
+- 跨平台支持 (Linux, macOS), 目前已验证的平台为Ubuntu 22.04 LTS, Ubuntu 20.04 LTS.
 - 基于终端的图形界面
 - 简单的构建系统
 - 清晰的代码结构

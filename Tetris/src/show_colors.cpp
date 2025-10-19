@@ -35,7 +35,7 @@ int pair_id_loop(){
     
     int color_f=30;
     int color_b=31;
-    int color_pair=42+256;
+    int color_pair=43;
     init_color(color_f, 500, 0, 500);
     init_color(color_b, 0, 1000,0);
     init_extended_pair(color_pair, color_f, color_b);
