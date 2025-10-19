@@ -13,3 +13,7 @@ endfunction()
 
 compile_it(Tetris src/main.cpp)
 compile_it(utf8 src/utf8.cpp)
+compile_it(colortest src/colortest.cpp)
+compile_it(colortest2 src/colortest2.cpp)
+compile_it(colortest3 src/colortest3.cpp)
+compile_it(show_colors src/show_colors.cpp)
