@@ -7,4 +7,4 @@
 //因为这里只是声明, 所以不用inline也没关系.
 void init_all_colors();
 
-void tmp_RGB_color()
+void tmp_RGB_color();
