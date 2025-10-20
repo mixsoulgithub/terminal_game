@@ -17,6 +17,7 @@ int main() {
     mvprintw(7, 1, "│ │");  // 竖边框
     mvprintw(8, 1, "└─┘");  // 下边框
     
+    mvprintw(0, 0, "    GAME OVERq  ");
     refresh();
     getch();
     endwin();

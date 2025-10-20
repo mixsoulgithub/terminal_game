@@ -35,7 +35,7 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
     int snake_length = snake_element["initial_length"];
     int snake_speed = snake_element["initial_speed"];
     auto snake_position = snake_element["initial_position"];
-    int w = snake_position["row"];
+    int w = snake_position["row"];//居然能正确识别int.
     int h = snake_position["col"];
     std::string snake_direction = snake_element["initial_direction"];
     DIRECT dir = RIGHT; //default
@@ -69,6 +69,7 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
 
 void SnakeGame::processInput()
 {
+    mvprintw(9, 10, "Game Over! Final Score: %d", m_scoreboard.get_score());
     int ch = getch();
         // 处理输入
         switch (ch)
@@ -77,8 +78,10 @@ void SnakeGame::processInput()
             case 'Q':
                 attron(COLOR_PAIR(COLOR_WHITE_BLACK));  // 启用颜色：白色前景，黑色背景
                 // 在屏幕顶部显示游戏结束信息和最终分数
-                mvprintw(0, 0, "Game Over! Final Score: %d", m_scoreboard.get_score());
-                // 将输入模式改回阻塞模式（无限等待）
+                // mvprintw(0, 0, "      ");// 将输入模式改回阻塞模式（无限等待）
+                // clrtoeol();//清空当前行, 但没啥效果.
+                // mvaddstr(0, 0, "      ");//和printw一样.
+                mvprintw(10, 10, "Game Over! Final Score: %d", m_scoreboard.get_score());
                 timeout(-1);
                 // 等待用户按任意键继续
                 getch();
@@ -99,7 +102,7 @@ void SnakeGame::processInput()
             case 'p':
             case 'P':
                 m_is_paused = true;
-                mvprintw(0, 0, "Game is Paused. Press 'c' to continue.");
+                mvprintw(0, 0, "Game is Paused. Press c to continue.");
                 break;
             case 'c':
             case 'C':

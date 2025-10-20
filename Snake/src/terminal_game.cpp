@@ -29,11 +29,14 @@ bool TerminalGame::initialize()
 void TerminalGame::run()
 {
     // 主游戏循环
-    while (m_is_game_over == false) {
+    mvprintw(0, 10, "before while");//在这里没有问题
+        int debug_h=1;
+    mvprintw(debug_h++, 10, "before while");
         update();
+    mvprintw(debug_h++, 10, "before while");
         render();
+    mvprintw(debug_h++, 10, "before while");
         processInput();
-    }
 }
 
 void TerminalGame::shutdown()
@@ -55,7 +58,9 @@ bool TerminalGame::initialize_ncurses()
     keypad(stdscr, TRUE);   // 启用功能键（方向键、F1-F12等）的特殊编码
     timeout(1);             // 设置getch()为非阻塞模式，超时时间为1毫秒
     
+    // mvprintw(10, 10, "Game Over! Final Score: ");//在这里没问题
     init_all_colors();
 
+    //mvprintw(10, 10, "Game Over! Final Score: ");//在这里没有问题
     return true;
 }
