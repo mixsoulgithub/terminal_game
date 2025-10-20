@@ -16,6 +16,7 @@ Frame::~Frame() {
 bool Frame::flush_to_screen(const World& world)
 {
     // 这里 get_objects 的返回值类型稳定，可以不使用 auto 自动推导
+    mvprintw(0, 30, "flush_to_screen");//在这里没有问题
     const std::vector<std::shared_ptr<Object>>& objs = world.get_objects();//copy or move?
     for(const std::shared_ptr<Object>& obj : objs) //template delays type makes it's harder to find objs/obj typo.
     {
@@ -27,6 +28,7 @@ bool Frame::flush_to_screen(const World& world)
             // std::printf("H: %d, W: %d, outlook: %s\n", H, W, (obj_outlook[i]).c_str());
             attron(color);
             mvaddstr(/*m_height + */H, /*m_width + */W, pattern.c_str());
+            attroff(color);
         }
     }
     return true;
