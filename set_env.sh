@@ -8,6 +8,7 @@ echo "deb http://mirrors.aliyun.com/ubuntu/ focal-updates main restricted univer
 
 apt update
 apt install -y wget
+apt install -y tar bzip2
 
 #检测是否安装了micromamba
 if [micromamba -v]
