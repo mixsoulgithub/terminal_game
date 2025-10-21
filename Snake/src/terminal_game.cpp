@@ -2,7 +2,6 @@
 #include <ncurses.h>
 
 #include "terminal_game.hpp"
-#include "color.hpp"
 
 TerminalGame::TerminalGame():
     m_is_game_over(false),
@@ -21,6 +20,7 @@ bool TerminalGame::initialize()
     bool initialize_result = true;
 
     initialize_result &= initialize_ncurses();
+    initialize_result &= m_frame.initialize();
     initialize_result &= buildFromConfigFile("../config/config.json");
 
     return initialize_result;
@@ -54,8 +54,6 @@ bool TerminalGame::initialize_ncurses()
     curs_set(0);            // 隐藏光标（0=隐藏，1=正常，2=高亮）
     keypad(stdscr, TRUE);   // 启用功能键（方向键、F1-F12等）的特殊编码
     timeout(1);             // 设置getch()为非阻塞模式，超时时间为1毫秒
-    
-    init_all_colors();
 
     return true;
 }
