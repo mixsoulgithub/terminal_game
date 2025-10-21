@@ -49,8 +49,8 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
         dir = RIGHT;
     }
     Outlook snake_outlook = Outlook(snake_symbol, 2);
-    std::shared_ptr<Snake> snake = std::make_shared<Snake>(h, w, snake_outlook, dir);
-    m_world.add_object(snake);
+    m_snake = std::make_shared<Snake>(h, w, snake_outlook, dir);
+    m_world.add_object(m_snake);
 
     /* Food */
     auto food_element = configJson["food"];
@@ -62,6 +62,7 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
 
         std::shared_ptr<Food> food = std::make_shared<Food>(x, y, food_symbol.c_str());
         m_world.add_object(food);
+        m_foods.push_back(food);
     }
     
     return true;
@@ -87,12 +88,16 @@ void SnakeGame::processInput()
                 m_is_game_over = true;
                 break;
             case KEY_LEFT:
+                m_snake->test_move_offset_foce(-1, 0); //测试用, 强制向下移动
                 break;
             case KEY_RIGHT:
+                m_snake->test_move_offset_foce(1, 0); //测试用, 强制向上移动
                 break;
             case KEY_UP:
+                m_snake->test_move_offset_foce(0, -1); //测试用, 强制向左移动
                 break;
             case KEY_DOWN:
+                m_snake->test_move_offset_foce(0, 1); //测试用, 强制向左移动
                 break;
             case ' ':
                 break;

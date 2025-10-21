@@ -18,4 +18,7 @@ protected:
     bool m_is_paused;
     int m_score;
     ScoreBoard m_scoreboard;
+
+    std::shared_ptr<Snake> m_snake;
+    std::vector<std::shared_ptr<Food>> m_foods;
 };

@@ -22,6 +22,16 @@ class Snake: public Object{
     DIRECT get_dir();
 
     int grow(Outlook& outlook=default_outlook);//when eat something, snake will grow.
+
+    // test functions
+    void test_move_offset_foce(int w_offset, int h_offset){
+        for (int i = 0; i < body.size(); i++){
+            auto& [x,y]=body[i].location;
+            x+=h_offset;
+            y+=w_offset;
+        }
+    }
+
     private:
         DIRECT dir;
         static int DIRECT_STEP[4][2];
