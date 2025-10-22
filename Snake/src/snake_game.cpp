@@ -2,7 +2,6 @@
 #include <fstream>
 #include "tool/json.hpp"
 #include "snake_game.hpp"
-#include "color.hpp"
 
 SnakeGame::SnakeGame(): TerminalGame(), m_is_paused(false), m_score(0), m_scoreboard()
 {
@@ -48,7 +47,7 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
     } else if (snake_direction == "RIGHT") {
         dir = RIGHT;
     }
-    Outlook snake_outlook = Outlook(snake_symbol, 2);
+    Outlook snake_outlook = Outlook(snake_symbol, ColorMode::FRONT_YELLOW_BACK_WHITE);
     m_snake = std::make_shared<Snake>(h, w, snake_outlook, dir);
     m_world.add_object(m_snake);
 
@@ -76,7 +75,6 @@ void SnakeGame::processInput()
         {
             case 'q':
             case 'Q':
-                attron(COLOR_PAIR(COLOR_WHITE_BLACK));  // 启用颜色：白色前景，黑色背景
                 // 在屏幕顶部显示游戏结束信息和最终分数
                 mvprintw(0, 0, "Game Over! Final Score: %d", m_scoreboard.get_score());
                 // 将输入模式改回阻塞模式（无限等待）
@@ -112,7 +110,6 @@ void SnakeGame::processInput()
                 mvprintw(0, 0, "                                      "); // Clear the pause message
                 break;
         }
-        refresh();
         usleep(10000);  // 10ms延迟，减少CPU使用
 }
 

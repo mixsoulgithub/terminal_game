@@ -2,8 +2,9 @@
 #include <vector>
 #include <string>
 #include <tuple>
+#include "color/color_system.hpp"
 
-using Outlook=std::tuple<std::string, int>;//pattern, color
+using Outlook=std::tuple<std::string, ColorMode>;//pattern, color
 
 //Body 用于存储物体的每个部分的位置和外观
 struct Body{
@@ -11,8 +12,8 @@ struct Body{
     Outlook outlook;//花纹, pattern, 也就是字符. 以及颜色, 严格来讲是颜色对.
 
     //重载了两份构造函数.
-    Body(int x, int y, const std::string pattern, const int color=0):
-        location(std::make_tuple(x,y)), outlook(std::make_tuple(pattern,color)){}
+    Body(int x, int y, const std::string& pattern, const ColorMode color_mode = ColorMode::FRONT_WHITE_BACK_BLACK):
+        location(std::make_tuple(x,y)), outlook(std::make_tuple(pattern, color_mode)){}
 
     Body(int x, int y, const Outlook& pattern_color):
         location(std::make_tuple(x,y)), outlook(pattern_color){}
