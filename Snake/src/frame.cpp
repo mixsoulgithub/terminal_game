@@ -18,9 +18,21 @@ void Frame::flush_to_screen(const World& world)
     //TODO : flush objects as they order, that is, makes objs a sorted list.
 
     //WIP: only flush when some objects change. 
+    int need_flush=0;
     // 这里 get_objects 的返回值类型稳定，可以不使用 auto 自动推导
     const std::vector<std::shared_ptr<Object>>& objs = world.get_objects();//copy or move?
     for(const std::shared_ptr<Object>& obj : objs) //template delays type makes it's harder to find objs/obj typo.
+    {
+      if (obj->is_changed()) {
+        need_flush=1;
+        clear();
+        break;
+      }
+    }
+    if (!need_flush) {
+      return;
+    }
+    for(const std::shared_ptr<Object>& obj : objs) 
     {
         //no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
         const std::vector<Body>& obj_body = obj->get_body();
@@ -32,9 +44,11 @@ void Frame::flush_to_screen(const World& world)
             mvaddstr(/*m_height + */H, /*m_width + */W, pattern.c_str());
             m_color_system.unset_color_mode(color_mode);
         }
+        obj->unchange();
     }
     refresh();
 
+    //now it means vaild frame count.
     m_frame_count++;
 }
 //detect if it is clash with other object

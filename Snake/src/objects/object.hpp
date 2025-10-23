@@ -25,14 +25,15 @@ struct Body{
 
 struct Object{
     
-private:
+protected:
     std::vector<Body> body;//一个物体由多个部分组成, 逻辑上是链表.
     static Outlook default_outlook;//默认外观, 用于初始化物体的各个部分.
     int m_is_changed;
 public:
     Outlook& get_default_outlook(){ return default_outlook; }
     int is_changed(){return m_is_changed;}
-    void change(){ m_is_changed=!m_is_changed;}
+    void change(){ m_is_changed=1;}
+    void unchange(){ m_is_changed=0;}
     //提供一些操作 body 的接口.
     const std::vector<Body>& get_body() const;
     const Body& get_body(int i) const;
@@ -42,6 +43,9 @@ public:
 
     Object(Outlook default_outlook);//需要传入默认外观.
     // 由于很多地方要用:Object(Outlook(std::string(logo),1)), 所以不用左值引用了.
-    Object()=default;//给出默认构造函数. 此时default outloock为默认值. 见cpp文件.
+
+    //because different object need their own m_is_changed, so m_is_changed is not static,
+    //and so we need non-default Object constructor to initialize.
+    Object();
     virtual void foo(){}//make it polymorphic in runtime.
 };
