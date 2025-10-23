@@ -15,12 +15,15 @@ Frame::~Frame() {
 //show pixels on screen.
 void Frame::flush_to_screen(const World& world)
 {
-    clear();
+    //TODO : flush objects as they order, that is, makes objs a sorted list.
+
+    //WIP: only flush when some objects change. 
     // 这里 get_objects 的返回值类型稳定，可以不使用 auto 自动推导
     const std::vector<std::shared_ptr<Object>>& objs = world.get_objects();//copy or move?
     for(const std::shared_ptr<Object>& obj : objs) //template delays type makes it's harder to find objs/obj typo.
     {
-        const std::vector<Body>& obj_body = obj->get_body();//no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
+        //no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
+        const std::vector<Body>& obj_body = obj->get_body();
         for(auto&& [location, outlook] : obj_body)
         {
             auto [H, W] = location;
