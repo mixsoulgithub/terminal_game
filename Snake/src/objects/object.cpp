@@ -6,7 +6,13 @@ Outlook Object::default_outlook=std::make_tuple(std::string(" "), ColorMode::FRO
 
 Object::Object(Outlook outlook)
 {
+    m_is_changed=1;
     default_outlook=outlook;
+}
+
+Object::Object()
+{
+    m_is_changed=1;
 }
 
 const std::vector<Body>& Object::get_body() const

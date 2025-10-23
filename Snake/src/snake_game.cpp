@@ -87,15 +87,19 @@ void SnakeGame::processInput()
                 break;
             case KEY_LEFT:
                 m_snake->test_move_offset_foce(-1, 0); //测试用, 强制向下移动
+                m_snake->change();
                 break;
             case KEY_RIGHT:
                 m_snake->test_move_offset_foce(1, 0); //测试用, 强制向上移动
+                m_snake->change();
                 break;
             case KEY_UP:
                 m_snake->test_move_offset_foce(0, -1); //测试用, 强制向左移动
+                m_snake->change();
                 break;
             case KEY_DOWN:
                 m_snake->test_move_offset_foce(0, 1); //测试用, 强制向左移动
+                m_snake->change();
                 break;
             case ' ':
                 break;
