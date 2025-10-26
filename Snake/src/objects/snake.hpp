@@ -20,7 +20,7 @@ class Snake: public Object{
     int move(World& world);
     // int check_collision();
     DIRECT get_dir();
-
+    Body get_head();
     int grow(Outlook& outlook=default_outlook);//when eat something, snake will grow.
 
     // test functions

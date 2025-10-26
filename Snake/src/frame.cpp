@@ -44,11 +44,10 @@ void Frame::flush_to_screen(const World& world)
             mvaddstr(/*m_height + */H, /*m_width + */W, pattern.c_str());
             m_color_system.unset_color_mode(color_mode);
         }
-        obj->unchange();
     }
     refresh();
 
-    //now it means vaild frame count.
+    //now it means vaild frame.
     m_frame_count++;
 }
 //detect if it is clash with other object

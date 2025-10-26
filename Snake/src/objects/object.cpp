@@ -15,6 +15,7 @@ Object::Object()
     m_is_changed=1;
 }
 
+//.size()-1 is head, 0 is tail.
 const std::vector<Body>& Object::get_body() const
 {
     return body;

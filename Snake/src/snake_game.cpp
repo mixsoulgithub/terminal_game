@@ -28,6 +28,13 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
 
     // 根据配置文件内容初始化游戏元素
     // 例如，创建蛇和食物对象并添加到游戏世界中
+
+    /*world*/ 
+    auto world_element = configJson["world"];
+    int down_limit=world_element["height"];
+    int right_limit=world_element["width"];
+    m_world.set_limits(0, down_limit, 0, right_limit);
+
     /* Snake */
     auto snake_element = configJson["snake"];
     std::string snake_symbol = snake_element["symbol"];
@@ -55,15 +62,15 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
     auto food_element = configJson["food"];
     std::string food_symbol = food_element["symbol"];
     auto food_points = food_element["points"];
+    m_foods=std::make_shared<Food>(food_symbol.c_str()); 
     for (const auto& point : food_points) {
         int x = point["row"];
         int y = point["col"];
-
-        std::shared_ptr<Food> food = std::make_shared<Food>(x, y, food_symbol.c_str());
-        m_world.add_object(food);
-        m_foods.push_back(food);
+        Body food_body (x, y, food_symbol.c_str());
+        m_foods->insert_body(0,food_body);
     }
     
+    m_world.add_object(m_foods);
     return true;
 }
 
@@ -86,20 +93,16 @@ void SnakeGame::processInput()
                 m_is_game_over = true;
                 break;
             case KEY_LEFT:
-                m_snake->test_move_offset_foce(-1, 0); //测试用, 强制向下移动
-                m_snake->change();
+                m_snake->update_dir(LEFT);
                 break;
             case KEY_RIGHT:
-                m_snake->test_move_offset_foce(1, 0); //测试用, 强制向上移动
-                m_snake->change();
+                m_snake->update_dir(RIGHT);
                 break;
             case KEY_UP:
-                m_snake->test_move_offset_foce(0, -1); //测试用, 强制向左移动
-                m_snake->change();
+                m_snake->update_dir(UP);
                 break;
             case KEY_DOWN:
-                m_snake->test_move_offset_foce(0, 1); //测试用, 强制向左移动
-                m_snake->change();
+                m_snake->update_dir(DOWN);
                 break;
             case ' ':
                 break;
@@ -107,6 +110,7 @@ void SnakeGame::processInput()
             case 'P':
                 m_is_paused = true;
                 mvprintw(0, 0, "Game is Paused. Press 'c' to continue.");
+                m_snake->change();//make snake changed to reflush.
                 break;
             case 'c':
             case 'C':
@@ -120,6 +124,8 @@ void SnakeGame::processInput()
 void SnakeGame::update()
 {
     if(m_is_paused) return;
+    m_snake->move(m_world);
+    
     m_world.update();
 }
 void SnakeGame::render()

@@ -15,6 +15,11 @@ Snake::Snake(int h, int w, const Outlook& default_outlook, DIRECT dir):Object(de
     body.emplace_back(h, w, default_outlook);
 }
     
+
+Body Snake::get_head(){
+    return body[body.size()-1];
+}
+
 int Snake::refresh(World& world){
     int i=0;
     for(auto [h,w]:body){
@@ -38,12 +43,14 @@ int Snake::update_dir(DIRECT new_dir){
 }
 
 int Snake::move(World& world){
+    change();
     using namespace Collision;
-    auto [head_x, head_y]=body[body.size()-1].get_location();
+    auto [head_x, head_y]=get_head().get_location();
     int* step=DIRECT_STEP[dir];
     head_x=head_x + step[0];
     head_y=head_y + step[1];
     body.emplace_back(head_x, head_y, default_outlook);//居然可以这样传递make tuple参数.
+    //in collison, snake eat or die.
     if(check_collision(world, *this)==UNSOLVABLE||check_collision(*this)==UNSOLVABLE){
         return -1;
     }
