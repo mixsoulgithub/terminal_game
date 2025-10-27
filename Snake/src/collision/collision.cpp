@@ -49,6 +49,7 @@ namespace Collision{
         }
         return NONE;
     }
+    //not used so far
     template<>
     COLLISION_TYPE check_collision<Food, Snake>(Food& food, Snake& snake){
         auto& snake_body=snake.get_body();

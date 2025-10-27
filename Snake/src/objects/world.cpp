@@ -2,14 +2,14 @@
 #include "snake.hpp"
 #include "food.hpp"
 #include <limits.h>
-World::World()
+World::World():m_start_time(std::chrono::steady_clock::now())
 {
-    m_up_limit=0;    
-    m_down_limit=std::numeric_limits<int>::max();    
-    m_left_limit=0;    
-    m_right_limit=std::numeric_limits<int>::max();    
 }
 
+int World::m_up_limit=0;    
+int World::m_down_limit=std::numeric_limits<int>::max();    
+int World::m_left_limit=0;    
+int World::m_right_limit=std::numeric_limits<int>::max();    
 World::~World()
 {
 
@@ -20,11 +20,15 @@ void World::update()
     
 }
 
+std::chrono::steady_clock::time_point World::now(){
+    return std::chrono::steady_clock::now();
+}
 int World::set_limits(int up, int down, int left, int right){
-    m_down_limit=up;
+    m_up_limit=up;
     m_down_limit=down;
     m_left_limit=left;
     m_right_limit=right;
+    return 0;
 }
 
 std::tuple<int,int,int,int> World::get_limits(){

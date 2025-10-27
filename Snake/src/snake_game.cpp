@@ -55,7 +55,7 @@ bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
         dir = RIGHT;
     }
     Outlook snake_outlook = Outlook(snake_symbol, ColorMode::FRONT_YELLOW_BACK_WHITE);
-    m_snake = std::make_shared<Snake>(h, w, snake_outlook, dir);
+    m_snake = std::make_shared<Snake>(h, w, snake_outlook, dir,snake_speed);
     m_world.add_object(m_snake);
 
     /* Food */
@@ -118,7 +118,7 @@ void SnakeGame::processInput()
                 mvprintw(0, 0, "                                      "); // Clear the pause message
                 break;
         }
-        usleep(10000);  // 10ms延迟，减少CPU使用
+        usleep(1000);  // 1ms延迟，减少CPU使用
 }
 
 void SnakeGame::update()

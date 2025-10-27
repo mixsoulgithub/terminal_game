@@ -53,7 +53,7 @@ bool TerminalGame::initialize_ncurses()
     noecho();               // 关闭输入字符的自动回显
     curs_set(0);            // 隐藏光标（0=隐藏，1=正常，2=高亮）
     keypad(stdscr, TRUE);   // 启用功能键（方向键、F1-F12等）的特殊编码
-    timeout(1);             // 设置getch()为非阻塞模式，超时时间为1毫秒
+    timeout(0);             // 设置getch()为非阻塞模式，超时时间为1毫秒
 
     return true;
 }

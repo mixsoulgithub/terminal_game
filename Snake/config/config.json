@@ -1,7 +1,7 @@
 {
     "world": {
-        "height": "64",
-        "width": "64"
+        "height": 64,
+        "width": 64
     },
     "snake": {
         "symbol": "O",

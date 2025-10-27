@@ -1,4 +1,5 @@
 #include "snake.hpp"
+#include <chrono>
 #include "food.hpp"
 #include <stdexcept>
 #include "../collision/collision.hpp"
@@ -11,7 +12,7 @@ int Snake::DIRECT_STEP[4][2]{ //H, W
     {1,0}
 };
     
-Snake::Snake(int h, int w, const Outlook& default_outlook, DIRECT dir):Object(default_outlook), dir(dir){
+Snake::Snake(int h, int w, const Outlook& default_outlook, DIRECT dir, int speed):Object(default_outlook), dir(dir), speed(speed){
     body.emplace_back(h, w, default_outlook);
 }
     
@@ -43,6 +44,14 @@ int Snake::update_dir(DIRECT new_dir){
 }
 
 int Snake::move(World& world){
+    using namespace std::chrono;
+    static auto last_update_time = world.now();
+    auto current_time = world.now();
+    if(speed> duration_cast<milliseconds>(current_time - last_update_time).count()){
+        //speed is milliseconds cost of a move. 
+        unchange();
+        return 0;
+    }
     change();
     using namespace Collision;
     auto [head_x, head_y]=get_head().get_location();
