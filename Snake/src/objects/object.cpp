@@ -2,7 +2,6 @@
 #include <stdexcept>
 //静态成员变量必须在类外初始化.
 
-Outlook Object::default_outlook=std::make_tuple(std::string(" "), ColorMode::FRONT_WHITE_BACK_BLACK);
 
 Object::Object(Outlook outlook)
 {
@@ -15,6 +14,7 @@ Object::Object()
     m_is_changed=1;
 }
 
+//.size()-1 is head, 0 is tail.
 const std::vector<Body>& Object::get_body() const
 {
     return body;

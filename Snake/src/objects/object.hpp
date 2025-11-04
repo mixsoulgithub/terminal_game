@@ -18,6 +18,8 @@ struct Body{
     Body(int x, int y, const Outlook& pattern_color):
         location(std::make_tuple(x,y)), outlook(pattern_color){}
     
+    Body(std::tuple<int,int> location , const Outlook& pattern_color):
+        location(location), outlook(pattern_color){}
     //获取位置和外观. 由于这几个函数比较简单, 就直接内联在这里了.
     const std::tuple<int, int>& get_location() const { return location; }
     const Outlook& get_outlook() const { return outlook; }
@@ -27,12 +29,12 @@ struct Object{
     
 protected:
     std::vector<Body> body;//一个物体由多个部分组成, 逻辑上是链表.
-    static Outlook default_outlook;//默认外观, 用于初始化物体的各个部分.
+    Outlook default_outlook;//默认外观, 用于初始化物体的各个部分.
     int m_is_changed;
 public:
     Outlook& get_default_outlook(){ return default_outlook; }
-    int is_changed(){return m_is_changed;}
-    void change(){ m_is_changed=1;}
+    int is_changed(){return m_is_changed;}// it should be invoked by self func.
+    void change(){ m_is_changed=1;} // it should be invoked by self func.
     void unchange(){ m_is_changed=0;}
     //提供一些操作 body 的接口.
     const std::vector<Body>& get_body() const;

@@ -19,6 +19,7 @@ bool TerminalGame::initialize()
 {
     bool initialize_result = true;
 
+    mvprintw(0, 0, __FUNCTION__);
     initialize_result &= initialize_ncurses();
     initialize_result &= m_frame.initialize();
     initialize_result &= buildFromConfigFile("../config/config.json");
@@ -30,19 +31,27 @@ void TerminalGame::run()
 {
     // 主游戏循环
     while (m_is_game_over == false) {
+
+    mvprintw(0, 0, __FUNCTION__);
         update();
         render();
         processInput();
     }
+    // mvprintw(0, 0, "Game Over! Final Score");
+    // // 将输入模式改回阻塞模式（无限等待）
+    // timeout(-1);
+    // // 等待用户按任意键继续
+    // getch();
+    // // 退出NCurses模式，恢复终端原始状态
+    // endwin();
+    // m_is_game_over = true;
 }
 
 void TerminalGame::shutdown()
 {
-    // 将输入模式改回阻塞模式（无限等待）
-    timeout(-1);
-    // 等待用户按任意键继续
+    timeout(-1);  // 阻塞等待按键
     getch();
-    // 退出NCurses模式，恢复终端原始状态
+    
     endwin();
 }
 
@@ -55,7 +64,8 @@ bool TerminalGame::initialize_ncurses()
     noecho();               // 关闭输入字符的自动回显
     curs_set(0);            // 隐藏光标（0=隐藏，1=正常，2=高亮）
     keypad(stdscr, TRUE);   // 启用功能键（方向键、F1-F12等）的特殊编码
-    timeout(1);             // 设置getch()为非阻塞模式，超时时间为1毫秒
+    timeout(0);             // 设置getch()为非阻塞模式，超时时间为1毫秒
 
+    mvprintw(0, 0, __FUNCTION__);
     return true;
 }

@@ -12,7 +12,7 @@ typedef enum {
 class Snake: public Object{
     // the body of snake is tail->middle->head.
     public:
-    Snake(int h, int w, const Outlook& default_outlook, DIRECT dir);
+    Snake(int h, int w, const Outlook& default_outlook, DIRECT dir, int speed);
 
     int refresh(World& world);
 
@@ -20,8 +20,10 @@ class Snake: public Object{
     int move(World& world);
     // int check_collision();
     DIRECT get_dir();
+    Body get_head();
+    int grow(Outlook& outlook);//when eat something, snake will grow.
+    int grow();
 
-    int grow(Outlook& outlook=default_outlook);//when eat something, snake will grow.
 
     // test functions
     void test_move_offset_foce(int w_offset, int h_offset){
@@ -35,4 +37,5 @@ class Snake: public Object{
     private:
         DIRECT dir;
         static int DIRECT_STEP[4][2];
+        int speed;
 };

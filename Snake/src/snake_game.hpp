@@ -20,5 +20,5 @@ protected:
     ScoreBoard m_scoreboard;
 
     std::shared_ptr<Snake> m_snake;
-    std::vector<std::shared_ptr<Food>> m_foods;
+    std::shared_ptr<Food> m_foods;
 };

@@ -29,6 +29,11 @@ namespace Collision{
 
     template<>
     COLLISION_TYPE check_collision<World, Snake>(World& world, Snake& snake);
+    
+    //for food generation, but random generation, then check, then gen, it will be very stupid when snake 
+    //occpuy most of space. so we let world check spare space instead.
+    template<>
+    COLLISION_TYPE check_collision<World, std::tuple<int,int>>(World& world, std::tuple<int,int>& location);
 
     template<typename T>
     COLLISION_TYPE check_collision(T& A);
