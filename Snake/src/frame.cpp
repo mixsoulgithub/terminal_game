@@ -1,6 +1,8 @@
 #include "frame.hpp"
 #include <cstdio>
 #include <vector>
+#include <food.hpp>
+#include <snake.hpp>
 
 //一帧是由若干个图层组成的.不过按渲染顺序来. 逻辑和渲染分离.
 Frame::Frame(int H,  int W,  int OH,  int OW):
@@ -25,7 +27,7 @@ void Frame::flush_to_screen(const World& world)
     {
       if (obj->is_changed()) {
         need_flush=1;
-        clear();
+        // clear();
         break;
       }
     }
@@ -34,6 +36,13 @@ void Frame::flush_to_screen(const World& world)
     }
     for(const std::shared_ptr<Object>& obj : objs) 
     {
+        static int snake_update = 0;
+        static int food_update = 0;
+        if(typeid(*obj)==typeid(Snake)){
+            mvprintw(4, 64, "snake_update=%d", snake_update++); 
+        }else if(typeid(*obj)==typeid(Food)){
+            mvprintw(5, 64, "food_update=%d", food_update++); 
+        }
         //no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
         const std::vector<Body>& obj_body = obj->get_body();
         for(auto&& [location, outlook] : obj_body)
@@ -41,14 +50,16 @@ void Frame::flush_to_screen(const World& world)
             auto [H, W] = location;
             auto [pattern, color_mode] = outlook;
             m_color_system.set_color_mode(color_mode);
+            if(typeid(*obj)==typeid(Snake)){
+            mvprintw(3, 64, "H=%d, W=%d", H, W); 
+            }
             mvaddstr(/*m_height + */H, /*m_width + */W, pattern.c_str());
             m_color_system.unset_color_mode(color_mode);
         }
-        obj->unchange();
     }
     refresh();
 
-    //now it means vaild frame count.
+    //now it means vaild frame.
     m_frame_count++;
 }
 //detect if it is clash with other object

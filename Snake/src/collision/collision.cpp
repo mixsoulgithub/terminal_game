@@ -36,25 +36,52 @@ namespace Collision{
         auto& snake_body=snake.get_body();
         auto& food_body=food.get_body();
         int snake_len=snake_body.size();
+        //only head of snake can eat something.
+        auto&& [s_location, s_outlook]=snake_body[snake_len-1];
         int food_len=food_body.size();
-        for(int i=0;i<snake_len;++i){
-            for(int j=0;j<food_len;++j){
-                auto&& [s_location, s_outlook]=snake_body[i];
-                auto&& [f_location, f_outlook]=food_body[j];
-                if(s_location==f_location){
-                    snake.grow();
-                    food.delete_body(j);
-                    return SOLVABLE;
-                }
+        for(int j=0;j<food_len;++j){
+            auto&& [f_location, f_outlook]=food_body[j];
+            if(s_location==f_location){
+                snake.grow();
+                food.delete_body(j);
+                return SOLVABLE;
             }
         }
         return NONE;
     }
+    //not used so far
     template<>
     COLLISION_TYPE check_collision<Food, Snake>(Food& food, Snake& snake){
-        return check_collision<Snake, Food>(snake, food);
+        auto& snake_body=snake.get_body();
+        auto& food_body=food.get_body();
+        int snake_len=snake_body.size();
+        int food_len=food_body.size();
+        for(int i=0;i<snake_len;i++){
+        for(int j=0;j<food_len;++j){
+            auto&& [s_location,s_outlook]=snake_body[i];
+            auto&& [f_location, f_outlook]=food_body[j];
+            if(s_location==f_location){
+                return UNSOLVABLE;
+            }
+        }
+        }
+        return NONE;
+    
     }
     
+    template<>
+    COLLISION_TYPE check_collision<World, std::tuple<int,int>>(World& world, std::tuple<int,int>& location){
+        auto objs=world.get_objects();
+        for(auto&& obj: objs){
+            for(auto&& [obj_location, _]:obj->get_body()){
+               if(obj_location==location){
+                   return UNSOLVABLE;
+               } 
+            }
+        }
+        return NONE;
+    }
+
     template<typename T>
     COLLISION_TYPE check_collision(T& A){
         auto& body=A.get_body();
@@ -72,8 +99,8 @@ namespace Collision{
     COLLISION_TYPE check_collision<Snake>(Snake& snake){
         auto& body=snake.get_body();
         int len=body.size();
-        auto& head_location=body[0].get_location();
-        for(int i=1;i<len;i++){
+        auto& head_location=snake.get_head().get_location();
+        for(int i=0;i<len-1;i++){
             if(head_location==body[i].get_location()){
                 return UNSOLVABLE;
             }

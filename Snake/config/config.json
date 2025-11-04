@@ -1,4 +1,8 @@
 {
+    "world": {
+        "height": 64,
+        "width": 64
+    },
     "snake": {
         "symbol": "O",
         "initial_length": 5,
