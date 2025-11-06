@@ -8,48 +8,37 @@
 int main() {
     initscr();
     noecho();
-    // curs_set(0);      // 隐藏光标
+    curs_set(0);      // 隐藏光标
     nodelay(stdscr, TRUE);
+    start_color();
+    timeout(0);  // 非阻塞输入
 //TODO get input
-    int HEIGHT=1, WIDTH=1;
+    int HEIGHT=5, WIDTH=5;
 
-    const std::string text = " ";
-    std::string oneline=" ";
-    for(int i =1;i<WIDTH;i++){
-        oneline+=" ";
-    }
-    std::vector<std::string> square(HEIGHT, oneline);
     double t = 0.0;
-
+    if(!can_change_color()){
+        mvprintw(1,2*WIDTH,"can't change color");
+    }
     while (true) {
         clear();//remember to clear, otherwise it will be a endless slash
-        std::string frame;
-        frame.reserve(HEIGHT * WIDTH * 200); // 预分配内存, 200 is for special str.
-
-        frame += "\033[H"; // 移动光标到左上, 这种操作居然也是特殊字符.here is at first avaliable location, after bash prompt.
-
-        int r = (int)(128 + 127 * sin(t * 0.3 ));
-        int g = (int)(128 + 127 * sin(t * 0.3 ));
-        int b = (int)(128 + 127 * sin(t * 0.3 ));
+        
+        int r = (int)(500 + 500 * sin(t * 3 ));
+        int g = (int)(500 + 500* sin(t * 3 +4));
+        int b = (int)(500 + 500* sin(t * 3 +8));
+        init_color(2, r, g, b);
+        
+        init_pair(3, COLOR_BLACK, 2);
+        attron(COLOR_PAIR(3));
         for (int h = 0; h < HEIGHT; h++) {
-            // frame += 
-            //     "\033[48;2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) +
-            //     "m" + square[h] + "\033[0m" 
-            //     + "\n"
-            //     ;
-
-            frame = "\033[48;2;" + std::to_string(r) + ";" + std::to_string(g) + ";" + std::to_string(b) +
-                 "m" + square[h] + "\033[0m" 
-                 + "\n"
-                 ;
-        printf("%s", frame.c_str());//maybe use printw?
-        fflush(stdout);
+         mvprintw(3, 5*WIDTH, "RGB: (%3d, %3d, %3d) - t: %.2f", 
+                    r, g, b, t);  
+         mvprintw(h,WIDTH,"test output");
         }
-
+        attroff(COLOR_PAIR(3));
 
         usleep(80000); // 80ms -> ~12 FPS
         t += 0.1;
-
+        refresh();
         int ch = getch();
         if (ch == 'q') break;
     }
