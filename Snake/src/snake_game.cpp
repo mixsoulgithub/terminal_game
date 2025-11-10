@@ -84,7 +84,7 @@ void SnakeGame::processInput()
             case 'Q':
                 // TODO encapsulate it
                 // 在屏幕顶部显示游戏结束信息和最终分数
-                mvprintw(0, 0, "Game Over! Final Score: %d", m_scoreboard.get_score());
+                mvprintw(10, 32, "Game Over! Final Score: %d", m_scoreboard.get_score());
                 endwin();
                 m_is_game_over = true;
                 break;
@@ -122,7 +122,7 @@ void SnakeGame::update()
     static int i=0;
     if(m_is_paused) return;
     //TODO magic number -1
-    mvprintw(0, 0, "update %d", i++);
+    mvprintw(11, 64, "update %d", i++);
     if(m_snake->move(m_world)==-1){
         m_is_paused=true;
     }

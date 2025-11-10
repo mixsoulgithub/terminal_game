@@ -19,7 +19,6 @@ bool TerminalGame::initialize()
 {
     bool initialize_result = true;
 
-    mvprintw(0, 0, __FUNCTION__);
     initialize_result &= initialize_ncurses();
     initialize_result &= m_frame.initialize();
     initialize_result &= buildFromConfigFile("../config/config.json");
@@ -32,7 +31,6 @@ void TerminalGame::run()
     // 主游戏循环
     while (m_is_game_over == false) {
 
-    mvprintw(0, 0, __FUNCTION__);
         update();
         render();
         processInput();
@@ -66,6 +64,5 @@ bool TerminalGame::initialize_ncurses()
     keypad(stdscr, TRUE);   // 启用功能键（方向键、F1-F12等）的特殊编码
     timeout(0);             // 设置getch()为非阻塞模式，超时时间为1毫秒
 
-    mvprintw(0, 0, __FUNCTION__);
     return true;
 }
