@@ -4,7 +4,7 @@
         "width": 64
     },
     "snake": {
-        "symbol": "O",
+        "symbol": "#",
         "initial_length": 5,
         "initial_speed": 200,
         "initial_position": {"row": 5, "col": 5},
@@ -14,8 +14,9 @@
     "food": {
         "symbol": "*",
         "points": [
-            {"row": 0, "col": 0},
-            {"row": 1, "col": 1},
+            {"row": 4, "col": 4},
+            {"row": 7, "col": 8},
+            {"row": 2, "col": 4},
             {"row": 2, "col": 2}
         ]
     }

@@ -4,6 +4,11 @@
 #include <tuple>
 #include "color/color_system.hpp"
 
+enum COLLISION_TYPE{
+    NONE=0,
+    UNSOLVABLE=1,
+    SOLVABLE=2
+};
 using Outlook=std::tuple<std::string, ColorMode>;//pattern, color
 
 //Body 用于存储物体的每个部分的位置和外观
