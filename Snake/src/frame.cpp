@@ -36,13 +36,6 @@ void Frame::flush_to_screen(const World& world)
     }
     for(const std::shared_ptr<Object>& obj : objs) 
     {
-        static int snake_update = 0;
-        static int food_update = 0;
-        if(typeid(*obj)==typeid(Snake)){
-            mvprintw(4, 64, "snake_update=%d", snake_update++); 
-        }else if(typeid(*obj)==typeid(Food)){
-            mvprintw(5, 64, "food_update=%d", food_update++); 
-        }
         //no copy cost. Function 'get_body' with deduced return type cannot be used before it is defined, this is because of speration of declaration and definition.
         const std::vector<Body>& obj_body = obj->get_body();
         for(auto&& [location, outlook] : obj_body)
