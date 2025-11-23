@@ -3,3 +3,7 @@
 1. m_代表类成员变量
 2. TODO: 后续功能
 3. 用&传递不需要多态的对象, 如world. 用shared ptr传递需要多态的对象, 如snake. 有了这种约定, snake不需要命名为snakeptr.
+4. 建议提交代码前运行clang-format *.cpp *.hpp进行格式化. 它会根据.clang-format按llvm风格进行格式化. 忽略json.hpp文件的格式化.
+如果代码中需要避免格式化, 可以使用// clang-format off 和 // clang-format on 注释将其包裹起来.
+可以运行`find . \( -name '*.cpp' -o -name '*.hpp' \) -not -name 'json.hpp' -print0 | xargs -0 clang-format -i`进行格式化.
+大概需要十几秒.

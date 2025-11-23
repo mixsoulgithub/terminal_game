@@ -4,43 +4,37 @@
 #include <memory>
 
 class Food;
-typedef enum {
-            UP=0b00,
-            RIGHT=0b01,
-            LEFT=0b10,
-            DOWN=0b11
-}DIRECT;
+typedef enum { UP = 0b00, RIGHT = 0b01, LEFT = 0b10, DOWN = 0b11 } DIRECT;
 
-class Snake: public Object{
-    // the body of snake is tail->middle->head.
-    public:
-    Snake(int h, int w, const Outlook& default_outlook, DIRECT dir, int speed);
+class Snake : public Object {
+  // the body of snake is tail->middle->head.
+public:
+  Snake(int h, int w, const Outlook &default_outlook, DIRECT dir, int speed);
 
-    int update_dir(DIRECT new_dir);
-    int move(World& world);
-    DIRECT get_dir();
-    Body get_head();
-    int grow(Outlook& outlook);//when eat something, snake will grow.
-    int grow();
-    //use with to show the collision may be not symmetric. 
-    COLLISION_TYPE collision_with(World& world);
-    COLLISION_TYPE collision_with(std::shared_ptr<Object> food);
-    COLLISION_TYPE collision_with(std::shared_ptr<Food> food);
-    COLLISION_TYPE collision_with_self();
-    
+  int update_dir(DIRECT new_dir);
+  int move(World &world);
+  DIRECT get_dir();
+  Body get_head();
+  int grow(Outlook &outlook); // when eat something, snake will grow.
+  int grow();
+  // use with to show the collision may be not symmetric.
+  COLLISION_TYPE collision_with(World &world);
+  COLLISION_TYPE collision_with(std::shared_ptr<Object> food);
+  COLLISION_TYPE collision_with(std::shared_ptr<Food> food);
+  COLLISION_TYPE collision_with_self();
 
-    // test functions
-    void test_move_offset_foce(int w_offset, int h_offset){
-        for (int i = 0; i < body.size(); i++){
-            auto& [x,y]=body[i].location;
-            x+=h_offset;
-            y+=w_offset;
-        }
+  // test functions
+  void test_move_offset_foce(int w_offset, int h_offset) {
+    for (int i = 0; i < body.size(); i++) {
+      auto &[x, y] = body[i].location;
+      x += h_offset;
+      y += w_offset;
     }
+  }
 
-    private:
-        DIRECT dir;
-        DIRECT new_dir;
-        static int DIRECT_STEP[4][2];
-        int speed;
+private:
+  DIRECT dir;
+  DIRECT new_dir;
+  static int DIRECT_STEP[4][2];
+  int speed;
 };

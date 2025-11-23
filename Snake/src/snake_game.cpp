@@ -1,135 +1,123 @@
-#include <unistd.h>
-#include <fstream>
-#include "tool/json.hpp"
 #include "snake_game.hpp"
+#include "tool/json.hpp"
+#include <fstream>
+#include <unistd.h>
 
-SnakeGame::SnakeGame(): TerminalGame(), m_is_paused(false), m_score(0), m_scoreboard()
-{
-    
+SnakeGame::SnakeGame() : TerminalGame(), m_is_paused(false), m_score(0), m_scoreboard() {}
+
+SnakeGame::~SnakeGame() {}
+
+bool SnakeGame::buildFromConfigFile(const std::string &configFilePath) {
+  // 读取配置文件并初始化游戏参数
+  nlohmann::json configJson;
+
+  std::ifstream file(configFilePath);
+  if (!file.is_open()) {
+    return false;
+  }
+  file >> configJson;
+  file.close();
+
+  // 根据配置文件内容初始化游戏元素
+  // 例如，创建蛇和食物对象并添加到游戏世界中
+
+  /*world*/
+  auto world_element = configJson["world"];
+  int down_limit = world_element["height"];
+  int right_limit = world_element["width"];
+  m_world.set_limits(0, down_limit, 0, right_limit);
+
+  /* Snake */
+  auto snake_element = configJson["snake"];
+  std::string snake_symbol = snake_element["symbol"];
+  int snake_length = snake_element["initial_length"];
+  int snake_speed = snake_element["initial_speed"];
+  auto snake_position = snake_element["initial_position"];
+  int w = snake_position["row"];
+  int h = snake_position["col"];
+  std::string snake_direction = snake_element["initial_direction"];
+  DIRECT dir = RIGHT; // default
+  if (snake_direction == "UP") {
+    dir = UP;
+  } else if (snake_direction == "DOWN") {
+    dir = DOWN;
+  } else if (snake_direction == "LEFT") {
+    dir = LEFT;
+  } else if (snake_direction == "RIGHT") {
+    dir = RIGHT;
+  }
+  Outlook snake_outlook = Outlook(snake_symbol, ColorMode::FRONT_WHITE_BACK_BLACK);
+  m_snake = std::make_shared<Snake>(h, w, snake_outlook, dir, snake_speed);
+  m_world.add_object(m_snake);
+
+  /* Food */
+  auto food_element = configJson["food"];
+  std::string food_symbol = food_element["symbol"];
+  auto food_points = food_element["points"];
+  m_foods = std::make_shared<Food>(food_symbol.c_str());
+  for (const auto &point : food_points) {
+    int x = point["row"];
+    int y = point["col"];
+    Body food_body(x, y, food_symbol.c_str());
+    m_foods->insert_body(0, food_body);
+  }
+
+  m_world.add_object(m_foods);
+  return true;
 }
 
-SnakeGame::~SnakeGame()
-{
-
+void SnakeGame::processInput() {
+  int ch = getch();
+  // 处理输入
+  switch (ch) {
+  case 'q':
+  case 'Q':
+    // TODO encapsulate it
+    // 在屏幕顶部显示游戏结束信息和最终分数
+    mvprintw(10, 32, "Game Over! Final Score: %d", m_scoreboard.get_score());
+    endwin();
+    m_is_game_over = true;
+    break;
+  case KEY_LEFT:
+    m_snake->update_dir(LEFT);
+    break;
+  case KEY_RIGHT:
+    m_snake->update_dir(RIGHT);
+    break;
+  case KEY_UP:
+    m_snake->update_dir(UP);
+    break;
+  case KEY_DOWN:
+    m_snake->update_dir(DOWN);
+    break;
+  case ' ':
+    break;
+  case 'p':
+  case 'P':
+    m_is_paused = true;
+    mvprintw(0, 0, "Game is Paused. Press 'c' to continue.");
+    m_snake->change(); // make snake changed to reflush.
+    break;
+  case 'c':
+  case 'C':
+    m_is_paused = false;
+    mvprintw(0, 0,
+             "                                      "); // Clear the pause message
+    break;
+  }
+  usleep(1000); // 1ms延迟，减少CPU使用
 }
 
-bool SnakeGame::buildFromConfigFile(const std::string& configFilePath)
-{
-    // 读取配置文件并初始化游戏参数
-    nlohmann::json configJson;
-    
-    std::ifstream file(configFilePath);
-    if (!file.is_open())
-    {
-        return false;
-    }
-    file >> configJson;
-    file.close();
+void SnakeGame::update() {
+  static int i = 0;
+  if (m_is_paused)
+    return;
+  // TODO magic number -1
+  mvprintw(11, 64, "update %d", i++);
+  if (m_snake->move(m_world) == -1) {
+    m_is_paused = true;
+  }
 
-    // 根据配置文件内容初始化游戏元素
-    // 例如，创建蛇和食物对象并添加到游戏世界中
-
-    /*world*/ 
-    auto world_element = configJson["world"];
-    int down_limit=world_element["height"];
-    int right_limit=world_element["width"];
-    m_world.set_limits(0, down_limit, 0, right_limit);
-
-    /* Snake */
-    auto snake_element = configJson["snake"];
-    std::string snake_symbol = snake_element["symbol"];
-    int snake_length = snake_element["initial_length"];
-    int snake_speed = snake_element["initial_speed"];
-    auto snake_position = snake_element["initial_position"];
-    int w = snake_position["row"];
-    int h = snake_position["col"];
-    std::string snake_direction = snake_element["initial_direction"];
-    DIRECT dir = RIGHT; //default
-    if (snake_direction == "UP") {
-        dir = UP;
-    } else if (snake_direction == "DOWN") {
-        dir = DOWN;
-    } else if (snake_direction == "LEFT") {
-        dir = LEFT;
-    } else if (snake_direction == "RIGHT") {
-        dir = RIGHT;
-    }
-    Outlook snake_outlook = Outlook(snake_symbol, ColorMode::FRONT_WHITE_BACK_BLACK);
-    m_snake = std::make_shared<Snake>(h, w, snake_outlook, dir,snake_speed);
-    m_world.add_object(m_snake);
-
-    /* Food */
-    auto food_element = configJson["food"];
-    std::string food_symbol = food_element["symbol"];
-    auto food_points = food_element["points"];
-    m_foods=std::make_shared<Food>(food_symbol.c_str()); 
-    for (const auto& point : food_points) {
-        int x = point["row"];
-        int y = point["col"];
-        Body food_body (x, y, food_symbol.c_str());
-        m_foods->insert_body(0,food_body);
-    }
-    
-    m_world.add_object(m_foods);
-    return true;
+  m_world.update();
 }
-
-void SnakeGame::processInput()
-{
-    int ch = getch();
-        // 处理输入
-        switch (ch)
-        {
-            case 'q':
-            case 'Q':
-                // TODO encapsulate it
-                // 在屏幕顶部显示游戏结束信息和最终分数
-                mvprintw(10, 32, "Game Over! Final Score: %d", m_scoreboard.get_score());
-                endwin();
-                m_is_game_over = true;
-                break;
-            case KEY_LEFT:
-                m_snake->update_dir(LEFT);
-                break;
-            case KEY_RIGHT:
-                m_snake->update_dir(RIGHT);
-                break;
-            case KEY_UP:
-                m_snake->update_dir(UP);
-                break;
-            case KEY_DOWN:
-                m_snake->update_dir(DOWN);
-                break;
-            case ' ':
-                break;
-            case 'p':
-            case 'P':
-                m_is_paused = true;
-                mvprintw(0, 0, "Game is Paused. Press 'c' to continue.");
-                m_snake->change();//make snake changed to reflush.
-                break;
-            case 'c':
-            case 'C':
-                m_is_paused = false;
-                mvprintw(0, 0, "                                      "); // Clear the pause message
-                break;
-        }
-        usleep(1000);  // 1ms延迟，减少CPU使用
-}
-
-void SnakeGame::update()
-{
-    static int i=0;
-    if(m_is_paused) return;
-    //TODO magic number -1
-    mvprintw(11, 64, "update %d", i++);
-    if(m_snake->move(m_world)==-1){
-        m_is_paused=true;
-    }
-    
-    m_world.update();
-}
-void SnakeGame::render()
-{
-    m_frame.flush_to_screen(m_world);
-}
+void SnakeGame::render() { m_frame.flush_to_screen(m_world); }
