@@ -25,9 +25,7 @@ public:
 
   int set_limits(int up, int down, int left, int right);
   std::tuple<int, int, int, int> get_limits();
-
   std::vector<std::tuple<int, int>> get_spare_space();
-
   std::chrono::steady_clock::time_point now();
 
 protected:

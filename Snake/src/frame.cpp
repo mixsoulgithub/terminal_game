@@ -54,32 +54,6 @@ void Frame::flush_to_screen(const World &world) {
   // now it means vaild frame.
   m_frame_count++;
 }
-// detect if it is clash with other object
-// only sometimes it will check.
-//  template<typename Container>
-//  auto check_collision(Object it) -> decltype(std::forward<Container>(objs),
-//  int()) {
-//      using ValueType = typename std::decay_t<Container>::value_type;
-//      static_assert(
-//          std::is_same_v<ValueType, std::shared_ptr<Object>>,
-//          "Container must hold shared_ptr<Object>"
-//      );
-//      static_assert(
-//          std::is_same_v<std::decay_t<Container>, std::vector<ValueType>>,
-//          "Container must be a vector"
-//      );
-//      for(auto&& obj : objs){
-//          if(obj.get()==&it) continue;//skip self
-//          for(auto [h1,w1]:it.body){
-//              for(auto [h2,w2]:(*obj).body){
-//                  if(h1==h2 && w1==w2){
-//                      return 1;
-//                  }
-//              }
-//          }
-//      }
-//      return 0;
-//  }
 
 // if all =1, return all as vector. if all =0, return first found.
 int Frame::set_pixels(std::vector<std::tuple<int, int>> &body, std::vector<std::string> &pixels) {

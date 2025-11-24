@@ -9,7 +9,8 @@ Object::Object(Outlook outlook) {
 
 Object::Object() { m_is_changed = 1; }
 
-//.size()-1 is head, 0 is tail.
+//.size()-1 is head, 0 is tail. flush from tail to head, then we can get overlop rather than
+//confilct when snake meet its body.
 const std::vector<Body> &Object::get_body() const { return body; }
 
 const Body &Object::get_body(int i) const {

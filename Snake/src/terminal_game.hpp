@@ -16,7 +16,6 @@ public:
   bool initialize();
   void run();
   void shutdown();
-
   virtual bool buildFromConfigFile(const std::string &configFilePath) = 0;
 
 protected:

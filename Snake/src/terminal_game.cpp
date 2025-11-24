@@ -25,14 +25,6 @@ void TerminalGame::run() {
     render();
     processInput();
   }
-  // mvprintw(0, 0, "Game Over! Final Score");
-  // // 将输入模式改回阻塞模式（无限等待）
-  // timeout(-1);
-  // // 等待用户按任意键继续
-  // getch();
-  // // 退出NCurses模式，恢复终端原始状态
-  // endwin();
-  // m_is_game_over = true;
 }
 
 void TerminalGame::shutdown() {

@@ -7,3 +7,6 @@
 如果代码中需要避免格式化, 可以使用// clang-format off 和 // clang-format on 注释将其包裹起来.
 可以运行`find . \( -name '*.cpp' -o -name '*.hpp' \) -not -name 'json.hpp' -print0 | xargs -0 clang-format -i`进行格式化.
 大概需要十几秒.
+5. 注释, 除非几个字, 否则在被注释的上方说明
+6. 如果有, 类的构造函数总是第一个, 析构函数总是最后一个.
+7. 随着项目进行, 冗余的注释应该清理, 必要时写在文档里. 

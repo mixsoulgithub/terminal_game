@@ -5,7 +5,6 @@
 #include <memory>
 #include <ncurses.h>
 #include <stdexcept>
-// 游戏区域尺寸
 
 // TODO bind this with direction
 int Snake::DIRECT_STEP[4][2]{// H, W
@@ -51,8 +50,7 @@ int Snake::move(World &world) {
   mvprintw(0, 64, "head_x= %d, head_y = %d", head_x, head_y);
   auto [patltern, color] = default_outlook;
   mvprintw(7, 64, "snake body len %ld", body.size());
-  body.emplace_back(head_x, head_y,
-                    default_outlook); // 居然可以这样传递make tuple参数.
+  body.emplace_back(head_x, head_y, default_outlook); 
   // remove tail.
   auto [tail_loc, _] = body[0];
   body.erase(body.begin());
@@ -63,8 +61,7 @@ int Snake::move(World &world) {
 
   mvprintw(1, 64, "bodysize= %ld, ", body.size());
   // in collison, snake eat or die.
-  // first check collision with world, it may grow, then check collision with
-  // self.
+  // first check collision with world, it may grow, then check collision with self.
   if (collision_with(world) == UNSOLVABLE || collision_with_self() == UNSOLVABLE) {
     return -1;
   }
@@ -126,8 +123,7 @@ COLLISION_TYPE Snake::collision_with_self() {
 
 DIRECT Snake::get_dir() { return dir; }
 
-int Snake::grow(Outlook &outlook) { // here default argument must be static to
-                                    // tell linker where it is before runtime.
+int Snake::grow(Outlook &outlook) { 
   int len = body.size();
   if (len <= 0)
     throw std::runtime_error("snake lenth <=0");
@@ -143,4 +139,5 @@ int Snake::grow(Outlook &outlook) { // here default argument must be static to
   return 1;
 }
 
+// here default_outlook must be static to tell linker where it is before runtime.
 int Snake::grow() { return grow(default_outlook); }
