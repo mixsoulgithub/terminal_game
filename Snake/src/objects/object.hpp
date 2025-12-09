@@ -29,6 +29,7 @@ struct Body {
 struct Object {
 
 protected:
+//head of sneak is at body.size()-1
   std::vector<Body> body;  
   Outlook default_outlook; 
   int m_is_changed;

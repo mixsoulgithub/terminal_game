@@ -50,7 +50,6 @@ void Frame::flush_to_screen(const World &world) {
     }
   }
   refresh();
-
   // now it means vaild frame.
   m_frame_count++;
 }

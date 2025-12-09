@@ -55,7 +55,7 @@ int Snake::move(World &world) {
   auto [tail_loc, _] = body[0];
   body.erase(body.begin());
 
-  // TODO encapsulate rewirte by hand.
+  // TODO encapsulate rewirte by hand. use background in world to rewrite.
   auto [tail_x, tail_y] = tail_loc;
   mvprintw(tail_x, tail_y, " ");
 
@@ -72,9 +72,10 @@ COLLISION_TYPE Snake::collision_with(World &world) {
   COLLISION_TYPE ans = NONE;
   auto objs = world.get_objects();
   for (auto &&obj : objs) {
-    if (collision_with(obj) == UNSOLVABLE) {
+    auto result=collision_with(obj);
+    if (result== UNSOLVABLE) {
       return UNSOLVABLE;
-    } else if (collision_with(obj) == SOLVABLE) {
+    } else if (result == SOLVABLE) {
       ans = SOLVABLE;
     }
   }
@@ -111,7 +112,7 @@ COLLISION_TYPE Snake::collision_with(std::shared_ptr<Food> food) {
 
 COLLISION_TYPE Snake::collision_with_self() {
   int len = body.size();
-  auto &&[head_location, _] = body[0];
+  auto &&[head_location, _] = body[body.size() - 1];
   for (int i = 1; i < len; i++) {
     auto &&[body_location, _] = body[i];
     if (head_location == body_location) {
