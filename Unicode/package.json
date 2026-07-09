@@ -1,0 +1,20 @@
+{
+  "name": "unicode",
+  "version": "1.0.0",
+  "module": "src/index.ts",
+  "devDependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "bin": {
+    "unicode": "./src/index.ts"
+  },
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "blessed": "^0.1.81"
+  }
+}
