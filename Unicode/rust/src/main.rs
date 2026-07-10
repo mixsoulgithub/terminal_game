@@ -15,7 +15,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 // ── constants ──────────────────────────────────────────────────
 
@@ -76,20 +76,16 @@ fn glyph(cp: u32) -> String {
     }
 }
 
-/// Build a fixed-width (2-column) cell string in glyph mode.
+/// Build a cell string in glyph mode.  Always appends a space so
+/// cells never merge — even when the terminal renders a character
+/// narrower than unicode-width predicts.
 fn glyph_cell(cp: u32) -> String {
     if let Some(ch) = char::from_u32(cp) {
-        if ch.width().unwrap_or(1) == 0 {
+        if ch.width() == Some(0) {
             return format!("\u{25CC}{ch} ");
         }
     }
-    let raw = glyph(cp);
-    let w = UnicodeWidthStr::width(raw.as_str());
-    if w >= 2 {
-        raw
-    } else {
-        raw + " "
-    }
+    glyph(cp) + " "
 }
 
 /// Build a fixed-width (5-column) hex cell: "XXXX "
@@ -495,12 +491,22 @@ mod tests {
 
     #[test]
     fn test_glyph_cell_wide() {
-        assert_eq!(glyph_cell(0x4E2D), "中");
+        // CJK chars also get trailing space (always padded).
+        assert_eq!(glyph_cell(0x4E2D), "\u{4E2D} ");
     }
 
     #[test]
     fn test_glyph_cell_invalid() {
         assert_eq!(glyph_cell(0xD800), "· ");
+    }
+
+    #[test]
+    fn test_glyph_cell_ambiguous() {
+        assert_eq!(glyph_cell(0x25FD), "\u{25FD} ");
+        assert_eq!(glyph_cell(0x2605), "\u{2605} ");
+        assert_eq!(glyph_cell(0x2648), "\u{2648} ");
+        // Control char U+0001 → control picture ␁, padded
+        assert_eq!(glyph_cell(0x0001), "\u{2401} ");
     }
 
     #[test]
@@ -552,3 +558,4 @@ mod tests {
         assert_eq!(a.prev_valid_page(), 53);
     }
 }
+
