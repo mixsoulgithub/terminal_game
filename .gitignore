@@ -3,3 +3,4 @@
 */.vscode/
 .vscode
 *.swp
+/Unicode/rust/target
