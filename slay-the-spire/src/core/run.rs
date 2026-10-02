@@ -243,10 +243,6 @@ impl Run {
 
     // ---- 地图 ----
 
-    pub fn cur_node(&self) -> Option<usize> {
-        self.pos
-    }
-
     pub fn reachable(&self) -> Vec<usize> {
         self.map.reachable_from(self.pos)
     }

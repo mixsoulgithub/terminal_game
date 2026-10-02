@@ -124,15 +124,21 @@ pub fn render(f: &mut Frame, app: &App) {
 /// 底栏:左边是模式与消息,右边是当前界面的按键提示
 fn status(buf: &mut Buffer, area: Rect, app: &App) {
     let width = area.width as usize;
-    let mode = match app.mode {
-        Mode::Normal => format!("-- {} --", app.run.screen.name()),
-        Mode::Command => ":".to_string(),
-    };
-    let left = if app.mode == Mode::Command {
-        format!(":{}{}", app.cmd, "_")
-    } else {
-        format!("{mode} {}", app.msg)
-    };
+    let mode = format!("-- {} --", app.run.screen.name());
+    if app.mode == Mode::Command {
+        // 打字的时候整条底栏都让给命令行,不然提示会把输入挤掉
+        let line = format!(":{}_", app.cmd);
+        put_padded(
+            buf,
+            area.x,
+            area.y,
+            &truncate(&line, width),
+            width,
+            theme::selected(),
+        );
+        return;
+    }
+    let left = format!("{mode} {}", app.msg);
     let hints = app.key_hints();
     let hint_text: String = hints
         .iter()
@@ -211,6 +217,35 @@ mod tests {
     }
 
     #[test]
+    fn full_hand_fills_both_rows() {
+        let mut app = app_in_combat(7, "three_sentries");
+        {
+            let c = app.run.combat_mut().unwrap();
+            c.hand = vec![crate::core::cards::card("strike"); 10];
+        }
+        let text = screen_text(&app, 120, 36);
+        let rows: Vec<&str> = text.lines().collect();
+        let energy_row = rows
+            .iter()
+            .position(|l| l.contains("energy"))
+            .expect("应该有能量行");
+        // 十张牌分成两行,每行五张;每个格子的记号是"1 6"(费用 1,伤害 6)
+        assert_eq!(
+            rows[energy_row + 1].matches("1 6").count(),
+            5,
+            "第一行应正好五张:\n{text}"
+        );
+        assert_eq!(
+            rows[energy_row + 2].matches("1 6").count(),
+            5,
+            "第二行应正好五张:\n{text}"
+        );
+        // 详情区给出选中那张的全名与完整描述
+        assert!(rows[energy_row].contains("Strike"), "详情缺名字");
+        assert!(rows[energy_row + 1].contains("Deal 6 damage."), "详情缺描述");
+    }
+
+    #[test]
     fn overlays_render_their_content() {
         let mut app = App::new(9);
         app.overlay = Some(Overlay::Deck);
@@ -262,11 +297,10 @@ mod tests {
         // 叠加层在各种尺寸下也要能画
         for ov in [
             Overlay::Deck,
+            Overlay::Map,
             Overlay::Relics,
             Overlay::Potions,
             Overlay::Help,
-            Overlay::Discard,
-            Overlay::Exhaust,
         ] {
             app.overlay = Some(ov);
             for size in [(24u16, 6u16), (60, 20), (160, 50)] {

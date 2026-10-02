@@ -1,5 +1,5 @@
 // 顶栏:一行纯数字,靠颜色区分含义——血红、格挡蓝、能量黄、金币金黄.
-// 战斗之外没有能量;层数/牌数这类次要信息压在后面,用暗色.
+// 能量不在这里(它挪到手牌旁边),层数/牌数这类次要信息压在后面,用暗色.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -23,7 +23,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let p = &run.player;
     let y = area.y;
     let limit = area.x + area.width;
-    let mut x = area.x;
+    // 左上空出两格:有些终端在左上角会吃掉第一个格子
+    let mut x = area.x + 2;
     let dim = theme::dim();
 
     // 血量 / 上限 / 格挡
@@ -34,14 +35,6 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let block = run.combat().map(|c| c.player.block).unwrap_or(0);
     x = seg(buf, x, y, limit, &block.to_string(), theme::fg(theme::BLOCK));
     x += 3;
-
-    // 能量:只有战斗里才有
-    if let Some(c) = run.combat() {
-        x = seg(buf, x, y, limit, &c.energy.to_string(), theme::fg(theme::ENERGY));
-        x = seg(buf, x, y, limit, "/", theme::dim());
-        x = seg(buf, x, y, limit, &c.max_energy.to_string(), theme::fg(theme::ENERGY));
-        x += 3;
-    }
 
     // 金币
     x = seg(buf, x, y, limit, &format!("${}", p.gold), theme::fg(theme::GOLD));

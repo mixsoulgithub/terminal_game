@@ -47,24 +47,28 @@ CARD_RE = re.compile(r"\|\s*(\d+)\.\s+([^|]*?)\s*\|")
 TYPE_RE = re.compile(r"\|\s*(Attack|Skill|Power|Status|Curse)\s+c\S*")
 
 
-def hand_attacks(text: str) -> list[str]:
-    """从战斗界面里读出每张手牌的序号与类型,返回攻击牌的按键序列。
+DETAIL_RE = re.compile(r"^(\S[^|]*?)\s{2,}(Attack|Skill|Power|Status|Curse)\s{2,}cost\s+(\S+)\s*$")
 
-    手牌一行里并排放着好几张卡,所以名字行与类型行都要整行取全部匹配,
-    再按位置配对。
-    """
-    slot_re = re.compile(r"\|\s*(\d+)\.\s+([^|]*?)\s*\|")
-    type_re = re.compile(r"\|\s*(Attack|Skill|Power|Status|Curse)\s+c\S*")
-    slots: list[int] = []
-    kinds: list[str] = []
+
+def selected_kind(text: str) -> str | None:
+    """从手牌区右侧的详情行里读出选中那张牌的类型(找不到就返回 None)。"""
     for line in text.splitlines():
-        slots += [int(m.group(1)) for m in slot_re.finditer(line)]
-        kinds += [m.group(1) for m in type_re.finditer(line)]
-    return [
-        "0" if slot == 10 else str(slot)
-        for slot, kind in zip(slots, kinds)
-        if kind == "Attack"
-    ]
+        m = DETAIL_RE.match(line.strip())
+        if m:
+            return m.group(2)
+    return None
+
+
+def play_one_turn(text: str) -> None:
+    """一次只做一件事:选中的是攻击牌就打出去,否则往右挪一格。
+
+    调用方每次都要重新抓屏(打出一张牌后手牌会左移)。
+    """
+    kind = selected_kind(text)
+    if kind == "Attack":
+        send("Enter")
+    else:
+        send("l")
 
 
 def current(screen_text: str) -> str:
@@ -75,13 +79,26 @@ def current(screen_text: str) -> str:
     return "?"
 
 
-def play(binary: str, seed: int, steps: int = 120) -> tuple[str, set[str], str]:
+def wait_for_map(timeout: float = 8.0) -> str:
+    """等第一帧画出来:启动瞬间抓屏可能抓到空屏或半帧。"""
+    deadline = time.time() + timeout
+    text = screen()
+    while "M monster" not in text and time.time() < deadline:
+        time.sleep(0.2)
+        text = screen()
+    return text
+
+
+def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
     start(binary, seed)
     seen: set[str] = set()
-    text = screen()
+    text = wait_for_map()
     if "M monster" not in text:
         raise AssertionError(f"seed {seed}: 地图没有图例,首屏如下:\n{text}")
     seen.add("MAP")
+    # 战斗里的节奏:打最多 4 张攻击牌,找不到攻击牌连续挪 5 次就结束回合
+    plays = 0
+    moves = 0
     for _ in range(steps):
         text = screen()
         where = current(text)
@@ -89,12 +106,22 @@ def play(binary: str, seed: int, steps: int = 120) -> tuple[str, set[str], str]:
         if where in ("VICTORY", "DEATH"):
             stop()
             return where, seen, text
+        if where != "COMBAT":
+            plays = moves = 0
         if where == "MAP":
             send("Enter")
         elif where == "COMBAT":
-            # 从屏幕里读出攻击牌,最多打三张(正好 3 点能量),然后结束回合
-            keys = hand_attacks(text)[:3]
-            send(*(keys + ["e"]))
+            kind = selected_kind(text)
+            if kind == "Attack" and plays < 4:
+                send("Enter")
+                plays += 1
+                moves = 0
+            elif moves >= 5:
+                send("e")
+                plays = moves = 0
+            else:
+                send("l")
+                moves += 1
         elif where == "REWARD":
             send("Enter", "Enter", "c", "Escape")
         elif where == "REST":

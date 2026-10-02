@@ -1,5 +1,5 @@
-// 叠加层:牌组、弃牌堆、消耗堆、遗物、药水、帮助.
-// 都是只读的滚动列表,j/k 翻,esc 或 q 关.
+// 叠加层:牌组、地图、遗物、药水、帮助.
+// 任何界面都能开;再按一次同一个键(或 esc)关掉.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -7,13 +7,14 @@ use ratatui::style::Style;
 use crate::app::App;
 use crate::core::card::CardInstance;
 use crate::ui::theme;
-use crate::ui::{draw_box, put_padded, truncate};
+use crate::ui::{draw_box, put, put_padded, truncate};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Overlay {
+    /// 整条路的样子,只读
+    Map,
+    /// 战斗里连抽牌堆/手牌/弃牌堆/消耗堆一起看
     Deck,
-    Discard,
-    Exhaust,
     Relics,
     Potions,
     Help,
@@ -22,12 +23,22 @@ pub enum Overlay {
 impl Overlay {
     pub fn title(self) -> &'static str {
         match self {
-            Overlay::Deck => "deck",
-            Overlay::Discard => "discard pile",
-            Overlay::Exhaust => "exhausted",
+            Overlay::Map => "map",
+            Overlay::Deck => "cards",
             Overlay::Relics => "relics",
             Overlay::Potions => "potions",
             Overlay::Help => "help",
+        }
+    }
+
+    /// 关掉它要按的键,提示用
+    pub fn close_key(self) -> &'static str {
+        match self {
+            Overlay::Map => "m",
+            Overlay::Deck => "d",
+            Overlay::Relics => "r",
+            Overlay::Potions => "p",
+            Overlay::Help => "?",
         }
     }
 }
@@ -52,48 +63,37 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
     let run = &app.run;
     let mut out: Vec<(String, Style)> = Vec::new();
     match ov {
-        Overlay::Deck => {
-            let deck = &run.player.deck;
-            out.push((
-                format!("{} cards in deck", deck.len()),
-                theme::fg(theme::INFO),
-            ));
-            for (i, c) in deck.iter().enumerate() {
-                out.push((
-                    format!("{:>3}. {}", i + 1, card_line(c)),
-                    theme::fg(theme::card_color(c.kind(), c.rarity())),
-                ));
-            }
-        }
-        Overlay::Discard => match run.combat() {
+        Overlay::Map => {}
+        Overlay::Deck => match run.combat() {
             Some(c) => {
-                out.push((
-                    format!("{} cards in the discard pile", c.discard.len()),
-                    theme::fg(theme::INFO),
-                ));
-                for (i, card) in c.discard.iter().enumerate() {
+                // 战斗中:把这场战斗里的每一堆都摊开
+                let mut section = |name: &str, pile: &[CardInstance], style: Style| {
+                    out.push((format!("{name} ({})", pile.len()), theme::fg(theme::INFO)));
+                    if pile.is_empty() {
+                        out.push(("    (empty)".to_string(), theme::dim()));
+                    }
+                    for (i, card) in pile.iter().enumerate() {
+                        out.push((
+                            format!("{:>3}. {}", i + 1, card_line(card)),
+                            style,
+                        ));
+                    }
+                };
+                section("hand", &c.hand, theme::fg(theme::SEL_FG));
+                section("draw pile", &c.draw, theme::dim());
+                section("discard pile", &c.discard, theme::dim());
+                section("exhausted", &c.exhaust, theme::dim());
+            }
+            None => {
+                let deck = &run.player.deck;
+                out.push((format!("{} cards in deck", deck.len()), theme::fg(theme::INFO)));
+                for (i, c) in deck.iter().enumerate() {
                     out.push((
-                        format!("{:>3}. {}", i + 1, card_line(card)),
-                        theme::fg(theme::card_color(card.kind(), card.rarity())),
+                        format!("{:>3}. {}", i + 1, card_line(c)),
+                        theme::fg(theme::card_color(c.kind(), c.rarity())),
                     ));
                 }
             }
-            None => out.push(("no combat right now".to_string(), theme::dim())),
-        },
-        Overlay::Exhaust => match run.combat() {
-            Some(c) => {
-                out.push((
-                    format!("{} cards exhausted this combat", c.exhaust.len()),
-                    theme::fg(theme::INFO),
-                ));
-                for (i, card) in c.exhaust.iter().enumerate() {
-                    out.push((
-                        format!("{:>3}. {}", i + 1, card_line(card)),
-                        theme::dim(),
-                    ));
-                }
-            }
-            None => out.push(("no combat right now".to_string(), theme::dim())),
         },
         Overlay::Relics => {
             for (i, r) in run.player.relics.iter().enumerate() {
@@ -119,7 +119,7 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
             }
             out.push((String::new(), theme::dim()));
             out.push((
-                "in this list: 1-3 quaff the potion, t then slot to toss".to_string(),
+                "1-3 drink that potion, t then 1-3 toss it".to_string(),
                 theme::fg(theme::INFO),
             ));
         }
@@ -133,6 +133,10 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
 }
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
+    if ov == Overlay::Map {
+        render_map(buf, area, app);
+        return;
+    }
     let w = area.width.saturating_sub(8).min(96).max(30);
     let h = area.height.saturating_sub(4).max(6);
     let rect = Rect::new(
@@ -145,7 +149,11 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     for y in rect.y..rect.y + rect.height {
         put_padded(buf, rect.x, y, "", rect.width as usize, Style::default().bg(theme::BG));
     }
-    let title = format!("{}  (j/k scroll, esc close)", ov.title());
+    let title = format!(
+        "{}  (j/k scroll, {} or esc close)",
+        ov.title(),
+        ov.close_key()
+    );
     draw_box(buf, rect, &title, theme::fg(theme::SEL_FG), theme::fg(theme::INFO));
     let rows = lines(app, ov);
     let inner_h = rect.height.saturating_sub(2) as usize;
@@ -164,7 +172,6 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
             *style,
         );
     }
-    // 底部指示还有多少行
     if rows.len() > inner_h {
         let footer = format!(" {}/{} ", (scroll + inner_h).min(rows.len()), rows.len());
         put_padded(
@@ -176,4 +183,26 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
             theme::fg(theme::WARN),
         );
     }
+}
+
+/// 地图叠加层:整屏铺开,只读,自带 h/l 看路
+fn render_map(buf: &mut Buffer, area: Rect, app: &App) {
+    if area.height < 6 {
+        return;
+    }
+    // 先把整屏刷成底色,不然底下的战斗界面会从地图缝隙里透出来
+    for y in area.y..area.y + area.height {
+        put_padded(
+            buf,
+            area.x,
+            y,
+            "",
+            area.width as usize,
+            Style::default().bg(theme::BG),
+        );
+    }
+    let title = "map  (h/l look along the road, m or esc close)";
+    put(buf, area.x + 2, area.y, title, theme::fg(theme::INFO));
+    let inner = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+    crate::ui::mapview::render(buf, inner, app);
 }

@@ -26,9 +26,12 @@ options:
   -V, --version   show version
 
 keys (vim style, keyboard only):
-  map        h/j/k/l pick a node, enter to go, g/G first/last, : cmd
-  combat     1-9/0 or h/l pick a card, j/k pick a target, enter play
-             e or space end turn, d/D/X piles, z relics, p potions
+  map        h/l look back/forward along the road, j/k pick a fork
+             enter go, g/G jump to the ends of the road, : cmd
+  combat     1-9/0 or h/l select a card, j/k pick a target, enter play
+             e or space end turn
+  overlays   d cards (in combat: hand/draw/discard/exhaust), m map,
+             r relics, p potions - press the same key again or esc to close
   lists      j/k move, g/G top/bottom, enter confirm, esc cancel
   always     ? help, :q quit, ctrl-c quit
 

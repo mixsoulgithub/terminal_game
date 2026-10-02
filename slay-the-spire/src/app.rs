@@ -30,6 +30,8 @@ pub struct App {
     pub rest_index: usize,
     /// 等待选定目标的药水槽
     pub potion_pending: Option<usize>,
+    /// 药水列表里按过 t,下一个数字是"丢掉"而不是"喝掉"
+    pub toss_pending: bool,
     pub msg: String,
     pub warn: bool,
     pub quit: bool,
@@ -50,6 +52,7 @@ impl App {
             term_size: (100, 30),
             rest_index: 0,
             potion_pending: None,
+            toss_pending: false,
             msg: "h/l look along the road, j/k pick a fork, enter to go".to_string(),
             warn: false,
             quit: false,
@@ -68,6 +71,7 @@ impl App {
         self.map_scroll = 0;
         self.rest_index = 0;
         self.potion_pending = None;
+        self.toss_pending = false;
         self.info(format!("new run, seed {seed}"));
     }
 
@@ -112,7 +116,15 @@ impl App {
             }
             Mode::Normal => {}
         }
-        if self.overlay.is_some() {
+        // 叠加层:再按同一个键就关掉,按另一个叠加层键就直接切过去
+        if let Some(ov) = self.overlay {
+            if let Some(other) = overlay_key_of(key.code) {
+                self.potion_pending = None;
+                self.toss_pending = false;
+                self.overlay = if other == ov { None } else { Some(other) };
+                self.overlay_scroll = 0;
+                return;
+            }
             self.overlay_key(key);
             return;
         }
@@ -129,29 +141,10 @@ impl App {
             self.open_overlay(Overlay::Help);
             return;
         }
-        // 全局叠加层开关
-        match key.code {
-            KeyCode::Char('d') if self.has_piles() => {
-                self.open_overlay(Overlay::Deck);
-                return;
-            }
-            KeyCode::Char('D') if self.has_piles() => {
-                self.open_overlay(Overlay::Discard);
-                return;
-            }
-            KeyCode::Char('X') if self.has_piles() => {
-                self.open_overlay(Overlay::Exhaust);
-                return;
-            }
-            KeyCode::Char('z') if self.has_piles() => {
-                self.open_overlay(Overlay::Relics);
-                return;
-            }
-            KeyCode::Char('p') if self.has_piles() => {
-                self.open_overlay(Overlay::Potions);
-                return;
-            }
-            _ => {}
+        // 全局叠加层开关:任何阶段(含结算界面)都能看牌组/地图/遗物/药水
+        if let Some(ov) = overlay_key_of(key.code) {
+            self.open_overlay(ov);
+            return;
         }
         match self.run.screen {
             Screen::Map => self.map_key(key),
@@ -166,21 +159,23 @@ impl App {
         }
     }
 
-    fn has_piles(&self) -> bool {
-        matches!(self.run.screen, Screen::Map | Screen::Combat | Screen::Pick)
-    }
-
     fn open_overlay(&mut self, ov: Overlay) {
         self.overlay = Some(ov);
         self.overlay_scroll = 0;
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
+        let on_map = self.overlay == Some(Overlay::Map);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
                 self.overlay = None;
                 self.potion_pending = None;
+                self.toss_pending = false;
             }
+            KeyCode::Char('l') | KeyCode::Right if on_map => self.scroll_map(1),
+            KeyCode::Char('h') | KeyCode::Left if on_map => self.scroll_map(-1),
+            KeyCode::Char('g') if on_map => self.jump_map(false),
+            KeyCode::Char('G') if on_map => self.jump_map(true),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.overlay_scroll = self.overlay_scroll.saturating_add(1);
             }
@@ -190,13 +185,19 @@ impl App {
             KeyCode::Char('g') => self.overlay_scroll = 0,
             KeyCode::Char('G') => self.overlay_scroll = u16::MAX / 2,
             KeyCode::Char('t') if self.overlay == Some(Overlay::Potions) => {
-                self.msg = "press 1-3 to toss that potion".to_string();
-                self.warn = false;
+                self.toss_pending = true;
+                self.info("press 1-3 to toss that potion");
             }
             KeyCode::Char(c) if self.overlay == Some(Overlay::Potions) => {
                 if let Some(slot) = digit_slot(c) {
+                    let toss = std::mem::take(&mut self.toss_pending);
                     self.overlay = None;
-                    self.drink(slot);
+                    if toss {
+                        let r = self.run.toss_potion(slot);
+                        self.ok(r);
+                    } else {
+                        self.drink(slot);
+                    }
                 }
             }
             _ => {}
@@ -301,19 +302,41 @@ impl App {
         self.map_scroll = focus.saturating_sub(visible / 2).min(max_start);
     }
 
+    /// 沿路往后/往前看一步
+    fn scroll_map(&mut self, delta: i32) {
+        let max_start = self
+            .run
+            .map
+            .total_floors()
+            .saturating_sub(self.visible_floors());
+        if delta >= 0 {
+            self.map_scroll = (self.map_scroll + delta as usize).min(max_start);
+        } else {
+            self.map_scroll = self.map_scroll.saturating_sub((-delta) as usize);
+        }
+    }
+
+    /// 视野跳到路的起点或尽头
+    fn jump_map(&mut self, to_end: bool) {
+        let max_start = self
+            .run
+            .map
+            .total_floors()
+            .saturating_sub(self.visible_floors());
+        self.map_scroll = if to_end { max_start } else { 0 };
+    }
+
     fn map_key(&mut self, key: KeyEvent) {
         let reach_len = self.run.reachable().len();
-        let total = self.run.map.total_floors();
-        let visible = self.visible_floors();
-        let max_start = total.saturating_sub(visible);
+        let max_start = self
+            .run
+            .map
+            .total_floors()
+            .saturating_sub(self.visible_floors());
         match key.code {
             // 往前后看路
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.map_scroll = (self.map_scroll + 1).min(max_start);
-            }
-            KeyCode::Char('h') | KeyCode::Left => {
-                self.map_scroll = self.map_scroll.saturating_sub(1);
-            }
+            KeyCode::Char('l') | KeyCode::Right => self.scroll_map(1),
+            KeyCode::Char('h') | KeyCode::Left => self.scroll_map(-1),
             // 选岔路
             KeyCode::Char('j') | KeyCode::Down => {
                 if reach_len > 0 {
@@ -329,6 +352,7 @@ impl App {
             }
             KeyCode::Char('g') => self.map_scroll = 0,
             KeyCode::Char('G') => self.map_scroll = max_start,
+            KeyCode::Char('m') => {}
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let reach = self.run.reachable();
                 let Some(node) = reach.get(self.map_sel.min(reach.len().saturating_sub(1))) else {
@@ -652,7 +676,8 @@ impl App {
 
     fn over_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('r') => {
+            // 大写 R 重开,小写 r 留给"看遗物"
+            KeyCode::Char('R') => {
                 let seed = self.run.seed;
                 self.restart(seed);
             }
@@ -700,22 +725,11 @@ impl App {
         match head {
             "q" | "qa" | "quit" | "wq" | "x" => self.quit = true,
             "help" => self.open_overlay(Overlay::Help),
-            "deck" | "d" => self.open_overlay(Overlay::Deck),
-            "discard" => self.open_overlay(Overlay::Discard),
-            "exhaust" => self.open_overlay(Overlay::Exhaust),
-            "relics" | "z" => self.open_overlay(Overlay::Relics),
+            "deck" | "d" | "cards" => self.open_overlay(Overlay::Deck),
+            "map" | "m" => self.open_overlay(Overlay::Map),
+            "relics" | "r" => self.open_overlay(Overlay::Relics),
             "potions" | "p" => self.open_overlay(Overlay::Potions),
             "seed" => self.info(format!("seed {}", self.run.seed)),
-            "map" => {
-                let reach = self.run.reachable();
-                self.info(format!(
-                    "floor {}/{}  node {:?}  options {}",
-                    self.run.floor() + 1,
-                    self.run.map.total_floors(),
-                    self.run.cur_node(),
-                    reach.len()
-                ));
-            }
             "new" | "restart" => {
                 let seed = if rest.is_empty() {
                     self.run.seed.wrapping_add(0x2545_F491)
@@ -792,11 +806,10 @@ impl App {
         }
         match self.run.screen {
             Screen::Map => vec![
-                ("h/l", "look along the road"),
-                ("j/k", "pick a fork"),
+                ("h/l", "look"),
+                ("j/k", "fork"),
                 ("enter", "go"),
-                ("z", "relics"),
-                ("p", "potions"),
+                ("m d r p", "lists"),
                 ("?", "help"),
                 (":", "cmd"),
             ],
@@ -805,8 +818,7 @@ impl App {
                 ("j/k", "target"),
                 ("enter", "play"),
                 ("e", "end turn"),
-                ("d/D/X", "piles"),
-                ("p", "potions"),
+                ("m d r p", "lists"),
             ],
             Screen::Reward => vec![
                 ("j/k", "pick"),
@@ -819,9 +831,12 @@ impl App {
             Screen::Event => vec![("j/k", "pick"), ("enter", "choose")],
             Screen::Treasure => vec![("enter", "take the relic")],
             Screen::Pick => vec![("j/k", "pick"), ("enter", "confirm"), ("esc", "cancel")],
-            Screen::Victory | Screen::Death => {
-                vec![("r", "same seed"), ("n", "new seed"), ("q", "quit")]
-            }
+            Screen::Victory | Screen::Death => vec![
+                ("R", "same seed"),
+                ("n", "new seed"),
+                ("d/m/p", "cards/map/potions"),
+                ("q", "quit"),
+            ],
         }
     }
 
@@ -833,8 +848,9 @@ impl App {
             ("esc", "cancel / close"),
             ("1-9 0", "combat: select and play the nth card"),
             ("e space", "combat: end your turn"),
-            ("d D X", "deck / discard / exhaust pile"),
-            ("z", "relics"),
+            ("d", "cards: deck; in combat all four piles"),
+            ("m", "map, look along the road with h/l"),
+            ("r", "relics"),
             ("p", "potions (then 1-3 to drink, t then 1-3 to toss)"),
             ("g G", "first / last item in a list"),
             ("c", "reward: skip the card choices"),
@@ -846,7 +862,7 @@ impl App {
             (":seed", "show the run seed"),
             (":quaff N :toss N", "use or discard potion N"),
             (":new [seed]", "start a new run"),
-            ("r n", "after the run ends: restart with the same / a new seed"),
+            ("R n", "after the run ends: restart with the same / a new seed"),
             ("ctrl-c", "quit at any time"),
         ]
     }
@@ -865,6 +881,17 @@ fn hand_slot(c: char) -> Option<usize> {
 fn digit_slot(c: char) -> Option<usize> {
     match c {
         '1'..='3' => Some(c as usize - '1' as usize),
+        _ => None,
+    }
+}
+
+/// 叠加层的全局开关
+fn overlay_key_of(code: KeyCode) -> Option<Overlay> {
+    match code {
+        KeyCode::Char('d') => Some(Overlay::Deck),
+        KeyCode::Char('m') => Some(Overlay::Map),
+        KeyCode::Char('r') => Some(Overlay::Relics),
+        KeyCode::Char('p') => Some(Overlay::Potions),
         _ => None,
     }
 }
@@ -983,10 +1010,22 @@ mod tests {
     }
 
     #[test]
-    fn overlays_open_and_close() {
+    fn overlays_open_in_any_phase_and_toggle_closed() {
+        // 地图阶段
         let mut app = App::new(6);
+        for (k, ov) in [
+            ('d', Overlay::Deck),
+            ('m', Overlay::Map),
+            ('r', Overlay::Relics),
+            ('p', Overlay::Potions),
+        ] {
+            app.handle_key(key(k));
+            assert_eq!(app.overlay, Some(ov), "{k} 应该打开 {ov:?}");
+            // 再按一次同一个键就关掉
+            app.handle_key(key(k));
+            assert!(app.overlay.is_none(), "{k} 再按一次应该关掉");
+        }
         app.handle_key(key('d'));
-        assert_eq!(app.overlay, Some(Overlay::Deck));
         app.handle_key(key('j'));
         assert_eq!(app.overlay_scroll, 1);
         app.handle_key(esc());
@@ -995,6 +1034,46 @@ mod tests {
         assert_eq!(app.overlay, Some(Overlay::Help));
         app.handle_key(key('q'));
         assert!(app.overlay.is_none());
+    }
+
+    #[test]
+    fn overlays_work_in_every_screen() {
+        let mut app = App::new(6);
+        for screen in [
+            Screen::Map,
+            Screen::Combat,
+            Screen::Reward,
+            Screen::Rest,
+            Screen::Shop,
+            Screen::Event,
+            Screen::Treasure,
+            Screen::Pick,
+        ] {
+            app.run.screen = screen;
+            app.overlay = None;
+            app.handle_key(key('d'));
+            assert_eq!(app.overlay, Some(Overlay::Deck), "{screen:?} 里 d 应该能看牌组");
+            app.handle_key(key('m'));
+            assert_eq!(app.overlay, Some(Overlay::Map), "{screen:?} 里 m 应该能看地图");
+            app.overlay = None;
+        }
+    }
+
+    #[test]
+    fn map_overlay_scrolls_along_the_road() {
+        let mut app = App::new(6);
+        app.term_size = (40, 24);
+        app.handle_key(key('m'));
+        assert_eq!(app.overlay, Some(Overlay::Map));
+        let before = app.map_scroll;
+        app.handle_key(key('l'));
+        assert_eq!(app.map_scroll, before + 1, "地图叠加层里 l 应该往前看");
+        app.handle_key(key('h'));
+        assert_eq!(app.map_scroll, before);
+        // 地图叠加层里 enter 不该把人送进节点
+        app.handle_key(enter());
+        assert_eq!(app.run.screen, Screen::Map);
+        assert!(app.run.pos.is_none(), "叠加层里 enter 不能真的走");
     }
 
     #[test]
@@ -1076,6 +1155,35 @@ mod tests {
     }
 
     #[test]
+    fn potion_list_toss_flow() {
+        let mut app = App::new(9);
+        let def = crate::core::potions::POTIONS.first().unwrap();
+        app.run.player.potions[0] = Some(def);
+        app.handle_key(key('p'));
+        assert_eq!(app.overlay, Some(Overlay::Potions));
+        // t 之后按数字是丢掉
+        app.handle_key(key('t'));
+        assert!(app.toss_pending);
+        app.handle_key(key('1'));
+        assert!(app.run.player.potions[0].is_none(), "t + 1 应该丢掉药水");
+        assert!(app.overlay.is_none());
+        // 不带 t 时按数字是喝掉;地图上只能喝能在地图上用的那瓶
+        let map_potion = crate::core::potions::POTIONS
+            .iter()
+            .find(|p| p.out_of_combat)
+            .unwrap();
+        app.run.player.potions[1] = Some(map_potion);
+        app.handle_key(key('p'));
+        app.handle_key(key('2'));
+        assert!(app.run.player.potions[1].is_none(), "直接按数字应该喝掉药水");
+        // 战斗专用药水在地图上按了也喝不掉,应该留在格子里
+        app.run.player.potions[2] = Some(def);
+        app.handle_key(key('p'));
+        app.handle_key(key('3'));
+        assert!(app.run.player.potions[2].is_some(), "战斗专用药水不该在地图上被喝掉");
+    }
+
+    #[test]
     fn reward_escape_leaves_and_clamps() {
         let mut app = App::new(12);
         app.handle_key(enter());
@@ -1101,7 +1209,11 @@ mod tests {
         app.handle_key(key('q'));
         assert!(app.quit);
         app.quit = false;
+        // 结算界面:大写 R 重开,小写 r 是看遗物
         app.handle_key(key('r'));
+        assert_eq!(app.overlay, Some(Overlay::Relics));
+        app.handle_key(esc());
+        app.handle_key(key('R'));
         assert_eq!(app.run.screen, Screen::Map);
     }
 }

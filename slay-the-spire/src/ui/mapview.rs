@@ -49,7 +49,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     if !tip.is_empty() {
         put(buf, area.x, area.y + area.height - 2, &tip, theme::fg(theme::WARN));
     }
-    let legend = "M monster  E elite  ? event  R rest  $ shop  T treasure  B boss   h/l look along the road  j/k pick a fork";
+    let legend = "M monster  E elite  ? event  R rest  $ shop  T treasure  B boss";
     put(
         buf,
         area.x,

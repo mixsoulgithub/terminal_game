@@ -7,3 +7,4 @@
 /neon/target
 /slay-the-spire/target
 local/
+__pycache__/
