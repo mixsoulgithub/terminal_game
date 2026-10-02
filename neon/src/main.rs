@@ -35,8 +35,8 @@ options:
   -S, --no-wrap    do not wrap long lines
       --word-wrap  wrap at word boundaries
   -f, --follow     follow the file as it grows (like tail -f)
+      --no-rainbow do not tint every glyph; keep only the moving light band
       --no-anim    disable the color flow (static neon)
-      --rainbow    tint every glyph with the flowing gradient
       --fps <n>    animation frames per second (default 30)
       --flow <x>   color flow speed multiplier (default 1.0)
   -h, --help       show this help
@@ -47,8 +47,8 @@ keys:
   g / G       top/bottom      / ?          search        n / N   next/prev match
   &           filter lines    esc          clear search (quits if none)  q  quit
   m           wrap            w            word wrap     F       follow the file
-  l           numbers         a / r        animation      h       help
-  + / -       flow speed      mouse wheel  scroll
+  l           numbers         a            animation      h       help
+  r           rainbow tint    + / -        flow speed     mouse   scroll
 
 needs a terminal with 24-bit color support (COLORTERM=truecolor).
 ";
@@ -79,7 +79,7 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Parsed, String> {
         word_wrap: false,
         follow: false,
         anim: true,
-        rainbow: false,
+        rainbow: true,
         fps: 30.0,
         flow: 1.0,
     };
@@ -103,7 +103,7 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Parsed, String> {
             "--word-wrap" => a.word_wrap = true,
             "-f" | "--follow" => a.follow = true,
             "--no-anim" => a.anim = false,
-            "--rainbow" => a.rainbow = true,
+            "--no-rainbow" => a.rainbow = false,
             "--fps" => {
                 let v = value("--fps")?;
                 a.fps = v.parse().map_err(|_| format!("bad --fps: {v}"))?;
@@ -513,7 +513,7 @@ mod tests {
             panic!("expected a runnable config");
         };
         assert_eq!(a.file.as_deref(), Some("notes.txt"));
-        assert!(a.wrap && a.anim && !a.numbers && !a.rainbow);
+        assert!(a.wrap && a.anim && a.rainbow && !a.numbers);
         assert!(!a.follow && !a.word_wrap);
         assert_eq!(a.fps, 30.0);
         assert_eq!(a.flow, 1.0);
@@ -522,11 +522,11 @@ mod tests {
     #[test]
     fn flags_and_values() {
         let Ok(Parsed::Run(a)) =
-            args_of(&["-n", "-S", "--rainbow", "--word-wrap", "-f", "--fps", "60", "--flow=2.5", "f"])
+            args_of(&["-n", "-S", "--no-rainbow", "--word-wrap", "-f", "--fps", "60", "--flow=2.5", "f"])
         else {
             panic!("expected a runnable config");
         };
-        assert!(a.numbers && !a.wrap && a.rainbow && a.word_wrap && a.follow);
+        assert!(a.numbers && !a.wrap && !a.rainbow && a.word_wrap && a.follow);
         assert_eq!(a.fps, 60.0);
         assert_eq!(a.flow, 2.5);
     }
