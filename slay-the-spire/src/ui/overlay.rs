@@ -6,6 +6,7 @@ use ratatui::style::Style;
 
 use crate::app::App;
 use crate::core::card::CardInstance;
+use crate::core::run::HistoryKind;
 use crate::ui::theme;
 use crate::ui::{draw_box, put, put_padded, truncate};
 
@@ -132,14 +133,14 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
                 format!("{} entries in this run", run.history.len()),
                 theme::fg(theme::INFO),
             ));
-            for line in run.history.iter() {
-                // 缩进的行是从战斗日志抄过来的
-                let style = if line.starts_with("  ") {
-                    theme::dim()
-                } else {
-                    theme::fg(theme::FG)
+            for e in run.history.iter() {
+                let style = match e.kind {
+                    HistoryKind::System => theme::fg(theme::FG),
+                    HistoryKind::Player => theme::fg(theme::GOOD),
+                    HistoryKind::Enemy => theme::fg(theme::BAD),
+                    HistoryKind::Info => theme::dim(),
                 };
-                out.push((line.clone(), style));
+                out.push((e.text.clone(), style));
             }
         }
         Overlay::Help => {

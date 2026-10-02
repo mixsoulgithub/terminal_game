@@ -1,17 +1,21 @@
 // 地图界面:横向铺开,第 1 层在左、Boss 在右;纵向是同一层的不同岔路.
-// 一屏装不下整条路时用 h/l 往前/往后看,层号在最上面一行.
+// 只有"现在真能走的路"(当前节点、下一步的可选节点、以及它们之间的连线)是亮的,
+// 其余一律灰掉;右边空出来的地方放图例.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use crate::app::App;
-use crate::core::map::COLS;
+use crate::core::map::{NodeKind, COLS};
 use crate::core::run::Run;
 use crate::ui::theme;
 use crate::ui::{put, truncate};
 
 /// 每层占的列数:3 列画节点,1 列画连线
 pub const CELL_W: u16 = 4;
+
+/// 右边放图例需要多少列
+const LEGEND_W: u16 = 22;
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     if area.width < 12 || area.height < 4 {
@@ -47,16 +51,54 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         tip.push_str(&format!("(l) {} more floors", total - start - visible));
     }
     if !tip.is_empty() {
-        put(buf, area.x, area.y + area.height - 2, &tip, theme::fg(theme::WARN));
+        put(buf, area.x, area.y + area.height.saturating_sub(2), &tip, theme::fg(theme::WARN));
     }
-    let legend = "M monster  E elite  ? event  R rest  $ shop  T treasure  B boss";
-    put(
-        buf,
-        area.x,
-        area.y + area.height.saturating_sub(1),
-        &truncate(legend, area.width as usize),
-        theme::dim(),
-    );
+    let legend = legend_lines(run);
+    let map_w = visible as u16 * CELL_W;
+    let right_x = area.x + map_w + 2;
+    if area.width >= map_w + LEGEND_W + 2 && area.height as usize > legend.len() {
+        // 右边空着,图例就摆在那里
+        for (i, (text, style)) in legend.iter().enumerate() {
+            put(buf, right_x, top + i as u16, text, *style);
+        }
+    } else {
+        let line: String = legend
+            .iter()
+            .map(|(t, _)| t.trim().split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("  ");
+        put(
+            buf,
+            area.x,
+            area.y + area.height.saturating_sub(1),
+            &truncate(&line, area.width as usize),
+            theme::dim(),
+        );
+    }
+}
+
+/// 图例:每个符号是什么,颜色照搬地图上的用法
+fn legend_lines(run: &Run) -> Vec<(String, Style)> {
+    vec![
+        ("M  monster".to_string(), theme::kind_style(NodeKind::Monster)),
+        ("E  elite".to_string(), theme::kind_style(NodeKind::Elite)),
+        ("?  event".to_string(), theme::kind_style(NodeKind::Event)),
+        ("R  rest".to_string(), theme::kind_style(NodeKind::Rest)),
+        ("$  shop".to_string(), theme::kind_style(NodeKind::Shop)),
+        ("T  treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
+        (
+            format!("B  {}", run.boss_name()),
+            theme::kind_style(NodeKind::Boss),
+        ),
+        (
+            "bright = you can go there next".to_string(),
+            theme::fg(theme::SEL_FG),
+        ),
+        (
+            "(...) = you are here".to_string(),
+            theme::fg(theme::GOOD),
+        ),
+    ]
 }
 
 /// 一屏能放几层
@@ -96,13 +138,24 @@ fn render_floor(buf: &mut Buffer, x: u16, y0: u16, app: &App, floor: usize, slot
             continue;
         }
         let is_cur = run.pos == Some(*i);
-        let is_reach = reach.contains(i);
-        let is_sel = is_reach
-            && reachable_here
-                .iter()
-                .position(|r| r == i)
-                .map(|p| p == sel)
-                .unwrap_or(false);
+        let is_sel = reachable_here
+            .iter()
+            .position(|r| r == i)
+            .map(|p| p == sel)
+            .unwrap_or(false);
+        let is_next = reach.contains(i);
+        // Boss 直接写名字,其余用符号
+        if node.kind == NodeKind::Boss {
+            let x = if is_cur { x + 1 } else { x };
+            let name = truncate(run.boss_name(), 24);
+            let style = if is_next {
+                theme::kind_style(NodeKind::Boss)
+            } else {
+                theme::dim()
+            };
+            put(buf, x, y, &name, style);
+            continue;
+        }
         let sigil = node.kind.sigil();
         let (text, style) = if is_cur {
             (
@@ -112,20 +165,16 @@ fn render_floor(buf: &mut Buffer, x: u16, y0: u16, app: &App, floor: usize, slot
         } else if is_sel {
             (
                 format!("<{sigil}>"),
-                Style::default()
-                    .fg(theme::SEL_FG)
-                    .bg(theme::SEL_BG)
-                    .add_modifier(Modifier::BOLD),
+                theme::kind_style(node.kind).bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
             )
-        } else if is_reach {
+        } else if is_next {
             (
                 format!("<{sigil}>"),
-                Style::default()
-                    .fg(theme::kind_color(node.kind))
-                    .add_modifier(Modifier::BOLD),
+                theme::kind_style(node.kind).add_modifier(Modifier::BOLD),
             )
         } else {
-            (format!("[{sigil}]"), theme::fg(theme::kind_color(node.kind)))
+            // 现在走不到的节点一律灰掉
+            (format!("[{sigil}]"), theme::dim())
         };
         put(buf, x, y, &text, style);
     }
@@ -149,7 +198,9 @@ fn render_edges(buf: &mut Buffer, x: u16, y0: u16, run: &Run, floor: usize, slot
         };
         let yp = row_of(run.map.node(*parent).col);
         let yc = row_of(node.col);
-        let style = if reach.contains(parent) {
+        // 这条线属于"现在能走的路"才亮:要么从当前节点出发,要么终点是下一步可选
+        let on_path = reach.contains(parent) || reach.contains(child);
+        let style = if on_path {
             Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
         } else {
             theme::dim()

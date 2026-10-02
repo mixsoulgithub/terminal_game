@@ -24,6 +24,25 @@ const HISTORY_LIMIT: usize = 4000;
 /// 超限时一次丢掉多少条
 const HISTORY_TRIM: usize = 1000;
 
+/// 历史记录里一条的类别,决定它在历史窗口里怎么上色
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HistoryKind {
+    /// 一局流程自己的记录(进房间、买卖、拿奖励)
+    System,
+    /// 玩家做了什么
+    Player,
+    /// 敌人做了什么
+    Enemy,
+    /// 其他说明
+    Info,
+}
+
+#[derive(Clone, Debug)]
+pub struct HistoryEntry {
+    pub text: String,
+    pub kind: HistoryKind,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
     Map,
@@ -167,6 +186,8 @@ pub struct Run {
     pub rng: Rng,
     pub player: Player,
     pub map: ActMap,
+    /// 本局这条路的 Boss:开局定下来,地图上直接写名字
+    pub boss_enc: &'static Encounter,
     /// 玩家当前所在节点;None 表示还没上路
     pub pos: Option<usize>,
     pub floor_reached: usize,
@@ -180,7 +201,7 @@ pub struct Run {
     pub rest_index: usize,
     pub stats: Stats,
     /// 一整局发生过的所有事,用 H 翻看
-    pub history: Vec<String>,
+    pub history: Vec<HistoryEntry>,
     /// 已经抄进历史的战斗日志序号
     combat_log_seen: u64,
     /// 本局还没出现过的遗物
@@ -205,6 +226,7 @@ impl Run {
             .filter(|r| r.id != starter.id)
             .collect();
         let map = ActMap::generate(&mut rng);
+        let boss_enc: &'static Encounter = rng.pick(enemies::BOSSES);
         let mut run = Run {
             seed,
             rng,
@@ -217,6 +239,7 @@ impl Run {
                 potions: vec![None; POTION_SLOTS],
             },
             map,
+            boss_enc,
             pos: None,
             floor_reached: 0,
             screen: Screen::Map,
@@ -242,14 +265,25 @@ impl Run {
 
     /// 记一笔:既进历史记录,也更新界面上的提示
     fn say(&mut self, text: impl Into<String>) {
-        let text = text.into();
-        self.history.push(text);
+        self.push_history(text, HistoryKind::System);
+    }
+
+    fn push_history(&mut self, text: impl Into<String>, kind: HistoryKind) {
+        self.history.push(HistoryEntry {
+            text: text.into(),
+            kind,
+        });
         if self.history.len() > HISTORY_LIMIT {
             self.history.drain(0..HISTORY_TRIM);
         }
     }
 
     // ---- 地图 ----
+
+    /// 地图上 Boss 那里要写的名字
+    pub fn boss_name(&self) -> &'static str {
+        enemies::encounter_name(self.boss_enc)
+    }
 
     pub fn reachable(&self) -> Vec<usize> {
         self.map.reachable_from(self.pos)
@@ -291,7 +325,7 @@ impl Run {
             }
             NodeKind::Boss => {
                 self.stats.bosses += 1;
-                let enc = self.pick_encounter(EnemyKind::Boss);
+                let enc = self.boss_enc;
                 self.start_combat(enc);
             }
             NodeKind::Rest => {
@@ -364,11 +398,18 @@ impl Run {
         let Some(c) = self.combat.as_ref() else {
             return;
         };
-        let fresh: Vec<String> = c
+        let fresh: Vec<HistoryEntry> = c
             .log
             .iter()
             .filter(|l| l.seq > self.combat_log_seen)
-            .map(|l| format!("  {}", l.text))
+            .map(|l| HistoryEntry {
+                text: format!("  {}", l.text),
+                kind: match l.kind {
+                    crate::core::combat::LogKind::Enemy => HistoryKind::Enemy,
+                    crate::core::combat::LogKind::Player => HistoryKind::Player,
+                    crate::core::combat::LogKind::Info => HistoryKind::Info,
+                },
+            })
             .collect();
         if fresh.is_empty() {
             return;
@@ -1489,7 +1530,12 @@ mod tests {
             c.phase = Phase::Won;
         }
         r.sync_combat();
-        let joined = r.history.join("\n");
+        let joined = r
+            .history
+            .iter()
+            .map(|e| e.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(joined.contains("-- Turn 1 --"), "战斗日志要抄进历史");
         assert!(joined.contains("dealt") || joined.contains("you play"));
     }

@@ -98,8 +98,15 @@ pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let buf = f.buffer_mut();
     buf.set_style(area, Style::default().bg(theme::BG).fg(theme::FG));
-    if area.width < 24 || area.height < 6 {
-        put(buf, area.x, area.y, "terminal too small", theme::fg(theme::WARN));
+    if area.width < 80 || area.height < 24 {
+        // 界面按 80x24 起排:更小的终端只给一句提示,不硬挤
+        let msg = format!(
+            "spire needs at least 80x24 (now {}x{})",
+            area.width, area.height
+        );
+        let x = area.x + (area.width.saturating_sub(display_width(&msg) as u16)) / 2;
+        let y = area.y + area.height / 2;
+        put(buf, x, y, &msg, theme::fg(theme::WARN));
         return;
     }
     let hud_area = Rect::new(area.x, area.y, area.width, 1);
@@ -196,7 +203,7 @@ mod tests {
     fn map_screen_shows_legend_and_boss() {
         let app = App::new(5);
         let text = screen_text(&app, 110, 40);
-        assert!(text.contains("M monster"), "地图缺少图例:\n{text}");
+        assert!(text.contains("monster"), "地图缺少图例:\n{text}");
         assert!(text.contains('B'), "缺少 Boss 节点");
         assert!(text.contains("$99"), "顶栏没画出来");
         assert!(text.contains("80/80"), "血量数字没画出来");
@@ -228,15 +235,20 @@ mod tests {
             .iter()
             .position(|l| l.contains("energy"))
             .expect("应该有能量行");
-        // 十张牌分成两行,每行五张,格子里写的是牌名
+        // 十张牌分成两排,每排五张;每张两行:第一行牌名,第二行费用与效果
         assert_eq!(
             rows[energy_row + 1].matches("Strike").count(),
             5,
-            "第一行应正好五张:\n{text}"
+            "第一排应正好五张:\n{text}"
+        );
+        assert_eq!(
+            rows[energy_row + 3].matches("Strike").count(),
+            5,
+            "第二排应正好五张:\n{text}"
         );
         assert!(
-            rows[energy_row + 2].matches("Strike").count() >= 5,
-            "第二行应正好五张:\n{text}"
+            rows[energy_row + 2].matches("1 6").count() >= 3,
+            "第二行应该是费用与伤号:\n{text}"
         );
         // 详情区给出选中那张的全名与完整描述
         assert!(rows[energy_row].contains("Strike"), "详情缺名字");
@@ -303,6 +315,21 @@ mod tests {
         app.cmd = "seed".to_string();
         let text = screen_text(&app, 100, 30);
         assert!(text.contains(":seed"), "命令行没显示出来:\n{text}");
+    }
+
+    #[test]
+    fn minimum_terminal_is_80x24() {
+        let app = App::new(5);
+        // 80x24 要能完整画出来
+        let text = screen_text(&app, 80, 24);
+        assert!(text.contains("monster"), "80x24 下地图应该正常显示:\n{text}");
+        let combat = app_in_combat(5, "three_sentries");
+        let text = screen_text(&combat, 80, 24);
+        assert!(text.contains("energy"), "80x24 下战斗界面应该正常:\n{text}");
+        assert!(text.contains("Strike") || text.contains("Defend"), "手牌要画出来");
+        // 比这小就只给一句提示
+        let small = screen_text(&app, 79, 23);
+        assert!(small.contains("needs at least 80x24"), "小终端应给出提示:\n{small}");
     }
 
     #[test]

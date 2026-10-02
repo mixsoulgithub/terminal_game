@@ -691,6 +691,14 @@ pub static BOSSES: &[Encounter] = &[
     },
 ];
 
+/// 遭遇的显示名:只有一只敌人的遭遇就用那只敌人的名字(地图上的 Boss 用得到)
+pub fn encounter_name(enc: &Encounter) -> &'static str {
+    match enc.enemies {
+        [only] => enemy_def_or_panic(only).name,
+        _ => enc.id,
+    }
+}
+
 pub fn enemy_def(id: &str) -> Option<&'static EnemyDef> {
     ENEMIES.iter().find(|e| e.id == id)
 }

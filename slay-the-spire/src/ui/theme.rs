@@ -11,6 +11,9 @@ pub const SEL_BG: Color = Color::Rgb(46, 56, 96);
 pub const SEL_FG: Color = Color::Rgb(242, 246, 255);
 pub const GOOD: Color = Color::Rgb(120, 222, 140);
 pub const BAD: Color = Color::Rgb(236, 96, 108);
+/// 血的颜色(顶栏和地图上的怪都用它)
+pub const BLOOD: Color = Color::Rgb(236, 96, 108);
+pub const YELLOW: Color = Color::Rgb(238, 226, 104);
 pub const BLOCK: Color = Color::Rgb(122, 176, 240);
 pub const ENERGY: Color = Color::Rgb(238, 226, 104);
 pub const GOLD: Color = Color::Rgb(250, 186, 66);
@@ -34,16 +37,19 @@ pub fn selected() -> Style {
     Style::default().fg(SEL_FG).bg(SEL_BG).add_modifier(Modifier::BOLD)
 }
 
-/// 地图节点颜色
-pub fn kind_color(kind: NodeKind) -> Color {
+/// 地图上各类房间的颜色:M 红、E 橙红、? 黄、R 红底、$ 金、T 亮黄、Boss 亮红
+pub fn kind_style(kind: NodeKind) -> Style {
     match kind {
-        NodeKind::Monster => Color::Rgb(210, 130, 130),
-        NodeKind::Elite => Color::Rgb(255, 140, 90),
-        NodeKind::Event => Color::Rgb(120, 210, 220),
-        NodeKind::Rest => Color::Rgb(140, 220, 160),
-        NodeKind::Shop => GOLD,
-        NodeKind::Treasure => Color::Rgb(240, 220, 120),
-        NodeKind::Boss => Color::Rgb(255, 90, 110),
+        NodeKind::Monster => Style::default().fg(BLOOD),
+        NodeKind::Elite => Style::default().fg(Color::Rgb(255, 140, 90)),
+        NodeKind::Event => Style::default().fg(YELLOW),
+        // 休息点是红底黑字,一眼就能认出来
+        NodeKind::Rest => Style::default().fg(BG).bg(BLOOD),
+        NodeKind::Shop => Style::default().fg(GOLD),
+        NodeKind::Treasure => Style::default().fg(Color::Rgb(246, 226, 120)),
+        NodeKind::Boss => Style::default()
+            .fg(Color::Rgb(255, 86, 104))
+            .add_modifier(Modifier::BOLD),
     }
 }
 
