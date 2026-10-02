@@ -1,18 +1,36 @@
 # Terminal Games
 
-一个基于 ncurses 库开发的终端游戏合集。正在抽象出可复用的框架.
+terminal toys set.
 
 ## 项目结构
 
 ```
 terminal_game
 ├── README.md
+├── neon/               # less 式分页器,霓虹流动色(Rust + ratatui)
+│   ├── Cargo.toml
+│   ├── README.md
+│   └── src/
 ├── Snake/              # 正在开发
 │   ├── CMakeLists.txt
 │   └── src/
 └── Tetris/             # 已实现
     ├── CMakeLists.txt
     └── src/
+```
+
+## 工具
+
+### neon
+
+less 式分页器,底栏是一根流动的霓虹灯管,正文里有一条高斯光带扫过。用 Rust + ratatui,走 24 位真彩。
+名字、过滤、行数、进度、开关全部压在底栏一行里,没有顶栏。
+静止时不向终端写任何字节,流动时约 268 KB/s(100x40,见 `neon/README.md` 的实测表)。
+
+```bash
+cd neon
+cargo build --release
+./target/release/neon README.md
 ```
 
 ## 游戏列表

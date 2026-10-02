@@ -1,0 +1,16 @@
+[package]
+name = "neon"
+version = "0.1.0"
+edition = "2021"
+description = "neon pager: a less-like viewer with a flowing neon palette"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+unicode-width = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
