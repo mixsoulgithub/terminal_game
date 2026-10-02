@@ -14,9 +14,14 @@ terminal_game
 ├── Snake/              # 正在开发
 │   ├── CMakeLists.txt
 │   └── src/
-└── Tetris/             # 已实现
-    ├── CMakeLists.txt
-    └── src/
+├── Tetris/             # 已实现
+│   ├── CMakeLists.txt
+│   └── src/
+└── slay-the-spire/     # 终端爬塔(类杀戮尖塔, Rust + ratatui)
+    ├── Cargo.toml
+    ├── README.md
+    ├── src/
+    └── tools/
 ```
 
 ## 工具
@@ -46,6 +51,21 @@ cargo build --release
 - 使用键盘控制方块移动和旋转
 - 消除完整的行获得分数
 - 方块堆到顶部游戏结束
+
+### 3. spire (终端爬塔)
+- 类杀戮尖塔的单人构筑 roguelike:能量/格挡/卡牌构筑/地图推进
+- 15 层地图 + Boss,含战斗、精英、事件、商店、营火、宝箱
+- 56 张卡、19 种敌人、17 个遗物、12 瓶药水、8 个事件
+- 纯键盘 vim 风格操作(hjkl 选择、enter 确认、: 命令行),无鼠标
+- Rust + ratatui,和 neon 同一套技术栈;同一 seed 必定复现同一局
+
+```bash
+cd slay-the-spire
+cargo build --release
+./target/release/spire --seed 7
+# 键位与玩法见 slay-the-spire/README.md
+python3 tools/smoke.py ./target/debug/spire 7 42   # tmux 驱动真跑一整局
+```
 
 ## 构建要求
 - 类Unix系统. 如Linux, MacOS.

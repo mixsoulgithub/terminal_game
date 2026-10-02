@@ -5,3 +5,5 @@
 *.swp
 /Unicode/rust/target
 /neon/target
+/slay-the-spire/target
+local/
