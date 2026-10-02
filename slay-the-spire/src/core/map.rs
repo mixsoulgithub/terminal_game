@@ -94,6 +94,26 @@ impl ActMap {
         }
     }
 
+    /// 从某个节点出发往前能走到的所有节点(含它自己).
+    /// 地图界面用它来画"选了这间房之后的整片未来",所以含 Boss 那一层.
+    pub fn forward_reachable(&self, from: usize) -> Vec<bool> {
+        let mut seen = vec![false; self.nodes.len()];
+        if from >= self.nodes.len() {
+            return seen;
+        }
+        let mut stack = vec![from];
+        while let Some(i) = stack.pop() {
+            if seen[i] {
+                continue;
+            }
+            seen[i] = true;
+            for nxt in &self.nodes[i].next {
+                stack.push(*nxt);
+            }
+        }
+        seen
+    }
+
     /// 生成地图
     ///
     /// 6 条路径按"列号非递减"的顺序同时往上走:第 i 条永远不跑到第 i+1 条的右边,
@@ -420,6 +440,35 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn forward_reachable_covers_the_rest_of_the_road() {
+        for seed in 0..10 {
+            let m = map(seed);
+            // 从任何一个第一层节点出发,最后都能到 Boss
+            for &start in m.row(0) {
+                let fwd = m.forward_reachable(start);
+                assert!(fwd[start], "起点自己要算进去");
+                assert!(fwd[m.boss], "往前一定包含 Boss");
+                // 不在里面的节点,一定不是它的后代
+                for (i, ok) in fwd.iter().enumerate() {
+                    if *ok || i == m.boss {
+                        continue;
+                    }
+                    for p in &m.nodes[i].prev {
+                        assert!(!fwd[*p], "前向闭包漏了 {i}");
+                    }
+                }
+            }
+            // 第一层不同起点的未来不完全一样,高亮才会随 h/j/k 变
+            let row0 = m.row(0);
+            if row0.len() > 1 {
+                let a = m.forward_reachable(row0[0]);
+                let b = m.forward_reachable(row0[row0.len() - 1]);
+                assert_ne!(a, b, "不同岔路的未来应该不同");
             }
         }
     }

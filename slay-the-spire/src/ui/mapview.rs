@@ -34,6 +34,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let right_x = area.x + map_w + 2;
     let legend = legend_lines(run);
     let legend_shown = area.width >= map_w + LEGEND_W + 2 && area.height as usize > legend.len();
+    // 选中那条岔路之后的整片未来:换一个岔路,亮的就是另一片
+    let future = chosen_future(app);
     // 图例贴右边区域的上沿放,这样它不会和任何一行节点(尤其 Boss 那行)撞上
     let legend_y = if top >= area.y + 1 + legend.len() as u16 {
         top - legend.len() as u16
@@ -54,6 +56,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             app,
             f,
             slot_h,
+            future.as_deref(),
             if legend_shown {
                 Some((right_x, legend_y + legend.len() as u16))
             } else {
@@ -61,7 +64,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             },
         );
         if f + 1 < total {
-            render_edges(buf, x, top, run, f, slot_h);
+            render_edges(buf, x, top, app, f, slot_h, future.as_deref());
         }
     }
     // 视野两头还有内容就给一句提示
@@ -103,6 +106,13 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             theme::dim(),
         );
     }
+}
+
+/// 光标停着的那间房之后的整片未来(含它自己);还没上路时就是起点们的未来
+fn chosen_future(app: &App) -> Option<Vec<bool>> {
+    let reach = app.run.reachable();
+    let chosen = *reach.get(app.map_sel.min(reach.len().saturating_sub(1)))?;
+    Some(app.run.map.forward_reachable(chosen))
 }
 
 /// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
@@ -149,6 +159,7 @@ fn render_floor(
     app: &App,
     floor: usize,
     slot_h: u16,
+    future: Option<&[bool]>,
     // 图例的位置:(左边, 结束行)——Boss 的名字不能压上去
     legend: Option<(u16, u16)>,
 ) {
@@ -172,8 +183,8 @@ fn render_floor(
             .position(|r| r == i)
             .map(|p| p == sel)
             .unwrap_or(false);
-        let is_next = reach.contains(i);
-        // Boss 直接写名字,其余用符号
+        let is_candidate = reach.contains(i);
+        let on_path = future.map(|f| f[*i]).unwrap_or(false);
         if node.kind == NodeKind::Boss {
             // 名字写在节点右边;只有这一行真的和图例同排时才让位
             let room = match legend {
@@ -182,7 +193,7 @@ fn render_floor(
                 }
                 _ => buf.area.width.saturating_sub(x),
             };
-            let style = if is_next {
+            let style = if on_path {
                 theme::kind_style(NodeKind::Boss)
             } else {
                 theme::dim()
@@ -197,23 +208,27 @@ fn render_floor(
             continue;
         }
         let sigil = node.kind.sigil();
+        let kind_style = theme::kind_style(node.kind);
         let (text, style) = if is_cur {
+            // 你现在在这里
             (
                 format!("({sigil})"),
                 Style::default().fg(theme::GOOD).add_modifier(Modifier::BOLD),
             )
         } else if is_sel {
+            // 光标停着的那个岔路
             (
                 format!("<{sigil}>"),
-                theme::kind_style(node.kind).bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
+                kind_style.bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
             )
-        } else if is_next {
-            (
-                format!("<{sigil}>"),
-                theme::kind_style(node.kind).add_modifier(Modifier::BOLD),
-            )
+        } else if on_path {
+            // 选了它之后能走到的房间
+            (format!("<{sigil}>"), kind_style.add_modifier(Modifier::BOLD))
+        } else if is_candidate {
+            // 别的岔路:可以选,但不是当前这条未来
+            (format!("<{sigil}>"), kind_style)
         } else {
-            // 现在走不到的节点一律灰掉
+            // 现在走不到的一律灰掉
             (format!("[{sigil}]"), theme::dim())
         };
         put(buf, x, y, &text, style);
@@ -223,8 +238,17 @@ fn render_floor(
 /// 连线:逐个"子节点"画一条从父节点到它的斜线.
 /// 一个父节点最多连三个子节点,只画第一条会把岔路藏起来;
 /// 而按子节点画,朝上的走上一半行、朝下的走下一半行,彼此不会压到.
-fn render_edges(buf: &mut Buffer, x: u16, y0: u16, run: &Run, floor: usize, slot_h: u16) {
-    let reach = run.reachable();
+/// 父节点优先取"你现在站的那个",这样从当前位置出发的这条线一定画得出来.
+fn render_edges(
+    buf: &mut Buffer,
+    x: u16,
+    y0: u16,
+    app: &App,
+    floor: usize,
+    slot_h: u16,
+    future: Option<&[bool]>,
+) {
+    let run = &app.run;
     let upper = floor + 1;
     if upper >= run.map.total_floors() {
         return;
@@ -237,13 +261,19 @@ fn render_edges(buf: &mut Buffer, x: u16, y0: u16, run: &Run, floor: usize, slot
         if node.kind == NodeKind::Boss {
             continue;
         }
-        let Some(parent) = node.prev.first() else {
+        let parent = node
+            .prev
+            .iter()
+            .copied()
+            .find(|p| Some(*p) == run.pos)
+            .or_else(|| node.prev.first().copied());
+        let Some(parent) = parent else {
             continue;
         };
-        let yp = row_of(run.map.node(*parent).col);
+        let yp = row_of(run.map.node(parent).col);
         let yc = row_of(node.col);
-        // 这条线属于"现在能走的路"才亮:要么从当前节点出发,要么终点是下一步可选
-        let on_path = reach.contains(parent) || reach.contains(child);
+        // 这一步落在"选中那条岔路的未来"里才亮
+        let on_path = future.map(|f| f[*child]).unwrap_or(false);
         let style = if on_path {
             Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
         } else {

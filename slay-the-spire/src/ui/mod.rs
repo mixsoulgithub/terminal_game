@@ -318,6 +318,48 @@ mod tests {
         assert!(text.contains(":seed"), "命令行没显示出来:\n{text}");
     }
 
+    /// 把每个格子的"字符+样式"抓成字符串:只改颜色不改字符也能比出来
+    fn style_snapshot(app: &App, w: u16, h: u16) -> String {
+        let mut term = Terminal::new(TestBackend::new(w, h)).expect("test terminal");
+        term.draw(|f| render(f, app)).expect("draw");
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                out.push_str(cell.symbol());
+                out.push_str(&format!("{:?}", cell.style()));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn map_highlight_follows_the_chosen_fork() {
+        // 地图上第一层有很多岔路:换一个岔路,该亮的那片未来就不一样
+        let mut app = App::new(5);
+        app.term_size = (110, 34);
+        let reach = app.run.reachable();
+        assert!(reach.len() > 1, "第一层应该有多个岔路");
+        let before = style_snapshot(&app, 110, 34);
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert_eq!(app.map_sel, 1);
+        let after = style_snapshot(&app, 110, 34);
+        assert_ne!(before, after, "换个岔路,高亮的未来应该跟着变");
+
+        // 高亮的是"选中的那间房之后的整片未来",包含 Boss,但不含刚走出来的那间
+        let sel = app.run.reachable()[app.map_sel];
+        let fwd = app.run.map.forward_reachable(sel);
+        assert!(fwd[app.run.map.boss], "未来里应当包含 Boss");
+        if let Some(pos) = app.run.pos {
+            assert!(!fwd[pos], "刚走出来的房间不该算进未来");
+        }
+    }
+
     #[test]
     fn minimum_terminal_is_80x24() {
         let app = App::new(5);
