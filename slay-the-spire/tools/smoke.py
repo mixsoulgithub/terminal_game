@@ -83,7 +83,7 @@ def wait_for_map(timeout: float = 8.0) -> str:
     """等第一帧画出来:启动瞬间抓屏可能抓到空屏或半帧。"""
     deadline = time.time() + timeout
     text = screen()
-    while "monster" not in text and time.time() < deadline:
+    while "merchant" not in text and time.time() < deadline:
         time.sleep(0.2)
         text = screen()
     return text
@@ -93,7 +93,7 @@ def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
     start(binary, seed)
     seen: set[str] = set()
     text = wait_for_map()
-    if "monster" not in text:
+    if "merchant" not in text:
         raise AssertionError(f"seed {seed}: 地图没有图例,首屏如下:\n{text}")
     seen.add("MAP")
     # 战斗里的节奏:打最多 4 张攻击牌,找不到攻击牌连续挪 5 次就结束回合

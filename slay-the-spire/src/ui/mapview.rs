@@ -30,6 +30,16 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let slot_h = (avail / COLS as u16).clamp(1, 4);
     let block_h = COLS as u16 * slot_h;
     let top = area.y + 1 + avail.saturating_sub(block_h) / 2;
+    let map_w = visible as u16 * CELL_W;
+    let right_x = area.x + map_w + 2;
+    let legend = legend_lines(run);
+    let legend_shown = area.width >= map_w + LEGEND_W + 2 && area.height as usize > legend.len();
+    // 图例贴右边区域的上沿放,这样它不会和任何一行节点(尤其 Boss 那行)撞上
+    let legend_y = if top >= area.y + 1 + legend.len() as u16 {
+        top - legend.len() as u16
+    } else {
+        area.y + 1
+    };
     for i in 0..visible {
         let f = start + i;
         if f >= total {
@@ -37,7 +47,19 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         }
         let x = area.x + (i as u16) * CELL_W;
         floor_label(buf, x, area.y, app, f);
-        render_floor(buf, x, top, app, f, slot_h);
+        render_floor(
+            buf,
+            x,
+            top,
+            app,
+            f,
+            slot_h,
+            if legend_shown {
+                Some((right_x, legend_y + legend.len() as u16))
+            } else {
+                None
+            },
+        );
         if f + 1 < total {
             render_edges(buf, x, top, run, f, slot_h);
         }
@@ -53,13 +75,19 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     if !tip.is_empty() {
         put(buf, area.x, area.y + area.height.saturating_sub(2), &tip, theme::fg(theme::WARN));
     }
-    let legend = legend_lines(run);
-    let map_w = visible as u16 * CELL_W;
-    let right_x = area.x + map_w + 2;
-    if area.width >= map_w + LEGEND_W + 2 && area.height as usize > legend.len() {
+    // 地图下面一行:亮暗和当前位置怎么读
+    let hint = "bright = you can go there next    (x) = you are here";
+    put(
+        buf,
+        area.x,
+        area.y + area.height.saturating_sub(2),
+        &truncate(hint, area.width as usize),
+        theme::dim(),
+    );
+    if legend_shown {
         // 右边空着,图例就摆在那里
         for (i, (text, style)) in legend.iter().enumerate() {
-            put(buf, right_x, top + i as u16, text, *style);
+            put(buf, right_x, legend_y + i as u16, text, *style);
         }
     } else {
         let line: String = legend
@@ -77,26 +105,18 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
 }
 
-/// 图例:每个符号是什么,颜色照搬地图上的用法
+/// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     vec![
-        ("M  monster".to_string(), theme::kind_style(NodeKind::Monster)),
-        ("E  elite".to_string(), theme::kind_style(NodeKind::Elite)),
-        ("?  event".to_string(), theme::kind_style(NodeKind::Event)),
-        ("R  rest".to_string(), theme::kind_style(NodeKind::Rest)),
-        ("$  shop".to_string(), theme::kind_style(NodeKind::Shop)),
+        ("?  unknown".to_string(), theme::kind_style(NodeKind::Event)),
+        ("$  merchant".to_string(), theme::kind_style(NodeKind::Shop)),
         ("T  treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
+        ("R  rest".to_string(), theme::kind_style(NodeKind::Rest)),
+        ("E  enemy".to_string(), theme::kind_style(NodeKind::Monster)),
+        ("E  elite".to_string(), theme::kind_style(NodeKind::Elite)),
         (
             format!("B  {}", run.boss_name()),
             theme::kind_style(NodeKind::Boss),
-        ),
-        (
-            "bright = you can go there next".to_string(),
-            theme::fg(theme::SEL_FG),
-        ),
-        (
-            "(...) = you are here".to_string(),
-            theme::fg(theme::GOOD),
         ),
     ]
 }
@@ -122,7 +142,16 @@ fn floor_label(buf: &mut Buffer, x: u16, y: u16, app: &App, floor: usize) {
     put(buf, x, y, &format!("{:>2} ", floor + 1), style);
 }
 
-fn render_floor(buf: &mut Buffer, x: u16, y0: u16, app: &App, floor: usize, slot_h: u16) {
+fn render_floor(
+    buf: &mut Buffer,
+    x: u16,
+    y0: u16,
+    app: &App,
+    floor: usize,
+    slot_h: u16,
+    // 图例的位置:(左边, 结束行)——Boss 的名字不能压上去
+    legend: Option<(u16, u16)>,
+) {
     let run = &app.run;
     let reach = run.reachable();
     let reachable_here: Vec<usize> = reach
@@ -146,14 +175,25 @@ fn render_floor(buf: &mut Buffer, x: u16, y0: u16, app: &App, floor: usize, slot
         let is_next = reach.contains(i);
         // Boss 直接写名字,其余用符号
         if node.kind == NodeKind::Boss {
-            let x = if is_cur { x + 1 } else { x };
-            let name = truncate(run.boss_name(), 24);
+            // 名字写在节点右边;只有这一行真的和图例同排时才让位
+            let room = match legend {
+                Some((lx, legend_bottom)) if y < legend_bottom => {
+                    lx.saturating_sub(1).saturating_sub(x)
+                }
+                _ => buf.area.width.saturating_sub(x),
+            };
             let style = if is_next {
                 theme::kind_style(NodeKind::Boss)
             } else {
                 theme::dim()
             };
-            put(buf, x, y, &name, style);
+            let name = run.boss_name();
+            if room as usize >= crate::ui::display_width(name) {
+                put(buf, x, y, &truncate(name, room as usize), style);
+            } else {
+                // 实在放不下名字就退回符号,图例那一行仍然写着全名
+                put(buf, x, y, "[B]", style);
+            }
             continue;
         }
         let sigil = node.kind.sigil();
@@ -193,6 +233,10 @@ fn render_edges(buf: &mut Buffer, x: u16, y0: u16, run: &Run, floor: usize, slot
     let row_of = |col: usize| y0 + (col as u16) * slot_h;
     for child in run.map.row(upper) {
         let node = run.map.node(*child);
+        // Boss 房不连线:最后一层只有它,不需要箭头指过去
+        if node.kind == NodeKind::Boss {
+            continue;
+        }
         let Some(parent) = node.prev.first() else {
             continue;
         };

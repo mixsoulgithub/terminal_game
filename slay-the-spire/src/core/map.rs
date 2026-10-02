@@ -23,7 +23,8 @@ pub enum NodeKind {
 impl NodeKind {
     pub fn sigil(self) -> char {
         match self {
-            NodeKind::Monster => 'M',
+            // 普通怪与精英都是 E,精英靠红底区分
+            NodeKind::Monster => 'E',
             NodeKind::Elite => 'E',
             NodeKind::Event => '?',
             NodeKind::Rest => 'R',
@@ -97,6 +98,16 @@ impl ActMap {
     ///
     /// 6 条路径按"列号非递减"的顺序同时往上走:第 i 条永远不跑到第 i+1 条的右边,
     /// 于是路径只会合并或分叉,不会交叉。两条路径落在同一列时共用同一个节点。
+    ///
+    /// 房间类型按原作第一章的规矩贴:
+    /// - 第 1 层全是怪,第 9 层全是宝箱,第 15 层全是休息点,Boss 单独一层
+    /// - 精英不出现在前 5 层
+    /// - 休息点与商店不出现在 Boss 前两层
+    /// - 同一条路径上不连续出现同一类型(怪物除外)
+    /// - 保底至少一个精英、一个商店、一个事件;一个节点最多三个岔路
+    ///
+    /// 原作另有一条"多个父节点同型就跟着同型"的成片规则,但它和这套路径形状
+    /// 叠加会长出整条商店/事件带(实测会出现一层里连着六个商店),所以不采用.
     pub fn generate(rng: &mut Rng) -> ActMap {
         let mut nodes: Vec<Node> = Vec::new();
         // grid[floor][col] = 该位置已建立的节点下标
@@ -221,6 +232,7 @@ impl ActMap {
                 .iter()
                 .map(|p| self.nodes[*p].kind)
                 .collect();
+            // 先按层的规矩定下允许的类型
             let mut cands: Vec<(NodeKind, u32)> = vec![
                 (NodeKind::Monster, 45),
                 (NodeKind::Event, 22),
@@ -231,16 +243,13 @@ impl ActMap {
                 cands.push((NodeKind::Elite, 16));
             }
             cands.retain(|(k, _)| {
-                // 同一条路径上不连续出现同一类型(怪物例外)
-                if *k != NodeKind::Monster && parents.contains(k) {
-                    return false;
-                }
                 // 休息点与商店不出现在 Boss 前两层
-                if matches!(k, NodeKind::Rest | NodeKind::Shop) && floor >= FLOORS - 2 {
-                    return false;
-                }
-                true
+                !(matches!(k, NodeKind::Rest | NodeKind::Shop) && floor >= FLOORS - 2)
             });
+            // 同一条路径上不连续出现同一类型(怪物例外).
+            // 原作还有一条"多个父节点同型就跟着同型"的成片规则,但那和这套
+            // 路径形状叠加会长出整条商店/事件带,这里不采用
+            cands.retain(|(k, _)| *k == NodeKind::Monster || !parents.contains(k));
             if cands.is_empty() {
                 continue;
             }
@@ -259,18 +268,24 @@ impl ActMap {
         if self.nodes.iter().any(|n| n.kind == kind) {
             return;
         }
-        let cands: Vec<usize> = self
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| {
-                n.kind == NodeKind::Monster
-                    && n.floor >= min_floor
-                    && n.floor < FLOORS - 1
-                    && n.floor != 8
-            })
-            .map(|(i, _)| i)
-            .collect();
+        // 只能挑"换成这种类型也不会和上下层撞型"的怪物房
+        let n_nodes = self.nodes.len();
+        let mut cands: Vec<usize> = Vec::new();
+        for i in 0..n_nodes {
+            let n = &self.nodes[i];
+            if n.kind != NodeKind::Monster
+                || n.floor < min_floor
+                || n.floor >= FLOORS - 1
+                || n.floor == 8
+            {
+                continue;
+            }
+            let clean = n.prev.iter().all(|p| self.nodes[*p].kind != kind)
+                && n.next.iter().all(|c| self.nodes[*c].kind != kind);
+            if clean {
+                cands.push(i);
+            }
+        }
         if cands.is_empty() {
             return;
         }
@@ -370,6 +385,41 @@ mod tests {
             let m = map(seed);
             for n in &m.nodes {
                 assert!(n.next.len() <= 3, "单个节点最多三个分叉");
+            }
+        }
+    }
+
+    #[test]
+    fn room_placement_rules_hold() {
+        for seed in 0..40 {
+            let m = map(seed);
+            for n in &m.nodes {
+                match n.kind {
+                    NodeKind::Elite => assert!(
+                        n.floor >= 5,
+                        "seed {seed}: 精英不该出现在第 {} 层",
+                        n.floor + 1
+                    ),
+                    // 休息点/商店不随机落在 Boss 前两层;最后一层是规定好的休息点
+                    NodeKind::Rest | NodeKind::Shop => assert!(
+                        n.floor != FLOORS - 2,
+                        "seed {seed}: 休息点/商店不该出现在第 {} 层",
+                        n.floor + 1
+                    ),
+                    NodeKind::Boss => assert_eq!(n.floor, FLOORS),
+                    _ => {}
+                }
+                // 同一条路径上不连续同类型(怪物除外)
+                for p in &n.prev {
+                    let parent = m.node(*p);
+                    if parent.kind != NodeKind::Monster {
+                        assert_ne!(
+                            parent.kind, n.kind,
+                            "seed {seed}: 第 {} 层出现连续同类型房间",
+                            n.floor + 1
+                        );
+                    }
+                }
             }
         }
     }

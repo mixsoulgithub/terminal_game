@@ -203,7 +203,8 @@ mod tests {
     fn map_screen_shows_legend_and_boss() {
         let app = App::new(5);
         let text = screen_text(&app, 110, 40);
-        assert!(text.contains("monster"), "地图缺少图例:\n{text}");
+        assert!(text.contains("merchant"), "地图缺少图例:\n{text}");
+        assert!(text.contains("elite"), "图例缺精英那一行:\n{text}");
         assert!(text.contains('B'), "缺少 Boss 节点");
         assert!(text.contains("$99"), "顶栏没画出来");
         assert!(text.contains("80/80"), "血量数字没画出来");
@@ -322,7 +323,7 @@ mod tests {
         let app = App::new(5);
         // 80x24 要能完整画出来
         let text = screen_text(&app, 80, 24);
-        assert!(text.contains("monster"), "80x24 下地图应该正常显示:\n{text}");
+        assert!(text.contains("merchant"), "80x24 下地图应该正常显示:\n{text}");
         let combat = app_in_combat(5, "three_sentries");
         let text = screen_text(&combat, 80, 24);
         assert!(text.contains("energy"), "80x24 下战斗界面应该正常:\n{text}");

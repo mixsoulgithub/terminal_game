@@ -37,13 +37,16 @@ pub fn selected() -> Style {
     Style::default().fg(SEL_FG).bg(SEL_BG).add_modifier(Modifier::BOLD)
 }
 
-/// 地图上各类房间的颜色:M 红、E 橙红、? 黄、R 红底、$ 金、T 亮黄、Boss 亮红
+/// 地图上各类房间的颜色与底色:
+/// E 红字 = 普通怪,E 红底 = 精英,R 红底(更亮)= 休息,? 黄 = 未知
 pub fn kind_style(kind: NodeKind) -> Style {
     match kind {
         NodeKind::Monster => Style::default().fg(BLOOD),
-        NodeKind::Elite => Style::default().fg(Color::Rgb(255, 140, 90)),
+        NodeKind::Elite => Style::default()
+            .fg(SEL_FG)
+            .bg(Color::Rgb(150, 30, 42))
+            .add_modifier(Modifier::BOLD),
         NodeKind::Event => Style::default().fg(YELLOW),
-        // 休息点是红底黑字,一眼就能认出来
         NodeKind::Rest => Style::default().fg(BG).bg(BLOOD),
         NodeKind::Shop => Style::default().fg(GOLD),
         NodeKind::Treasure => Style::default().fg(Color::Rgb(246, 226, 120)),
