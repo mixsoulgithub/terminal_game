@@ -38,7 +38,7 @@ options:
       --no-rainbow do not tint every glyph; keep only the moving light band
       --no-anim    disable the color flow (static neon)
       --fps <n>    animation frames per second (default 30)
-      --flow <x>   color flow speed multiplier (default 1.0)
+      --flow <x>   color flow speed multiplier (default 2.0)
   -h, --help       show this help
   -V, --version    show version
 
@@ -81,7 +81,7 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Parsed, String> {
         anim: true,
         rainbow: true,
         fps: 30.0,
-        flow: 1.0,
+        flow: 2.0,
     };
     let mut it = argv.peekable();
     while let Some(arg) = it.next() {
@@ -516,7 +516,7 @@ mod tests {
         assert!(a.wrap && a.anim && a.rainbow && !a.numbers);
         assert!(!a.follow && !a.word_wrap);
         assert_eq!(a.fps, 30.0);
-        assert_eq!(a.flow, 1.0);
+        assert_eq!(a.flow, 2.0);
     }
 
     #[test]

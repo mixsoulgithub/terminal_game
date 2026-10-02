@@ -25,7 +25,7 @@ terminal_game
 
 less 式分页器,底栏是一根流动的霓虹灯管,正文每个字形按视口位置铺满整圈色相(默认开启),另有一条高斯光带扫过。用 Rust + ratatui,走 24 位真彩。
 名字、过滤、行数、进度、开关全部压在底栏一行里,没有顶栏。
-静止时不向终端写任何字节,流动时约 605 KB/s(`--no-rainbow` 约 245 KB/s;100x40,见 `neon/README.md` 的实测表)。
+静止时不向终端写任何字节,流动时约 1.15 MB/s(`--no-rainbow` 约 618 KB/s;100x40,见 `neon/README.md` 的实测表)。
 
 ```bash
 cd neon
