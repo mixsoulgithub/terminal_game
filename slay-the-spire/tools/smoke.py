@@ -99,6 +99,7 @@ def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
     # 战斗里的节奏:打最多 4 张攻击牌,找不到攻击牌连续挪 5 次就结束回合
     plays = 0
     moves = 0
+    checked_history = False
     for _ in range(steps):
         text = screen()
         where = current(text)
@@ -109,6 +110,15 @@ def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
         if where != "COMBAT":
             plays = moves = 0
         if where == "MAP":
+            # 打第一场之后翻一次历史记录,确认叠加层开了也能正常关掉
+            if not checked_history and seen >= {"MAP", "COMBAT", "REWARD"}:
+                send("H")
+                hist = screen()
+                # 历史记录默认停在最新一条,所以用标题而不是"条目数"那一行来判断
+                if "history  (j/k scroll, H or esc close)" not in hist:
+                    raise AssertionError(f"seed {seed}: H 没打开历史记录:\n{hist}")
+                send("Escape")
+                checked_history = True
             send("Enter")
         elif where == "COMBAT":
             kind = selected_kind(text)

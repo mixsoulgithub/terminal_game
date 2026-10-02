@@ -404,13 +404,22 @@ fn pick(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     };
     let cands = app.run.picker_candidates();
+    let upgrading = p.purpose == crate::core::run::PickPurpose::Upgrade;
     let mut rows: Vec<Row> = Vec::new();
     let mut details: Vec<String> = Vec::new();
     for (slot, deck_idx) in cands.iter().enumerate() {
         let card = &app.run.player.deck[*deck_idx];
-        rows.push(card_row(slot, card));
+        // 升级时直接给升级后的样子:名字、费用、描述都是升级后的
+        let shown = if upgrading {
+            let mut preview = card.clone();
+            preview.upgrade();
+            preview
+        } else {
+            card.clone()
+        };
+        rows.push(card_row(slot, &shown));
         if slot == p.index {
-            details = card_details(card);
+            details = card_details(&shown);
         }
     }
     if rows.is_empty() {

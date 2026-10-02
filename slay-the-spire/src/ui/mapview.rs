@@ -131,33 +131,39 @@ fn render_floor(buf: &mut Buffer, x: u16, y0: u16, app: &App, floor: usize, slot
     }
 }
 
-/// 连线:写在两层之间那一列上,从父节点那行一路斜到子节点那行
+/// 连线:逐个"子节点"画一条从父节点到它的斜线.
+/// 一个父节点最多连三个子节点,只画第一条会把岔路藏起来;
+/// 而按子节点画,朝上的走上一半行、朝下的走下一半行,彼此不会压到.
 fn render_edges(buf: &mut Buffer, x: u16, y0: u16, run: &Run, floor: usize, slot_h: u16) {
     let reach = run.reachable();
-    for i in run.map.row(floor) {
-        let node = run.map.node(*i);
-        let Some(child) = node.next.first() else {
+    let upper = floor + 1;
+    if upper >= run.map.total_floors() {
+        return;
+    }
+    let col_x = x + CELL_W - 1;
+    let row_of = |col: usize| y0 + (col as u16) * slot_h;
+    for child in run.map.row(upper) {
+        let node = run.map.node(*child);
+        let Some(parent) = node.prev.first() else {
             continue;
         };
-        let c = run.map.node(*child);
-        let yp = y0 + (node.col as u16) * slot_h;
-        let yc = y0 + (c.col as u16) * slot_h;
-        let style = if reach.contains(i) {
+        let yp = row_of(run.map.node(*parent).col);
+        let yc = row_of(node.col);
+        let style = if reach.contains(parent) {
             Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
         } else {
             theme::dim()
         };
-        let col = x + CELL_W - 1;
         if yp == yc {
             if yp < buf.area.height {
-                put(buf, col, yp, "-", style);
+                put(buf, col_x, yp, "-", style);
             }
             continue;
         }
         let ch = if yc > yp { '\\' } else { '/' };
         for y in (yp.min(yc) + 1)..yp.max(yc) {
             if y < buf.area.height {
-                put(buf, col, y, &ch.to_string(), style);
+                put(buf, col_x, y, &ch.to_string(), style);
             }
         }
     }

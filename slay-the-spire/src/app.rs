@@ -122,7 +122,11 @@ impl App {
                 self.potion_pending = None;
                 self.toss_pending = false;
                 self.overlay = if other == ov { None } else { Some(other) };
-                self.overlay_scroll = 0;
+                self.overlay_scroll = if other == Overlay::History {
+                    u16::MAX / 2
+                } else {
+                    0
+                };
                 return;
             }
             self.overlay_key(key);
@@ -161,7 +165,8 @@ impl App {
 
     fn open_overlay(&mut self, ov: Overlay) {
         self.overlay = Some(ov);
-        self.overlay_scroll = 0;
+        // 历史记录先看最新的一条,其他列表从头看
+        self.overlay_scroll = if ov == Overlay::History { u16::MAX / 2 } else { 0 };
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
@@ -729,6 +734,7 @@ impl App {
             "map" | "m" => self.open_overlay(Overlay::Map),
             "relics" | "r" => self.open_overlay(Overlay::Relics),
             "potions" | "p" => self.open_overlay(Overlay::Potions),
+            "history" | "log" | "H" => self.open_overlay(Overlay::History),
             "seed" => self.info(format!("seed {}", self.run.seed)),
             "new" | "restart" => {
                 let seed = if rest.is_empty() {
@@ -810,6 +816,7 @@ impl App {
                 ("j/k", "fork"),
                 ("enter", "go"),
                 ("m d r p", "lists"),
+                ("H", "history"),
                 ("?", "help"),
                 (":", "cmd"),
             ],
@@ -819,6 +826,7 @@ impl App {
                 ("enter", "play"),
                 ("e", "end turn"),
                 ("m d r p", "lists"),
+                ("H", "history"),
             ],
             Screen::Reward => vec![
                 ("j/k", "pick"),
@@ -852,6 +860,7 @@ impl App {
             ("m", "map, look along the road with h/l"),
             ("r", "relics"),
             ("p", "potions (then 1-3 to drink, t then 1-3 to toss)"),
+            ("H", "history: everything that happened in this run"),
             ("g G", "first / last item in a list"),
             ("c", "reward: skip the card choices"),
             ("?", "this help"),
@@ -892,6 +901,7 @@ fn overlay_key_of(code: KeyCode) -> Option<Overlay> {
         KeyCode::Char('m') => Some(Overlay::Map),
         KeyCode::Char('r') => Some(Overlay::Relics),
         KeyCode::Char('p') => Some(Overlay::Potions),
+        KeyCode::Char('H') => Some(Overlay::History),
         _ => None,
     }
 }

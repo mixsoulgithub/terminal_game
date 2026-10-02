@@ -17,6 +17,8 @@ pub enum Overlay {
     Deck,
     Relics,
     Potions,
+    /// 一整局发生过的事
+    History,
     Help,
 }
 
@@ -27,6 +29,7 @@ impl Overlay {
             Overlay::Deck => "cards",
             Overlay::Relics => "relics",
             Overlay::Potions => "potions",
+            Overlay::History => "history",
             Overlay::Help => "help",
         }
     }
@@ -38,6 +41,7 @@ impl Overlay {
             Overlay::Deck => "d",
             Overlay::Relics => "r",
             Overlay::Potions => "p",
+            Overlay::History => "H",
             Overlay::Help => "?",
         }
     }
@@ -123,6 +127,21 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
                 theme::fg(theme::INFO),
             ));
         }
+        Overlay::History => {
+            out.push((
+                format!("{} entries in this run", run.history.len()),
+                theme::fg(theme::INFO),
+            ));
+            for line in run.history.iter() {
+                // 缩进的行是从战斗日志抄过来的
+                let style = if line.starts_with("  ") {
+                    theme::dim()
+                } else {
+                    theme::fg(theme::FG)
+                };
+                out.push((line.clone(), style));
+            }
+        }
         Overlay::Help => {
             for (k, v) in app.help_rows() {
                 out.push((format!("  {:<16} {}", k, v), theme::fg(theme::FG)));
@@ -157,7 +176,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     draw_box(buf, rect, &title, theme::fg(theme::SEL_FG), theme::fg(theme::INFO));
     let rows = lines(app, ov);
     let inner_h = rect.height.saturating_sub(2) as usize;
-    let scroll = (app.overlay_scroll as usize).min(rows.len().saturating_sub(1));
+    // 夹在"最多能滚到最后一屏"的位置:历史记录打开时就是直接看最新几条
+    let scroll = (app.overlay_scroll as usize).min(rows.len().saturating_sub(inner_h));
     let inner_w = rect.width.saturating_sub(4) as usize;
     for i in 0..inner_h {
         let Some((text, style)) = rows.get(scroll + i) else {

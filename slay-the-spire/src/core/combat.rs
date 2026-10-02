@@ -35,6 +35,8 @@ pub enum LogKind {
 pub struct LogLine {
     pub kind: LogKind,
     pub text: String,
+    /// 递增序号:一局的"历史记录"靠它只抄一次日志
+    pub seq: u64,
 }
 
 pub struct Enemy {
@@ -105,6 +107,8 @@ pub struct Combat {
     pub kind: EnemyKind,
     /// 本场对敌人造成的总伤害,结算界面用
     pub damage_dealt: i32,
+    /// 已经产出的日志条数(日志会截断,所以用序号而不是长度)
+    pub log_seq: u64,
     relic_thorns: i32,
 }
 
@@ -179,6 +183,7 @@ impl Combat {
             encounter_id: enc.id,
             kind: enc.kind,
             damage_dealt: 0,
+            log_seq: 0,
             relic_thorns: 0,
         };
 
@@ -244,7 +249,12 @@ impl Combat {
     }
 
     fn push_log(&mut self, kind: LogKind, text: String) {
-        self.log.push(LogLine { kind, text });
+        self.log_seq += 1;
+        self.log.push(LogLine {
+            kind,
+            text,
+            seq: self.log_seq,
+        });
         if self.log.len() > 200 {
             self.log.drain(0..100);
         }

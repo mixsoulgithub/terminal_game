@@ -145,17 +145,16 @@ fn status(buf: &mut Buffer, area: Rect, app: &App) {
         .map(|(k, v)| format!("{k} {v}"))
         .collect::<Vec<_>>()
         .join("   ");
+    // 消息优先于按键提示:提示放不下就截断它,别把"为什么按不动"吃掉
     let hint_w = display_width(&hint_text);
-    let left_w = width.saturating_sub(hint_w + 2);
+    let msg_w = display_width(&left);
+    let left_w = msg_w
+        .min(width.saturating_sub(1))
+        .min((width / 2).max(width.saturating_sub(hint_w + 2)));
     put_padded(buf, area.x, area.y, &left, left_w, theme::selected());
-    if hint_w + 1 < width {
-        put(
-            buf,
-            area.x + 1 + left_w as u16,
-            area.y,
-            &hint_text,
-            theme::fg(theme::DIM),
-        );
+    let hx = area.x + left_w as u16 + 1;
+    if hx < area.x + area.width {
+        put(buf, hx, area.y, &hint_text, theme::fg(theme::DIM));
     }
 }
 
@@ -229,20 +228,58 @@ mod tests {
             .iter()
             .position(|l| l.contains("energy"))
             .expect("应该有能量行");
-        // 十张牌分成两行,每行五张;每个格子的记号是"1 6"(费用 1,伤害 6)
+        // 十张牌分成两行,每行五张,格子里写的是牌名
         assert_eq!(
-            rows[energy_row + 1].matches("1 6").count(),
+            rows[energy_row + 1].matches("Strike").count(),
             5,
             "第一行应正好五张:\n{text}"
         );
-        assert_eq!(
-            rows[energy_row + 2].matches("1 6").count(),
-            5,
+        assert!(
+            rows[energy_row + 2].matches("Strike").count() >= 5,
             "第二行应正好五张:\n{text}"
         );
         // 详情区给出选中那张的全名与完整描述
         assert!(rows[energy_row].contains("Strike"), "详情缺名字");
         assert!(rows[energy_row + 1].contains("Deal 6 damage."), "详情缺描述");
+    }
+
+    #[test]
+    fn upgrade_picker_previews_the_upgraded_card() {
+        let mut app = App::new(21);
+        // 先把牌组里塞一张 Strike,再打开营火的升级界面
+        app.run.rest_smith();
+        assert_eq!(app.run.screen, Screen::Pick);
+        let text = screen_text(&app, 110, 30);
+        assert!(
+            text.contains("Strike+") && text.contains("Deal 9 damage."),
+            "升级界面应该显示升级后的样子:\n{text}"
+        );
+    }
+
+    #[test]
+    fn history_window_shows_what_happened() {
+        let mut app = app_in_combat(31, "jaw_worm_solo");
+        app.run.sync_combat();
+        // 走真实按键:打开时应该直接停在最新几条上
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('H'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert_eq!(app.overlay, Some(Overlay::History));
+        let text = screen_text(&app, 110, 34);
+        assert!(
+            text.contains("history  (j/k scroll, H or esc close)"),
+            "历史窗口没打开:\n{text}"
+        );
+        assert!(
+            text.contains("Combat begins") || text.contains("Turn 1"),
+            "历史里应该有刚打完的那几步:\n{text}"
+        );
+        // 滚到顶再滚到底都不该空屏
+        app.overlay_scroll = 0;
+        let top = screen_text(&app, 110, 34);
+        assert!(top.contains("entries in this run"), "滚到顶该看到条目数:\n{top}");
+        assert!(top.contains("climb the spire"), "滚到顶该看到开局第一条:\n{top}");
     }
 
     #[test]

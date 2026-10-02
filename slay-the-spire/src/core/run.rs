@@ -1,7 +1,5 @@
 // 一局(run)的流程:地图推进、战斗结算、奖励、商店、事件、营火、牌组管理.
 // 所有状态都在这里,UI 只读这些字段并调用这里的方法改状态.
-use std::collections::VecDeque;
-
 use crate::core::card::{CardDef, CardInstance, Rarity};
 use crate::core::cards;
 use crate::core::combat::{Combat, CombatSetup, Phase};
@@ -21,6 +19,10 @@ pub const STARTING_HP: i32 = 80;
 pub const STARTING_GOLD: i32 = 99;
 /// 营火休息回复比例(百分比)
 pub const REST_HEAL_PCT: i32 = 30;
+/// 历史记录上限
+const HISTORY_LIMIT: usize = 4000;
+/// 超限时一次丢掉多少条
+const HISTORY_TRIM: usize = 1000;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
@@ -177,7 +179,10 @@ pub struct Run {
     pub treasure: Option<&'static RelicDef>,
     pub rest_index: usize,
     pub stats: Stats,
-    pub messages: VecDeque<String>,
+    /// 一整局发生过的所有事,用 H 翻看
+    pub history: Vec<String>,
+    /// 已经抄进历史的战斗日志序号
+    combat_log_seen: u64,
     /// 本局还没出现过的遗物
     relic_pool: Vec<&'static RelicDef>,
     last_encounter: &'static str,
@@ -223,7 +228,8 @@ impl Run {
             treasure: None,
             rest_index: 0,
             stats: Stats::default(),
-            messages: VecDeque::new(),
+            history: Vec::new(),
+            combat_log_seen: 0,
             relic_pool,
             last_encounter: "",
         };
@@ -234,10 +240,12 @@ impl Run {
         run
     }
 
+    /// 记一笔:既进历史记录,也更新界面上的提示
     fn say(&mut self, text: impl Into<String>) {
-        self.messages.push_back(text.into());
-        while self.messages.len() > 120 {
-            self.messages.pop_front();
+        let text = text.into();
+        self.history.push(text);
+        if self.history.len() > HISTORY_LIMIT {
+            self.history.drain(0..HISTORY_TRIM);
         }
     }
 
@@ -332,6 +340,7 @@ impl Run {
             relics: self.player.relics.clone(),
         };
         self.combat = Some(Combat::new(enc, setup, seed));
+        self.combat_log_seen = 0;
         self.screen = Screen::Combat;
         self.stats.fights += 1;
     }
@@ -350,8 +359,30 @@ impl Run {
         self.combat.as_mut()
     }
 
+    /// 把这场战斗里还没抄过的日志行追加到历史记录
+    fn absorb_combat_log(&mut self) {
+        let Some(c) = self.combat.as_ref() else {
+            return;
+        };
+        let fresh: Vec<String> = c
+            .log
+            .iter()
+            .filter(|l| l.seq > self.combat_log_seen)
+            .map(|l| format!("  {}", l.text))
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        self.combat_log_seen = c.log_seq;
+        self.history.extend(fresh);
+        if self.history.len() > HISTORY_LIMIT {
+            self.history.drain(0..HISTORY_TRIM);
+        }
+    }
+
     /// 每次战斗内操作之后调用:同步生命、处理胜负
     pub fn sync_combat(&mut self) {
+        self.absorb_combat_log();
         let Some(c) = self.combat.as_ref() else {
             return;
         };
@@ -380,6 +411,7 @@ impl Run {
     }
 
     fn resolve_victory(&mut self) {
+        self.absorb_combat_log();
         let Some(c) = self.combat.take() else {
             return;
         };
@@ -431,6 +463,7 @@ impl Run {
     }
 
     fn resolve_defeat(&mut self) {
+        self.absorb_combat_log();
         self.combat = None;
         self.say("you fell in battle");
         self.screen = Screen::Death;
@@ -507,7 +540,7 @@ impl Run {
                     return Err("no potion here".to_string());
                 };
                 if !self.add_potion(def) {
-                    return Err("no free potion slot".to_string());
+                    return Err("no free potion slot: press p, then t+1-3 to toss one".to_string());
                 }
                 self.mark_reward(|r| r.potion_taken = true);
                 Ok(format!("potion gained: {}", def.name))
@@ -652,7 +685,7 @@ impl Run {
             ShopItem::Potion(def, _) => {
                 let def = *def;
                 if !self.add_potion(def) {
-                    return Err("no free potion slot".to_string());
+                    return Err("no free potion slot: press p, then t+1-3 to toss one".to_string());
                 }
                 self.spend_gold(price);
                 self.shop.as_mut().unwrap().sold[i] = true;
@@ -1437,6 +1470,82 @@ mod tests {
         assert!(r.player.gold >= 0 || before >= 0);
         r.leave_event();
         assert_eq!(r.screen, Screen::Map);
+    }
+
+    #[test]
+    fn history_records_the_run() {
+        let mut r = run(67);
+        let first = r.history.len();
+        assert!(first > 0, "开局就该有一条");
+        let start = r.reachable()[0];
+        r.enter_node(start).unwrap();
+        assert!(r.history.len() > first, "进入房间要记一笔");
+        {
+            let c = r.combat.as_mut().unwrap();
+            c.play_card(0, Some(0)).ok();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = Phase::Won;
+        }
+        r.sync_combat();
+        let joined = r.history.join("\n");
+        assert!(joined.contains("-- Turn 1 --"), "战斗日志要抄进历史");
+        assert!(joined.contains("dealt") || joined.contains("you play"));
+    }
+
+    #[test]
+    fn fruit_juice_works_on_the_map() {
+        let mut r = run(83);
+        let def = potions::POTIONS
+            .iter()
+            .find(|p| p.id == "fruit_juice")
+            .expect("果汗药水应该在池子里");
+        assert!(def.out_of_combat, "果汗要能在地图上喝");
+        r.player.potions[0] = Some(def);
+        let (hp, max_hp) = (r.player.hp, r.player.max_hp);
+        r.quaff_potion(0, None).unwrap();
+        assert_eq!(r.player.max_hp, max_hp + 5);
+        assert_eq!(r.player.hp, hp + 5);
+        assert!(r.player.potions[0].is_none(), "喝完该腾出格子");
+    }
+
+    #[test]
+    fn potion_reward_needs_a_free_slot() {
+        let mut r = run(71);
+        // 三格占满时拿不下药水,腾出一格就能拿
+        let def = crate::core::potions::POTIONS.first().unwrap();
+        let start = r.reachable()[0];
+        r.enter_node(start).unwrap();
+        {
+            let c = r.combat.as_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = Phase::Won;
+        }
+        r.sync_combat();
+        let reward = r.reward.as_mut().unwrap();
+        reward.potion = Some(def);
+        reward.potion_taken = false;
+        for slot in r.player.potions.iter_mut() {
+            *slot = Some(def);
+        }
+        r.reward_clamp();
+        // 选中药水那一行
+        let slots = r.reward_slots();
+        let idx = slots
+            .iter()
+            .position(|s| matches!(s, RewardSlot::Potion))
+            .unwrap();
+        r.reward.as_mut().unwrap().index = idx;
+        assert!(r.reward_take().is_err(), "满格时不该拿得下");
+        assert!(r.reward_slots().contains(&RewardSlot::Potion), "拿不下就该还在");
+        // 腾一格
+        r.player.potions[0] = None;
+        let msg = r.reward_take().unwrap();
+        assert!(msg.starts_with("potion gained"), "腾出格子后应该能拿走");
+        assert!(r.player.potions.iter().flatten().count() == 3);
     }
 
     #[test]

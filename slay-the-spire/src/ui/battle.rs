@@ -6,7 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::App;
-use crate::core::card::{CardInstance, Cost, Effect};
+use crate::core::card::{CardInstance, Cost};
 use crate::core::combat::{Combat, LogKind};
 use crate::core::enemy::Intent;
 use crate::ui::theme;
@@ -188,9 +188,26 @@ fn render_hand(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     }
     let narrow = area.width < NARROW;
     let rows_h = 2u16;
+    let gx = area.x + 2;
+    // 格子宽度跟着手牌里最长的名字走,尽量把名字写全
+    let longest = c
+        .hand
+        .iter()
+        .map(|x| display_width(&x.label()) as u16)
+        .max()
+        .unwrap_or(6);
+    let cell_w = if narrow {
+        ((area.width.saturating_sub(4)) / GRID_COLS as u16).clamp(7, 20)
+    } else {
+        // 右边给详情留约 26 格,剩下的都给格子
+        let room = ((area.width.saturating_sub(26)) / GRID_COLS as u16).clamp(7, 20);
+        (longest + 1).clamp(7, 20).min(room)
+    };
+    let grid_w = cell_w * GRID_COLS as u16;
+
     // 能量写在手牌区第一行,离手牌最近;后面跟一句当前能不能打出去的提示
     let energy = format!("{}/{}", c.energy, c.max_energy);
-    let mut ex = area.x + 2;
+    let mut ex = gx;
     ex = put2(
         buf,
         ex,
@@ -200,15 +217,16 @@ fn render_hand(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
     );
     ex = put2(buf, ex, area.y, 12, " energy", theme::dim());
+    let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
     let reason = if c.hand.is_empty() {
         None
     } else {
-        c.blocked_reason(app.hand_sel.min(c.hand.len() - 1))
+        c.blocked_reason(sel)
     };
     let hint = match reason {
         Some(r) => format!("cannot play: {r}"),
         None if c.hand.is_empty() => "no cards - press e to end the turn".to_string(),
-        None => match c.hand.get(app.hand_sel.min(c.hand.len() - 1)) {
+        None => match c.hand.get(sel) {
             Some(card) if card.needs_target() => match c.enemies.get(app.target_sel) {
                 Some(e) if e.alive() => format!("[enter] play on {}", e.name),
                 _ => "[enter] play".to_string(),
@@ -221,25 +239,38 @@ fn render_hand(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     } else {
         theme::dim()
     };
-    let _ = put2(buf, ex + 2, area.y, 40, &hint, hint_style);
-    // 格子整体缩进两格,和顶栏/能量的左边界对齐
-    let gx = area.x + 2;
+    // 提示写在能量后面,宽度刚好到格子/详情列为止,免得和右边的详情挤在一起
+    let limit = if narrow {
+        area.x + area.width
+    } else {
+        gx + grid_w + 1
+    };
+    let hint_room = (limit).saturating_sub(ex + 2) as usize;
+    let _ = put2(buf, ex + 2, area.y, hint_room, &hint, hint_style);
+
+    render_cells(
+        buf,
+        Rect::new(gx, area.y + 1, grid_w, rows_h),
+        app,
+        c,
+        cell_w,
+    );
     if narrow {
         // 窄屏:详情单独占最后一行的整宽
-        let cell_w = ((area.width.saturating_sub(4)) / GRID_COLS as u16).clamp(6, 16);
-        let grid = Rect::new(gx, area.y + 1, cell_w * GRID_COLS as u16, rows_h);
-        render_cells(buf, grid, app, c, cell_w);
         let y = area.y + 1 + rows_h;
         if y < area.y + area.height {
             let text = selected_text(app, c);
-            put_padded(buf, gx, y, &text, (area.width as usize).saturating_sub(5), theme::fg(theme::FG));
+            put_padded(
+                buf,
+                gx,
+                y,
+                &text,
+                (area.width as usize).saturating_sub(5),
+                theme::fg(theme::FG),
+            );
         }
         return;
     }
-    // 宽屏:左格子右详情
-    let cell_w = ((area.width * 45 / 100) / GRID_COLS as u16).clamp(6, 14);
-    let grid_w = cell_w * GRID_COLS as u16;
-    render_cells(buf, Rect::new(gx, area.y + 1, grid_w, rows_h), app, c, cell_w);
     let dx = area.x + grid_w + 3;
     let dw = (area.x + area.width).saturating_sub(dx) as usize;
     if dw >= 16 {
@@ -261,109 +292,29 @@ fn render_cells(buf: &mut Buffer, area: Rect, app: &App, c: &Combat, cell_w: u16
         };
         let selected = slot == app.hand_sel;
         let playable = c.blocked_reason(slot).is_none();
-        draw_cell(buf, x, y, cell_w.saturating_sub(1), card, selected, playable);
+        draw_cell(buf, x, y, cell_w, card, selected, playable);
     }
 }
 
-/// 一个速记格子:费用黄、伤害红、+格挡蓝、-生命红……
+/// 一个速记格子:只写牌名,颜色按牌的种类;打不出去的整格压暗(等于告诉你能量不够)
 fn draw_cell(buf: &mut Buffer, x: u16, y: u16, w: u16, card: &CardInstance, selected: bool, playable: bool) {
     if w == 0 {
         return;
     }
-    let bg = if selected { theme::SEL_BG } else { theme::BG };
-    put_padded(buf, x, y, "", w as usize, Style::default().bg(bg).fg(theme::FG));
-    let mut cx = x;
-    for (text, color) in card_tokens(card) {
-        if cx >= x + w {
-            break;
-        }
-        let style = if !playable {
-            theme::dim()
-        } else if selected {
-            Style::default()
-                .fg(color)
-                .bg(theme::SEL_BG)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme::fg(color)
-        };
-        cx = put2(buf, cx, y, (x + w - cx) as usize, &text, style);
-        if cx < x + w {
-            cx = put2(buf, cx, y, (x + w - cx) as usize, " ", Style::default().bg(bg));
-        }
-    }
-}
-
-/// 把一张牌压成"费用 + 效果"的短记号,颜色和顶栏同一套
-fn card_tokens(card: &CardInstance) -> Vec<(String, Color)> {
-    let mut out: Vec<(String, Color)> = Vec::new();
-    match card.cost() {
-        Cost::Fixed(n) => out.push((n.to_string(), theme::ENERGY)),
-        Cost::X => out.push(("X".to_string(), theme::ENERGY)),
-        Cost::Unplayable => out.push(("-".to_string(), theme::DIM)),
-    }
-    for e in card.effects() {
-        let tok = match *e {
-            Effect::Damage { amount, times } => Some((
-                if times > 1 {
-                    format!("{amount}x{times}")
-                } else {
-                    amount.to_string()
-                },
-                theme::BAD,
-            )),
-            Effect::DamageAll { amount, times } => Some((
-                if times > 1 {
-                    format!("{amount}x{times}A")
-                } else {
-                    format!("{amount}A")
-                },
-                theme::BAD,
-            )),
-            Effect::DamageRandom { amount, times } => Some((format!("{amount}R{times}"), theme::BAD)),
-            Effect::DamageEqualBlock => Some(("=B".to_string(), theme::BAD)),
-            Effect::DamageWithBonus { amount, .. } => {
-                Some(((amount + card.bonus).to_string(), theme::BAD))
-            }
-            Effect::DamagePerStrike { base, .. } => Some((format!("{base}+"), theme::BAD)),
-            Effect::DamageStrengthMult { amount, .. } => Some((amount.to_string(), theme::BAD)),
-            Effect::DamageIfVulnerable { amount, .. } => Some((amount.to_string(), theme::BAD)),
-            Effect::DamageAndKillMaxHp { amount, .. } => Some((amount.to_string(), theme::BAD)),
-            Effect::DamagePerExhausted { per } => Some((format!("{per}E"), theme::BAD)),
-            Effect::DamageAllX { per } => Some((format!("{per}X"), theme::BAD)),
-            Effect::Reaper { amount } => Some((format!("{amount}A"), theme::BAD)),
-            Effect::Block { amount } => Some((format!("+{amount}"), theme::BLOCK)),
-            Effect::DoubleBlock => Some(("+Bx2".to_string(), theme::BLOCK)),
-            Effect::BlockPerExhausted { per } => Some((format!("+{per}E"), theme::BLOCK)),
-            Effect::LoseHp { amount } => Some((format!("-{amount}"), theme::BAD)),
-            Effect::GainEnergy { n } => Some((format!("e{n}"), theme::ENERGY)),
-            Effect::Draw { n } => Some((format!("d{n}"), theme::INFO)),
-            Effect::AddSelfStatus { status, n }
-            | Effect::AddTargetStatus { status, n }
-            | Effect::AddAllEnemiesStatus { status, n } => Some((
-                format!("{n}{}", status.short()),
-                if status.is_debuff() {
-                    theme::DEBUFF
-                } else {
-                    theme::BUFF
-                },
-            )),
-            Effect::DoubleSelfStatus(s) => Some((format!("{}x2", s.short()), theme::BUFF)),
-            Effect::ExhaustHand
-            | Effect::ExhaustRandomInHand { .. }
-            | Effect::ExhaustNonAttacks { .. }
-            | Effect::ExhaustSelf => Some(("exh".to_string(), theme::DIM)),
-            Effect::AddCardToDraw { .. } | Effect::AddCardToDiscard { .. } => {
-                Some(("add".to_string(), theme::DIM))
-            }
-            Effect::UpgradeRandomInHand { .. } => Some(("up".to_string(), theme::INFO)),
-            Effect::BonusSelf { .. } => None,
-        };
-        if let Some(tok) = tok {
-            out.push(tok);
-        }
-    }
-    out
+    let color = if playable {
+        theme::card_color(card.kind(), card.rarity())
+    } else {
+        theme::DIM
+    };
+    let style = if selected {
+        Style::default()
+            .fg(color)
+            .bg(theme::SEL_BG)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme::fg(color)
+    };
+    put_padded(buf, x, y, &format!(" {}", card.label()), w as usize, style);
 }
 
 /// 选中那张牌的详情:名字 + 费用/类型 + 完整描述
