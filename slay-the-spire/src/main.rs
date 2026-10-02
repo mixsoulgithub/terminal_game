@@ -121,6 +121,9 @@ fn run(seed: u64) -> io::Result<()> {
     app.clamp();
     let result = (|| -> io::Result<()> {
         loop {
+            // 地图要用终端宽度算一屏放几层,所以每轮都把尺寸交给 App
+            let size = terminal.size()?;
+            app.term_size = (size.width, size.height);
             terminal.draw(|f| ui::render(f, &app))?;
             if app.quit {
                 break;

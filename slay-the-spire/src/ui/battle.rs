@@ -72,10 +72,24 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
             put(buf, x + 2, y, &fit("slain", inner_w), theme::dim());
             continue;
         }
-        // 血条
-        let ratio = e.hp_ratio();
-        let hp = format!("HP [{}] {}/{}", theme::bar(ratio, 8), e.hp, e.max_hp);
-        put(buf, x + 2, y, &fit(&hp, inner_w), theme::fg(theme::hp_color(ratio)));
+        // 血量 / 上限 / 格挡:同样是数字,不用血条
+        let hp = format!("  {}/{}", e.hp, e.max_hp);
+        let bx = put2(
+            buf,
+            x + 2,
+            y,
+            inner_w,
+            &hp,
+            theme::fg(theme::BAD),
+        );
+        put2(
+            buf,
+            bx,
+            y,
+            inner_w.saturating_sub((bx - x - 2) as usize),
+            &format!("/{}", e.block),
+            theme::fg(theme::BLOCK),
+        );
         y += 1;
         if y >= area.y + area.height - 1 {
             continue;
@@ -110,6 +124,13 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
             theme::fg(theme::BLOCK),
         );
     }
+}
+
+/// 从 x 开始写一段文本,返回下一个可写位置(用于同一行拼不同颜色)
+fn put2(buf: &mut Buffer, x: u16, y: u16, width: usize, text: &str, style: Style) -> u16 {
+    let t = truncate(text, width);
+    put(buf, x, y, &t, style);
+    x + display_width(&t) as u16
 }
 
 fn intent_text(c: &Combat, i: usize) -> (String, ratatui::style::Color) {

@@ -1,5 +1,5 @@
 // 输入状态机:所有键位都在这里,UI 只读状态.
-// 操作风格向 vim 靠:hjkl 移动、enter 确认、esc 取消、: 开命令行.
+// 操作风格向 vim 靠:地图用 h/l 往前后看路、j/k 选岔路,enter 确认,esc 取消,: 开命令行.
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::core::run::{Run, Screen};
@@ -21,8 +21,12 @@ pub struct App {
     pub hand_sel: usize,
     /// 敌人光标
     pub target_sel: usize,
-    /// 可达节点里的选择序号
+    /// 可达节点里的选择序号(岔路)
     pub map_sel: usize,
+    /// 地图视野的起始层:l 往前看,h 往后看
+    pub map_scroll: usize,
+    /// 最近一次已知的终端尺寸,地图要用它算一屏放几层
+    pub term_size: (u16, u16),
     pub rest_index: usize,
     /// 等待选定目标的药水槽
     pub potion_pending: Option<usize>,
@@ -42,9 +46,11 @@ impl App {
             hand_sel: 0,
             target_sel: 0,
             map_sel: 0,
+            map_scroll: 0,
+            term_size: (100, 30),
             rest_index: 0,
             potion_pending: None,
-            msg: "hjkl to move, enter to confirm, ? for help, : for commands".to_string(),
+            msg: "h/l look along the road, j/k pick a fork, enter to go".to_string(),
             warn: false,
             quit: false,
         }
@@ -59,6 +65,7 @@ impl App {
         self.hand_sel = 0;
         self.target_sel = 0;
         self.map_sel = 0;
+        self.map_scroll = 0;
         self.rest_index = 0;
         self.potion_pending = None;
         self.info(format!("new run, seed {seed}"));
@@ -277,21 +284,51 @@ impl App {
 
     // ---- 地图 ----
 
+    /// 一屏能放几层(和 ui 用同一套算法)
+    fn visible_floors(&self) -> usize {
+        crate::ui::mapview::visible_floors(self.term_size.0 as usize, self.run.map.total_floors())
+    }
+
+    /// 把视野挪到选中节点附近,保证光标一定看得见
+    fn follow_selection(&mut self) {
+        let reach = self.run.reachable();
+        let focus = match reach.get(self.map_sel.min(reach.len().saturating_sub(1))) {
+            Some(i) => self.run.map.node(*i).floor,
+            None => self.run.floor(),
+        };
+        let visible = self.visible_floors();
+        let max_start = self.run.map.total_floors().saturating_sub(visible);
+        self.map_scroll = focus.saturating_sub(visible / 2).min(max_start);
+    }
+
     fn map_key(&mut self, key: KeyEvent) {
         let reach_len = self.run.reachable().len();
+        let total = self.run.map.total_floors();
+        let visible = self.visible_floors();
+        let max_start = total.saturating_sub(visible);
         match key.code {
-            KeyCode::Char('j') | KeyCode::Char('l') | KeyCode::Right | KeyCode::Down => {
+            // 往前后看路
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.map_scroll = (self.map_scroll + 1).min(max_start);
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.map_scroll = self.map_scroll.saturating_sub(1);
+            }
+            // 选岔路
+            KeyCode::Char('j') | KeyCode::Down => {
                 if reach_len > 0 {
                     self.map_sel = (self.map_sel + 1) % reach_len;
+                    self.follow_selection();
                 }
             }
-            KeyCode::Char('k') | KeyCode::Char('h') | KeyCode::Left | KeyCode::Up => {
+            KeyCode::Char('k') | KeyCode::Up => {
                 if reach_len > 0 {
                     self.map_sel = (self.map_sel + reach_len - 1) % reach_len;
+                    self.follow_selection();
                 }
             }
-            KeyCode::Char('g') => self.map_sel = 0,
-            KeyCode::Char('G') => self.map_sel = reach_len.saturating_sub(1),
+            KeyCode::Char('g') => self.map_scroll = 0,
+            KeyCode::Char('G') => self.map_scroll = max_start,
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let reach = self.run.reachable();
                 let Some(node) = reach.get(self.map_sel.min(reach.len().saturating_sub(1))) else {
@@ -305,6 +342,7 @@ impl App {
                         self.map_sel = 0;
                         self.hand_sel = 0;
                         self.rest_index = 0;
+                        self.follow_selection();
                         self.info(format!(
                             "floor {}: {}",
                             self.run.map.node(node).floor + 1,
@@ -754,7 +792,8 @@ impl App {
         }
         match self.run.screen {
             Screen::Map => vec![
-                ("h/j/k/l", "pick node"),
+                ("h/l", "look along the road"),
+                ("j/k", "pick a fork"),
                 ("enter", "go"),
                 ("z", "relics"),
                 ("p", "potions"),
@@ -788,7 +827,8 @@ impl App {
 
     pub fn help_rows(&self) -> Vec<(&'static str, &'static str)> {
         vec![
-            ("h j k l", "move (map: pick node, combat: card/target)"),
+            ("h l", "map: look back / forward along the road"),
+            ("j k", "map: pick a fork    combat: card / target"),
             ("enter", "confirm / play the selected card"),
             ("esc", "cancel / close"),
             ("1-9 0", "combat: select and play the nth card"),
@@ -847,18 +887,41 @@ mod tests {
     }
 
     #[test]
-    fn map_selection_wraps_around() {
+    fn map_keys_look_along_the_road_and_pick_forks() {
         let mut app = App::new(1);
+        // 窄终端才看得出"看路":一屏放不下整条路
+        app.term_size = (40, 30);
+        let visible = app.visible_floors();
+        let total = app.run.map.total_floors();
+        assert_eq!(visible, 10);
+        assert!(total > visible);
+
+        // j/k 选岔路,并带动视野
         let n = app.run.reachable().len();
-        assert!(n > 0);
+        assert!(n > 1, "第一层应该有多个起点");
         app.handle_key(key('j'));
-        assert_eq!(app.map_sel, 1 % n);
+        assert_eq!(app.map_sel, 1);
         app.handle_key(key('k'));
         assert_eq!(app.map_sel, 0);
         for _ in 0..n * 2 {
-            app.handle_key(key('l'));
+            app.handle_key(key('j'));
         }
         assert!(app.map_sel < n);
+
+        // h/l 看路
+        let here = app.map_scroll;
+        app.handle_key(key('l'));
+        assert_eq!(app.map_scroll, here + 1);
+        app.handle_key(key('h'));
+        assert_eq!(app.map_scroll, here);
+        app.handle_key(key('G'));
+        assert_eq!(app.map_scroll, total - visible, "G 应看到路尽头");
+        app.handle_key(key('l'));
+        assert_eq!(app.map_scroll, total - visible, "l 不该越过路尽头");
+        app.handle_key(key('g'));
+        assert_eq!(app.map_scroll, 0);
+        app.handle_key(key('h'));
+        assert_eq!(app.map_scroll, 0, "h 不该越过路起点");
     }
 
     #[test]

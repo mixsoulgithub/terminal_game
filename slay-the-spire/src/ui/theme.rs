@@ -12,8 +12,8 @@ pub const SEL_FG: Color = Color::Rgb(242, 246, 255);
 pub const GOOD: Color = Color::Rgb(120, 222, 140);
 pub const BAD: Color = Color::Rgb(236, 96, 108);
 pub const BLOCK: Color = Color::Rgb(122, 176, 240);
-pub const ENERGY: Color = Color::Rgb(240, 200, 90);
-pub const GOLD: Color = Color::Rgb(240, 200, 90);
+pub const ENERGY: Color = Color::Rgb(238, 226, 104);
+pub const GOLD: Color = Color::Rgb(250, 186, 66);
 pub const RELIC: Color = Color::Rgb(198, 160, 255);
 pub const ATTACK: Color = Color::Rgb(255, 122, 122);
 pub const BUFF: Color = Color::Rgb(206, 150, 255);
@@ -32,25 +32,6 @@ pub fn dim() -> Style {
 
 pub fn selected() -> Style {
     Style::default().fg(SEL_FG).bg(SEL_BG).add_modifier(Modifier::BOLD)
-}
-
-/// 血条颜色:满血偏青绿,残血偏红
-pub fn hp_color(ratio: f32) -> Color {
-    let t = ratio.clamp(0.0, 1.0);
-    if t > 0.6 {
-        GOOD
-    } else if t > 0.3 {
-        WARN
-    } else {
-        BAD
-    }
-}
-
-/// `####----` 形式的血条
-pub fn bar(ratio: f32, width: usize) -> String {
-    let filled = ((ratio.clamp(0.0, 1.0)) * width as f32).round() as usize;
-    let filled = filled.min(width);
-    format!("{}{}", "#".repeat(filled), "-".repeat(width - filled))
 }
 
 /// 地图节点颜色

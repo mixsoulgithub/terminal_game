@@ -193,7 +193,8 @@ mod tests {
         let text = screen_text(&app, 110, 40);
         assert!(text.contains("M monster"), "地图缺少图例:\n{text}");
         assert!(text.contains('B'), "缺少 Boss 节点");
-        assert!(text.contains("GOLD 99"), "顶栏没画出来");
+        assert!(text.contains("$99"), "顶栏没画出来");
+        assert!(text.contains("80/80"), "血量数字没画出来");
     }
 
     #[test]
@@ -203,7 +204,8 @@ mod tests {
         for e in app.run.combat().unwrap().enemies.iter() {
             assert!(text.contains(&e.name), "敌人 {} 没画出来:\n{text}", e.name);
         }
-        assert!(text.contains("EN 3/3"), "没有能量显示");
+        assert!(text.contains("3/3"), "没有能量显示");
+        assert!(!text.contains("##"), "不该再出现血条");
         let name = app.run.combat().unwrap().hand[0].label();
         assert!(text.contains(&name), "手牌 {name} 没画出来:\n{text}");
     }

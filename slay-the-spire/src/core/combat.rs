@@ -63,15 +63,6 @@ impl Enemy {
         self.hp <= 0
     }
 
-    /// 显示用的血条比例
-    pub fn hp_ratio(&self) -> f32 {
-        if self.max_hp <= 0 {
-            0.0
-        } else {
-            (self.hp as f32 / self.max_hp as f32).clamp(0.0, 1.0)
-        }
-    }
-
     pub fn intent(&self) -> Intent {
         if self.sleep_left > 0 && !self.awake {
             return Intent::Sleep;

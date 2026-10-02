@@ -1,4 +1,5 @@
-// 顶栏:一行的玩家状态.战斗里额外显示能量、牌堆计数与自身状态.
+// 顶栏:一行纯数字,靠颜色区分含义——血红、格挡蓝、能量黄、金币金黄.
+// 战斗之外没有能量;层数/牌数这类次要信息压在后面,用暗色.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -7,117 +8,79 @@ use crate::app::App;
 use crate::ui::theme;
 use crate::ui::{display_width, put, truncate};
 
-fn segment(buf: &mut Buffer, x: &mut u16, y: u16, limit: u16, text: &str, style: Style) {
-    if *x >= limit {
-        return;
+/// 写一段文本,返回推进后的 x
+fn seg(buf: &mut Buffer, x: u16, y: u16, limit: u16, text: &str, style: Style) -> u16 {
+    if x >= limit {
+        return x;
     }
-    let w = (limit - *x) as usize;
-    let t = truncate(text, w);
-    put(buf, *x, y, &t, style);
-    *x += display_width(&t) as u16 + 2;
+    let t = truncate(text, (limit - x) as usize);
+    put(buf, x, y, &t, style);
+    x + display_width(&t) as u16
 }
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let run = &app.run;
     let p = &run.player;
     let y = area.y;
-    let mut x = area.x;
     let limit = area.x + area.width;
+    let mut x = area.x;
+    let dim = theme::dim();
 
-    let hp_ratio = if p.max_hp > 0 {
-        p.hp as f32 / p.max_hp as f32
-    } else {
-        0.0
-    };
-    let hp_text = format!("HP [{}] {}/{}", theme::bar(hp_ratio, 12), p.hp, p.max_hp);
-    segment(
-        buf,
-        &mut x,
-        y,
-        limit,
-        &hp_text,
-        theme::fg(theme::hp_color(hp_ratio)),
-    );
+    // 血量 / 上限 / 格挡
+    x = seg(buf, x, y, limit, &p.hp.to_string(), theme::fg(theme::BAD));
+    x = seg(buf, x, y, limit, "/", theme::dim());
+    x = seg(buf, x, y, limit, &p.max_hp.to_string(), theme::fg(theme::BAD));
+    x = seg(buf, x, y, limit, "/", theme::dim());
+    let block = run.combat().map(|c| c.player.block).unwrap_or(0);
+    x = seg(buf, x, y, limit, &block.to_string(), theme::fg(theme::BLOCK));
+    x += 3;
 
+    // 能量:只有战斗里才有
     if let Some(c) = run.combat() {
-        segment(
-            buf,
-            &mut x,
-            y,
-            limit,
-            &format!("EN {}/{}", c.energy, c.max_energy),
-            Style::default()
-                .fg(theme::ENERGY)
-                .add_modifier(Modifier::BOLD),
-        );
-        if c.player.block > 0 {
-            segment(
-                buf,
-                &mut x,
-                y,
-                limit,
-                &format!("BLK {}", c.player.block),
-                theme::fg(theme::BLOCK),
-            );
-        }
+        x = seg(buf, x, y, limit, &c.energy.to_string(), theme::fg(theme::ENERGY));
+        x = seg(buf, x, y, limit, "/", theme::dim());
+        x = seg(buf, x, y, limit, &c.max_energy.to_string(), theme::fg(theme::ENERGY));
+        x += 3;
     }
 
-    segment(
-        buf,
-        &mut x,
-        y,
-        limit,
-        &format!("GOLD {}", p.gold),
-        theme::fg(theme::GOLD),
-    );
+    // 金币
+    x = seg(buf, x, y, limit, &format!("${}", p.gold), theme::fg(theme::GOLD));
+    x += 3;
+
+    // 次要信息
     let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
-    segment(
-        buf,
-        &mut x,
-        y,
-        limit,
-        &format!("F{}/{}", floor, run.map.total_floors()),
-        theme::fg(theme::INFO),
-    );
     let potions = p.potions.iter().flatten().count();
-    segment(
-        buf,
-        &mut x,
-        y,
-        limit,
-        &format!("DECK {} POT {} RELIC {}", p.deck.len(), potions, p.relics.len()),
-        theme::dim(),
+    let mut rest = format!(
+        "F{floor}/{}  DECK {}  RELIC {}  POT {potions}",
+        run.map.total_floors(),
+        p.deck.len(),
+        p.relics.len()
     );
     if let Some(c) = run.combat() {
-        segment(
-            buf,
-            &mut x,
-            y,
-            limit,
-            &format!(
-                "DRAW {} DISC {} EXH {}",
-                c.draw.len(),
-                c.discard.len(),
-                c.exhaust.len()
-            ),
-            theme::dim(),
-        );
+        rest.push_str(&format!(
+            "  draw {} disc {} exh {}",
+            c.draw.len(),
+            c.discard.len(),
+            c.exhaust.len()
+        ));
     }
+    x = seg(buf, x, y, limit, &rest, dim);
+
+    // 自身增减益:短名 + 层数
     if let Some(c) = run.combat() {
         let mut s = String::new();
         for (st, n) in c.player.statuses.iter() {
             s.push_str(&format!("{} {}  ", st.short(), n));
         }
         if !s.is_empty() {
-            segment(
+            let _ = x;
+            let _ = seg(
                 buf,
-                &mut x,
+                x,
                 y,
                 limit,
                 s.trim_end(),
-                Style::default()
-                    .fg(theme::DEBUFF)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme::DEBUFF).add_modifier(Modifier::BOLD),
             );
         }
     }
