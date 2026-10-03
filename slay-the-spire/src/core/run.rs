@@ -385,6 +385,17 @@ impl Run {
         self.start_combat(enc);
     }
 
+    /// 调试用:直接判定这一场战斗胜利,进入奖励结算(不影响整局,跳的是战斗不是本局)
+    pub fn debug_win_battle(&mut self) {
+        if let Some(c) = self.combat.as_mut() {
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = crate::core::combat::Phase::Won;
+        }
+        self.sync_combat();
+    }
+
     pub fn combat(&self) -> Option<&Combat> {
         self.combat.as_ref()
     }

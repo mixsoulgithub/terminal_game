@@ -776,6 +776,14 @@ impl App {
             "potions" | "p" => self.open_overlay(Overlay::Potions),
             "history" | "log" | "H" => self.open_overlay(Overlay::History),
             "seed" => self.info(format!("seed {}", self.run.seed)),
+            "win" => {
+                if self.run.combat().is_some() {
+                    self.run.debug_win_battle();
+                    self.clamp();
+                } else {
+                    self.warn("not in a battle");
+                }
+            }
             "new" | "restart" => {
                 let seed = if rest.is_empty() {
                     self.run.seed.wrapping_add(0x2545_F491)
@@ -903,6 +911,7 @@ impl App {
             (":help", "this help"),
             (":deck :relics :potions", "open those lists"),
             (":seed", "show the run seed"),
+            (":win", "win the current battle (skip to the reward)"),
             (":quaff N :toss N", "use or discard potion N"),
             (":new [seed]", "start a new run"),
             ("R n", "after the run ends: restart with the same / a new seed"),

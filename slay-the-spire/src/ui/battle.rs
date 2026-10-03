@@ -10,10 +10,7 @@ use crate::app::{App, Mode};
 use crate::core::combat::Combat;
 use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
-use crate::ui::{cost_label, display_width, draw_box, hline, put, put_padded, truncate, wrap_text};
-
-/// 手牌格数:正好放满一手
-pub const HAND_SLOTS: usize = 10;
+use crate::ui::{cost_label, display_width, draw_box, put, put_padded, truncate, wrap_text};
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(c) = app.run.combat() else {
@@ -81,8 +78,10 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     let iy = area.y + 1;
     let bottom = area.y + area.height - 1;
     let inner_h = (bottom - iy) as usize;
-    // 10 行手牌,再留一行分隔线和至少一行详情
-    let card_lines = HAND_SLOTS.min(inner_h.saturating_sub(2));
+    // 手牌一行一张,不预留空行,详情紧贴最后一张下面:
+    // 牌少时详情往上靠,牌多于 5 张时详情那块自然被挤小.
+    // 至少给详情留"名字 + 一行描述"两行.
+    let card_lines = c.hand.len().min(inner_h.saturating_sub(2));
     let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
     for slot in 0..card_lines {
         let y = iy + slot as u16;
@@ -100,17 +99,14 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         };
         put_padded(buf, ix, y, &text, iw, style);
     }
-    // 分隔线:下面是详情
-    let sep_y = iy + card_lines as u16;
-    if sep_y >= bottom {
-        return;
-    }
-    hline(buf, ix, sep_y, iw as u16, '-', theme::fg(theme::BORDER));
     // 详情:牌名 + 类型 + 完整描述(能量已经写在边框上了,不再重复)
     let Some(card) = c.hand.get(sel) else {
         return;
     };
-    let dy = sep_y + 1;
+    let dy = iy + card_lines as u16;
+    if dy >= bottom {
+        return;
+    }
     let head = format!("{}  {}", card.label(), card.kind().name());
     let head_style = if c.blocked_reason(sel).is_none() {
         Style::default()

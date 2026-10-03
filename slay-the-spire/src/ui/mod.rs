@@ -60,9 +60,22 @@ pub fn display_width(s: &str) -> usize {
         .sum()
 }
 
-/// 药水名里的 "Potion" 用 ~ 代替,省地方("Fire Potion" -> "Fire ~")
+/// 药水名里的 "Potion" 换成 ~,只在放不下时才用
 pub fn potion_label(name: &str) -> String {
     name.replace("Potion", "~")
+}
+
+/// 药水名列表:放得下就用全名,放不下才缩成 ~
+pub fn potion_names(names: &[&str], avail: usize) -> String {
+    let full = names.join(" - ");
+    if names.is_empty() || display_width(&full) <= avail {
+        return full;
+    }
+    names
+        .iter()
+        .map(|n| potion_label(n))
+        .collect::<Vec<_>>()
+        .join(" - ")
 }
 
 /// 卡牌费用记号:数字 / X / -
@@ -463,6 +476,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 

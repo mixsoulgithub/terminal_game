@@ -125,7 +125,7 @@ fn relic_row(idx: usize, r: &RelicDef, price: Option<i32>) -> Row {
 fn potion_row(idx: usize, p: &PotionDef, price: Option<i32>) -> Row {
     let price = price.map(|p| format!("  {p}g")).unwrap_or_default();
     Row {
-        text: format!("{}) {}{}", idx + 1, crate::ui::potion_label(p.name), price),
+        text: format!("{}) {}{}", idx + 1, p.name, price),
         style: theme::fg(theme::BUFF),
     }
 }
@@ -135,7 +135,7 @@ fn relic_details(r: &RelicDef) -> Vec<String> {
 }
 
 fn potion_details(p: &PotionDef) -> Vec<String> {
-    vec![crate::ui::potion_label(p.name), p.desc.to_string()]
+    vec![p.name.to_string(), p.desc.to_string()]
 }
 
 // ---- 奖励 ----
@@ -223,10 +223,17 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 None => continue,
             },
             RewardSlot::Potion => match r.potion {
-                Some(d) => (
-                    format!("Potion  {}", crate::ui::potion_label(d.name)),
-                    theme::BUFF,
-                ),
+                Some(d) => {
+                    // 放得下就写全名,放不下才把 "Potion" 缩成 "~"
+                    let full = format!("Potion  {}", d.name);
+                    let avail = (area.width as usize).saturating_sub(6);
+                    let text = if display_width(&full) <= avail {
+                        full
+                    } else {
+                        format!("Potion  {}", crate::ui::potion_label(d.name))
+                    };
+                    (text, theme::BUFF)
+                }
                 None => continue,
             },
             _ => continue,

@@ -114,12 +114,7 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
                 match slot {
                     Some(p) => {
                         out.push((
-                            format!(
-                                "{:>3}. {:<20} [{}]",
-                                i + 1,
-                                crate::ui::potion_label(p.name),
-                                p.rarity.name()
-                            ),
+                            format!("{:>3}. {:<20} [{}]", i + 1, p.name, p.rarity.name()),
                             theme::fg(theme::BUFF),
                         ));
                         out.push((format!("     {}", p.desc), theme::dim()));
