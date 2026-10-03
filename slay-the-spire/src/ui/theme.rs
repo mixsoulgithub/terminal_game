@@ -46,10 +46,10 @@ pub fn kind_style(kind: NodeKind) -> Style {
             .fg(SEL_FG)
             .bg(Color::Rgb(150, 30, 42))
             .add_modifier(Modifier::BOLD),
-        NodeKind::Event => Style::default().fg(YELLOW),
-        NodeKind::Rest => Style::default().fg(BG).bg(BLOOD),
-        NodeKind::Shop => Style::default().fg(GOLD),
-        NodeKind::Treasure => Style::default().fg(Color::Rgb(246, 226, 120)),
+        NodeKind::Event => Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
+        NodeKind::Rest => Style::default().fg(BG).bg(BLOOD).add_modifier(Modifier::BOLD),
+        NodeKind::Shop => Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+        NodeKind::Treasure => Style::default().fg(Color::Rgb(246, 226, 120)).add_modifier(Modifier::BOLD),
         NodeKind::Boss => Style::default()
             .fg(Color::Rgb(255, 86, 104))
             .add_modifier(Modifier::BOLD),

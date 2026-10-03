@@ -24,7 +24,7 @@ impl NodeKind {
     pub fn sigil(self) -> char {
         match self {
             // 普通怪与精英都是 E,精英靠红底区分
-            NodeKind::Monster => 'E',
+            NodeKind::Monster => 'e',
             NodeKind::Elite => 'E',
             NodeKind::Event => '?',
             NodeKind::Rest => 'R',

@@ -34,17 +34,13 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let block_h = COLS as u16 * ROW_H - 1;
     let top = area.y + area.height.saturating_sub(block_h) / 2;
     let map_w = visible as u16 * CELL_W;
-    let right_x = area.x + map_w + 2;
+    // 图例靠最右停,纵向和地图一样居中
+    let right_x = area.x + area.width.saturating_sub(LEGEND_W);
     let legend = legend_lines(run);
-    let legend_shown = area.width >= map_w + LEGEND_W + 2 && area.height as usize > legend.len();
+    let legend_shown = right_x >= area.x + map_w + 2 && area.height as usize > legend.len();
     // 选中那条岔路之后的整片未来:换一个岔路,亮的就是另一片
     let future = chosen_future(app);
-    // 图例贴右边区域的上沿放,这样它不会和任何一行节点(尤其 Boss 那行)撞上
-    let legend_y = if top >= area.y + 1 + legend.len() as u16 {
-        top - legend.len() as u16
-    } else {
-        area.y + 1
-    };
+    let legend_y = area.y + area.height.saturating_sub(legend.len() as u16) / 2;
     for i in 0..visible {
         let f = start + i;
         if f >= total {
@@ -120,12 +116,12 @@ fn chosen_future(app: &App) -> Option<Vec<bool>> {
 /// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     vec![
-        ("?  unknown".to_string(), theme::kind_style(NodeKind::Event)),
-        ("$  merchant".to_string(), theme::kind_style(NodeKind::Shop)),
-        ("T  treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
-        ("R  rest".to_string(), theme::kind_style(NodeKind::Rest)),
-        ("E  enemy".to_string(), theme::kind_style(NodeKind::Monster)),
-        ("E  elite".to_string(), theme::kind_style(NodeKind::Elite)),
+        ("?  Unknown".to_string(), theme::kind_style(NodeKind::Event)),
+        ("$  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
+        ("T  Treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
+        ("R  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
+        ("e  Enemy".to_string(), theme::kind_style(NodeKind::Monster)),
+        ("E  Elite".to_string(), theme::kind_style(NodeKind::Elite)),
         (
             format!("B  {}", run.boss_name()),
             theme::kind_style(NodeKind::Boss),
