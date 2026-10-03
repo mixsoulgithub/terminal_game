@@ -17,11 +17,17 @@ terminal_game
 ├── Tetris/             # 已实现
 │   ├── CMakeLists.txt
 │   └── src/
-└── slay-the-spire/     # 终端爬塔(类杀戮尖塔, Rust + ratatui)
-    ├── Cargo.toml
-    ├── README.md
-    ├── src/
-    └── tools/
+├── slay-the-spire/     # 终端爬塔(类杀戮尖塔, Rust + ratatui)
+│   ├── Cargo.toml
+│   ├── README.md
+│   ├── src/
+│   └── tools/
+└── refs/               # 只读参考:别人的终端爬塔实现(submodule,见 refs/README.md)
+    ├── end_of_eden/    # Go,完成度最高的类尖塔控制台 roguelike
+    ├── slay-rust/      # Rust + ratatui,同栈同分层
+    ├── slay-the-cli/   # TypeScript,零依赖,规则最忠实
+    ├── sts2-cli/       # C#,真 StS2 引擎 headless(需游戏本体)
+    └── sts-textual-py/ # Python + textual 原型
 ```
 
 ## 工具

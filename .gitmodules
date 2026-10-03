@@ -1,0 +1,15 @@
+[submodule "refs/end_of_eden"]
+	path = refs/end_of_eden
+	url = git@github.com:BigJk/end_of_eden.git
+[submodule "refs/slay-the-cli"]
+	path = refs/slay-the-cli
+	url = git@github.com:anthonykrivonos/slay-the-cli.git
+[submodule "refs/slay-rust"]
+	path = refs/slay-rust
+	url = git@github.com:chloebrett/slay.git
+[submodule "refs/sts2-cli"]
+	path = refs/sts2-cli
+	url = git@github.com:wuhao21/sts2-cli.git
+[submodule "refs/sts-textual-py"]
+	path = refs/sts-textual-py
+	url = git@github.com:q107580018/Slay-the-Spire.git
