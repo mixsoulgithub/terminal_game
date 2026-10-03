@@ -2,7 +2,7 @@
 // 统一用"列表 + 详情"的样式,选中行整行反白.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 
 use crate::app::App;
 use crate::core::card::CardInstance;
@@ -10,7 +10,7 @@ use crate::core::potions::PotionDef;
 use crate::core::relics::RelicDef;
 use crate::core::run::{RewardSlot, ShopItem};
 use crate::ui::theme;
-use crate::ui::{draw_box, fit, hline, put_padded, truncate};
+use crate::ui::{display_width, draw_box, fit, hline, put, put_padded, truncate, wrap_text};
 
 struct Row {
     text: String,
@@ -144,41 +144,178 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(r) = &app.run.reward else {
         return;
     };
-    let slots = app.run.reward_slots();
-    let mut rows: Vec<Row> = Vec::new();
-    let mut details: Vec<String> = Vec::new();
-    for (i, slot) in slots.iter().enumerate() {
-        match *slot {
-            RewardSlot::Gold => rows.push(Row {
-                text: format!("{}) Gold  +{}", i + 1, r.gold),
-                style: theme::fg(theme::GOLD),
-            }),
-            RewardSlot::Card(ci) => {
-                let card = &r.cards[ci];
-                rows.push(card_row(i, card));
-                if i == r.index {
-                    details = card_details(card);
-                }
-            }
-            RewardSlot::Relic => {
-                if let Some(def) = r.relic {
-                    rows.push(relic_row(i, def, None));
-                    if i == r.index {
-                        details = relic_details(def);
-                    }
-                }
-            }
-            RewardSlot::Potion => {
-                if let Some(def) = r.potion {
-                    rows.push(potion_row(i, def, None));
-                    if i == r.index {
-                        details = potion_details(def);
-                    }
-                }
-            }
-        }
+    if area.height < 6 || area.width < 40 {
+        return;
     }
-    draw_list(buf, area, "reward", &rows, r.index, &details);
+    let slots = app.run.reward_slots();
+    // 按 reward_slots 的顺序把每类槽位挑出来,选择下标才能对上
+    let gold = slots.iter().position(|s| matches!(s, RewardSlot::Gold));
+    let cards: Vec<usize> = slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| matches!(s, RewardSlot::Card(_)))
+        .map(|(i, _)| i)
+        .collect();
+    let others: Vec<usize> = slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| matches!(s, RewardSlot::Relic | RewardSlot::Potion))
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut y = area.y;
+    // 金币行
+    if let Some(gi) = gold {
+        let sel = r.index == gi;
+        let style = if sel { theme::selected() } else { theme::fg(theme::GOLD) };
+        put_padded(
+            buf,
+            area.x + 2,
+            y,
+            &format!("{}Gold  +{}", marker(sel), r.gold),
+            (area.width as usize).saturating_sub(4),
+            style,
+        );
+        y += 1;
+    }
+    // 选牌框:里面横排每张候选卡各一个卡框
+    if !cards.is_empty() {
+        let card_h = (area.y + area.height).saturating_sub(y + others.len() as u16);
+        if card_h >= 4 {
+            render_card_pick(buf, Rect::new(area.x, y, area.width, card_h), app, &slots, &cards);
+        }
+        y += card_h;
+    }
+    // 遗物与药水各占一行
+    for i in others {
+        if y >= area.y + area.height {
+            break;
+        }
+        let sel = r.index == i;
+        let (text, color) = match slots[i] {
+            RewardSlot::Relic => match r.relic {
+                Some(d) => (format!("Relic  {}  [{}]", d.name, d.rarity.name()), theme::RELIC),
+                None => continue,
+            },
+            RewardSlot::Potion => match r.potion {
+                Some(d) => (format!("Potion  {}", d.name), theme::BUFF),
+                None => continue,
+            },
+            _ => continue,
+        };
+        let style = if sel { theme::selected() } else { theme::fg(color) };
+        put_padded(
+            buf,
+            area.x + 2,
+            y,
+            &format!("{}{text}", marker(sel)),
+            (area.width as usize).saturating_sub(4),
+            style,
+        );
+        y += 1;
+    }
+}
+
+fn marker(selected: bool) -> &'static str {
+    if selected {
+        "> "
+    } else {
+        "  "
+    }
+}
+
+/// 选牌框:一个外框,里面横排每张候选卡各一个卡框
+fn render_card_pick(
+    buf: &mut Buffer,
+    area: Rect,
+    app: &App,
+    slots: &[RewardSlot],
+    cards: &[usize],
+) {
+    let r = app.run.reward.as_ref().expect("reward");
+    draw_box(
+        buf,
+        area,
+        "pick a card",
+        theme::fg(theme::BORDER),
+        theme::fg(theme::INFO),
+    );
+    let n = cards.len() as u16;
+    let inner_x = area.x + 1;
+    let inner_y = area.y + 1;
+    let inner_w = area.width.saturating_sub(2);
+    let inner_h = area.height.saturating_sub(2);
+    let gap = 1u16;
+    let cw = inner_w.saturating_sub(gap * (n - 1)) / n;
+    if cw < 6 || inner_h < 3 {
+        return;
+    }
+    for (k, &si) in cards.iter().enumerate() {
+        let card = match slots[si] {
+            RewardSlot::Card(ci) => &r.cards[ci],
+            _ => continue,
+        };
+        let x = inner_x + k as u16 * (cw + gap);
+        let rect = Rect::new(x, inner_y, cw, inner_h);
+        card_box(buf, rect, card, r.index == si);
+    }
+}
+
+/// 一张卡的小框:费用写在框的边上,牌名居中,下面折行写描述
+fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
+    if rect.width < 6 || rect.height < 3 {
+        return;
+    }
+    let border = if selected {
+        theme::fg(theme::SEL_FG)
+    } else {
+        theme::fg(theme::BORDER)
+    };
+    let title = if selected {
+        Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD)
+    };
+    draw_box(buf, rect, &crate::ui::cost_label(card), border, title);
+    let inner_w = (rect.width as usize).saturating_sub(2);
+    if inner_w == 0 {
+        return;
+    }
+    // 牌名居中
+    let row_bg = if selected { theme::SEL_BG } else { theme::BG };
+    put_padded(
+        buf,
+        rect.x + 1,
+        rect.y + 1,
+        "",
+        inner_w,
+        Style::default().bg(row_bg),
+    );
+    let name = card.label();
+    let nx = rect.x + 1 + (inner_w.saturating_sub(display_width(&name)) / 2) as u16;
+    let name_style = if selected {
+        theme::selected()
+    } else {
+        theme::fg(theme::card_color(card.kind(), card.rarity()))
+    };
+    put(buf, nx, rect.y + 1, &name, name_style);
+    // 描述
+    let max_lines = (rect.y + rect.height - 1)
+        .saturating_sub(rect.y + 2) as usize;
+    let text = card.display_text();
+    for (i, line) in wrap_text(&text, inner_w.saturating_sub(2), max_lines)
+        .iter()
+        .enumerate()
+    {
+        put_padded(
+            buf,
+            rect.x + 1,
+            rect.y + 2 + i as u16,
+            &format!(" {line}"),
+            inner_w,
+            theme::fg(theme::FG),
+        );
+    }
 }
 
 // ---- 商店 ----

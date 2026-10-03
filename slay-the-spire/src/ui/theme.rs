@@ -21,7 +21,6 @@ pub const RELIC: Color = Color::Rgb(198, 160, 255);
 pub const ATTACK: Color = Color::Rgb(255, 122, 122);
 pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
-pub const SLEEP: Color = Color::Rgb(140, 150, 200);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
 pub const WARN: Color = Color::Rgb(240, 170, 90);
 
@@ -53,19 +52,6 @@ pub fn kind_style(kind: NodeKind) -> Style {
         NodeKind::Boss => Style::default()
             .fg(Color::Rgb(255, 86, 104))
             .add_modifier(Modifier::BOLD),
-    }
-}
-
-/// 敌人意图颜色
-pub fn intent_color(intent: &crate::core::enemy::Intent) -> Color {
-    use crate::core::enemy::Intent::*;
-    match intent {
-        Attack { .. } | AttackDefend { .. } | AttackDebuff { .. } => ATTACK,
-        Defend => BLOCK,
-        Buff => BUFF,
-        Debuff => DEBUFF,
-        Sleep => SLEEP,
-        Unknown => DIM,
     }
 }
 

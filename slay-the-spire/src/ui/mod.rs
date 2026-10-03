@@ -60,6 +60,53 @@ pub fn display_width(s: &str) -> usize {
         .sum()
 }
 
+/// 卡牌费用记号:数字 / X / -
+pub fn cost_label(card: &crate::core::card::CardInstance) -> String {
+    match card.cost() {
+        crate::core::card::Cost::Fixed(n) => n.to_string(),
+        crate::core::card::Cost::X => "X".to_string(),
+        crate::core::card::Cost::Unplayable => "-".to_string(),
+    }
+}
+
+/// 按宽度折行,最多 max_lines 行;放不下的部分用 .. 收尾
+pub fn wrap_text(s: &str, width: usize, max_lines: usize) -> Vec<String> {
+    if width == 0 || max_lines == 0 {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_w = 0usize;
+    for word in s.split(' ') {
+        let ww = display_width(word);
+        if cur_w == 0 && ww > width {
+            lines.push(truncate(word, width));
+            if lines.len() == max_lines {
+                break;
+            }
+            continue;
+        }
+        if cur_w + ww + 1 > width && cur_w > 0 {
+            lines.push(std::mem::take(&mut cur));
+            cur_w = 0;
+            if lines.len() == max_lines {
+                break;
+            }
+        }
+        if cur_w > 0 {
+            cur.push(' ');
+            cur_w += 1;
+        }
+        cur.push_str(word);
+        cur_w += ww;
+    }
+    if lines.len() < max_lines && !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines.truncate(max_lines);
+    lines
+}
+
 /// 在缓冲里写一行,右侧补空格到 width(用于选中行的底色铺满)
 pub fn put_padded(buf: &mut Buffer, x: u16, y: u16, text: &str, width: usize, style: Style) {
     put(buf, x, y, &fit(text, width), style);
@@ -110,19 +157,23 @@ pub fn render(f: &mut Frame, app: &App) {
         return;
     }
     let hud_area = Rect::new(area.x, area.y, area.width, 1);
-    let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
-    let body = Rect::new(area.x, area.y + 1, area.width, area.height - 2);
-    // 顶部隔开一条线,信息更清楚
-    hline(buf, body.x, body.y, body.width, '-', theme::fg(theme::BORDER));
-    let body = Rect::new(body.x, body.y + 1, body.width, body.height.saturating_sub(1));
-
     hud::render(buf, hud_area, app);
-    match app.run.screen {
-        crate::core::run::Screen::Map => mapview::render(buf, body, app),
-        crate::core::run::Screen::Combat => battle::render(buf, body, app),
-        _ => menu::render(buf, body, app),
-    };
-    status(buf, status_area, app);
+    if app.run.screen == crate::core::run::Screen::Combat {
+        // 战斗界面自带信息行和命令栏,顶栏以下整块都归它,不用全局底栏
+        let body = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1));
+        battle::render(buf, body, app);
+    } else {
+        let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+        let body = Rect::new(area.x, area.y + 1, area.width, area.height - 2);
+        // 顶部隔开一条线,信息更清楚
+        hline(buf, body.x, body.y, body.width, '-', theme::fg(theme::BORDER));
+        let body = Rect::new(body.x, body.y + 1, body.width, body.height.saturating_sub(1));
+        match app.run.screen {
+            crate::core::run::Screen::Map => mapview::render(buf, body, app),
+            _ => menu::render(buf, body, app),
+        };
+        status(buf, status_area, app);
+    }
     if let Some(ov) = app.overlay {
         overlay::render(buf, area, app, ov);
     }
@@ -203,8 +254,8 @@ mod tests {
     fn map_screen_shows_legend_and_boss() {
         let app = App::new(5);
         let text = screen_text(&app, 110, 40);
-        assert!(text.contains("merchant"), "地图缺少图例:\n{text}");
-        assert!(text.contains("elite"), "图例缺精英那一行:\n{text}");
+        assert!(text.contains("Merchant"), "地图缺少图例:\n{text}");
+        assert!(text.contains("Elite"), "图例缺精英那一行:\n{text}");
         assert!(text.contains('B'), "缺少 Boss 节点");
         assert!(text.contains("$99"), "顶栏没画出来");
         assert!(text.contains("80/80"), "血量数字没画出来");
@@ -224,36 +275,23 @@ mod tests {
     }
 
     #[test]
-    fn full_hand_fills_both_rows() {
+    fn full_hand_lists_ten_cards_with_cost() {
         let mut app = app_in_combat(7, "three_sentries");
         {
             let c = app.run.combat_mut().unwrap();
             c.hand = vec![crate::core::cards::card("strike"); 10];
         }
         let text = screen_text(&app, 120, 36);
-        let rows: Vec<&str> = text.lines().collect();
-        let energy_row = rows
-            .iter()
-            .position(|l| l.contains("energy"))
-            .expect("应该有能量行");
-        // 十张牌分成两排,每排五张;每张两行:第一行牌名,第二行费用与效果
+        // 手牌是固定 10 行速记,每行"费用 牌名"
         assert_eq!(
-            rows[energy_row + 1].matches("Strike").count(),
-            5,
-            "第一排应正好五张:\n{text}"
+            text.matches("1 Strike").count(),
+            10,
+            "手牌应该正好十行速记:\n{text}"
         );
-        assert_eq!(
-            rows[energy_row + 3].matches("Strike").count(),
-            5,
-            "第二排应正好五张:\n{text}"
-        );
-        assert!(
-            rows[energy_row + 2].matches("1 6").count() >= 3,
-            "第二行应该是费用与伤号:\n{text}"
-        );
-        // 详情区给出选中那张的全名与完整描述
-        assert!(rows[energy_row].contains("Strike"), "详情缺名字");
-        assert!(rows[energy_row + 1].contains("Deal 6 damage."), "详情缺描述");
+        // 分隔线下面给出选中那张的类型与完整描述(能量写在边框上,不再重复)
+        assert!(text.contains("Strike  Attack"), "详情缺牌名与类型:\n{text}");
+        assert!(text.contains("Deal 6 damage."), "详情缺描述:\n{text}");
+        assert!(text.contains("energy"), "边框上应该有能量:\n{text}");
     }
 
     #[test]
@@ -365,7 +403,7 @@ mod tests {
         let app = App::new(5);
         // 80x24 要能完整画出来
         let text = screen_text(&app, 80, 24);
-        assert!(text.contains("merchant"), "80x24 下地图应该正常显示:\n{text}");
+        assert!(text.contains("Merchant"), "80x24 下地图应该正常显示:\n{text}");
         let combat = app_in_combat(5, "three_sentries");
         let text = screen_text(&combat, 80, 24);
         assert!(text.contains("energy"), "80x24 下战斗界面应该正常:\n{text}");
@@ -420,3 +458,6 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
+
+

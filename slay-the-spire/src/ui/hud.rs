@@ -42,9 +42,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
 
     // 次要信息
     let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
-    let potions = p.potions.iter().flatten().count();
     let mut rest = format!(
-        "F{floor}/{}  DECK {}  RELIC {}  POT {potions}",
+        "F{floor}/{}  DECK {}  RELIC {}",
         run.map.total_floors(),
         p.deck.len(),
         p.relics.len()
@@ -59,17 +58,16 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
     x = seg(buf, x, y, limit, &rest, dim);
 
-    // 自身增减益:短名 + 层数
+    // 自身增减益
     if let Some(c) = run.combat() {
         let mut s = String::new();
         for (st, n) in c.player.statuses.iter() {
             s.push_str(&format!("{} {}  ", st.short(), n));
         }
-        if !s.is_empty() {
-            let _ = x;
-            let _ = seg(
+        if !s.trim().is_empty() {
+            x = seg(
                 buf,
-                x,
+                x + 2,
                 y,
                 limit,
                 s.trim_end(),
@@ -77,4 +75,13 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             );
         }
     }
+
+    // 药水区在最后:写全名,用 " - " 连起来
+    let names: Vec<&str> = p.potions.iter().flatten().map(|q| q.name).collect();
+    let potions = if names.is_empty() {
+        "POT -".to_string()
+    } else {
+        format!("POT {}", names.join(" - "))
+    };
+    let _ = seg(buf, x + 2, y, limit, &potions, theme::fg(theme::GOLD));
 }
