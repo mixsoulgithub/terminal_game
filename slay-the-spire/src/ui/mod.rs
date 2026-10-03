@@ -60,6 +60,11 @@ pub fn display_width(s: &str) -> usize {
         .sum()
 }
 
+/// 药水名里的 "Potion" 用 ~ 代替,省地方("Fire Potion" -> "Fire ~")
+pub fn potion_label(name: &str) -> String {
+    name.replace("Potion", "~")
+}
+
 /// 卡牌费用记号:数字 / X / -
 pub fn cost_label(card: &crate::core::card::CardInstance) -> String {
     match card.cost() {
@@ -458,6 +463,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 

@@ -125,7 +125,7 @@ fn relic_row(idx: usize, r: &RelicDef, price: Option<i32>) -> Row {
 fn potion_row(idx: usize, p: &PotionDef, price: Option<i32>) -> Row {
     let price = price.map(|p| format!("  {p}g")).unwrap_or_default();
     Row {
-        text: format!("{}) {}{}", idx + 1, p.name, price),
+        text: format!("{}) {}{}", idx + 1, crate::ui::potion_label(p.name), price),
         style: theme::fg(theme::BUFF),
     }
 }
@@ -135,7 +135,7 @@ fn relic_details(r: &RelicDef) -> Vec<String> {
 }
 
 fn potion_details(p: &PotionDef) -> Vec<String> {
-    vec![p.name.to_string(), p.desc.to_string()]
+    vec![crate::ui::potion_label(p.name), p.desc.to_string()]
 }
 
 // ---- 奖励 ----
@@ -163,10 +163,8 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         .map(|(i, _)| i)
         .collect();
 
-    // 遗物与药水贴着底部一行一个,卡框按内容定高后,下面留白不占
-    let tail_h = others.len() as u16;
-    let tail_y = (area.y + area.height).saturating_sub(tail_h);
     let mut y = area.y;
+    let bottom = area.y + area.height;
     // 金币行
     if let Some(gi) = gold {
         let sel = r.index == gi;
@@ -183,7 +181,8 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
     }
     // 卡牌段:直接横排三个卡框,外面不套框.
     // 高度取"最长描述折行后需要的行数 + 名字 1 行 + 上下边框 2 行",不足 10 行则撑到 10 行.
-    if !cards.is_empty() && y < tail_y {
+    // 牌被拿走之后这一段整体消失,后面的奖励自然顶上来,相邻摆放.
+    if !cards.is_empty() {
         let n = cards.len() as u16;
         let gap = 1u16;
         let cw = area.width.saturating_sub(gap * (n - 1)) / n;
@@ -199,7 +198,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             .max()
             .unwrap_or(0);
         let want_h = (longest as u16 + 3).max(10);
-        let card_h = want_h.min(tail_y - y);
+        let card_h = want_h.min(bottom.saturating_sub(y));
         if card_h >= 3 && cw >= 6 {
             for (k, &si) in cards.iter().enumerate() {
                 let card = match slots[si] {
@@ -210,9 +209,13 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 card_box(buf, Rect::new(x, y, cw, card_h), card, r.index == si);
             }
         }
+        y += card_h;
     }
-    // 遗物与药水
-    for (k, &i) in others.iter().enumerate() {
+    // 遗物与药水:紧跟在上一个奖励下面
+    for &i in others.iter() {
+        if y >= bottom {
+            break;
+        }
         let sel = r.index == i;
         let (text, color) = match slots[i] {
             RewardSlot::Relic => match r.relic {
@@ -220,7 +223,10 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 None => continue,
             },
             RewardSlot::Potion => match r.potion {
-                Some(d) => (format!("Potion  {}", d.name), theme::BUFF),
+                Some(d) => (
+                    format!("Potion  {}", crate::ui::potion_label(d.name)),
+                    theme::BUFF,
+                ),
                 None => continue,
             },
             _ => continue,
@@ -229,11 +235,12 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         put_padded(
             buf,
             area.x + 2,
-            tail_y + k as u16,
+            y,
             &format!("{}{text}", marker(sel)),
             (area.width as usize).saturating_sub(4),
             style,
         );
+        y += 1;
     }
 }
 

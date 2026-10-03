@@ -76,11 +76,16 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
 
     // 药水区:写全名,用 " - " 连起来
-    let names: Vec<&str> = p.potions.iter().flatten().map(|q| q.name).collect();
+    let names: Vec<String> = p
+        .potions
+        .iter()
+        .flatten()
+        .map(|q| crate::ui::potion_label(q.name))
+        .collect();
     let potions = if names.is_empty() {
-        "POT -".to_string()
+        "Potion -".to_string()
     } else {
-        format!("POT {}", names.join(" - "))
+        format!("Potion {}", names.join(" - "))
     };
     let _ = seg(buf, x + 2, y, limit, &potions, theme::fg(theme::GOLD));
 

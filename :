@@ -1,0 +1,18 @@
+commit and
+
+in reward, the space is enough, just use potion rather than ~, just use ~ when space is not enough, in top bar is also 
+
+:win to just win this battle (not this run) to go to reward stage
+
+and in battle, the card box, the description also be neighbour, and dinamicly shrink if card >5, but don't get more height if card <=5, what is it's upper neighbour area? 
+
+write the very simple ui.md to standardize the ui name. keep them very simple. and only the basic position relationship. forbidden any other description. 
+top bar: blood/blood limitation/block ...
+battle area 
+info bar
+command bar
+
+combact area:
+card area | enemy area
+
+card area
