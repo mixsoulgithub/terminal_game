@@ -11,8 +11,11 @@ use crate::core::run::Run;
 use crate::ui::theme;
 use crate::ui::{put, truncate};
 
-/// 每层占的列数:3 列画节点,1 列画连线
+/// 每层占的列数:1 列画节点,3 列画连线
 pub const CELL_W: u16 = 4;
+
+/// 每个岔路占的行数:1 行放节点,1 行留给斜线
+pub const ROW_H: u16 = 2;
 
 /// 右边放图例需要多少列
 const LEGEND_W: u16 = 22;
@@ -25,11 +28,11 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let total = run.map.total_floors();
     let visible = visible_floors(area.width as usize, total);
     let start = window_start(app, total, visible);
-    // 每个岔路占几行:按可用高度摊开,连线的斜线才有地方画
-    let avail = area.height.saturating_sub(2);
-    let slot_h = (avail / COLS as u16).clamp(1, 4);
-    let block_h = COLS as u16 * slot_h;
-    let top = area.y + 1 + avail.saturating_sub(block_h) / 2;
+    // 7 个岔路各占 1 行,行间再留 1 行画斜线,整块就是 2*7-1=13 行,垂直居中.
+    // 一个节点最多 3 个出度,且都落在下一层的相邻 3 列,所以斜边只跨一个列号,
+    // 中间那一行放一个 - \ / 就够连上.
+    let block_h = COLS as u16 * ROW_H - 1;
+    let top = area.y + area.height.saturating_sub(block_h) / 2;
     let map_w = visible as u16 * CELL_W;
     let right_x = area.x + map_w + 2;
     let legend = legend_lines(run);
@@ -55,7 +58,6 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             top,
             app,
             f,
-            slot_h,
             future.as_deref(),
             if legend_shown {
                 Some((right_x, legend_y + legend.len() as u16))
@@ -64,7 +66,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             },
         );
         if f + 1 < total {
-            render_edges(buf, x, top, app, f, slot_h, future.as_deref());
+            render_edges(buf, x, top, app, f, future.as_deref());
         }
     }
     // 视野两头还有内容就给一句提示
@@ -79,7 +81,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         put(buf, area.x, area.y + area.height.saturating_sub(2), &tip, theme::fg(theme::WARN));
     }
     // 地图下面一行:亮暗和当前位置怎么读
-    let hint = "bright = you can go there next    (x) = you are here";
+    let hint = "bright = you can go there next    green = you are here";
     put(
         buf,
         area.x,
@@ -158,7 +160,6 @@ fn render_floor(
     y0: u16,
     app: &App,
     floor: usize,
-    slot_h: u16,
     future: Option<&[bool]>,
     // 图例的位置:(左边, 结束行)——Boss 的名字不能压上去
     legend: Option<(u16, u16)>,
@@ -173,7 +174,7 @@ fn render_floor(
     let sel = app.map_sel.min(reachable_here.len().saturating_sub(1));
     for i in run.map.row(floor) {
         let node = run.map.node(*i);
-        let y = y0 + (node.col as u16) * slot_h;
+        let y = y0 + (node.col as u16) * ROW_H;
         if y >= buf.area.height {
             continue;
         }
@@ -210,85 +211,78 @@ fn render_floor(
         let sigil = node.kind.sigil();
         let kind_style = theme::kind_style(node.kind);
         let (text, style) = if is_cur {
-            // 你现在在这里
+            // 你现在在这里:单字符 + 绿底,给中间那一列连线让位
             (
-                format!("({sigil})"),
-                Style::default().fg(theme::GOOD).add_modifier(Modifier::BOLD),
+                format!("{sigil}"),
+                Style::default()
+                    .fg(theme::BG)
+                    .bg(theme::GOOD)
+                    .add_modifier(Modifier::BOLD),
             )
         } else if is_sel {
             // 光标停着的那个岔路
             (
-                format!("<{sigil}>"),
+                format!("{sigil}"),
                 kind_style.bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
             )
         } else if on_path {
             // 选了它之后能走到的房间
-            (format!("<{sigil}>"), kind_style.add_modifier(Modifier::BOLD))
+            (format!("{sigil}"), kind_style.add_modifier(Modifier::BOLD))
         } else if is_candidate {
             // 别的岔路:可以选,但不是当前这条未来
-            (format!("<{sigil}>"), kind_style)
+            (format!("{sigil}"), kind_style)
         } else {
             // 现在走不到的一律灰掉
-            (format!("[{sigil}]"), theme::dim())
+            (format!("{sigil}"), theme::dim())
         };
         put(buf, x, y, &text, style);
     }
 }
 
-/// 连线:逐个"子节点"画一条从父节点到它的斜线.
-/// 一个父节点最多连三个子节点,只画第一条会把岔路藏起来;
-/// 而按子节点画,朝上的走上一半行、朝下的走下一半行,彼此不会压到.
-/// 父节点优先取"你现在站的那个",这样从当前位置出发的这条线一定画得出来.
+/// 连线:逐个"父节点"把它的每一条出边都画出来.
+/// 一个父节点最多 3 条出边,且子节点只落在相邻的 3 列,所以每条斜边只跨一个
+/// 列号,正好落在两行之间那一行的中间列;同列的子节点连成一条横线 "-".
+/// 按父节点画才不会漏掉"多条路合并到同一个子节点"时的其它入边.
 fn render_edges(
     buf: &mut Buffer,
     x: u16,
     y0: u16,
     app: &App,
     floor: usize,
-    slot_h: u16,
     future: Option<&[bool]>,
 ) {
     let run = &app.run;
-    let upper = floor + 1;
-    if upper >= run.map.total_floors() {
-        return;
-    }
-    let col_x = x + CELL_W - 1;
-    let row_of = |col: usize| y0 + (col as u16) * slot_h;
-    for child in run.map.row(upper) {
-        let node = run.map.node(*child);
-        // Boss 房不连线:最后一层只有它,不需要箭头指过去
-        if node.kind == NodeKind::Boss {
-            continue;
-        }
-        let parent = node
-            .prev
-            .iter()
-            .copied()
-            .find(|p| Some(*p) == run.pos)
-            .or_else(|| node.prev.first().copied());
-        let Some(parent) = parent else {
-            continue;
-        };
-        let yp = row_of(run.map.node(parent).col);
-        let yc = row_of(node.col);
-        // 这一步落在"选中那条岔路的未来"里才亮
-        let on_path = future.map(|f| f[*child]).unwrap_or(false);
-        let style = if on_path {
-            Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
-        } else {
-            theme::dim()
-        };
-        if yp == yc {
-            if yp < buf.area.height {
-                put(buf, col_x, yp, "-", style);
+    // 中间那一列:父节点在 x,子节点在 x+CELL_W,取正中
+    let col_x = x + CELL_W / 2;
+    let row_of = |col: usize| y0 + (col as u16) * ROW_H;
+    for parent in run.map.row(floor) {
+        let p = run.map.node(*parent);
+        let yp = row_of(p.col);
+        for child in &p.next {
+            let c = run.map.node(*child);
+            // Boss 房不连线:最后一层只有它,不需要箭头指过去
+            if c.floor != floor + 1 || c.kind == NodeKind::Boss {
+                continue;
             }
-            continue;
-        }
-        let ch = if yc > yp { '\\' } else { '/' };
-        for y in (yp.min(yc) + 1)..yp.max(yc) {
-            if y < buf.area.height {
-                put(buf, col_x, y, &ch.to_string(), style);
+            let yc = row_of(c.col);
+            // 这一步落在"选中那条岔路的未来"里才亮
+            let on_path = future.map(|f| f[*child]).unwrap_or(false);
+            let style = if on_path {
+                Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
+            } else {
+                theme::dim()
+            };
+            if yp == yc {
+                if yp < buf.area.height {
+                    put(buf, col_x, yp, "-", style);
+                }
+                continue;
+            }
+            let ch = if yc > yp { '\\' } else { '/' };
+            for y in (yp.min(yc) + 1)..yp.max(yc) {
+                if y < buf.area.height {
+                    put(buf, col_x, y, &ch.to_string(), style);
+                }
             }
         }
     }

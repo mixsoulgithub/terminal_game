@@ -41,7 +41,7 @@ pub fn selected() -> Style {
 /// E 红字 = 普通怪,E 红底 = 精英,R 红底(更亮)= 休息,? 黄 = 未知
 pub fn kind_style(kind: NodeKind) -> Style {
     match kind {
-        NodeKind::Monster => Style::default().fg(BLOOD),
+        NodeKind::Monster => Style::default().fg(FG),
         NodeKind::Elite => Style::default()
             .fg(SEL_FG)
             .bg(Color::Rgb(150, 30, 42))
