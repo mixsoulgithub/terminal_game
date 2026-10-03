@@ -38,6 +38,13 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let right_x = area.x + area.width.saturating_sub(LEGEND_W);
     let legend = legend_lines(run);
     let legend_shown = right_x >= area.x + map_w + 2 && area.height as usize > legend.len();
+    // 地图横向居中:图例在时,可用的宽度要减掉图例那一块
+    let usable = if legend_shown {
+        area.width.saturating_sub(LEGEND_W)
+    } else {
+        area.width
+    };
+    let map_x = area.x + usable.saturating_sub(map_w) / 2;
     // 选中那条岔路之后的整片未来:换一个岔路,亮的就是另一片
     let future = chosen_future(app);
     let legend_y = area.y + area.height.saturating_sub(legend.len() as u16) / 2;
@@ -46,8 +53,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         if f >= total {
             break;
         }
-        let x = area.x + (i as u16) * CELL_W;
-        floor_label(buf, x, area.y, app, f);
+        let x = map_x + (i as u16) * CELL_W;
         render_floor(
             buf,
             x,
@@ -139,17 +145,6 @@ fn window_start(app: &App, total: usize, visible: usize) -> usize {
     app.map_scroll.min(total.saturating_sub(visible))
 }
 
-fn floor_label(buf: &mut Buffer, x: u16, y: u16, app: &App, floor: usize) {
-    let run = &app.run;
-    let here = run.pos.is_some() && run.floor() == floor;
-    let style = if here {
-        Style::default().fg(theme::GOOD).add_modifier(Modifier::BOLD)
-    } else {
-        theme::dim()
-    };
-    put(buf, x, y, &format!("{:>2} ", floor + 1), style);
-}
-
 fn render_floor(
     buf: &mut Buffer,
     x: u16,
@@ -216,17 +211,19 @@ fn render_floor(
                     .add_modifier(Modifier::BOLD),
             )
         } else if is_sel {
-            // 光标停着的那个岔路
+            // 光标停着的那个岔路:可以选,闪烁提示
             (
                 format!("{sigil}"),
-                kind_style.bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
+                kind_style
+                    .bg(theme::SEL_BG)
+                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
             )
         } else if on_path {
             // 选了它之后能走到的房间
             (format!("{sigil}"), kind_style.add_modifier(Modifier::BOLD))
         } else if is_candidate {
-            // 别的岔路:可以选,但不是当前这条未来
-            (format!("{sigil}"), kind_style)
+            // 别的岔路:现在就能选,跟着一起闪
+            (format!("{sigil}"), kind_style.add_modifier(Modifier::SLOW_BLINK))
         } else {
             // 现在走不到的一律灰掉
             (format!("{sigil}"), theme::dim())

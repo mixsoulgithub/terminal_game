@@ -249,7 +249,15 @@ fn render_enemy_block(
     if block_w == 0 {
         return;
     }
-    let x = area.x + area.width.saturating_sub(block_w as u16);
+    // 敌人区占满右边的剩余宽度;内容放在区中间一个 3/4 宽(向上取整)的框里,
+    // 框的左右各留至少一格,不让文字贴到边上.
+    let w = area.width as usize;
+    let region_w = ((w * 3 + 3) / 4).min(w.saturating_sub(2)).max(1);
+    let region_x = area.x + ((w - region_w) / 2) as u16;
+    let centered = region_x + (region_w.saturating_sub(block_w) / 2) as u16;
+    let min_x = area.x + 1;
+    let max_x = (area.x + area.width).saturating_sub(1 + block_w as u16).max(min_x);
+    let x = centered.clamp(min_x, max_x);
     let bg = if selected { theme::SEL_BG } else { theme::BG };
     let bottom = area.y + area.height;
     for (r, line) in lines.iter().enumerate() {

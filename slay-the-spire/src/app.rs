@@ -2,7 +2,7 @@
 // 操作风格向 vim 靠:地图用 h/l 往前后看路、j/k 选岔路,enter 确认,esc 取消,: 开命令行.
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::core::run::{Run, Screen};
+use crate::core::run::{RewardSlot, Run, Screen};
 use crate::ui::overlay::Overlay;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -451,30 +451,66 @@ impl App {
     // ---- 奖励 ----
 
     fn reward_key(&mut self, key: KeyEvent) {
-        let n = self.run.reward_slots().len();
+        let slots = self.run.reward_slots();
+        let n = slots.len();
+        // 奖励分成几组:金币、卡牌段、遗物、药水;j/k 在组间走,卡牌组内用 h/l 循环
+        let card_slots: Vec<usize> = slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| matches!(s, RewardSlot::Card(_)))
+            .map(|(i, _)| i)
+            .collect();
+        let group_of = |i: usize| -> u8 {
+            match slots.get(i) {
+                Some(RewardSlot::Gold) => 0,
+                Some(RewardSlot::Card(_)) => 1,
+                Some(RewardSlot::Relic) => 2,
+                _ => 3,
+            }
+        };
+        let mut groups: Vec<u8> = Vec::new();
+        for i in 0..n {
+            let g = group_of(i);
+            if groups.last() != Some(&g) {
+                groups.push(g);
+            }
+        }
+        let cur = self.run.reward.as_ref().map(|r| r.index).unwrap_or(0).min(n.saturating_sub(1));
+        let cur_g = group_of(cur);
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if n > 0 {
-                    if let Some(r) = self.run.reward.as_mut() {
-                        r.index = (r.index + 1).min(n - 1);
+                if let Some(pos) = groups.iter().position(|g| *g == cur_g) {
+                    if let Some(&ng) = groups.get(pos + 1) {
+                        if let Some(idx) = (0..n).find(|i| group_of(*i) == ng) {
+                            self.set_reward_index(idx);
+                        }
                     }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if let Some(r) = self.run.reward.as_mut() {
-                    r.index = r.index.saturating_sub(1);
+                if let Some(pos) = groups.iter().position(|g| *g == cur_g) {
+                    if pos > 0 {
+                        let pg = groups[pos - 1];
+                        if let Some(idx) = (0..n).rev().find(|i| group_of(*i) == pg) {
+                            self.set_reward_index(idx);
+                        }
+                    }
                 }
             }
-            KeyCode::Char('g') => {
-                if let Some(r) = self.run.reward.as_mut() {
-                    r.index = 0;
+            KeyCode::Char('h') | KeyCode::Left => {
+                if cur_g == 1 && card_slots.len() > 1 {
+                    let pos = card_slots.iter().position(|i| *i == cur).unwrap_or(0);
+                    self.set_reward_index(card_slots[(pos + card_slots.len() - 1) % card_slots.len()]);
                 }
             }
-            KeyCode::Char('G') => {
-                if let Some(r) = self.run.reward.as_mut() {
-                    r.index = n.saturating_sub(1);
+            KeyCode::Char('l') | KeyCode::Right => {
+                if cur_g == 1 && card_slots.len() > 1 {
+                    let pos = card_slots.iter().position(|i| *i == cur).unwrap_or(0);
+                    self.set_reward_index(card_slots[(pos + 1) % card_slots.len()]);
                 }
             }
+            KeyCode::Char('g') => self.set_reward_index(0),
+            KeyCode::Char('G') => self.set_reward_index(n.saturating_sub(1)),
             KeyCode::Char('c') => {
                 let m = self.run.reward_skip_cards();
                 self.info(m);
@@ -489,14 +525,18 @@ impl App {
             KeyCode::Char(c) => {
                 if let Some(slot) = hand_slot(c) {
                     if slot < n {
-                        if let Some(r) = self.run.reward.as_mut() {
-                            r.index = slot;
-                        }
+                        self.set_reward_index(slot);
                         self.take_reward();
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    fn set_reward_index(&mut self, i: usize) {
+        if let Some(r) = self.run.reward.as_mut() {
+            r.index = i;
         }
     }
 
@@ -822,7 +862,8 @@ impl App {
             ],
             Screen::Combat => vec![("?", "help"), (":", "cmd")],
             Screen::Reward => vec![
-                ("j/k", "pick"),
+                ("j/k", "gold/cards/relic/potion"),
+                ("h/l", "card"),
                 ("enter", "take"),
                 ("c", "skip cards"),
                 ("esc", "leave"),
@@ -843,8 +884,8 @@ impl App {
 
     pub fn help_rows(&self) -> Vec<(&'static str, &'static str)> {
         vec![
-            ("h l", "map: look back / forward along the road    combat: pick the target"),
-            ("j k", "map: pick a fork    combat: pick a card"),
+            ("h l", "map: look back / forward    combat: pick target    reward: pick card"),
+            ("j k", "map: pick a fork    combat: pick card    reward: pick gold/cards/relic/potion"),
             ("enter", "confirm / play the selected card"),
             ("esc", "cancel / close"),
             ("1-9 0", "combat: select and play the nth card"),
@@ -1203,6 +1244,56 @@ mod tests {
         app.handle_key(esc());
         assert_eq!(app.run.screen, Screen::Map);
         assert!(app.run.reward.is_none());
+    }
+
+    #[test]
+    fn reward_keys_hop_groups_and_cycle_cards() {
+        let mut app = App::new(12);
+        app.handle_key(enter());
+        {
+            let c = app.run.combat_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = crate::core::combat::Phase::Won;
+        }
+        app.run.sync_combat();
+        // 造一份"金币 + 三张牌 + 遗物"的奖励
+        {
+            let r = app.run.reward.as_mut().unwrap();
+            r.gold = 10;
+            r.gold_taken = false;
+            r.cards = vec![
+                crate::core::cards::card("strike"),
+                crate::core::cards::card("defend"),
+                crate::core::cards::card("bash"),
+            ];
+            r.card_taken = false;
+            r.relic = crate::core::relics::relic_def("vajra");
+            r.relic_taken = false;
+            r.index = 0;
+        }
+        // 槽位:0 金币,1..3 卡牌,4 遗物
+        assert_eq!(app.run.reward_slots().len(), 5);
+        let idx = |app: &App| app.run.reward.as_ref().unwrap().index;
+        // j 从金币跳到卡牌组的第一张,而不是逐槽走
+        app.handle_key(key('j'));
+        assert_eq!(idx(&app), 1);
+        // h/l 在卡牌组内循环
+        app.handle_key(key('l'));
+        assert_eq!(idx(&app), 2);
+        app.handle_key(key('h'));
+        assert_eq!(idx(&app), 1);
+        app.handle_key(key('h'));
+        assert_eq!(idx(&app), 3, "卡牌组内应循环到最后一张");
+        // j 跳到下一组(遗物)
+        app.handle_key(key('j'));
+        assert_eq!(idx(&app), 4);
+        // k 回到卡牌组的最后一张,再 k 回到金币
+        app.handle_key(key('k'));
+        assert_eq!(idx(&app), 3);
+        app.handle_key(key('k'));
+        assert_eq!(idx(&app), 0);
     }
 
     #[test]

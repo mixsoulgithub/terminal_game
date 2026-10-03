@@ -22,7 +22,12 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let run = &app.run;
     let p = &run.player;
     let y = area.y;
-    let limit = area.x + area.width;
+    // 右上角固定放"第几层/共几层",其它内容都别压过来
+    let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
+    let floor_text = format!("Floor {}/{}", floor, run.map.total_floors());
+    let floor_w = display_width(&floor_text) as u16;
+    let right_x = (area.x + area.width).saturating_sub(floor_w + 2);
+    let limit = right_x.saturating_sub(1).max(area.x + 2);
     // 左上空出两格:有些终端在左上角会吃掉第一个格子
     let mut x = area.x + 2;
     let dim = theme::dim();
@@ -41,13 +46,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     x += 3;
 
     // 次要信息
-    let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
-    let mut rest = format!(
-        "F{floor}/{}  DECK {}  RELIC {}",
-        run.map.total_floors(),
-        p.deck.len(),
-        p.relics.len()
-    );
+    let mut rest = format!("DECK {}  RELIC {}", p.deck.len(), p.relics.len());
     if let Some(c) = run.combat() {
         rest.push_str(&format!(
             "  draw {} disc {} exh {}",
@@ -76,7 +75,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         }
     }
 
-    // 药水区在最后:写全名,用 " - " 连起来
+    // 药水区:写全名,用 " - " 连起来
     let names: Vec<&str> = p.potions.iter().flatten().map(|q| q.name).collect();
     let potions = if names.is_empty() {
         "POT -".to_string()
@@ -84,4 +83,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         format!("POT {}", names.join(" - "))
     };
     let _ = seg(buf, x + 2, y, limit, &potions, theme::fg(theme::GOLD));
+
+    // 最右:Floor
+    put(buf, right_x, y, &floor_text, Style::default().fg(theme::INFO));
 }

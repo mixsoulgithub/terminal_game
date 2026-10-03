@@ -163,6 +163,9 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         .map(|(i, _)| i)
         .collect();
 
+    // 遗物与药水贴着底部一行一个,卡框按内容定高后,下面留白不占
+    let tail_h = others.len() as u16;
+    let tail_y = (area.y + area.height).saturating_sub(tail_h);
     let mut y = area.y;
     // 金币行
     if let Some(gi) = gold {
@@ -178,19 +181,38 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         );
         y += 1;
     }
-    // 选牌框:里面横排每张候选卡各一个卡框
-    if !cards.is_empty() {
-        let card_h = (area.y + area.height).saturating_sub(y + others.len() as u16);
-        if card_h >= 4 {
-            render_card_pick(buf, Rect::new(area.x, y, area.width, card_h), app, &slots, &cards);
+    // 卡牌段:直接横排三个卡框,外面不套框.
+    // 高度取"最长描述折行后需要的行数 + 名字 1 行 + 上下边框 2 行",不足 10 行则撑到 10 行.
+    if !cards.is_empty() && y < tail_y {
+        let n = cards.len() as u16;
+        let gap = 1u16;
+        let cw = area.width.saturating_sub(gap * (n - 1)) / n;
+        let text_w = (cw as usize).saturating_sub(4);
+        let longest = cards
+            .iter()
+            .map(|&si| match slots[si] {
+                RewardSlot::Card(ci) => {
+                    wrap_text(&r.cards[ci].display_text(), text_w, usize::MAX).len()
+                }
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        let want_h = (longest as u16 + 3).max(10);
+        let card_h = want_h.min(tail_y - y);
+        if card_h >= 3 && cw >= 6 {
+            for (k, &si) in cards.iter().enumerate() {
+                let card = match slots[si] {
+                    RewardSlot::Card(ci) => &r.cards[ci],
+                    _ => continue,
+                };
+                let x = area.x + k as u16 * (cw + gap);
+                card_box(buf, Rect::new(x, y, cw, card_h), card, r.index == si);
+            }
         }
-        y += card_h;
     }
-    // 遗物与药水各占一行
-    for i in others {
-        if y >= area.y + area.height {
-            break;
-        }
+    // 遗物与药水
+    for (k, &i) in others.iter().enumerate() {
         let sel = r.index == i;
         let (text, color) = match slots[i] {
             RewardSlot::Relic => match r.relic {
@@ -207,12 +229,11 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         put_padded(
             buf,
             area.x + 2,
-            y,
+            tail_y + k as u16,
             &format!("{}{text}", marker(sel)),
             (area.width as usize).saturating_sub(4),
             style,
         );
-        y += 1;
     }
 }
 
@@ -221,43 +242,6 @@ fn marker(selected: bool) -> &'static str {
         "> "
     } else {
         "  "
-    }
-}
-
-/// 选牌框:一个外框,里面横排每张候选卡各一个卡框
-fn render_card_pick(
-    buf: &mut Buffer,
-    area: Rect,
-    app: &App,
-    slots: &[RewardSlot],
-    cards: &[usize],
-) {
-    let r = app.run.reward.as_ref().expect("reward");
-    draw_box(
-        buf,
-        area,
-        "pick a card",
-        theme::fg(theme::BORDER),
-        theme::fg(theme::INFO),
-    );
-    let n = cards.len() as u16;
-    let inner_x = area.x + 1;
-    let inner_y = area.y + 1;
-    let inner_w = area.width.saturating_sub(2);
-    let inner_h = area.height.saturating_sub(2);
-    let gap = 1u16;
-    let cw = inner_w.saturating_sub(gap * (n - 1)) / n;
-    if cw < 6 || inner_h < 3 {
-        return;
-    }
-    for (k, &si) in cards.iter().enumerate() {
-        let card = match slots[si] {
-            RewardSlot::Card(ci) => &r.cards[ci],
-            _ => continue,
-        };
-        let x = inner_x + k as u16 * (cw + gap);
-        let rect = Rect::new(x, inner_y, cw, inner_h);
-        card_box(buf, rect, card, r.index == si);
     }
 }
 
