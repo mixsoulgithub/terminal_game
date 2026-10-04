@@ -65,19 +65,6 @@ pub fn potion_label(name: &str) -> String {
     name.replace("Potion", "~")
 }
 
-/// 药水名列表:放得下就用全名,放不下才缩成 ~
-pub fn potion_names(names: &[&str], avail: usize) -> String {
-    let full = names.join(" - ");
-    if names.is_empty() || display_width(&full) <= avail {
-        return full;
-    }
-    names
-        .iter()
-        .map(|n| potion_label(n))
-        .collect::<Vec<_>>()
-        .join(" - ")
-}
-
 /// 卡牌费用记号:数字 / X / -
 pub fn cost_label(card: &crate::core::card::CardInstance) -> String {
     match card.cost() {
@@ -177,40 +164,32 @@ fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: S
 }
 
 /// 一张牌的说明:费用靠左、名字与类型居中,描述按宽度折行后也居中
-pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance, dim: bool) {
+pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
     let w = rect.width as usize;
     if w == 0 || rect.height == 0 {
         return;
     }
     let bottom = rect.y + rect.height;
     let mut y = rect.y;
-    // 费用左对齐,写成 (1) 并保持能量色
-    let cost_style = if dim {
-        theme::dim()
-    } else {
-        Style::default().fg(theme::ENERGY).add_modifier(ratatui::style::Modifier::BOLD)
-    };
+    // 费用左对齐,写成 (1) 并保持能量色;说明永远不压暗
+    let cost_style =
+        Style::default().fg(theme::ENERGY).add_modifier(ratatui::style::Modifier::BOLD);
     put(buf, rect.x, y, &format!("({})", cost_label(card)), cost_style);
     y += 1;
     if y >= bottom {
         return;
     }
     // 名字居中
-    let name_style = if dim {
-        theme::dim()
-    } else {
-        Style::default()
-            .fg(theme::card_color(card.kind(), card.rarity()))
-            .add_modifier(ratatui::style::Modifier::BOLD)
-    };
+    let name_style = Style::default()
+        .fg(theme::card_color(card.kind(), card.rarity()))
+        .add_modifier(ratatui::style::Modifier::BOLD);
     put_centered(buf, rect.x, y, w, &card.label(), name_style);
     y += 1;
     if y >= bottom {
         return;
     }
     // 类型居中
-    let kind_style = if dim { theme::dim() } else { theme::fg(theme::FG) };
-    put_centered(buf, rect.x, y, w, card.kind().name(), kind_style);
+    put_centered(buf, rect.x, y, w, card.kind().name(), theme::fg(theme::FG));
     y += 1;
     // 描述居中,按宽度折行
     let max = (bottom - y) as usize;
@@ -442,10 +421,10 @@ pub fn card_window(
                 theme::fg(theme::BORDER),
             );
         }
-        card_desc(buf, first, card, false);
-        card_desc(buf, second, after, false);
+        card_desc(buf, first, card);
+        card_desc(buf, second, after);
     } else {
-        card_desc(buf, split.detail, card, false);
+        card_desc(buf, split.detail, card);
     }
 }
 
@@ -466,7 +445,7 @@ pub fn render(f: &mut Frame, app: &App) {
     }
     let hud_area = Rect::new(area.x, area.y, area.width, 1);
     let relic_area = Rect::new(area.x, area.y + 1, area.width, 1);
-    hud::render(buf, hud_area, app);
+    let potion_rect = hud::render(buf, hud_area, app);
     relic_bar(buf, relic_area, app);
     if app.run.screen == crate::core::run::Screen::Combat {
         // 战斗界面自带信息行和命令栏,顶栏以下整块都归它,不用全局底栏
@@ -484,8 +463,41 @@ pub fn render(f: &mut Frame, app: &App) {
         };
         status(buf, status_area, app);
     }
+    // 选药水时,顶栏药水区下面浮一个无边框说明
+    potion_popup(buf, area, potion_rect, app);
     if let Some(ov) = app.overlay {
         overlay::render(buf, area, app, ov);
+    }
+}
+
+/// 选药水时的浮窗:无边框,宽度就是顶栏药水区那一块,高度按说明自动
+fn potion_popup(buf: &mut Buffer, area: Rect, potion_rect: Rect, app: &App) {
+    let Some(sel) = app.potion_sel else {
+        return;
+    };
+    let w = potion_rect.width as usize;
+    if w == 0 || area.height < 3 {
+        return;
+    }
+    let lines: Vec<String> = match app.run.player.potions.get(sel).and_then(|s| s.as_ref()) {
+        Some(d) => {
+            let mut v = vec![d.name.to_string()];
+            v.extend(wrap_text(d.desc, w, usize::MAX));
+            v
+        }
+        None => vec!["empty".to_string()],
+    };
+    let h = (lines.len() as u16).min(area.height.saturating_sub(2));
+    if h == 0 {
+        return;
+    }
+    let rect = Rect::new(potion_rect.x, area.y + 1, potion_rect.width, h);
+    let bg = Style::default().bg(theme::SEL_BG);
+    for y in rect.y..rect.y + rect.height {
+        put_padded(buf, rect.x, y, "", w, bg);
+    }
+    for (i, line) in lines.iter().take(h as usize).enumerate() {
+        put_padded(buf, rect.x, rect.y + i as u16, line, w, theme::fg(theme::FG).bg(theme::SEL_BG));
     }
 }
 
@@ -864,6 +876,7 @@ mod map_tests {
         }
     }
 }
+
 
 
 

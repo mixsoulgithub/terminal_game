@@ -30,6 +30,8 @@ pub struct App {
     /// 最近一次已知的终端尺寸,地图要用它算一屏放几层
     pub term_size: (u16, u16),
     pub rest_index: usize,
+    /// 顶栏里正在挑的药水槽(Some 时 p 之后的上下选择模式)
+    pub potion_sel: Option<usize>,
     /// 等待选定目标的药水槽
     pub potion_pending: Option<usize>,
     /// 药水列表里按过 t,下一个数字是"丢掉"而不是"喝掉"
@@ -54,6 +56,7 @@ impl App {
             map_scroll: 0,
             term_size: (100, 30),
             rest_index: 0,
+            potion_sel: None,
             potion_pending: None,
             toss_pending: false,
             msg: "h/l look along the road, j/k pick a fork, enter to go".to_string(),
@@ -74,6 +77,7 @@ impl App {
         self.map_sel = 0;
         self.map_scroll = 0;
         self.rest_index = 0;
+        self.potion_sel = None;
         self.potion_pending = None;
         self.toss_pending = false;
         self.info(format!("new run, seed {seed}"));
@@ -120,6 +124,11 @@ impl App {
             }
             Mode::Normal => {}
         }
+        // 正在顶栏挑药水:键都交给它
+        if self.potion_sel.is_some() {
+            self.potion_sel_key(key);
+            return;
+        }
         // 叠加层:再按同一个键就关掉,按另一个叠加层键就直接切过去
         if let Some(ov) = self.overlay {
             if let Some(other) = overlay_key_of(key.code) {
@@ -146,6 +155,13 @@ impl App {
         }
         if key.code == KeyCode::Char('?') {
             self.open_overlay(Overlay::Help);
+            return;
+        }
+        // p:不开窗口,直接在顶栏药水区挑第一瓶
+        if key.code == KeyCode::Char('p') {
+            self.potion_sel = Some(0);
+            self.toss_pending = false;
+            self.info("h/l choose a potion, enter drink, t then 1-3 toss");
             return;
         }
         // 全局叠加层开关:任何阶段(含结算界面)都能看牌组/地图/遗物/药水
@@ -220,6 +236,52 @@ impl App {
                         self.ok(r);
                     } else {
                         self.drink(slot);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 顶栏药水选择模式:h/l(或 j/k)换瓶,enter 喝,数字直接喝,t+数字丢
+    fn potion_sel_key(&mut self, key: KeyEvent) {
+        let n = self.run.player.potions.len();
+        let cur = self.potion_sel.unwrap_or(0).min(n.saturating_sub(1));
+        if n == 0 {
+            self.potion_sel = None;
+            return;
+        }
+        match key.code {
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Char('j') | KeyCode::Down => {
+                self.potion_sel = Some((cur + 1) % n);
+            }
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
+                self.potion_sel = Some((cur + n - 1) % n);
+            }
+            KeyCode::Enter => {
+                self.potion_sel = None;
+                if self.run.player.potions[cur].is_some() {
+                    self.drink(cur);
+                } else {
+                    self.warn("that slot is empty");
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => self.potion_sel = None,
+            KeyCode::Char('t') => {
+                self.toss_pending = true;
+                self.info("press 1-3 to toss that potion");
+            }
+            KeyCode::Char(c) => {
+                if let Some(slot) = digit_slot(c) {
+                    if slot < n {
+                        let toss = std::mem::take(&mut self.toss_pending);
+                        self.potion_sel = None;
+                        if toss {
+                            let r = self.run.toss_potion(slot);
+                            self.ok(r);
+                        } else {
+                            self.drink(slot);
+                        }
                     }
                 }
             }
@@ -919,7 +981,8 @@ impl App {
                 ("h/l", "look"),
                 ("j/k", "fork"),
                 ("enter", "go"),
-                ("m d r p", "lists"),
+                ("m d r", "lists"),
+                ("p", "potion"),
                 ("H", "history"),
                 ("?", "help"),
                 (":", "cmd"),
@@ -957,7 +1020,7 @@ impl App {
             ("d", "cards: deck; in combat all four piles"),
             ("m", "map, look along the road with h/l"),
             ("r", "relics"),
-            ("p", "potions (then 1-3 to drink, t then 1-3 to toss)"),
+            ("p", "potions: h/l choose, enter drink, 1-3 drink, t then 1-3 toss"),
             ("H", "history: everything that happened in this run"),
             ("g G", "first / last item in a list"),
             ("c", "reward: skip the card choices"),
@@ -1126,7 +1189,6 @@ mod tests {
             ('d', Overlay::Deck),
             ('m', Overlay::Map),
             ('r', Overlay::Relics),
-            ('p', Overlay::Potions),
         ] {
             app.handle_key(key(k));
             assert_eq!(app.overlay, Some(ov), "{k} 应该打开 {ov:?}");
@@ -1134,6 +1196,12 @@ mod tests {
             app.handle_key(key(k));
             assert!(app.overlay.is_none(), "{k} 再按一次应该关掉");
         }
+        // p 不开窗口,而是在顶栏药水区挑第一瓶
+        app.handle_key(key('p'));
+        assert_eq!(app.potion_sel, Some(0));
+        assert!(app.overlay.is_none());
+        app.handle_key(esc());
+        assert!(app.potion_sel.is_none());
         app.handle_key(key('d'));
         app.handle_key(key('j'));
         // 牌组窗口的 j/k 是挪光标(跳到下一张牌),不是滚动
@@ -1255,9 +1323,9 @@ mod tests {
         let Some(def) = def else { return };
         app.run.player.potions[0] = Some(def);
         app.handle_key(key('p'));
-        assert_eq!(app.overlay, Some(Overlay::Potions));
+        assert_eq!(app.potion_sel, Some(0));
         app.handle_key(key('1'));
-        assert!(app.overlay.is_none());
+        assert!(app.potion_sel.is_none());
         assert_eq!(app.potion_pending, Some(0));
         app.handle_key(esc());
         assert!(app.potion_pending.is_none());
@@ -1270,13 +1338,13 @@ mod tests {
         let def = crate::core::potions::POTIONS.first().unwrap();
         app.run.player.potions[0] = Some(def);
         app.handle_key(key('p'));
-        assert_eq!(app.overlay, Some(Overlay::Potions));
+        assert_eq!(app.potion_sel, Some(0));
         // t 之后按数字是丢掉
         app.handle_key(key('t'));
         assert!(app.toss_pending);
         app.handle_key(key('1'));
         assert!(app.run.player.potions[0].is_none(), "t + 1 应该丢掉药水");
-        assert!(app.overlay.is_none());
+        assert!(app.potion_sel.is_none());
         // 不带 t 时按数字是喝掉;地图上只能喝能在地图上用的那瓶
         let map_potion = crate::core::potions::POTIONS
             .iter()

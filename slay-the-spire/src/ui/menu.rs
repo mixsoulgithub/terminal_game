@@ -337,10 +337,9 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(item) = s.items.get(s.index) else {
         return;
     };
-    let sold = s.sold.get(s.index).copied().unwrap_or(false);
     let detail = split.detail;
     match item {
-        ShopItem::Card(card, _) => crate::ui::card_desc(buf, detail, card, sold),
+        ShopItem::Card(card, _) => crate::ui::card_desc(buf, detail, card),
         ShopItem::Relic(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
         ShopItem::Potion(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
         ShopItem::Remove(_) => put_lines(

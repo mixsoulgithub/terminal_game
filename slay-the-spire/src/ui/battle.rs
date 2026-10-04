@@ -87,7 +87,7 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     let Some(card) = c.hand.get(sel) else {
         return;
     };
-    crate::ui::card_desc(buf, split.detail, card, c.blocked_reason(sel).is_some());
+    crate::ui::card_desc(buf, split.detail, card);
 }
 
 // ---- 敌人区 ----

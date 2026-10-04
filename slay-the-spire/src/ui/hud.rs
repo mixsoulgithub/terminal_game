@@ -18,7 +18,7 @@ fn seg(buf: &mut Buffer, x: u16, y: u16, limit: u16, text: &str, style: Style) -
     x + display_width(&t) as u16
 }
 
-pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
+pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     let run = &app.run;
     let p = &run.player;
     let y = area.y;
@@ -75,23 +75,44 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         }
     }
 
-    // 药水区:每个药水加 (),挨着排;放不下才把 "Potion" 缩成 "~"
-    let names: Vec<&str> = p.potions.iter().flatten().map(|q| q.name).collect();
-    let potions = if names.is_empty() {
-        String::new()
-    } else {
-        let avail = limit.saturating_sub(x + 2) as usize;
-        crate::ui::potion_names(&names, avail)
-            .split(" - ")
-            .map(|n| format!("({n}) "))
-            .collect::<String>()
-            .trim_end()
-            .to_string()
+    // 药水区:每个槽位一个 (),空的也写出来;选中那个铺底色
+    let px0 = x + 2;
+    let avail = limit.saturating_sub(px0) as usize;
+    let labels = |short: bool| -> Vec<String> {
+        p.potions
+            .iter()
+            .map(|slot| match slot {
+                Some(d) => {
+                    if short {
+                        format!("({})", crate::ui::potion_label(d.name))
+                    } else {
+                        format!("({})", d.name)
+                    }
+                }
+                None => "()".to_string(),
+            })
+            .collect()
     };
-    if !potions.is_empty() {
-        let _ = seg(buf, x + 2, y, limit, &potions, theme::fg(theme::GOLD));
+    let mut texts = labels(false);
+    let total: usize = texts.iter().map(|t| display_width(t)).sum();
+    if total > avail {
+        texts = labels(true);
     }
+    let mut px = px0;
+    for (i, text) in texts.iter().enumerate() {
+        let style = if app.potion_sel == Some(i) {
+            theme::selected()
+        } else if p.potions.get(i).and_then(|s| s.as_ref()).is_some() {
+            theme::fg(theme::GOLD)
+        } else {
+            theme::dim()
+        };
+        put(buf, px, y, text, style);
+        px += display_width(text) as u16;
+    }
+    let potion_rect = Rect::new(px0, y, px.saturating_sub(px0), 1);
 
     // 最右:Floor
     put(buf, right_x, y, &floor_text, Style::default().fg(theme::INFO));
+    potion_rect
 }
