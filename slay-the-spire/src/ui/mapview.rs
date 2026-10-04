@@ -169,7 +169,6 @@ fn render_floor(
         if y >= buf.area.height {
             continue;
         }
-        let is_cur = run.pos == Some(*i);
         let is_sel = reachable_here
             .iter()
             .position(|r| r == i)
@@ -191,8 +190,13 @@ fn render_floor(
                 theme::dim()
             };
             let name = run.boss_name();
-            if room as usize >= crate::ui::display_width(name) {
-                put(buf, x, y, &truncate(name, room as usize), style);
+            let label = if is_sel {
+                format!("[{name}]")
+            } else {
+                name.to_string()
+            };
+            if room as usize >= crate::ui::display_width(&label) {
+                put(buf, x, y, &truncate(&label, room as usize), style);
             } else {
                 // 实在放不下名字就退回符号,图例那一行仍然写着全名
                 put(buf, x, y, "[B]", style);
@@ -201,9 +205,18 @@ fn render_floor(
         }
         let sigil = node.kind.sigil();
         let kind_style = theme::kind_style(node.kind);
-        let (text, style) = if is_cur {
-            // 你现在在这里:单字符 + 绿底,给中间那一列连线让位
+        let visited = run.path.contains(i);
+        // 选中的房间用 [ ] 框出来:符号仍然落在本列,方括号借用左右各一格
+        let (px, text, style) = if is_sel && x > 0 {
             (
+                x - 1,
+                format!("[{sigil}]"),
+                kind_style.add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+            )
+        } else if visited {
+            // 走过的房间(含现在这间)统一绿底
+            (
+                x,
                 format!("{sigil}"),
                 Style::default()
                     .fg(theme::BG)
@@ -211,24 +224,27 @@ fn render_floor(
                     .add_modifier(Modifier::BOLD),
             )
         } else if is_sel {
-            // 光标停着的那个岔路:可以选,闪烁提示
+            // 最左那一列没法往左借格子,退回底色
             (
+                x,
                 format!("{sigil}"),
-                kind_style
-                    .bg(theme::SEL_BG)
-                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+                kind_style.bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
             )
         } else if on_path {
             // 选了它之后能走到的房间
-            (format!("{sigil}"), kind_style.add_modifier(Modifier::BOLD))
+            (x, format!("{sigil}"), kind_style.add_modifier(Modifier::BOLD))
         } else if is_candidate {
             // 别的岔路:现在就能选,跟着一起闪
-            (format!("{sigil}"), kind_style.add_modifier(Modifier::SLOW_BLINK))
+            (
+                x,
+                format!("{sigil}"),
+                kind_style.add_modifier(Modifier::SLOW_BLINK),
+            )
         } else {
             // 现在走不到的一律灰掉
-            (format!("{sigil}"), theme::dim())
+            (x, format!("{sigil}"), theme::dim())
         };
-        put(buf, x, y, &text, style);
+        put(buf, px, y, &text, style);
     }
 }
 
@@ -258,8 +274,12 @@ fn render_edges(
                 continue;
             }
             let yc = row_of(c.col);
-            // 这一步落在"选中那条岔路的未来"里才亮
-            let on_path = future.map(|f| f[*child]).unwrap_or(false);
+            // 只有"从选中房间开始的未来"里的边才亮:
+            // 父节点也得在未来里(或者它就是你现在站的那间),否则别的路汇进这条
+            // 未来时(如 a-b 与 c 都通向 b),c 到 b 的边会被误点亮.
+            let on_path = future
+                .map(|f| f[*child] && (f[*parent] || Some(*parent) == run.pos))
+                .unwrap_or(false);
             let style = if on_path {
                 Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
             } else {

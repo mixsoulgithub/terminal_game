@@ -190,6 +190,8 @@ pub struct Run {
     pub boss_enc: &'static Encounter,
     /// 玩家当前所在节点;None 表示还没上路
     pub pos: Option<usize>,
+    /// 这一局走过的节点(按顺序),地图上走过的房间统一给底色
+    pub path: Vec<usize>,
     pub floor_reached: usize,
     pub screen: Screen,
     pub combat: Option<Combat>,
@@ -241,6 +243,7 @@ impl Run {
             map,
             boss_enc,
             pos: None,
+            path: Vec::new(),
             floor_reached: 0,
             screen: Screen::Map,
             combat: None,
@@ -307,6 +310,7 @@ impl Run {
         let node = self.map.node(idx);
         let (kind, floor) = (node.kind, node.floor);
         self.pos = Some(idx);
+        self.path.push(idx);
         self.floor_reached = floor;
         self.say(format!("floor {}: {}", floor + 1, kind.name()));
         let per_floor: i32 = self.player.relic_fx_sum(|r| r.fx.gold_per_floor);

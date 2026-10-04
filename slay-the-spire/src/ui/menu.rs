@@ -217,7 +217,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             })
             .max()
             .unwrap_or(0);
-        let want_h = (longest as u16 + 3).max(10);
+        let want_h = longest as u16 + 3;
         let card_h = want_h.min(bottom.saturating_sub(y));
         if card_h >= 3 && cw >= 6 {
             for (k, &si) in cards.iter().enumerate() {
