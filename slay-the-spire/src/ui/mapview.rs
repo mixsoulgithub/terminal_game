@@ -298,9 +298,9 @@ fn render_edges(
             }
             let ch = if yc > yp { '\\' } else { '/' };
             if yp.abs_diff(yc) > ROW_H {
-                // 跨了不止一层(只有通往 Boss 才会这样):只画挨着子节点的那一格,
-                // 不铺一整列,免得堆出一长条 / 或 \
-                let y = if yc > yp { yc - 1 } else { yc + 1 };
+                // 跨了不止一层(只有通往 Boss 才会这样):只画挨着父节点的那一格,
+                // 当作"Boss 就在隔壁";不铺一整列,也不会所有边都堆到 Boss 旁同一格
+                let y = if yc > yp { yp + 1 } else { yp - 1 };
                 if y < buf.area.height {
                     put(buf, col_x, y, &ch.to_string(), style);
                 }

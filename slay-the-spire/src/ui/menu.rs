@@ -2,7 +2,7 @@
 // 统一用"列表 + 详情"的样式,选中行整行反白.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 
 use crate::app::App;
 use crate::core::card::CardInstance;
@@ -236,7 +236,7 @@ fn marker(selected: bool) -> &'static str {
     }
 }
 
-/// 一张卡的小框:费用写在框的边上,牌名居中,下面折行写描述
+/// 一张卡的小框:框里用和战斗一样的说明版式(费用行 + 名字/类型/描述居中)
 fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
     if rect.width < 6 || rect.height < 3 {
         return;
@@ -246,13 +246,7 @@ fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
     } else {
         theme::fg(theme::BORDER)
     };
-    let title = if selected {
-        Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD)
-    };
-    // 费用写在框边上,框里用和战斗一样的说明版式
-    draw_box(buf, rect, &crate::ui::cost_label(card), border, title);
+    draw_box(buf, rect, "", border, theme::fg(theme::INFO));
     let inner = Rect::new(
         rect.x + 1,
         rect.y + 1,
@@ -271,7 +265,7 @@ fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
             );
         }
     }
-    crate::ui::card_body(buf, inner, card);
+    crate::ui::card_desc(buf, inner, card);
 }
 
 // ---- 商店 ----
