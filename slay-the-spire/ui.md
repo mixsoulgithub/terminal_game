@@ -13,4 +13,5 @@ card area
   energy
   card list
   description
+  buff 
   conclude info

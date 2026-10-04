@@ -526,15 +526,26 @@ fn potion_popup(buf: &mut Buffer, area: Rect, potion_rect: Rect, app: &App) {
     }
 }
 
-/// 遗物行:只写名字,逗号加空格分开;所有界面都有,和顶栏一样
+/// 遗物行:只写名字,逗号加空格分开;名字按稀有度上色
 fn relic_bar(buf: &mut Buffer, area: Rect, app: &App) {
-    let names: Vec<&str> = app.run.player.relics.iter().map(|r| r.name).collect();
-    let text = if names.is_empty() {
-        "no relics".to_string()
-    } else {
-        names.join(", ")
-    };
-    put(buf, area.x + 2, area.y, &text, theme::fg(theme::FG));
+    let relics = &app.run.player.relics;
+    if relics.is_empty() {
+        put(buf, area.x + 2, area.y, "no relics", theme::dim());
+        return;
+    }
+    let mut x = area.x + 2;
+    for (i, r) in relics.iter().enumerate() {
+        if x >= area.x + area.width {
+            break;
+        }
+        let text = if i == 0 {
+            r.name.to_string()
+        } else {
+            format!(", {}", r.name)
+        };
+        put(buf, x, area.y, &text, theme::fg(theme::relic_color(r.rarity)));
+        x += display_width(&text) as u16;
+    }
 }
 
 /// 底栏:左边是模式与消息,右边是当前界面的按键提示
@@ -840,6 +851,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 

@@ -10,11 +10,6 @@ use crate::core::run::{RewardSlot, ShopItem};
 use crate::ui::theme;
 use crate::ui::{display_width, draw_box, put, put_padded, truncate, wrap_text};
 
-struct Row {
-    text: String,
-    style: Style,
-}
-
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     match app.run.screen {
         crate::core::run::Screen::Reward => reward(buf, area, app),
@@ -26,84 +21,6 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         crate::core::run::Screen::Victory => summary(buf, area, app, true),
         crate::core::run::Screen::Death => summary(buf, area, app, false),
         _ => {}
-    }
-}
-
-/// 列表框:标题 + 选中行 + 描述.
-/// 宽盒子用 --- 上下分(列表按内容定高),窄盒子用 | 左右分(两侧各自折行).
-fn draw_list(
-    buf: &mut Buffer,
-    area: Rect,
-    title: &str,
-    rows: &[Row],
-    sel: usize,
-    details: &[String],
-) {
-    draw_box(buf, area, title, theme::fg(theme::BORDER), theme::fg(theme::INFO));
-    if area.width < 4 || area.height < 4 {
-        return;
-    }
-    let inner = Rect::new(
-        area.x + 1,
-        area.y + 1,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    let split = crate::ui::split_list_detail(inner, rows.len() as u16);
-    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
-    // 列表
-    let list = split.list;
-    let lw = list.width as usize;
-    if lw == 0 || list.height == 0 {
-        return;
-    }
-    let capacity = list.height as usize;
-    let start = if rows.len() > capacity {
-        sel.saturating_sub(capacity / 2).min(rows.len() - capacity)
-    } else {
-        0
-    };
-    let mut y = list.y;
-    let bottom = list.y + list.height;
-    for (i, row) in rows.iter().skip(start).enumerate() {
-        let idx = start + i;
-        let selected = idx == sel;
-        let style = if selected { theme::selected() } else { row.style };
-        let marker = if selected { "> " } else { "  " };
-        let text = format!("{marker}{}", row.text);
-        // 窄盒子左右分的时候,这半边要正常折行;宽盒子一行一条
-        let lines = if split.horizontal {
-            vec![truncate(&text, lw)]
-        } else {
-            wrap_text(&text, lw, usize::MAX)
-        };
-        for line in lines {
-            if y >= bottom {
-                break;
-            }
-            put_padded(buf, list.x, y, &line, lw, style);
-            y += 1;
-        }
-        if y >= bottom {
-            break;
-        }
-    }
-    // 描述
-    let detail = split.detail;
-    let dw = detail.width as usize;
-    if dw == 0 || detail.height == 0 {
-        return;
-    }
-    let mut y = detail.y;
-    let bottom = detail.y + detail.height;
-    for line in details {
-        for wrapped in wrap_text(line, dw, usize::MAX) {
-            if y >= bottom {
-                return;
-            }
-            put_padded(buf, detail.x, y, &wrapped, dw, theme::fg(theme::FG));
-            y += 1;
-        }
     }
 }
 
@@ -191,7 +108,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             RewardSlot::Relic => match r.relic {
                 Some(d) => (
                     format!("Relic  {}  ({})", d.name, d.desc),
-                    theme::RELIC,
+                    theme::relic_color(d.rarity),
                 ),
                 None => continue,
             },
@@ -346,7 +263,11 @@ fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected:
             crate::ui::put_card_line(buf, x, y, name_w as u16, card, selected, sold);
         }
         ShopItem::Relic(def, _) => {
-            let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::RELIC).bg(bg) };
+            let style = if sold {
+                theme::dim().bg(bg)
+            } else {
+                theme::fg(theme::relic_color(def.rarity)).bg(bg)
+            };
             put(buf, x, y, &truncate(&format!("{} [{}]", def.name, def.rarity.name()), name_w), style);
         }
         ShopItem::Potion(def, _) => {
@@ -385,24 +306,37 @@ fn put_lines(buf: &mut Buffer, rect: Rect, lines: &[String]) {
 
 fn rest(buf: &mut Buffer, area: Rect, app: &App) {
     let heal = app.run.player.max_hp * crate::core::run::REST_HEAL_PCT / 100;
-    let rows = vec![
-        Row {
-            text: format!("1) Rest  heal {heal} HP"),
-            style: theme::fg(theme::GOOD),
-        },
-        Row {
-            text: "2) Smith  upgrade a card".to_string(),
-            style: theme::fg(theme::BLOCK),
-        },
+    draw_box(
+        buf,
+        area,
+        "rest site",
+        theme::fg(theme::BORDER),
+        theme::fg(theme::INFO),
+    );
+    let inner_w = (area.width as usize).saturating_sub(4);
+    let inner_x = area.x + 2;
+    if inner_w == 0 || area.height < 4 {
+        return;
+    }
+    // 和事件界面一样:没有描述,只有居中的选项,选中靠底色
+    let choices = [
+        (format!("Rest   heal {heal} HP"), theme::fg(theme::GOOD)),
+        ("Smith   upgrade a card".to_string(), theme::fg(theme::BLOCK)),
     ];
-    let details = vec![
-        format!(
-            "HP {}/{}   max HP {}",
-            app.run.player.hp, app.run.player.max_hp, app.run.player.max_hp
-        ),
-        "Rest sites are the only place to heal or upgrade.".to_string(),
-    ];
-    draw_list(buf, area, "rest site", &rows, app.rest_index, &details);
+    let n = choices.len() as u16;
+    let mut y = area.y + (area.height.saturating_sub(n)) / 2;
+    for (i, (text, base)) in choices.iter().enumerate() {
+        if y >= area.y + area.height - 1 {
+            break;
+        }
+        let selected = i == app.rest_index;
+        let style = if selected { theme::selected() } else { *base };
+        if selected {
+            put_padded(buf, inner_x, y, "", inner_w, style);
+        }
+        crate::ui::put_centered_line(buf, inner_x, y, inner_w, text, style);
+        y += 1;
+    }
 }
 
 // ---- 事件 ----
@@ -489,41 +423,53 @@ fn treasure(buf: &mut Buffer, area: Rect, app: &App) {
         theme::fg(theme::GOLD),
     );
     let inner_w = (area.width as usize).saturating_sub(4);
+    let inner_x = area.x + 2;
+    if inner_w == 0 {
+        return;
+    }
+    // 全部居中
     let mut y = area.y + 2;
-    put_padded(buf, area.x + 2, y, "you open the chest...", inner_w, theme::fg(theme::FG));
+    crate::ui::put_centered_line(
+        buf,
+        inner_x,
+        y,
+        inner_w,
+        "you open the chest...",
+        theme::fg(theme::FG),
+    );
     y += 2;
     match app.run.treasure {
         Some(relic) => {
-            put_padded(
+            crate::ui::put_centered_line(
                 buf,
-                area.x + 2,
+                inner_x,
                 y,
-                &format!("  {}  [{}]", relic.name, relic.rarity.name()),
                 inner_w,
-                theme::fg(theme::RELIC),
+                &format!("{}  [{}]", relic.name, relic.rarity.name()),
+                theme::fg(theme::relic_color(relic.rarity)),
             );
             if y + 1 < area.y + area.height - 1 {
-                put_padded(
+                crate::ui::put_centered_line(
                     buf,
-                    area.x + 2,
+                    inner_x,
                     y + 1,
-                    &truncate(relic.desc, inner_w),
                     inner_w,
+                    relic.desc,
                     theme::fg(theme::FG),
                 );
             }
         }
         None => {
-            put_padded(buf, area.x + 2, y, "  (empty)", inner_w, theme::dim());
+            crate::ui::put_centered_line(buf, inner_x, y, inner_w, "(empty)", theme::dim());
         }
     }
     if y + 3 < area.y + area.height - 1 {
-        put_padded(
+        crate::ui::put_centered_line(
             buf,
-            area.x + 2,
+            inner_x,
             y + 3,
-            "press enter to take it",
             inner_w,
+            "press enter to take it",
             theme::dim(),
         );
     }

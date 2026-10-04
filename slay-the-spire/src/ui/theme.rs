@@ -17,7 +17,6 @@ pub const YELLOW: Color = Color::Rgb(238, 226, 104);
 pub const BLOCK: Color = Color::Rgb(122, 176, 240);
 pub const ENERGY: Color = Color::Rgb(238, 226, 104);
 pub const GOLD: Color = Color::Rgb(250, 186, 66);
-pub const RELIC: Color = Color::Rgb(198, 160, 255);
 pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
@@ -51,6 +50,18 @@ pub fn kind_style(kind: NodeKind) -> Style {
         NodeKind::Boss => Style::default()
             .fg(Color::Rgb(255, 86, 104))
             .add_modifier(Modifier::BOLD),
+    }
+}
+
+/// 遗物名字的颜色:按稀有度——starter(基本)/common 默认白,uncommon 蓝,
+/// rare 橙黄;Special 暂按金币色处理(数据里目前只有前四种)
+pub fn relic_color(rarity: crate::core::card::Rarity) -> Color {
+    use crate::core::card::Rarity;
+    match rarity {
+        Rarity::Uncommon => Color::Rgb(120, 170, 240),
+        Rarity::Rare => Color::Rgb(250, 186, 66),
+        Rarity::Special => GOLD,
+        _ => FG,
     }
 }
 

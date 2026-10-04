@@ -91,7 +91,7 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
             for (i, r) in run.player.relics.iter().enumerate() {
                 out.push((
                     format!("{:>3}. {:<20} [{}]", i + 1, r.name, r.rarity.name()),
-                    theme::fg(theme::RELIC),
+                    theme::fg(theme::relic_color(r.rarity)),
                 ));
                 out.push((format!("     {}", r.desc), theme::dim()));
             }

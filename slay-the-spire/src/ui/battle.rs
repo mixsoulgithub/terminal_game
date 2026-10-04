@@ -235,8 +235,9 @@ fn render_enemy_block(
     let min_x = area.x + 1;
     let max_x = (area.x + area.width).saturating_sub(1 + block_w as u16).max(min_x);
     let x = centered.clamp(min_x, max_x);
-    let bg = if selected { theme::SEL_BG } else { theme::BG };
+    let bg = theme::BG;
     let bottom = area.y + area.height;
+    let rows_drawn = lines.len().min(max_rows as usize) as u16;
     for (r, line) in lines.iter().enumerate() {
         if r as u16 >= max_rows {
             break;
@@ -251,6 +252,26 @@ fn render_enemy_block(
             put(buf, cx, y, text, style.bg(bg));
             cx += display_width(text) as u16;
         }
+    }
+    if selected {
+        // 选中的敌人用四个角标出来:/ \ \ / 加 - | 边框
+        let style = theme::fg(theme::SEL_FG);
+        let (cx0, cy0) = (x.saturating_sub(1), y0.saturating_sub(1));
+        let (cx1, cy1) = (x + block_w as u16, y0 + rows_drawn);
+        if cy0 < bottom {
+            crate::ui::hline(buf, cx0 + 1, cy0, cx1.saturating_sub(cx0 + 1), '-', style);
+        }
+        if cy1 < bottom {
+            crate::ui::hline(buf, cx0 + 1, cy1, cx1.saturating_sub(cx0 + 1), '-', style);
+        }
+        for y in cy0..=cy1.min(bottom.saturating_sub(1)) {
+            put(buf, cx0, y, "|", style);
+            put(buf, cx1, y, "|", style);
+        }
+        put(buf, cx0, cy0, "/", style);
+        put(buf, cx1, cy0, "\\", style);
+        put(buf, cx0, cy1, "\\", style);
+        put(buf, cx1, cy1, "/", style);
     }
 }
 
