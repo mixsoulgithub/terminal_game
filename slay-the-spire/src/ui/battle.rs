@@ -92,6 +92,15 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         return;
     };
     crate::ui::card_desc(buf, split.detail, card);
+    // 描述与增减益之间横一条分隔线
+    crate::ui::hline(
+        buf,
+        inner.x,
+        buff_y.saturating_sub(1),
+        inner.width,
+        crate::ui::BOX_H,
+        theme::fg(theme::BORDER),
+    );
     // 增减益行:自己身上的 buff/debuff
     let status_words: Vec<(String, Style)> = c
         .player
@@ -145,7 +154,8 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         }
         let selected = app.target_sel == i && e.alive();
         let lines = enemy_lines(c, i);
-        render_enemy_block(buf, area, y0, slot_h, &lines, selected);
+        // 框上下各占一行,内容最多放 slot_h - 2 行
+        render_enemy_block(buf, area, y0, slot_h.saturating_sub(2), &lines, selected);
     }
 }
 
@@ -251,52 +261,51 @@ fn render_enemy_block(
     if block_w == 0 {
         return;
     }
+    let rows = lines.len().min(max_rows as usize) as u16;
+    if rows == 0 {
+        return;
+    }
     // 敌人区占满右边的剩余宽度;内容放在区中间一个 3/4 宽(向上取整)的框里,
     // 框的左右各留至少一格,不让文字贴到边上.
     let w = area.width as usize;
-    let region_w = ((w * 3 + 3) / 4).min(w.saturating_sub(2)).max(1);
+    let region_w = ((w * 3 + 3) / 4).min(w.saturating_sub(4)).max(1);
     let region_x = area.x + ((w - region_w) / 2) as u16;
     let centered = region_x + (region_w.saturating_sub(block_w) / 2) as u16;
-    let min_x = area.x + 1;
-    let max_x = (area.x + area.width).saturating_sub(1 + block_w as u16).max(min_x);
+    let min_x = area.x + 2;
+    let max_x = (area.x + area.width)
+        .saturating_sub(2 + block_w as u16)
+        .max(min_x);
     let x = centered.clamp(min_x, max_x);
     let bg = theme::BG;
     let bottom = area.y + area.height;
-    let rows_drawn = lines.len().min(max_rows as usize) as u16;
-    for (r, line) in lines.iter().enumerate() {
-        if r as u16 >= max_rows {
-            break;
+    // 每个敌人都有框;选中的那个亮起来
+    let border = if selected { theme::SEL_FG } else { theme::BORDER };
+    let box_area = Rect::new(
+        x.saturating_sub(1),
+        y0,
+        block_w as u16 + 2,
+        rows + 2,
+    );
+    if box_area.y + box_area.height > bottom {
+        // 放不下就退回不画框,只写内容
+        for (r, line) in lines.iter().take(rows as usize).enumerate() {
+            let mut cx = x;
+            for (text, style) in line {
+                put(buf, cx, y0 + r as u16, text, style.bg(bg));
+                cx += display_width(text) as u16;
+            }
         }
-        let y = y0 + r as u16;
-        if y >= bottom {
-            break;
-        }
+        return;
+    }
+    crate::ui::draw_box(buf, box_area, "", theme::fg(border), theme::fg(theme::INFO));
+    for (r, line) in lines.iter().take(rows as usize).enumerate() {
+        let y = y0 + 1 + r as u16;
         put_padded(buf, x, y, "", block_w, Style::default().bg(bg));
         let mut cx = x;
         for (text, style) in line {
             put(buf, cx, y, text, style.bg(bg));
             cx += display_width(text) as u16;
         }
-    }
-    if selected {
-        // 选中的敌人用四个角标出来:/ \ \ / 加 - | 边框
-        let style = theme::fg(theme::SEL_FG);
-        let (cx0, cy0) = (x.saturating_sub(1), y0.saturating_sub(1));
-        let (cx1, cy1) = (x + block_w as u16, y0 + rows_drawn);
-        if cy0 < bottom {
-            crate::ui::hline(buf, cx0 + 1, cy0, cx1.saturating_sub(cx0 + 1), '-', style);
-        }
-        if cy1 < bottom {
-            crate::ui::hline(buf, cx0 + 1, cy1, cx1.saturating_sub(cx0 + 1), '-', style);
-        }
-        for y in cy0..=cy1.min(bottom.saturating_sub(1)) {
-            put(buf, cx0, y, "|", style);
-            put(buf, cx1, y, "|", style);
-        }
-        put(buf, cx0, cy0, "/", style);
-        put(buf, cx1, cy0, "\\", style);
-        put(buf, cx0, cy1, "\\", style);
-        put(buf, cx1, cy1, "/", style);
     }
 }
 

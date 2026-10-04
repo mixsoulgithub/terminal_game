@@ -117,19 +117,23 @@ pub fn put_padded(buf: &mut Buffer, x: u16, y: u16, text: &str, width: usize, st
     put(buf, x, y, &fit(text, width), style);
 }
 
-/// ASCII 方框
+/// 方框用的制表符
+pub const BOX_H: char = '─';
+pub const BOX_V: char = '│';
+
+/// 制表符方框
 pub fn draw_box(buf: &mut Buffer, area: Rect, title: &str, style: Style, title_style: Style) {
     if area.width < 2 || area.height < 2 {
         return;
     }
     let w = area.width as usize;
-    let top = format!("+{}+", "-".repeat(w.saturating_sub(2)));
+    let top = format!("┌{}┐", BOX_H.to_string().repeat(w.saturating_sub(2)));
     put(buf, area.x, area.y, &top, style);
-    let bottom = format!("+{}+", "-".repeat(w.saturating_sub(2)));
+    let bottom = format!("└{}┘", BOX_H.to_string().repeat(w.saturating_sub(2)));
     put(buf, area.x, area.y + area.height - 1, &bottom, style);
     for y in area.y + 1..area.y + area.height - 1 {
-        put(buf, area.x, y, "|", style);
-        put(buf, area.x + area.width - 1, y, "|", style);
+        put(buf, area.x, y, &BOX_V.to_string(), style);
+        put(buf, area.x + area.width - 1, y, &BOX_V.to_string(), style);
     }
     if !title.is_empty() && w > 6 {
         let t = format!(" {} ", truncate(title, w - 6));
@@ -342,9 +346,9 @@ fn split_list_detail_with(area: Rect, list_h: u16, force_h: bool) -> Split {
 /// 按切分结果画出中间那条分隔线
 pub fn draw_split(buf: &mut Buffer, area: Rect, split: &Split, style: Style) {
     if split.horizontal {
-        hline(buf, area.x, split.detail.y.saturating_sub(1), area.width, '-', style);
+        hline(buf, area.x, split.detail.y.saturating_sub(1), area.width, BOX_H, style);
     } else {
-        vline(buf, split.detail.x.saturating_sub(1), area.y, area.height, '|', style);
+        vline(buf, split.detail.x.saturating_sub(1), area.y, area.height, BOX_V, style);
     }
 }
 
@@ -492,7 +496,7 @@ pub fn card_window(
                 split.detail.x,
                 second.y.saturating_sub(1),
                 split.detail.width,
-                '-',
+                BOX_H,
                 theme::fg(theme::BORDER),
             );
         } else {
@@ -501,7 +505,7 @@ pub fn card_window(
                 second.x.saturating_sub(1),
                 split.detail.y,
                 split.detail.height,
-                '|',
+                BOX_V,
                 theme::fg(theme::BORDER),
             );
         }
@@ -539,7 +543,7 @@ pub fn render(f: &mut Frame, app: &App) {
         let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
         let body = Rect::new(area.x, area.y + 2, area.width, area.height.saturating_sub(3));
         // 顶部隔开一条线,信息更清楚
-        hline(buf, body.x, body.y, body.width, '-', theme::fg(theme::BORDER));
+        hline(buf, body.x, body.y, body.width, BOX_H, theme::fg(theme::BORDER));
         let body = Rect::new(body.x, body.y + 1, body.width, body.height.saturating_sub(1));
         match app.run.screen {
             crate::core::run::Screen::Map => mapview::render(buf, body, app),
@@ -717,15 +721,9 @@ mod tests {
             "手牌应该正好十行速记:\n{text}"
         );
         // 分隔线下面给出选中那张的说明:费用、名字、类型、描述
-        let rows: Vec<&str> = text.lines().collect();
-        assert!(
-            rows.iter().any(|l| l.replace('|', " ").trim() == "Strike"),
-            "详情缺牌名:\n{text}"
-        );
-        assert!(
-            rows.iter().any(|l| l.replace('|', " ").trim() == "<Attack>"),
-            "详情缺类型(要带尖括号):\n{text}"
-        );
+        assert!(text.contains("(1)"), "详情缺费用:\n{text}");
+        assert!(text.contains("Strike"), "详情缺牌名:\n{text}");
+        assert!(text.contains("<Attack>"), "详情缺类型(要带尖括号):\n{text}");
         assert!(text.contains("Deal 6 damage."), "详情缺描述:\n{text}");
         assert!(text.contains("energy"), "边框上应该有能量:\n{text}");
     }

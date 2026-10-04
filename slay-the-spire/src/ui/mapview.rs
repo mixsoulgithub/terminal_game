@@ -292,11 +292,12 @@ fn render_edges(
             };
             if yp == yc {
                 if yp < buf.area.height {
-                    put(buf, col_x, yp, "-", style);
+                    put(buf, col_x, yp, &crate::ui::BOX_H.to_string(), style);
                 }
                 continue;
             }
-            let ch = if yc > yp { '\\' } else { '/' };
+            // 制表符里的斜线
+            let ch = if yc > yp { '╲' } else { '╱' };
             if yp.abs_diff(yc) > ROW_H {
                 // 跨了不止一层(只有通往 Boss 才会这样):只画挨着父节点的那一格,
                 // 当作"Boss 就在隔壁";不铺一整列,也不会所有边都堆到 Boss 旁同一格
