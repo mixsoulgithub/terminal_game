@@ -166,8 +166,8 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             })
             .max()
             .unwrap_or(0);
-        // 高度按内容:名字 1 行 + 类型 1 行 + 最长描述折行行数 + 上下边框 2 行
-        let want_h = longest as u16 + 4;
+        // 高度按内容:费用 1 行 + 名字 1 行 + 类型 1 行 + 最长描述折行行数 + 上下边框 2 行
+        let want_h = longest as u16 + 5;
         let card_h = want_h.min(bottom.saturating_sub(y));
         if card_h >= 3 && cw >= 6 {
             for (k, &si) in cards.iter().enumerate() {
