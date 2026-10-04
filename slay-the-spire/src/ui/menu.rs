@@ -239,18 +239,25 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         let sel = r.index == i;
         let (text, color) = match slots[i] {
             RewardSlot::Relic => match r.relic {
-                Some(d) => (format!("Relic  {}  [{}]", d.name, d.rarity.name()), theme::RELIC),
+                Some(d) => (
+                    format!("Relic  {}  ({})", d.name, d.desc),
+                    theme::RELIC,
+                ),
                 None => continue,
             },
             RewardSlot::Potion => match r.potion {
                 Some(d) => {
                     // 放得下就写全名,放不下才把 "Potion" 缩成 "~"
-                    let full = format!("Potion  {}", d.name);
+                    let full = format!("Potion  {}  ({})", d.name, d.desc);
                     let avail = (area.width as usize).saturating_sub(6);
                     let text = if display_width(&full) <= avail {
                         full
                     } else {
-                        format!("Potion  {}", crate::ui::potion_label(d.name))
+                        format!(
+                            "Potion  {}  ({})",
+                            crate::ui::potion_label(d.name),
+                            d.desc
+                        )
                     };
                     (text, theme::BUFF)
                 }
@@ -559,77 +566,35 @@ fn pick(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     };
     let cands = app.run.picker_candidates();
-    let upgrading = p.purpose == crate::core::run::PickPurpose::Upgrade;
-    draw_box(
+    let deck = &app.run.player.deck;
+    // 整副牌都列出来(和看牌组的窗口一样),只有候选的那些可选
+    let rows: Vec<crate::ui::CardRow> = deck
+        .iter()
+        .enumerate()
+        .map(|(i, card)| crate::ui::CardRow::Card {
+            card: card.clone(),
+            selectable: cands.contains(&i),
+        })
+        .collect();
+    let sel = cands.get(p.index).copied().unwrap_or(0);
+    // 只有升级才需要"升级后"那一份说明
+    let after = if p.purpose == crate::core::run::PickPurpose::Upgrade {
+        cands.get(p.index).map(|i| {
+            let mut up = deck[*i].clone();
+            up.upgrade();
+            up
+        })
+    } else {
+        None
+    };
+    crate::ui::card_window(
         buf,
         area,
         p.purpose.title(),
-        theme::fg(theme::BORDER),
-        theme::fg(theme::INFO),
+        &rows,
+        sel,
+        after.as_ref(),
     );
-    if area.width < 4 || area.height < 4 {
-        return;
-    }
-    let inner = Rect::new(
-        area.x + 1,
-        area.y + 1,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    let split = crate::ui::split_list_detail(inner, cands.len() as u16);
-    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
-    // 卡牌列表:和战斗里一样,一行一张 "费用 牌名"
-    let list = split.list;
-    let lw = list.width as usize;
-    if lw == 0 || list.height == 0 {
-        return;
-    }
-    let capacity = list.height as usize;
-    let start = if cands.len() > capacity {
-        p.index.saturating_sub(capacity / 2).min(cands.len() - capacity)
-    } else {
-        0
-    };
-    for (i, deck_idx) in cands.iter().skip(start).take(capacity).enumerate() {
-        let card = &app.run.player.deck[*deck_idx];
-        let text = format!("{} {}", crate::ui::cost_label(card), card.label());
-        let style = if start + i == p.index {
-            theme::selected()
-        } else {
-            theme::fg(theme::card_color(card.kind(), card.rarity()))
-        };
-        put_padded(buf, list.x, list.y + i as u16, &text, lw, style);
-    }
-    // 描述:升级时左边是原卡、右边是升级后的卡,中间一条竖线
-    let Some(deck_idx) = cands.get(p.index) else {
-        return;
-    };
-    let card = &app.run.player.deck[*deck_idx];
-    let detail = split.detail;
-    if upgrading {
-        let half = detail.width / 2;
-        let left = Rect::new(detail.x, detail.y, half, detail.height);
-        let right = Rect::new(
-            detail.x + half + 1,
-            detail.y,
-            detail.width.saturating_sub(half + 1),
-            detail.height,
-        );
-        crate::ui::vline(
-            buf,
-            detail.x + half,
-            detail.y,
-            detail.height,
-            '|',
-            theme::fg(theme::BORDER),
-        );
-        let mut upgraded = card.clone();
-        upgraded.upgrade();
-        crate::ui::card_desc(buf, left, card, false);
-        crate::ui::card_desc(buf, right, &upgraded, false);
-    } else {
-        crate::ui::card_desc(buf, detail, card, false);
-    }
 }
 
 // ---- 胜负结算 ----

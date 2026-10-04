@@ -205,10 +205,21 @@ pub struct Split {
 }
 
 pub fn split_list_detail(area: Rect, list_h: u16) -> Split {
-    // 内容左右各留 1 格,分隔线仍然横跨整个 area
+    split_list_detail_with(area, list_h, false)
+}
+
+/// 同上,但强制上下分(战斗的卡区就是这么用的)
+pub fn split_list_detail_h(area: Rect, list_h: u16) -> Split {
+    split_list_detail_with(area, list_h, true)
+}
+
+/// `force_h` 为 true 时一定用横线上下分;否则按规则判断.
+/// 内容左右各留 1 格,分隔线仍然横跨整个 area.
+fn split_list_detail_with(area: Rect, list_h: u16, force_h: bool) -> Split {
     let x = area.x + 1;
     let w = area.width.saturating_sub(2);
-    let horizontal = w as u32 > area.height as u32 * 3 / 2;
+    // 够宽(宽 > 高 * 1.5)左右分,否则上下分
+    let horizontal = force_h || w as u32 <= area.height as u32 * 3 / 2;
     if horizontal {
         let lh = list_h.min(area.height.saturating_sub(2));
         Split {
@@ -245,6 +256,170 @@ pub fn draw_split(buf: &mut Buffer, area: Rect, split: &Split, style: Style) {
     }
 }
 
+/// 指定切分方向的对半切分:horizontal 为 true 时上下分(-),false 时左右分(|)
+pub fn split_two_with(area: Rect, horizontal: bool) -> (Rect, Rect, bool) {
+    if horizontal {
+        let h = area.height / 2;
+        (
+            Rect::new(area.x, area.y, area.width, h),
+            Rect::new(
+                area.x,
+                area.y + h + 1,
+                area.width,
+                area.height.saturating_sub(h + 1),
+            ),
+            true,
+        )
+    } else {
+        let w = area.width / 2;
+        (
+            Rect::new(area.x, area.y, w, area.height),
+            Rect::new(
+                area.x + w + 1,
+                area.y,
+                area.width.saturating_sub(w + 1),
+                area.height,
+            ),
+            false,
+        )
+    }
+}
+
+/// 一行卡牌列表:费用用能量色,牌名用牌自己的颜色;selected 时整行铺底色
+pub fn put_card_line(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    w: u16,
+    card: &crate::core::card::CardInstance,
+    selected: bool,
+    dim: bool,
+) {
+    if w == 0 {
+        return;
+    }
+    let bg = if selected { theme::SEL_BG } else { theme::BG };
+    let base = Style::default().bg(bg);
+    put_padded(buf, x, y, "", w as usize, base);
+    let cost_style = if dim {
+        theme::dim().bg(bg)
+    } else {
+        Style::default().fg(theme::ENERGY).bg(bg)
+    };
+    let name_style = if dim {
+        theme::dim().bg(bg)
+    } else {
+        Style::default()
+            .fg(theme::card_color(card.kind(), card.rarity()))
+            .bg(bg)
+    };
+    let mut cx = x;
+    let mut left = w as usize;
+    let cost = truncate(&cost_label(card), left);
+    put(buf, cx, y, &cost, cost_style);
+    let cw = display_width(&cost);
+    cx += cw as u16;
+    left = left.saturating_sub(cw);
+    if left == 0 {
+        return;
+    }
+    put(buf, cx, y, " ", base);
+    cx += 1;
+    left -= 1;
+    let name = truncate(&card.label(), left);
+    put(buf, cx, y, &name, name_style);
+}
+
+/// 卡牌窗口里的一行
+pub enum CardRow {
+    /// 分组标题(战斗里各堆的名字)
+    Header(String),
+    Card {
+        card: crate::core::card::CardInstance,
+        /// 不可选的行会压暗,光标跳过
+        selectable: bool,
+    },
+}
+
+/// 卡牌窗口:左边(或上面)是卡牌列表,右边(或下面)是选中那张的说明.
+/// `after` 有值时(升级),说明那半边再按同一规则对半切成"升级前 / 升级后".
+pub fn card_window(
+    buf: &mut Buffer,
+    area: Rect,
+    title: &str,
+    rows: &[CardRow],
+    sel: usize,
+    after: Option<&crate::core::card::CardInstance>,
+) {
+    draw_box(buf, area, title, theme::fg(theme::SEL_FG), theme::fg(theme::INFO));
+    if area.width < 4 || area.height < 4 {
+        return;
+    }
+    let inner = Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let split = split_list_detail(inner, rows.len() as u16);
+    draw_split(buf, inner, &split, theme::fg(theme::BORDER));
+    // 列表
+    let list = split.list;
+    let lw = list.width;
+    if lw == 0 || list.height == 0 {
+        return;
+    }
+    let capacity = list.height as usize;
+    let start = if rows.len() > capacity {
+        sel.saturating_sub(capacity / 2).min(rows.len() - capacity)
+    } else {
+        0
+    };
+    for (i, row) in rows.iter().skip(start).take(capacity).enumerate() {
+        let idx = start + i;
+        let y = list.y + i as u16;
+        match row {
+            CardRow::Header(text) => {
+                put_padded(buf, list.x, y, text, lw as usize, theme::fg(theme::INFO));
+            }
+            CardRow::Card { card, selectable } => {
+                put_card_line(buf, list.x, y, lw, card, idx == sel, !selectable);
+            }
+        }
+    }
+    // 说明
+    let Some(CardRow::Card { card, .. }) = rows.get(sel) else {
+        return;
+    };
+    if let Some(after) = after {
+        // 升级的"前 / 后"两份说明用和外面相反的方向切,免得两条同样的线并排
+        let (first, second, horizontal) = split_two_with(split.detail, !split.horizontal);
+        if horizontal {
+            hline(
+                buf,
+                split.detail.x,
+                second.y.saturating_sub(1),
+                split.detail.width,
+                '-',
+                theme::fg(theme::BORDER),
+            );
+        } else {
+            vline(
+                buf,
+                second.x.saturating_sub(1),
+                split.detail.y,
+                split.detail.height,
+                '|',
+                theme::fg(theme::BORDER),
+            );
+        }
+        card_desc(buf, first, card, false);
+        card_desc(buf, second, after, false);
+    } else {
+        card_desc(buf, split.detail, card, false);
+    }
+}
+
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let buf = f.buffer_mut();
@@ -261,14 +436,16 @@ pub fn render(f: &mut Frame, app: &App) {
         return;
     }
     let hud_area = Rect::new(area.x, area.y, area.width, 1);
+    let relic_area = Rect::new(area.x, area.y + 1, area.width, 1);
     hud::render(buf, hud_area, app);
+    relic_bar(buf, relic_area, app);
     if app.run.screen == crate::core::run::Screen::Combat {
         // 战斗界面自带信息行和命令栏,顶栏以下整块都归它,不用全局底栏
-        let body = Rect::new(area.x, area.y + 1, area.width, area.height.saturating_sub(1));
+        let body = Rect::new(area.x, area.y + 2, area.width, area.height.saturating_sub(2));
         battle::render(buf, body, app);
     } else {
         let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
-        let body = Rect::new(area.x, area.y + 1, area.width, area.height - 2);
+        let body = Rect::new(area.x, area.y + 2, area.width, area.height.saturating_sub(3));
         // 顶部隔开一条线,信息更清楚
         hline(buf, body.x, body.y, body.width, '-', theme::fg(theme::BORDER));
         let body = Rect::new(body.x, body.y + 1, body.width, body.height.saturating_sub(1));
@@ -281,6 +458,17 @@ pub fn render(f: &mut Frame, app: &App) {
     if let Some(ov) = app.overlay {
         overlay::render(buf, area, app, ov);
     }
+}
+
+/// 遗物行:只写名字,逗号加空格分开;所有界面都有,和顶栏一样
+fn relic_bar(buf: &mut Buffer, area: Rect, app: &App) {
+    let names: Vec<&str> = app.run.player.relics.iter().map(|r| r.name).collect();
+    let text = if names.is_empty() {
+        "no relics".to_string()
+    } else {
+        names.join(", ")
+    };
+    put(buf, area.x + 2, area.y, &text, theme::fg(theme::FG));
 }
 
 /// 底栏:左边是模式与消息,右边是当前界面的按键提示
@@ -442,7 +630,8 @@ mod tests {
         let mut app = App::new(9);
         app.overlay = Some(Overlay::Deck);
         let text = screen_text(&app, 110, 36);
-        assert!(text.contains("cards in deck"), "牌组界面没内容:\n{text}");
+        assert!(text.contains("Strike"), "牌组界面没列出手牌:\n{text}");
+        assert!(text.contains("Deal 6 damage."), "牌组界面缺卡牌说明:\n{text}");
         app.overlay = Some(Overlay::Help);
         let text = screen_text(&app, 110, 36);
         assert!(text.contains(":q"), "帮助界面没列出 :q");
@@ -638,3 +827,5 @@ mod map_tests {
         }
     }
 }
+
+

@@ -122,6 +122,7 @@ fn chosen_future(app: &App) -> Option<Vec<bool>> {
 /// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     vec![
+        ("[] you are here".to_string(), Style::default().add_modifier(Modifier::BOLD)),
         ("?  Unknown".to_string(), theme::kind_style(NodeKind::Event)),
         ("$  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
         ("T  Treasure".to_string(), theme::kind_style(NodeKind::Treasure)),

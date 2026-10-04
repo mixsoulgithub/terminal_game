@@ -48,19 +48,34 @@ impl Overlay {
     }
 }
 
-fn card_line(card: &CardInstance) -> String {
-    let cost = match card.cost() {
-        crate::core::card::Cost::Fixed(n) => n.to_string(),
-        crate::core::card::Cost::X => "X".to_string(),
-        crate::core::card::Cost::Unplayable => "-".to_string(),
-    };
-    format!(
-        "{:<18} cost {:<2} {:<8} {}",
-        card.label(),
-        cost,
-        card.kind().name(),
-        card.display_text()
-    )
+/// 牌组窗口的行:战斗中按抽牌/弃牌/消耗/手牌摊开,平时就是整副牌组
+pub fn deck_rows(app: &App) -> Vec<crate::ui::CardRow> {
+    use crate::ui::CardRow;
+    let run = &app.run;
+    fn push(rows: &mut Vec<CardRow>, list: &[CardInstance]) {
+        for c in list {
+            rows.push(CardRow::Card {
+                card: c.clone(),
+                selectable: true,
+            });
+        }
+    }
+    let mut rows = Vec::new();
+    match run.combat() {
+        Some(c) => {
+            for (name, pile) in [
+                ("hand", &c.hand),
+                ("draw pile", &c.draw),
+                ("discard pile", &c.discard),
+                ("exhausted", &c.exhaust),
+            ] {
+                rows.push(CardRow::Header(format!("{name} ({})", pile.len())));
+                push(&mut rows, pile);
+            }
+        }
+        None => push(&mut rows, &run.player.deck),
+    }
+    rows
 }
 
 /// 叠加层要显示的所有行(按需生成,不缓存)
@@ -69,37 +84,9 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
     let mut out: Vec<(String, Style)> = Vec::new();
     match ov {
         Overlay::Map => {}
-        Overlay::Deck => match run.combat() {
-            Some(c) => {
-                // 战斗中:把这场战斗里的每一堆都摊开
-                let mut section = |name: &str, pile: &[CardInstance], style: Style| {
-                    out.push((format!("{name} ({})", pile.len()), theme::fg(theme::INFO)));
-                    if pile.is_empty() {
-                        out.push(("    (empty)".to_string(), theme::dim()));
-                    }
-                    for (i, card) in pile.iter().enumerate() {
-                        out.push((
-                            format!("{:>3}. {}", i + 1, card_line(card)),
-                            style,
-                        ));
-                    }
-                };
-                section("hand", &c.hand, theme::fg(theme::SEL_FG));
-                section("draw pile", &c.draw, theme::dim());
-                section("discard pile", &c.discard, theme::dim());
-                section("exhausted", &c.exhaust, theme::dim());
-            }
-            None => {
-                let deck = &run.player.deck;
-                out.push((format!("{} cards in deck", deck.len()), theme::fg(theme::INFO)));
-                for (i, c) in deck.iter().enumerate() {
-                    out.push((
-                        format!("{:>3}. {}", i + 1, card_line(c)),
-                        theme::fg(theme::card_color(c.kind(), c.rarity())),
-                    ));
-                }
-            }
-        },
+        Overlay::Deck => {
+            // 牌组窗口改用"列表 + 说明",这里不再产生行
+        }
         Overlay::Relics => {
             for (i, r) in run.player.relics.iter().enumerate() {
                 out.push((
@@ -168,6 +155,16 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     // 先清底,免得和后面的界面文字糊在一起
     for y in rect.y..rect.y + rect.height {
         put_padded(buf, rect.x, y, "", rect.width as usize, Style::default().bg(theme::BG));
+    }
+    if ov == Overlay::Deck {
+        let rows = deck_rows(app);
+        let title = format!(
+            "{}  (j/k pick, {} or esc close)",
+            ov.title(),
+            ov.close_key()
+        );
+        crate::ui::card_window(buf, rect, &title, &rows, app.overlay_sel, None);
+        return;
     }
     let title = format!(
         "{}  (j/k scroll, {} or esc close)",

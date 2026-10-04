@@ -10,7 +10,7 @@ use crate::app::{App, Mode};
 use crate::core::combat::Combat;
 use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
-use crate::ui::{cost_label, display_width, draw_box, put, put_padded, truncate};
+use crate::ui::{display_width, draw_box, put, put_padded, truncate};
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(c) = app.run.combat() else {
@@ -21,25 +21,12 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         return;
     }
     // 底部两行固定:信息行 + 命令栏
-    let relics = Rect::new(area.x, area.y, area.width, 1);
     let command = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
     let info = Rect::new(area.x, area.y + area.height - 2, area.width, 1);
-    let main = Rect::new(area.x, area.y + 1, area.width, area.height - 3);
-    render_relics(buf, relics, app);
+    let main = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
     render_main(buf, main, app, c);
     render_info(buf, info, app, c);
     render_command(buf, command, app);
-}
-
-/// 遗物行:只写名字,逗号加空格分开,别的都不加
-fn render_relics(buf: &mut Buffer, area: Rect, app: &App) {
-    let names: Vec<&str> = app.run.player.relics.iter().map(|r| r.name).collect();
-    let text = if names.is_empty() {
-        "no relics".to_string()
-    } else {
-        names.join(", ")
-    };
-    put(buf, area.x + 2, area.y, &text, theme::fg(theme::FG));
 }
 
 /// 主区:左边角色区(带框),右边敌人区
@@ -80,12 +67,11 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    // 手牌 + 描述:走通用的列表/描述切分
-    let split = crate::ui::split_list_detail(inner, c.hand.len() as u16);
+    // 手牌 + 描述:卡区固定用横线上下分(列表在上、说明在下)
+    let split = crate::ui::split_list_detail_h(inner, c.hand.len() as u16);
     crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
     let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
     let list = split.list;
-    let lw = list.width as usize;
     let rows = list.height as usize;
     let start = if c.hand.len() > rows {
         sel.saturating_sub(rows / 2).min(c.hand.len() - rows)
@@ -94,16 +80,8 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     };
     for (i, card) in c.hand.iter().skip(start).take(rows).enumerate() {
         let slot = start + i;
-        let text = format!("{} {}", cost_label(card), card.label());
         let playable = c.blocked_reason(slot).is_none();
-        let style = if slot == sel {
-            theme::selected()
-        } else if !playable {
-            theme::dim()
-        } else {
-            theme::fg(theme::card_color(card.kind(), card.rarity()))
-        };
-        put_padded(buf, list.x, list.y + i as u16, &text, lw, style);
+        crate::ui::put_card_line(buf, list.x, list.y + i as u16, list.width, card, slot == sel, !playable);
     }
     // 描述:牌名 + 类型 + 完整描述(能量已经写在边框上了,不再重复)
     let Some(card) = c.hand.get(sel) else {

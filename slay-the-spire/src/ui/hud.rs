@@ -75,17 +75,22 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         }
     }
 
-    // 药水区:写全名,用 " - " 连起来;放不下才把 "Potion" 缩成 "~"
+    // 药水区:每个药水加 (),挨着排;放不下才把 "Potion" 缩成 "~"
     let names: Vec<&str> = p.potions.iter().flatten().map(|q| q.name).collect();
-    let prefix = "Potion ";
-    let avail = (limit.saturating_sub(x + 2) as usize).saturating_sub(prefix.len());
-    let body = crate::ui::potion_names(&names, avail);
-    let potions = if body.is_empty() {
-        format!("{prefix}-")
+    let potions = if names.is_empty() {
+        String::new()
     } else {
-        format!("{prefix}{body}")
+        let avail = limit.saturating_sub(x + 2) as usize;
+        crate::ui::potion_names(&names, avail)
+            .split(" - ")
+            .map(|n| format!("({n}) "))
+            .collect::<String>()
+            .trim_end()
+            .to_string()
     };
-    let _ = seg(buf, x + 2, y, limit, &potions, theme::fg(theme::GOLD));
+    if !potions.is_empty() {
+        let _ = seg(buf, x + 2, y, limit, &potions, theme::fg(theme::GOLD));
+    }
 
     // 最右:Floor
     put(buf, right_x, y, &floor_text, Style::default().fg(theme::INFO));

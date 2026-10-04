@@ -17,6 +17,8 @@ pub struct App {
     pub cmd: String,
     pub overlay: Option<Overlay>,
     pub overlay_scroll: u16,
+    /// 看牌组窗口里的光标(行下标,跳过分组标题)
+    pub overlay_sel: usize,
     /// 手牌光标
     pub hand_sel: usize,
     /// 敌人光标
@@ -45,6 +47,7 @@ impl App {
             cmd: String::new(),
             overlay: None,
             overlay_scroll: 0,
+            overlay_sel: 0,
             hand_sel: 0,
             target_sel: 0,
             map_sel: 0,
@@ -65,6 +68,7 @@ impl App {
         self.cmd.clear();
         self.overlay = None;
         self.overlay_scroll = 0;
+        self.overlay_sel = 0;
         self.hand_sel = 0;
         self.target_sel = 0;
         self.map_sel = 0;
@@ -121,12 +125,11 @@ impl App {
             if let Some(other) = overlay_key_of(key.code) {
                 self.potion_pending = None;
                 self.toss_pending = false;
-                self.overlay = if other == ov { None } else { Some(other) };
-                self.overlay_scroll = if other == Overlay::History {
-                    u16::MAX / 2
+                if other == ov {
+                    self.overlay = None;
                 } else {
-                    0
-                };
+                    self.open_overlay(other);
+                }
                 return;
             }
             self.overlay_key(key);
@@ -165,8 +168,13 @@ impl App {
 
     fn open_overlay(&mut self, ov: Overlay) {
         self.overlay = Some(ov);
+        self.overlay_sel = 0;
         // 历史记录先看最新的一条,其他列表从头看
         self.overlay_scroll = if ov == Overlay::History { u16::MAX / 2 } else { 0 };
+        if ov == Overlay::Deck {
+            // 牌组窗口的光标要停在第一张牌上,别停在分组标题
+            self.deck_cursor_end(false);
+        }
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
@@ -182,11 +190,21 @@ impl App {
             KeyCode::Char('g') if on_map => self.jump_map(false),
             KeyCode::Char('G') if on_map => self.jump_map(true),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.overlay_scroll = self.overlay_scroll.saturating_add(1);
+                if self.overlay == Some(Overlay::Deck) {
+                    self.move_deck_cursor(1);
+                } else {
+                    self.overlay_scroll = self.overlay_scroll.saturating_add(1);
+                }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.overlay_scroll = self.overlay_scroll.saturating_sub(1);
+                if self.overlay == Some(Overlay::Deck) {
+                    self.move_deck_cursor(-1);
+                } else {
+                    self.overlay_scroll = self.overlay_scroll.saturating_sub(1);
+                }
             }
+            KeyCode::Char('g') if self.overlay == Some(Overlay::Deck) => self.deck_cursor_end(false),
+            KeyCode::Char('G') if self.overlay == Some(Overlay::Deck) => self.deck_cursor_end(true),
             KeyCode::Char('g') => self.overlay_scroll = 0,
             KeyCode::Char('G') => self.overlay_scroll = u16::MAX / 2,
             KeyCode::Char('t') if self.overlay == Some(Overlay::Potions) => {
@@ -207,6 +225,41 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// 牌组窗口的光标移动:只在可选的行之间走
+    fn move_deck_cursor(&mut self, delta: i32) {
+        let rows = crate::ui::overlay::deck_rows(self);
+        let picks: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, crate::ui::CardRow::Card { selectable: true, .. }))
+            .map(|(i, _)| i)
+            .collect();
+        if picks.is_empty() {
+            return;
+        }
+        let pos = picks
+            .iter()
+            .position(|i| *i == self.overlay_sel)
+            .unwrap_or(0);
+        let np = (pos as i32 + delta).clamp(0, picks.len() as i32 - 1) as usize;
+        self.overlay_sel = picks[np];
+    }
+
+    fn deck_cursor_end(&mut self, last: bool) {
+        let rows = crate::ui::overlay::deck_rows(self);
+        let picks: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, crate::ui::CardRow::Card { selectable: true, .. }))
+            .map(|(i, _)| i)
+            .collect();
+        self.overlay_sel = if last {
+            picks.last().copied().unwrap_or(0)
+        } else {
+            picks.first().copied().unwrap_or(0)
+        };
     }
 
     fn drink(&mut self, slot: usize) {
@@ -1080,7 +1133,8 @@ mod tests {
         }
         app.handle_key(key('d'));
         app.handle_key(key('j'));
-        assert_eq!(app.overlay_scroll, 1);
+        // 牌组窗口的 j/k 是挪光标(跳到下一张牌),不是滚动
+        assert_eq!(app.overlay_sel, 1);
         app.handle_key(esc());
         assert!(app.overlay.is_none());
         app.handle_key(key('?'));
