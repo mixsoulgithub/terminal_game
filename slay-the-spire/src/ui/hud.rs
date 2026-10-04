@@ -86,25 +86,18 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
         put(buf, cx, y, &floor_text, Style::default().fg(theme::INFO));
     }
 
-    // 最右:DECK/RELIC(战斗里再加牌堆计数)和自身增减益,整体右对齐
-    let mut right = format!("DECK {}  RELIC {}", p.deck.len(), p.relics.len());
+    // 最右:Deck 数,右边留 2 格
+    let right = format!("Deck {}", p.deck.len());
     let mut statuses = String::new();
     if let Some(c) = run.combat() {
-        right.push_str(&format!(
-            "  draw {} disc {} exh {}",
-            c.draw.len(),
-            c.discard.len(),
-            c.exhaust.len()
-        ));
         for (st, n) in c.player.statuses.iter() {
             statuses.push_str(&format!("{} {}  ", st.short(), n));
         }
     }
     let statuses = statuses.trim_end();
     let right_w = display_width(&right) + if statuses.is_empty() { 0 } else { 2 + display_width(statuses) };
-    // 别压到中间的 Floor 上
     let rx = (area.x + area.width)
-        .saturating_sub(right_w as u16)
+        .saturating_sub(right_w as u16 + 2)
         .max(cx + floor_w + 1);
     let rx = seg(buf, rx, y, area.x + area.width, &right, dim);
     if !statuses.is_empty() {

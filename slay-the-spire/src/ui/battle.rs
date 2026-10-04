@@ -64,12 +64,15 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         area.width.saturating_sub(2),
         area.height.saturating_sub(2),
     );
-    if inner.width == 0 || inner.height == 0 {
+    if inner.width == 0 || inner.height < 2 {
         return;
     }
+    // 最下面一行留给牌堆小结:draw 靠左、exhausted 居中、discard 靠右,不加分隔线
+    let body = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
+    let summary_y = inner.y + inner.height - 1;
     // 手牌 + 描述:卡区固定用横线上下分(列表在上、说明在下)
-    let split = crate::ui::split_list_detail_h(inner, c.hand.len() as u16);
-    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
+    let split = crate::ui::split_list_detail_h(body, c.hand.len() as u16);
+    crate::ui::draw_split(buf, body, &split, theme::fg(theme::BORDER));
     let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
     let list = split.list;
     let rows = list.height as usize;
@@ -88,6 +91,17 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         return;
     };
     crate::ui::card_desc(buf, split.detail, card);
+    // 底行:draw / exhausted / discard
+    let w = inner.width as usize;
+    let left = format!("draw {}", c.draw.len());
+    let mid = format!("exhausted {}", c.exhaust.len());
+    let right = format!("discard {}", c.discard.len());
+    put_padded(buf, inner.x, summary_y, "", w, Style::default());
+    put(buf, inner.x, summary_y, &left, theme::fg(theme::INFO));
+    let mid_x = inner.x + (w.saturating_sub(crate::ui::display_width(&mid)) / 2) as u16;
+    put(buf, mid_x, summary_y, &mid, theme::fg(theme::INFO));
+    let right_x = inner.x + w.saturating_sub(crate::ui::display_width(&right)) as u16;
+    put(buf, right_x, summary_y, &right, theme::fg(theme::INFO));
 }
 
 // ---- 敌人区 ----

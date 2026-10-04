@@ -168,6 +168,17 @@ fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: S
     put(buf, x + ((w - tw) / 2) as u16, y, text, style);
 }
 
+/// 卡牌类型记号:攻击 <Attack>、技能 [Skill]、能力 (Power),其余就写名字
+fn kind_label(kind: crate::core::card::CardType) -> String {
+    use crate::core::card::CardType;
+    match kind {
+        CardType::Attack => format!("<{}>", kind.name()),
+        CardType::Skill => format!("[{}]", kind.name()),
+        CardType::Power => format!("({})", kind.name()),
+        _ => kind.name().to_string(),
+    }
+}
+
 /// 一张牌的说明主体:名字、类型、描述都居中(不含费用)
 pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
     let w = rect.width as usize;
@@ -178,15 +189,15 @@ pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
     let mut y = rect.y;
     // 名字居中
     let name_style = Style::default()
-        .fg(theme::card_color(card.kind(), card.rarity()))
+        .fg(theme::card_color(card.rarity()))
         .add_modifier(ratatui::style::Modifier::BOLD);
     put_centered(buf, rect.x, y, w, &card.label(), name_style);
     y += 1;
     if y >= bottom {
         return;
     }
-    // 类型居中
-    put_centered(buf, rect.x, y, w, card.kind().name(), theme::fg(theme::FG));
+    // 类型居中,按类型加不同括号
+    put_centered(buf, rect.x, y, w, &kind_label(card.kind()), theme::fg(theme::FG));
     y += 1;
     // 描述居中,按宽度折行
     let max = (bottom - y) as usize;
@@ -332,7 +343,7 @@ pub fn put_card_line(
         theme::dim().bg(bg)
     } else {
         Style::default()
-            .fg(theme::card_color(card.kind(), card.rarity()))
+            .fg(theme::card_color(card.rarity()))
             .bg(bg)
     };
     let mut cx = x;
@@ -642,8 +653,8 @@ mod tests {
             "详情缺牌名:\n{text}"
         );
         assert!(
-            rows.iter().any(|l| l.replace('|', " ").trim() == "Attack"),
-            "详情缺类型:\n{text}"
+            rows.iter().any(|l| l.replace('|', " ").trim() == "<Attack>"),
+            "详情缺类型(要带尖括号):\n{text}"
         );
         assert!(text.contains("Deal 6 damage."), "详情缺描述:\n{text}");
         assert!(text.contains("energy"), "边框上应该有能量:\n{text}");

@@ -18,7 +18,6 @@ pub const BLOCK: Color = Color::Rgb(122, 176, 240);
 pub const ENERGY: Color = Color::Rgb(238, 226, 104);
 pub const GOLD: Color = Color::Rgb(250, 186, 66);
 pub const RELIC: Color = Color::Rgb(198, 160, 255);
-pub const ATTACK: Color = Color::Rgb(255, 122, 122);
 pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
@@ -55,28 +54,12 @@ pub fn kind_style(kind: NodeKind) -> Style {
     }
 }
 
-/// 卡牌类型颜色;稀有牌再提亮一档
-pub fn card_color(kind: crate::core::card::CardType, rarity: crate::core::card::Rarity) -> Color {
-    use crate::core::card::{CardType, Rarity};
-    let base = match kind {
-        CardType::Attack => ATTACK,
-        CardType::Skill => Color::Rgb(140, 190, 255),
-        CardType::Power => BUFF,
-        CardType::Curse => Color::Rgb(200, 90, 160),
-        CardType::Status => DIM,
-    };
-    let bump = match rarity {
-        Rarity::Uncommon => 15,
-        Rarity::Rare => 35,
-        _ => 0,
-    };
-    if let Color::Rgb(r, g, b) = base {
-        Color::Rgb(
-            r.saturating_add(bump),
-            g.saturating_add(bump * 2 / 3),
-            b.saturating_add(bump),
-        )
-    } else {
-        base
+/// 卡牌名字的颜色:只看稀有度——Basic/Common 白,Uncommon 蓝,Rare 橙黄,Special 也当白
+pub fn card_color(rarity: crate::core::card::Rarity) -> Color {
+    use crate::core::card::Rarity;
+    match rarity {
+        Rarity::Uncommon => Color::Rgb(120, 170, 240),
+        Rarity::Rare => Color::Rgb(250, 186, 66),
+        _ => FG,
     }
 }
