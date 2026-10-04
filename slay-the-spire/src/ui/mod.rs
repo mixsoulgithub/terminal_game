@@ -166,31 +166,60 @@ pub fn vline(buf: &mut Buffer, x: u16, y: u16, height: u16, ch: char, style: Sty
     }
 }
 
-/// 一张牌的说明:首行 "名字  类型",下面按宽度折行写描述
+/// 居中写一行(按显示宽度居中)
+fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: Style) {
+    let tw = display_width(text);
+    if tw > w {
+        put(buf, x, y, &truncate(text, w), style);
+        return;
+    }
+    put(buf, x + ((w - tw) / 2) as u16, y, text, style);
+}
+
+/// 一张牌的说明:费用靠左、名字与类型居中,描述按宽度折行后也居中
 pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance, dim: bool) {
     let w = rect.width as usize;
     if w == 0 || rect.height == 0 {
         return;
     }
-    let head = format!("{}  {}", card.label(), card.kind().name());
-    let head_style = if dim {
+    let bottom = rect.y + rect.height;
+    let mut y = rect.y;
+    // 费用左对齐,写成 (1) 并保持能量色
+    let cost_style = if dim {
+        theme::dim()
+    } else {
+        Style::default().fg(theme::ENERGY).add_modifier(ratatui::style::Modifier::BOLD)
+    };
+    put(buf, rect.x, y, &format!("({})", cost_label(card)), cost_style);
+    y += 1;
+    if y >= bottom {
+        return;
+    }
+    // 名字居中
+    let name_style = if dim {
         theme::dim()
     } else {
         Style::default()
             .fg(theme::card_color(card.kind(), card.rarity()))
             .add_modifier(ratatui::style::Modifier::BOLD)
     };
-    put_padded(buf, rect.x, rect.y, &head, w, head_style);
-    let max = (rect.height as usize).saturating_sub(1);
-    for (i, line) in wrap_text(&card.display_text(), w, max).iter().enumerate() {
-        put_padded(
-            buf,
-            rect.x,
-            rect.y + 1 + i as u16,
-            line,
-            w,
-            theme::fg(theme::FG),
-        );
+    put_centered(buf, rect.x, y, w, &card.label(), name_style);
+    y += 1;
+    if y >= bottom {
+        return;
+    }
+    // 类型居中
+    let kind_style = if dim { theme::dim() } else { theme::fg(theme::FG) };
+    put_centered(buf, rect.x, y, w, card.kind().name(), kind_style);
+    y += 1;
+    // 描述居中,按宽度折行
+    let max = (bottom - y) as usize;
+    for line in wrap_text(&card.display_text(), w, max) {
+        if y >= bottom {
+            break;
+        }
+        put_centered(buf, rect.x, y, w, &line, theme::fg(theme::FG));
+        y += 1;
     }
 }
 
@@ -580,8 +609,16 @@ mod tests {
             10,
             "手牌应该正好十行速记:\n{text}"
         );
-        // 分隔线下面给出选中那张的类型与完整描述(能量写在边框上,不再重复)
-        assert!(text.contains("Strike  Attack"), "详情缺牌名与类型:\n{text}");
+        // 分隔线下面给出选中那张的说明:费用、名字、类型、描述
+        let rows: Vec<&str> = text.lines().collect();
+        assert!(
+            rows.iter().any(|l| l.replace('|', " ").trim() == "Strike"),
+            "详情缺牌名:\n{text}"
+        );
+        assert!(
+            rows.iter().any(|l| l.replace('|', " ").trim() == "Attack"),
+            "详情缺类型:\n{text}"
+        );
         assert!(text.contains("Deal 6 damage."), "详情缺描述:\n{text}");
         assert!(text.contains("energy"), "边框上应该有能量:\n{text}");
     }
@@ -827,5 +864,6 @@ mod map_tests {
         }
     }
 }
+
 
 
