@@ -159,6 +159,92 @@ pub fn hline(buf: &mut Buffer, x: u16, y: u16, width: u16, ch: char, style: Styl
     put(buf, x, y, &line, style);
 }
 
+/// 竖直分隔线
+pub fn vline(buf: &mut Buffer, x: u16, y: u16, height: u16, ch: char, style: Style) {
+    for i in 0..height {
+        put(buf, x, y + i, &ch.to_string(), style);
+    }
+}
+
+/// 一张牌的说明:首行 "名字  类型",下面按宽度折行写描述
+pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance, dim: bool) {
+    let w = rect.width as usize;
+    if w == 0 || rect.height == 0 {
+        return;
+    }
+    let head = format!("{}  {}", card.label(), card.kind().name());
+    let head_style = if dim {
+        theme::dim()
+    } else {
+        Style::default()
+            .fg(theme::card_color(card.kind(), card.rarity()))
+            .add_modifier(ratatui::style::Modifier::BOLD)
+    };
+    put_padded(buf, rect.x, rect.y, &head, w, head_style);
+    let max = (rect.height as usize).saturating_sub(1);
+    for (i, line) in wrap_text(&card.display_text(), w, max).iter().enumerate() {
+        put_padded(
+            buf,
+            rect.x,
+            rect.y + 1 + i as u16,
+            line,
+            w,
+            theme::fg(theme::FG),
+        );
+    }
+}
+
+/// "列表 + 描述" 的通用切分.
+/// 盒子够宽(宽 > 高 * 1.5)时用横线上下分:列表在上、按内容定高(动态缩),描述占剩下的;
+/// 否则用竖线左右分:各占一半,两侧各自按自己的宽度折行,不缩.
+pub struct Split {
+    pub list: Rect,
+    pub detail: Rect,
+    /// true = 上下分(分隔符 -),false = 左右分(分隔符 |)
+    pub horizontal: bool,
+}
+
+pub fn split_list_detail(area: Rect, list_h: u16) -> Split {
+    // 内容左右各留 1 格,分隔线仍然横跨整个 area
+    let x = area.x + 1;
+    let w = area.width.saturating_sub(2);
+    let horizontal = w as u32 > area.height as u32 * 3 / 2;
+    if horizontal {
+        let lh = list_h.min(area.height.saturating_sub(2));
+        Split {
+            list: Rect::new(x, area.y, w, lh),
+            detail: Rect::new(
+                x,
+                area.y + lh + 1,
+                w,
+                area.height.saturating_sub(lh + 1),
+            ),
+            horizontal: true,
+        }
+    } else {
+        let lw = w / 2;
+        Split {
+            list: Rect::new(x, area.y, lw, area.height),
+            detail: Rect::new(
+                x + lw + 1,
+                area.y,
+                w.saturating_sub(lw + 1),
+                area.height,
+            ),
+            horizontal: false,
+        }
+    }
+}
+
+/// 按切分结果画出中间那条分隔线
+pub fn draw_split(buf: &mut Buffer, area: Rect, split: &Split, style: Style) {
+    if split.horizontal {
+        hline(buf, area.x, split.detail.y.saturating_sub(1), area.width, '-', style);
+    } else {
+        vline(buf, split.detail.x.saturating_sub(1), area.y, area.height, '|', style);
+    }
+}
+
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let buf = f.buffer_mut();
@@ -476,6 +562,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 

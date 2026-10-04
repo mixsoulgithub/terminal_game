@@ -10,7 +10,7 @@ use crate::core::potions::PotionDef;
 use crate::core::relics::RelicDef;
 use crate::core::run::{RewardSlot, ShopItem};
 use crate::ui::theme;
-use crate::ui::{display_width, draw_box, fit, hline, put, put_padded, truncate, wrap_text};
+use crate::ui::{display_width, draw_box, fit, put, put_padded, truncate, wrap_text};
 
 struct Row {
     text: String,
@@ -31,7 +31,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
 }
 
-/// 列表框:标题 + 选中行 + 底部详情
+/// 列表框:标题 + 选中行 + 描述.
+/// 宽盒子用 --- 上下分(列表按内容定高),窄盒子用 | 左右分(两侧各自折行).
 fn draw_list(
     buf: &mut Buffer,
     area: Rect,
@@ -41,50 +42,69 @@ fn draw_list(
     details: &[String],
 ) {
     draw_box(buf, area, title, theme::fg(theme::BORDER), theme::fg(theme::INFO));
-    let inner_w = (area.width as usize).saturating_sub(4);
-    let detail_h = if area.height > 10 && !details.is_empty() {
-        (details.len() as u16 + 1).min(area.height / 3)
+    if area.width < 4 || area.height < 4 {
+        return;
+    }
+    let inner = Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let split = crate::ui::split_list_detail(inner, rows.len() as u16);
+    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
+    // 列表
+    let list = split.list;
+    let lw = list.width as usize;
+    if lw == 0 || list.height == 0 {
+        return;
+    }
+    let capacity = list.height as usize;
+    let start = if rows.len() > capacity {
+        sel.saturating_sub(capacity / 2).min(rows.len() - capacity)
     } else {
         0
     };
-    let list_h = area.height.saturating_sub(2 + detail_h);
-    let start = if rows.len() > list_h as usize {
-        sel.saturating_sub(list_h as usize / 2)
-            .min(rows.len() - list_h as usize)
-    } else {
-        0
-    };
-    for (i, row) in rows.iter().skip(start).take(list_h as usize).enumerate() {
-        let y = area.y + 1 + i as u16;
+    let mut y = list.y;
+    let bottom = list.y + list.height;
+    for (i, row) in rows.iter().skip(start).enumerate() {
         let idx = start + i;
         let selected = idx == sel;
-        let style = if selected {
-            theme::selected()
-        } else {
-            row.style
-        };
+        let style = if selected { theme::selected() } else { row.style };
         let marker = if selected { "> " } else { "  " };
-        put_padded(
-            buf,
-            area.x + 2,
-            y,
-            &format!("{marker}{}", row.text),
-            inner_w,
-            style,
-        );
+        let text = format!("{marker}{}", row.text);
+        // 窄盒子左右分的时候,这半边要正常折行;宽盒子一行一条
+        let lines = if split.horizontal {
+            vec![truncate(&text, lw)]
+        } else {
+            wrap_text(&text, lw, usize::MAX)
+        };
+        for line in lines {
+            if y >= bottom {
+                break;
+            }
+            put_padded(buf, list.x, y, &line, lw, style);
+            y += 1;
+        }
+        if y >= bottom {
+            break;
+        }
     }
-    if detail_h > 0 {
-        let y0 = area.y + area.height - 1 - detail_h;
-        hline(buf, area.x + 1, y0, area.width - 2, '-', theme::fg(theme::BORDER));
-        for (i, line) in details.iter().take(detail_h as usize).enumerate() {
-            put_padded(
-                buf,
-                area.x + 2,
-                y0 + 1 + i as u16,
-                &format!("  {line}"),
-                inner_w,
-                theme::fg(theme::FG),
-            );
+    // 描述
+    let detail = split.detail;
+    let dw = detail.width as usize;
+    if dw == 0 || detail.height == 0 {
+        return;
+    }
+    let mut y = detail.y;
+    let bottom = detail.y + detail.height;
+    for line in details {
+        for wrapped in wrap_text(line, dw, usize::MAX) {
+            if y >= bottom {
+                return;
+            }
+            put_padded(buf, detail.x, y, &wrapped, dw, theme::fg(theme::FG));
+            y += 1;
         }
     }
 }
@@ -540,30 +560,76 @@ fn pick(buf: &mut Buffer, area: Rect, app: &App) {
     };
     let cands = app.run.picker_candidates();
     let upgrading = p.purpose == crate::core::run::PickPurpose::Upgrade;
-    let mut rows: Vec<Row> = Vec::new();
-    let mut details: Vec<String> = Vec::new();
-    for (slot, deck_idx) in cands.iter().enumerate() {
+    draw_box(
+        buf,
+        area,
+        p.purpose.title(),
+        theme::fg(theme::BORDER),
+        theme::fg(theme::INFO),
+    );
+    if area.width < 4 || area.height < 4 {
+        return;
+    }
+    let inner = Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let split = crate::ui::split_list_detail(inner, cands.len() as u16);
+    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
+    // 卡牌列表:和战斗里一样,一行一张 "费用 牌名"
+    let list = split.list;
+    let lw = list.width as usize;
+    if lw == 0 || list.height == 0 {
+        return;
+    }
+    let capacity = list.height as usize;
+    let start = if cands.len() > capacity {
+        p.index.saturating_sub(capacity / 2).min(cands.len() - capacity)
+    } else {
+        0
+    };
+    for (i, deck_idx) in cands.iter().skip(start).take(capacity).enumerate() {
         let card = &app.run.player.deck[*deck_idx];
-        // 升级时直接给升级后的样子:名字、费用、描述都是升级后的
-        let shown = if upgrading {
-            let mut preview = card.clone();
-            preview.upgrade();
-            preview
+        let text = format!("{} {}", crate::ui::cost_label(card), card.label());
+        let style = if start + i == p.index {
+            theme::selected()
         } else {
-            card.clone()
+            theme::fg(theme::card_color(card.kind(), card.rarity()))
         };
-        rows.push(card_row(slot, &shown));
-        if slot == p.index {
-            details = card_details(&shown);
-        }
+        put_padded(buf, list.x, list.y + i as u16, &text, lw, style);
     }
-    if rows.is_empty() {
-        rows.push(Row {
-            text: "(nothing to choose)".to_string(),
-            style: theme::dim(),
-        });
+    // 描述:升级时左边是原卡、右边是升级后的卡,中间一条竖线
+    let Some(deck_idx) = cands.get(p.index) else {
+        return;
+    };
+    let card = &app.run.player.deck[*deck_idx];
+    let detail = split.detail;
+    if upgrading {
+        let half = detail.width / 2;
+        let left = Rect::new(detail.x, detail.y, half, detail.height);
+        let right = Rect::new(
+            detail.x + half + 1,
+            detail.y,
+            detail.width.saturating_sub(half + 1),
+            detail.height,
+        );
+        crate::ui::vline(
+            buf,
+            detail.x + half,
+            detail.y,
+            detail.height,
+            '|',
+            theme::fg(theme::BORDER),
+        );
+        let mut upgraded = card.clone();
+        upgraded.upgrade();
+        crate::ui::card_desc(buf, left, card, false);
+        crate::ui::card_desc(buf, right, &upgraded, false);
+    } else {
+        crate::ui::card_desc(buf, detail, card, false);
     }
-    draw_list(buf, area, p.purpose.title(), &rows, p.index, &details);
 }
 
 // ---- 胜负结算 ----

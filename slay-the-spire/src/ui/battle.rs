@@ -10,7 +10,7 @@ use crate::app::{App, Mode};
 use crate::core::combat::Combat;
 use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
-use crate::ui::{cost_label, display_width, draw_box, put, put_padded, truncate, wrap_text};
+use crate::ui::{cost_label, display_width, draw_box, put, put_padded, truncate};
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(c) = app.run.combat() else {
@@ -70,24 +70,30 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         theme::fg(theme::BORDER),
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
     );
-    let ix = area.x + 2;
-    let iw = (area.width as usize).saturating_sub(4);
-    if iw == 0 {
+    let iy = area.y + 1;
+    let inner = Rect::new(
+        area.x + 1,
+        iy,
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let iy = area.y + 1;
-    let bottom = area.y + area.height - 1;
-    let inner_h = (bottom - iy) as usize;
-    // 手牌一行一张,不预留空行,详情紧贴最后一张下面:
-    // 牌少时详情往上靠,牌多于 5 张时详情那块自然被挤小.
-    // 至少给详情留"名字 + 一行描述"两行.
-    let card_lines = c.hand.len().min(inner_h.saturating_sub(2));
+    // 手牌 + 描述:走通用的列表/描述切分
+    let split = crate::ui::split_list_detail(inner, c.hand.len() as u16);
+    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
     let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
-    for slot in 0..card_lines {
-        let y = iy + slot as u16;
-        let Some(card) = c.hand.get(slot) else {
-            break;
-        };
+    let list = split.list;
+    let lw = list.width as usize;
+    let rows = list.height as usize;
+    let start = if c.hand.len() > rows {
+        sel.saturating_sub(rows / 2).min(c.hand.len() - rows)
+    } else {
+        0
+    };
+    for (i, card) in c.hand.iter().skip(start).take(rows).enumerate() {
+        let slot = start + i;
         let text = format!("{} {}", cost_label(card), card.label());
         let playable = c.blocked_reason(slot).is_none();
         let style = if slot == sel {
@@ -97,30 +103,13 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         } else {
             theme::fg(theme::card_color(card.kind(), card.rarity()))
         };
-        put_padded(buf, ix, y, &text, iw, style);
+        put_padded(buf, list.x, list.y + i as u16, &text, lw, style);
     }
-    // 详情:牌名 + 类型 + 完整描述(能量已经写在边框上了,不再重复)
+    // 描述:牌名 + 类型 + 完整描述(能量已经写在边框上了,不再重复)
     let Some(card) = c.hand.get(sel) else {
         return;
     };
-    let dy = iy + card_lines as u16;
-    if dy >= bottom {
-        return;
-    }
-    let head = format!("{}  {}", card.label(), card.kind().name());
-    let head_style = if c.blocked_reason(sel).is_none() {
-        Style::default()
-            .fg(theme::card_color(card.kind(), card.rarity()))
-            .add_modifier(Modifier::BOLD)
-    } else {
-        theme::dim()
-    };
-    put_padded(buf, ix, dy, &head, iw, head_style);
-    let max_lines = (bottom.saturating_sub(dy + 1)) as usize;
-    let text = card.display_text();
-    for (i, line) in wrap_text(&text, iw, max_lines).iter().enumerate() {
-        put_padded(buf, ix, dy + 1 + i as u16, line, iw, theme::fg(theme::FG));
-    }
+    crate::ui::card_desc(buf, split.detail, card, c.blocked_reason(sel).is_some());
 }
 
 // ---- 敌人区 ----
