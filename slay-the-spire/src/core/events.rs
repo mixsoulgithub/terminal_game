@@ -131,13 +131,13 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             EventChoice {
-                label: "Heal: pay 75 gold",
+                label: "Heal: pay $75",
                 cost_gold: 75,
                 cost_hp: 0,
                 outcome: outcome!(hp: 25, text: "Your wounds close under her touch."),
             },
             EventChoice {
-                label: "Purify: pay 50 gold, remove a card",
+                label: "Purify: pay $50, remove a card",
                 cost_gold: 50,
                 cost_hp: 0,
                 outcome: outcome!(remove_card: true, text: "She burns one card from your deck."),
@@ -210,7 +210,7 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             EventChoice {
-                label: "Reach in: pay 30 gold and lose 6 HP",
+                label: "Reach in: pay $30 and lose 6 HP",
                 cost_gold: 30,
                 cost_hp: 6,
                 outcome: outcome!(
@@ -263,7 +263,7 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             EventChoice {
-                label: "Agree: gain 120 gold",
+                label: "Agree: gain $120",
                 cost_gold: 0,
                 cost_hp: 0,
                 outcome: outcome!(

@@ -64,11 +64,12 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         area.width.saturating_sub(2),
         area.height.saturating_sub(2),
     );
-    if inner.width == 0 || inner.height < 2 {
+    if inner.width == 0 || inner.height < 3 {
         return;
     }
-    // 最下面一行留给牌堆小结:draw 靠左、exhausted 居中、discard 靠右,不加分隔线
-    let body = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
+    // 最下面两行:一行增减益,一行牌堆小结,都不加分隔线
+    let body = Rect::new(inner.x, inner.y, inner.width, inner.height - 2);
+    let buff_y = inner.y + inner.height - 2;
     let summary_y = inner.y + inner.height - 1;
     // 手牌 + 描述:卡区固定用横线上下分(列表在上、说明在下)
     let split = crate::ui::split_list_detail_h(body, c.hand.len() as u16);
@@ -91,6 +92,30 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         return;
     };
     crate::ui::card_desc(buf, split.detail, card);
+    // 增减益行:自己身上的 buff/debuff
+    let status_words: Vec<(String, Style)> = c
+        .player
+        .statuses
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (st, n))| {
+            let sep = (i > 0).then(|| (" ".to_string(), theme::fg(theme::FG)));
+            let color = if st.is_debuff() { theme::DEBUFF } else { theme::BUFF };
+            sep.into_iter()
+                .chain([(format!("{} {}", st.short(), n), theme::fg(color))])
+        })
+        .collect();
+    if !status_words.is_empty() {
+        let words = &status_words;
+        let len: usize = words.iter().map(|(t, _)| display_width(t)).sum();
+        let x = inner.x + (inner.width as usize).saturating_sub(len) as u16 / 2;
+        put_padded(buf, inner.x, buff_y, "", inner.width as usize, Style::default());
+        let mut cx = x;
+        for (t, st) in words {
+            put(buf, cx, buff_y, t, *st);
+            cx += display_width(t) as u16;
+        }
+    }
     // 底行:draw / exhausted / discard
     let w = inner.width as usize;
     let left = format!("draw {}", c.draw.len());

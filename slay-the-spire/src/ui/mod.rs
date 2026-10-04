@@ -168,6 +168,64 @@ fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: S
     put(buf, x + ((w - tw) / 2) as u16, y, text, style);
 }
 
+/// 把描述按词切开:数字后面跟 damage/block 时分别上血色/蓝色
+fn desc_words(text: &str) -> Vec<(String, Style)> {
+    let words: Vec<&str> = text.split(' ').collect();
+    let mut out = Vec::new();
+    for (i, w) in words.iter().enumerate() {
+        let next = words.get(i + 1).map(|n| n.to_ascii_lowercase()).unwrap_or_default();
+        let is_num = w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false);
+        let color = if is_num && next.starts_with("damage") {
+            Some(theme::BLOOD)
+        } else if is_num && next.starts_with("block") {
+            Some(theme::BLOCK)
+        } else {
+            None
+        };
+        let style = match color {
+            Some(c) => theme::fg(c),
+            None => theme::fg(theme::FG),
+        };
+        out.push((w.to_string(), style));
+    }
+    out
+}
+
+/// 按宽度把带样式的词折行
+fn wrap_words(words: &[(String, Style)], width: usize) -> Vec<Vec<(String, Style)>> {
+    let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
+    let mut cur: Vec<(String, Style)> = Vec::new();
+    let mut cur_w = 0usize;
+    for (w, st) in words {
+        let ww = display_width(w);
+        let extra = if cur.is_empty() { 0 } else { 1 };
+        if cur_w + ww + extra > width && !cur.is_empty() {
+            lines.push(std::mem::take(&mut cur));
+            cur_w = 0;
+        }
+        if !cur.is_empty() {
+            cur.push((" ".to_string(), theme::fg(theme::FG)));
+            cur_w += 1;
+        }
+        cur.push((w.clone(), *st));
+        cur_w += ww;
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// 居中写一行带样式的词
+fn put_centered_words(buf: &mut Buffer, x: u16, y: u16, w: usize, words: &[(String, Style)]) {
+    let len: usize = words.iter().map(|(t, _)| display_width(t)).sum();
+    let mut cx = x + (w.saturating_sub(len) / 2) as u16;
+    for (t, st) in words {
+        put(buf, cx, y, t, *st);
+        cx += display_width(t) as u16;
+    }
+}
+
 /// 卡牌类型记号:攻击 <Attack>、技能 [Skill]、能力 (Power),其余就写名字
 fn kind_label(kind: crate::core::card::CardType) -> String {
     use crate::core::card::CardType;
@@ -199,13 +257,14 @@ pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
     // 类型居中,按类型加不同括号
     put_centered(buf, rect.x, y, w, &kind_label(card.kind()), theme::fg(theme::FG));
     y += 1;
-    // 描述居中,按宽度折行
+    // 描述居中,按宽度折行;伤害数字上血色、格挡数字上蓝色
+    let words = desc_words(&card.display_text());
     let max = (bottom - y) as usize;
-    for line in wrap_text(&card.display_text(), w, max) {
+    for line in wrap_words(&words, w).into_iter().take(max) {
         if y >= bottom {
             break;
         }
-        put_centered(buf, rect.x, y, w, &line, theme::fg(theme::FG));
+        put_centered_words(buf, rect.x, y, w, &line);
         y += 1;
     }
 }
@@ -851,6 +910,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 

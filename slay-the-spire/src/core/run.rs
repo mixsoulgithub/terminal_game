@@ -572,7 +572,7 @@ impl Run {
                 let g = self.reward.as_ref().map(|r| r.gold).unwrap_or(0);
                 self.gain_gold(g);
                 self.mark_reward(|r| r.gold_taken = true);
-                Ok(format!("+{g} gold"))
+                Ok(format!("+${g}"))
             }
             RewardSlot::Card(i) => {
                 let Some(card) = self.reward.as_ref().and_then(|r| r.cards.get(i)).cloned() else {
@@ -720,7 +720,7 @@ impl Run {
         }
         let price = item.price();
         if self.player.gold < price {
-            return Err(format!("needs {price} gold"));
+            return Err(format!("needs ${price}"));
         }
         match item {
             ShopItem::Card(card, _) => {

@@ -59,7 +59,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             buf,
             area.x + 2,
             y,
-            &format!("{}Gold  +{}", marker(sel), r.gold),
+            &format!("{}Gold  +${}", marker(sel), r.gold),
             (area.width as usize).saturating_sub(4),
             style,
         );
@@ -388,7 +388,7 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
                 let available = app.run.event_choice_available(i);
                 let mut cost = String::new();
                 if choice.cost_gold > 0 {
-                    cost.push_str(&format!(" [{}g]", choice.cost_gold));
+                    cost.push_str(&format!(" [${}]", choice.cost_gold));
                 }
                 if choice.cost_hp > 0 {
                     cost.push_str(&format!(" [{}HP]", choice.cost_hp));
@@ -523,42 +523,53 @@ fn summary(buf: &mut Buffer, area: Rect, app: &App, victory: bool) {
         ("you died", theme::fg(theme::BAD))
     };
     draw_box(buf, area, title, theme::fg(theme::BORDER), style);
-    let lines = vec![
-        format!(
-            "{}",
+    let fg = theme::fg(theme::FG);
+    let dim = theme::dim();
+    let lines: Vec<(String, Style)> = vec![
+        (
             if victory {
                 "You climbed the spire and struck it down."
             } else {
                 "The spire claims another climber."
             }
+            .to_string(),
+            fg,
         ),
-        String::new(),
-        format!("seed          {}", run.seed),
-        format!("floor         {}/{}", run.floor() + 1, run.map.total_floors()),
-        format!("hp            {}/{}", run.player.hp, run.player.max_hp),
-        format!("gold          {}", run.player.gold),
-        format!("deck size     {}", run.player.deck.len()),
-        format!("relics        {}", run.player.relics.len()),
-        format!("fights        {}", run.stats.fights),
-        format!("elites        {}", run.stats.elites),
-        format!("bosses        {}", run.stats.bosses),
-        format!("turns         {}", run.stats.turns),
-        format!("damage dealt  {}", run.stats.damage_dealt),
-        format!("potions used  {}", run.stats.potions_used),
-        String::new(),
-        "r: new run (same seed)    n: new run (new seed)    :q quit".to_string(),
+        (String::new(), dim),
+        (format!("seed          {}", run.seed), fg),
+        (
+            format!("floor         {}/{}", run.floor() + 1, run.map.total_floors()),
+            fg,
+        ),
+        (format!("hp            {}/{}", run.player.hp, run.player.max_hp), fg),
+        (
+            format!("gold          ${}", run.player.gold),
+            theme::fg(theme::GOLD),
+        ),
+        (format!("deck size     {}", run.player.deck.len()), fg),
+        (format!("relics        {}", run.player.relics.len()), fg),
+        (format!("fights        {}", run.stats.fights), fg),
+        (format!("elites        {}", run.stats.elites), fg),
+        (format!("bosses        {}", run.stats.bosses), fg),
+        (format!("turns         {}", run.stats.turns), fg),
+        (
+            format!("damage dealt  {}", run.stats.damage_dealt),
+            theme::fg(theme::BLOOD),
+        ),
+        (format!("potions used  {}", run.stats.potions_used), fg),
+        (String::new(), dim),
+        (
+            "r: new run (same seed)    n: new run (new seed)    :q quit".to_string(),
+            dim,
+        ),
     ];
     let inner_w = (area.width as usize).saturating_sub(4);
-    for (i, line) in lines.iter().enumerate() {
+    for (i, (line, style)) in lines.iter().enumerate() {
         let y = area.y + 2 + i as u16;
         if y >= area.y + area.height - 1 {
             break;
         }
-        let style = if line.is_empty() {
-            theme::dim()
-        } else {
-            theme::fg(theme::FG)
-        };
+        let style = *style;
         put_padded(
             buf,
             area.x + 2,
