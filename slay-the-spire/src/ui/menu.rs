@@ -6,8 +6,6 @@ use ratatui::style::{Modifier, Style};
 
 use crate::app::App;
 use crate::core::card::CardInstance;
-use crate::core::potions::PotionDef;
-use crate::core::relics::RelicDef;
 use crate::core::run::{RewardSlot, ShopItem};
 use crate::ui::theme;
 use crate::ui::{display_width, draw_box, fit, put, put_padded, truncate, wrap_text};
@@ -107,55 +105,6 @@ fn draw_list(
             y += 1;
         }
     }
-}
-
-fn card_row(idx: usize, card: &CardInstance) -> Row {
-    let cost = match card.cost() {
-        crate::core::card::Cost::Fixed(n) => n.to_string(),
-        crate::core::card::Cost::X => "X".to_string(),
-        crate::core::card::Cost::Unplayable => "-".to_string(),
-    };
-    Row {
-        text: format!(
-            "{}) {}  cost {}  {}",
-            idx + 1,
-            card.label(),
-            cost,
-            card.kind().name()
-        ),
-        style: theme::fg(theme::card_color(card.kind(), card.rarity())),
-    }
-}
-
-fn card_details(card: &CardInstance) -> Vec<String> {
-    vec![
-        format!("{} ({})", card.label(), card.rarity().name()),
-        card.display_text(),
-    ]
-}
-
-fn relic_row(idx: usize, r: &RelicDef, price: Option<i32>) -> Row {
-    let price = price.map(|p| format!("  {p}g")).unwrap_or_default();
-    Row {
-        text: format!("{}) {}  [{}]{}", idx + 1, r.name, r.rarity.name(), price),
-        style: theme::fg(theme::RELIC),
-    }
-}
-
-fn potion_row(idx: usize, p: &PotionDef, price: Option<i32>) -> Row {
-    let price = price.map(|p| format!("  {p}g")).unwrap_or_default();
-    Row {
-        text: format!("{}) {}{}", idx + 1, p.name, price),
-        style: theme::fg(theme::BUFF),
-    }
-}
-
-fn relic_details(r: &RelicDef) -> Vec<String> {
-    vec![format!("{} [{}]", r.name, r.rarity.name()), r.desc.to_string()]
-}
-
-fn potion_details(p: &PotionDef) -> Vec<String> {
-    vec![p.name.to_string(), p.desc.to_string()]
 }
 
 // ---- 奖励 ----
@@ -349,48 +298,112 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(s) = &app.run.shop else {
         return;
     };
-    let mut rows: Vec<Row> = Vec::new();
-    let mut details: Vec<String> = Vec::new();
-    for (i, item) in s.items.iter().enumerate() {
-        let sold = s.sold.get(i).copied().unwrap_or(false);
-        let mut row = match item {
-            ShopItem::Card(card, price) => {
-                let mut row = card_row(i, card);
-                row.text.push_str(&format!("  {price}g"));
-                row
-            }
-            ShopItem::Relic(def, price) => relic_row(i, def, Some(*price)),
-            ShopItem::Potion(def, price) => potion_row(i, def, Some(*price)),
-            ShopItem::Remove(price) => Row {
-                text: format!("{}) Card Removal Service  {price}g", i + 1),
-                style: theme::fg(theme::GOOD),
-            },
-        };
-        if sold {
-            row.text.push_str("  [SOLD]");
-            row.style = theme::dim();
+    if area.width < 4 || area.height < 4 {
+        return;
+    }
+    draw_box(buf, area, "shop", theme::fg(theme::BORDER), theme::fg(theme::INFO));
+    let inner = Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    );
+    let split = crate::ui::split_list_detail(inner, s.items.len() as u16);
+    crate::ui::draw_split(buf, inner, &split, theme::fg(theme::BORDER));
+    // 商品列表:卡牌那行和战斗里的手牌一样,价钱靠右
+    let list = split.list;
+    if list.width == 0 || list.height == 0 {
+        return;
+    }
+    let capacity = list.height as usize;
+    let start = if s.items.len() > capacity {
+        s.index.saturating_sub(capacity / 2).min(s.items.len() - capacity)
+    } else {
+        0
+    };
+    for (i, item) in s.items.iter().skip(start).take(capacity).enumerate() {
+        let idx = start + i;
+        shop_row(
+            buf,
+            list.x,
+            list.y + i as u16,
+            list.width,
+            item,
+            idx == s.index,
+            s.sold.get(idx).copied().unwrap_or(false),
+        );
+    }
+    // 说明
+    let Some(item) = s.items.get(s.index) else {
+        return;
+    };
+    let sold = s.sold.get(s.index).copied().unwrap_or(false);
+    let detail = split.detail;
+    match item {
+        ShopItem::Card(card, _) => crate::ui::card_desc(buf, detail, card, sold),
+        ShopItem::Relic(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
+        ShopItem::Potion(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
+        ShopItem::Remove(_) => put_lines(
+            buf,
+            detail,
+            &[
+                "Card Removal Service".to_string(),
+                "Remove a card from your deck permanently.".to_string(),
+            ],
+        ),
+    }
+}
+
+/// 商品行的名字部分:卡牌用战斗里那套(费用+牌名),其它就一行文字
+fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected: bool, sold: bool) {
+    if w == 0 {
+        return;
+    }
+    let bg = if selected { theme::SEL_BG } else { theme::BG };
+    let base = Style::default().bg(bg);
+    put_padded(buf, x, y, "", w as usize, base);
+    // 价钱最多 $999,固定 4 格,靠右摆
+    let price = format!("{:<4}", format!("${}", item.price()));
+    let field_w = display_width(&price).min(w as usize);
+    let name_w = (w as usize).saturating_sub(field_w + 1);
+    match item {
+        ShopItem::Card(card, _) => {
+            crate::ui::put_card_line(buf, x, y, name_w as u16, card, selected, sold);
         }
-        rows.push(row);
-        if i == s.index {
-            details = match item {
-                ShopItem::Card(card, _) => card_details(card),
-                ShopItem::Relic(def, _) => relic_details(def),
-                ShopItem::Potion(def, _) => potion_details(def),
-                ShopItem::Remove(_) => vec![
-                    "Card Removal Service".to_string(),
-                    "Remove a card from your deck permanently.".to_string(),
-                ],
-            };
+        ShopItem::Relic(def, _) => {
+            let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::RELIC).bg(bg) };
+            put(buf, x, y, &truncate(&format!("{} [{}]", def.name, def.rarity.name()), name_w), style);
+        }
+        ShopItem::Potion(def, _) => {
+            let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::BUFF).bg(bg) };
+            put(buf, x, y, &truncate(&def.name, name_w), style);
+        }
+        ShopItem::Remove(_) => {
+            let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::GOOD).bg(bg) };
+            put(buf, x, y, &truncate("Card Removal Service", name_w), style);
         }
     }
-    draw_list(
-        buf,
-        area,
-        &format!("shop  (gold {})", app.run.player.gold),
-        &rows,
-        s.index,
-        &details,
-    );
+    let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::GOLD).bg(bg) };
+    put(buf, x + (w as usize - field_w) as u16, y, &price, style);
+}
+
+/// 左对齐写几行说明,按宽度折行
+fn put_lines(buf: &mut Buffer, rect: Rect, lines: &[String]) {
+    let w = rect.width as usize;
+    if w == 0 {
+        return;
+    }
+    let bottom = rect.y + rect.height;
+    let mut y = rect.y;
+    for line in lines {
+        for wrapped in wrap_text(line, w, usize::MAX) {
+            if y >= bottom {
+                return;
+            }
+            put_padded(buf, rect.x, y, &wrapped, w, theme::fg(theme::FG));
+            y += 1;
+        }
+    }
 }
 
 // ---- 营火 ----

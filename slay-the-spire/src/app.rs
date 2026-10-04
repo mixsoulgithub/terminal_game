@@ -608,16 +608,19 @@ impl App {
     fn shop_key(&mut self, key: KeyEvent) {
         let n = self.run.shop.as_ref().map(|s| s.items.len()).unwrap_or(0);
         match key.code {
+            // j/k 循环选:到底再按一下回到开头
             KeyCode::Char('j') | KeyCode::Down => {
                 if n > 0 {
                     if let Some(s) = self.run.shop.as_mut() {
-                        s.index = (s.index + 1).min(n - 1);
+                        s.index = (s.index + 1) % n;
                     }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if let Some(s) = self.run.shop.as_mut() {
-                    s.index = s.index.saturating_sub(1);
+                if n > 0 {
+                    if let Some(s) = self.run.shop.as_mut() {
+                        s.index = (s.index + n - 1) % n;
+                    }
                 }
             }
             KeyCode::Char('g') => {
