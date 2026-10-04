@@ -100,12 +100,11 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     }
     let mut px = px0;
     for (i, text) in texts.iter().enumerate() {
+        // 空格子也上色,不压暗
         let style = if app.potion_sel == Some(i) {
             theme::selected()
-        } else if p.potions.get(i).and_then(|s| s.as_ref()).is_some() {
-            theme::fg(theme::GOLD)
         } else {
-            theme::dim()
+            theme::fg(theme::GOLD)
         };
         put(buf, px, y, text, style);
         px += display_width(text) as u16;

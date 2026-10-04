@@ -249,6 +249,13 @@ fn render_floor(
     }
 }
 
+/// 一条边该不该亮:子节点要在"选中那条路的未来"里,父节点也得在未来里
+/// (或者它就是你现在站的那间,保证从当前位置出发那条边亮着).
+/// 只看子节点的话,别的岔路汇进这条路时它自己的入边会被误点亮.
+pub(crate) fn edge_lit(future: &[bool], pos: Option<usize>, parent: usize, child: usize) -> bool {
+    future[child] && (future[parent] || Some(parent) == pos)
+}
+
 /// 连线:逐个"父节点"把它的每一条出边都画出来.
 /// 一个父节点最多 3 条出边,且子节点只落在相邻的 3 列,所以每条斜边只跨一个
 /// 列号,正好落在两行之间那一行的中间列;同列的子节点连成一条横线 "-".
@@ -270,16 +277,13 @@ fn render_edges(
         let yp = row_of(p.col);
         for child in &p.next {
             let c = run.map.node(*child);
-            // Boss 房不连线:最后一层只有它,不需要箭头指过去
-            if c.floor != floor + 1 || c.kind == NodeKind::Boss {
+            // 只连相邻的下一层;Boss 那一层也要连过来
+            if c.floor != floor + 1 {
                 continue;
             }
             let yc = row_of(c.col);
-            // 只有"从选中房间开始的未来"里的边才亮:
-            // 父节点也得在未来里(或者它就是你现在站的那间),否则别的路汇进这条
-            // 未来时(如 a-b 与 c 都通向 b),c 到 b 的边会被误点亮.
             let on_path = future
-                .map(|f| f[*child] && (f[*parent] || Some(*parent) == run.pos))
+                .map(|f| edge_lit(f, run.pos, *parent, *child))
                 .unwrap_or(false);
             let style = if on_path {
                 Style::default().fg(theme::SEL_FG).add_modifier(Modifier::BOLD)

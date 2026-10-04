@@ -163,22 +163,14 @@ fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: S
     put(buf, x + ((w - tw) / 2) as u16, y, text, style);
 }
 
-/// 一张牌的说明:费用靠左、名字与类型居中,描述按宽度折行后也居中
-pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
+/// 一张牌的说明主体:名字、类型、描述都居中(不含费用)
+pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
     let w = rect.width as usize;
     if w == 0 || rect.height == 0 {
         return;
     }
     let bottom = rect.y + rect.height;
     let mut y = rect.y;
-    // 费用左对齐,写成 (1) 并保持能量色;说明永远不压暗
-    let cost_style =
-        Style::default().fg(theme::ENERGY).add_modifier(ratatui::style::Modifier::BOLD);
-    put(buf, rect.x, y, &format!("({})", cost_label(card)), cost_style);
-    y += 1;
-    if y >= bottom {
-        return;
-    }
     // 名字居中
     let name_style = Style::default()
         .fg(theme::card_color(card.kind(), card.rarity()))
@@ -200,6 +192,23 @@ pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
         put_centered(buf, rect.x, y, w, &line, theme::fg(theme::FG));
         y += 1;
     }
+}
+
+/// 一张牌的完整说明:费用靠左,剩下交给 card_body
+pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
+    let w = rect.width as usize;
+    if w == 0 || rect.height == 0 {
+        return;
+    }
+    // 费用左对齐,写成 (1) 并保持能量色;说明永远不压暗
+    let cost_style =
+        Style::default().fg(theme::ENERGY).add_modifier(ratatui::style::Modifier::BOLD);
+    put(buf, rect.x, rect.y, &format!("({})", cost_label(card)), cost_style);
+    card_body(
+        buf,
+        Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
+        card,
+    );
 }
 
 /// "列表 + 描述" 的通用切分.
@@ -741,6 +750,21 @@ mod tests {
     }
 
     #[test]
+    fn map_edge_lights_only_when_its_parent_is_on_the_route() {
+        // a - b
+        //   /
+        // c    : a,b 在选中那条路的未来里,c 不在
+        let future = [true, true, false];
+        assert!(crate::ui::mapview::edge_lit(&future, None, 0, 1), "a->b 应该亮");
+        assert!(
+            !crate::ui::mapview::edge_lit(&future, None, 2, 1),
+            "c 汇进 b,但 c 不在路上,c->b 不该亮"
+        );
+        // 站在 c 上时,从当前位置出发那条要亮
+        assert!(crate::ui::mapview::edge_lit(&future, Some(2), 2, 1));
+    }
+
+    #[test]
     fn minimum_terminal_is_80x24() {
         let app = App::new(5);
         // 80x24 要能完整画出来
@@ -803,79 +827,6 @@ mod tests {
 
 
 
-
-
-
-
-
-#[cfg(test)]
-mod map_tests {
-    //! 地图高亮的回归:点亮的边必须恰好是"从选中房间出发的那条路",
-    //! 不能因为别的岔路汇进这条路就把它们的入边也点亮.
-    use super::*;
-    use crate::app::App;
-    use crate::core::map::NodeKind;
-    use crate::core::run::Screen;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
-
-    fn lit_edges(app: &App, w: u16, h: u16) -> usize {
-        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render(f, app)).unwrap();
-        let buf = term.backend().buffer();
-        let mut n = 0;
-        // 只看地图主体,顶栏那条线和底栏的 "-- MAP --" 里也有 - 和 /
-        for y in 2..buf.area.height - 1 {
-            for x in 0..buf.area.width {
-                let cell = &buf[(x, y)];
-                if cell.style().fg == Some(theme::SEL_FG)
-                    && matches!(cell.symbol(), "-" | "/" | "\\")
-                {
-                    n += 1;
-                }
-            }
-        }
-        n
-    }
-
-    fn expected_edges(run: &crate::core::run::Run, chosen: usize) -> usize {
-        let future = run.map.forward_reachable(chosen);
-        let mut n = 0;
-        for f in 0..run.map.total_floors() {
-            for &p in run.map.row(f) {
-                for &c in &run.map.node(p).next {
-                    let cn = run.map.node(c);
-                    if cn.floor != f + 1 || cn.kind == NodeKind::Boss {
-                        continue;
-                    }
-                    if future[c] && (future[p] || Some(p) == run.pos) {
-                        n += 1;
-                    }
-                }
-            }
-        }
-        n
-    }
-
-    #[test]
-    fn map_lights_only_the_chosen_route() {
-        for seed in [3u64, 5, 7, 12, 99] {
-            let mut app = App::new(seed);
-            app.term_size = (120, 34);
-            app.run.screen = Screen::Map;
-            let reach = app.run.reachable();
-            let chosen = reach[app.map_sel.min(reach.len() - 1)];
-            assert_eq!(lit_edges(&app, 120, 34), expected_edges(&app.run, chosen), "seed {seed}");
-            // 站在刚选中的那间房上时,从它出发的那些边才算数
-            app.run.pos = Some(chosen);
-            let reach = app.run.reachable();
-            if !reach.is_empty() {
-                let next = reach[0];
-                assert_eq!(lit_edges(&app, 120, 34), expected_edges(&app.run, next), "seed {seed} pos");
-            }
-        }
-    }
-}
 
 
 

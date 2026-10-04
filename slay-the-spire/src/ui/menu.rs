@@ -166,7 +166,8 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             })
             .max()
             .unwrap_or(0);
-        let want_h = longest as u16 + 3;
+        // 高度按内容:名字 1 行 + 类型 1 行 + 最长描述折行行数 + 上下边框 2 行
+        let want_h = longest as u16 + 4;
         let card_h = want_h.min(bottom.saturating_sub(y));
         if card_h >= 3 && cw >= 6 {
             for (k, &si) in cards.iter().enumerate() {
@@ -250,46 +251,27 @@ fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
     } else {
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD)
     };
+    // 费用写在框边上,框里用和战斗一样的说明版式
     draw_box(buf, rect, &crate::ui::cost_label(card), border, title);
-    let inner_w = (rect.width as usize).saturating_sub(2);
-    if inner_w == 0 {
-        return;
-    }
-    // 牌名居中
-    let row_bg = if selected { theme::SEL_BG } else { theme::BG };
-    put_padded(
-        buf,
+    let inner = Rect::new(
         rect.x + 1,
         rect.y + 1,
-        "",
-        inner_w,
-        Style::default().bg(row_bg),
+        rect.width.saturating_sub(2),
+        rect.height.saturating_sub(2),
     );
-    let name = card.label();
-    let nx = rect.x + 1 + (inner_w.saturating_sub(display_width(&name)) / 2) as u16;
-    let name_style = if selected {
-        theme::selected()
-    } else {
-        theme::fg(theme::card_color(card.kind(), card.rarity()))
-    };
-    put(buf, nx, rect.y + 1, &name, name_style);
-    // 描述
-    let max_lines = (rect.y + rect.height - 1)
-        .saturating_sub(rect.y + 2) as usize;
-    let text = card.display_text();
-    for (i, line) in wrap_text(&text, inner_w.saturating_sub(2), max_lines)
-        .iter()
-        .enumerate()
-    {
-        put_padded(
-            buf,
-            rect.x + 1,
-            rect.y + 2 + i as u16,
-            &format!(" {line}"),
-            inner_w,
-            theme::fg(theme::FG),
-        );
+    if selected {
+        for y in inner.y..inner.y + inner.height {
+            put_padded(
+                buf,
+                inner.x,
+                y,
+                "",
+                inner.width as usize,
+                Style::default().bg(theme::SEL_BG),
+            );
+        }
     }
+    crate::ui::card_body(buf, inner, card);
 }
 
 // ---- 商店 ----

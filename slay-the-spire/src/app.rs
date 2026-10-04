@@ -266,7 +266,8 @@ impl App {
                     self.warn("that slot is empty");
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') => self.potion_sel = None,
+            // esc 或再按一次 p 都退回"不看药水说明"的状态
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('p') => self.potion_sel = None,
             KeyCode::Char('t') => {
                 self.toss_pending = true;
                 self.info("press 1-3 to toss that potion");
