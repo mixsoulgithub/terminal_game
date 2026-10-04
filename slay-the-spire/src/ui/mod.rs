@@ -154,6 +154,11 @@ pub fn vline(buf: &mut Buffer, x: u16, y: u16, height: u16, ch: char, style: Sty
 }
 
 /// 居中写一行(按显示宽度居中)
+pub fn put_centered_line(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: Style) {
+    put_centered(buf, x, y, w, text, style);
+}
+
+/// 居中写一行(按显示宽度居中)
 fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: Style) {
     let tw = display_width(text);
     if tw > w {
@@ -824,6 +829,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 

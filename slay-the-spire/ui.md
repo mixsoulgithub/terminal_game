@@ -13,3 +13,4 @@ card area
   energy
   card list
   description
+  conclude info

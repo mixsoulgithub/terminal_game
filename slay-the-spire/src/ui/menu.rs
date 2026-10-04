@@ -8,7 +8,7 @@ use crate::app::App;
 use crate::core::card::CardInstance;
 use crate::core::run::{RewardSlot, ShopItem};
 use crate::ui::theme;
-use crate::ui::{display_width, draw_box, fit, put, put_padded, truncate, wrap_text};
+use crate::ui::{display_width, draw_box, put, put_padded, truncate, wrap_text};
 
 struct Row {
     text: String,
@@ -420,40 +420,27 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
     );
     let inner_w = (area.width as usize).saturating_sub(4);
     let mut y = area.y + 2;
+    // 提示语多行,每行居中
     for line in st.def.body {
         if y >= area.y + area.height - 1 {
             break;
         }
-        put_padded(
-            buf,
-            area.x + 2,
-            y,
-            &truncate(line, inner_w),
-            inner_w,
-            theme::fg(theme::FG),
-        );
+        crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, line, theme::fg(theme::FG));
         y += 1;
     }
     y += 1;
     match st.result {
         Some(text) => {
             if y < area.y + area.height - 1 {
-                put_padded(
-                    buf,
-                    area.x + 2,
-                    y,
-                    &format!(">> {}", truncate(text, inner_w.saturating_sub(3))),
-                    inner_w,
-                    theme::fg(theme::GOOD),
-                );
+                crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, text, theme::fg(theme::GOOD));
             }
             if y + 1 < area.y + area.height - 1 {
-                put_padded(
+                crate::ui::put_centered_line(
                     buf,
                     area.x + 2,
                     y + 1,
-                    "   press enter or esc to continue",
                     inner_w,
+                    "press enter or esc to continue",
                     theme::dim(),
                 );
             }
@@ -472,7 +459,7 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
                 if choice.cost_hp > 0 {
                     cost.push_str(&format!(" [{}HP]", choice.cost_hp));
                 }
-                let text = format!("{}) {}{cost}", i + 1, choice.label);
+                let text = format!("{}{cost}", choice.label);
                 let style = if !available {
                     theme::dim()
                 } else if selected {
@@ -480,16 +467,11 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
                 } else {
                     theme::fg(theme::FG)
                 };
-                let marker = if selected { "> " } else { "  " };
-                let line = format!("{marker}{text}");
-                put_padded(
-                    buf,
-                    area.x + 2,
-                    y,
-                    &truncate(&fit(&line, inner_w), inner_w),
-                    inner_w,
-                    style,
-                );
+                // 不带序号和 > ,整行居中;选中靠底色
+                if selected {
+                    put_padded(buf, area.x + 2, y, "", inner_w, style);
+                }
+                crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, &text, style);
                 y += 1;
             }
         }

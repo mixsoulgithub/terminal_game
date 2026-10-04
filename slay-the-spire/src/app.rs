@@ -755,12 +755,15 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => {
                 if n > 0 {
                     let i = self.run.event.as_ref().map(|s| s.index).unwrap_or(0);
-                    self.run.event_index_set((i + 1).min(n - 1));
+                    // 循环选:到底再按 j 回到第一项
+                    self.run.event_index_set((i + 1) % n);
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                let i = self.run.event.as_ref().map(|s| s.index).unwrap_or(0);
-                self.run.event_index_set(i.saturating_sub(1));
+                if n > 0 {
+                    let i = self.run.event.as_ref().map(|s| s.index).unwrap_or(0);
+                    self.run.event_index_set((i + n - 1) % n);
+                }
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let i = self.run.event.as_ref().map(|s| s.index).unwrap_or(0);
