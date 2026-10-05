@@ -507,18 +507,19 @@ impl App {
     fn combat_key(&mut self, key: KeyEvent) {
         let hand_len = self.run.combat().map(|c| c.hand.len()).unwrap_or(0);
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
+            // h/l 循环换手牌,j/k 循环换敌人目标
+            KeyCode::Char('l') | KeyCode::Right => {
                 if hand_len > 0 {
                     self.hand_sel = (self.hand_sel + 1) % hand_len;
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('h') | KeyCode::Left => {
                 if hand_len > 0 {
                     self.hand_sel = (self.hand_sel + hand_len - 1) % hand_len;
                 }
             }
-            KeyCode::Char('h') | KeyCode::Left => self.move_target(-1),
-            KeyCode::Char('l') | KeyCode::Right => self.move_target(1),
+            KeyCode::Char('j') | KeyCode::Down => self.move_target(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_target(-1),
             KeyCode::Char('e') | KeyCode::Char(' ') => {
                 if let Some(c) = self.run.combat_mut() {
                     c.end_turn();
@@ -1015,8 +1016,8 @@ impl App {
 
     pub fn help_rows(&self) -> Vec<(&'static str, &'static str)> {
         vec![
-            ("h l", "map: look back / forward    combat: pick target    reward: pick card"),
-            ("j k", "map: pick a fork    combat: pick card    reward: pick gold/cards/relic/potion"),
+            ("h l", "map: look along the road    combat: pick card    reward: pick card"),
+            ("j k", "map: pick a fork    combat: pick target    reward: pick gold/cards/relic/potion"),
             ("enter", "confirm / play the selected card"),
             ("esc", "cancel / close"),
             ("1-9 0", "combat: select and play the nth card"),
@@ -1144,19 +1145,19 @@ mod tests {
         let hand_len = app.run.combat().unwrap().hand.len();
         let enemies = app.run.combat().unwrap().enemies.len();
         assert!(hand_len >= 2, "起手应该有至少两张牌");
-        app.handle_key(key('j'));
+        app.handle_key(key('l'));
         assert_eq!(app.hand_sel, 1);
         let before = app.target_sel;
-        app.handle_key(key('l'));
+        app.handle_key(key('j'));
         if enemies > 1 {
-            assert_ne!(app.target_sel, before, "多敌时 l 应换目标");
+            assert_ne!(app.target_sel, before, "多敌时 j 应换目标");
         } else {
             assert_eq!(app.target_sel, before, "只有一个敌人时目标不变");
         }
         assert_eq!(app.hand_sel, 1, "移动目标不该动手牌光标");
         // 反复移动不会越界
         for _ in 0..enemies + 2 {
-            app.handle_key(key('l'));
+            app.handle_key(key('j'));
         }
         assert!(app.target_sel < enemies);
     }

@@ -46,7 +46,10 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let top_h = main.height.saturating_sub(3).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
     let char_w = CHAR_W.min(top.width.saturating_sub(20));
-    let desc_w = 32u16.min(top.width.saturating_sub(char_w + 2 + 16));
+    // 说明区占整宽的 1/4(向下取整,含边框),同时给角色和敌人各留出位置
+    let desc_w = (top.width / 4)
+        .max(10)
+        .min(top.width.saturating_sub(char_w + 2 + 10));
     let desc = Rect::new(top.x, top.y, desc_w, top_h);
     let ch = Rect::new(desc.x + desc_w + 1, top.y, char_w, top_h);
     let foe_x = ch.x + char_w + 1;
