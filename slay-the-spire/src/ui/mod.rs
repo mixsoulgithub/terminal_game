@@ -733,12 +733,10 @@ mod tests {
             10,
             "手牌应该正好十行速记:\n{text}"
         );
-        // 分隔线下面给出选中那张的说明:费用、名字、类型、描述
-        assert!(text.contains("(1)"), "详情缺费用:\n{text}");
-        assert!(text.contains("Strike"), "详情缺牌名:\n{text}");
-        assert!(text.contains("<Attack>"), "详情缺类型(要带尖括号):\n{text}");
-        assert!(text.contains("Deal 6 damage."), "详情缺描述:\n{text}");
-        assert!(text.contains("energy"), "边框上应该有能量:\n{text}");
+        // 手牌下面是说明:能量在分隔线左边、类型在右边,正文是描述
+        assert!(text.contains("energy"), "缺能量:\n{text}");
+        assert!(text.contains("<Attack>"), "缺类型(要带尖括号):\n{text}");
+        assert!(text.contains("Deal 6 damage."), "缺描述:\n{text}");
     }
 
     #[test]

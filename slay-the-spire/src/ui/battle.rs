@@ -9,10 +9,10 @@ use crate::app::{App, Mode};
 use crate::core::combat::Combat;
 use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
-use crate::ui::{display_width, draw_box, put, put_padded, truncate};
+use crate::ui::{display_width, put, put_padded, truncate};
 
-/// 角色区宽度:画像 20 宽
-const CHAR_W: u16 = 20;
+/// 画像/血条宽度
+const IMG_W: usize = 20;
 /// 画像高度
 const ART_H: usize = 10;
 
@@ -57,29 +57,28 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let command = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
     let info = Rect::new(area.x, area.y + area.height - 2, area.width, 1);
     let main = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
-    // 上排:说明 | 角色 | 敌人;中间一条"能量线";下面两行:手牌 / 牌堆小结
-    let top_h = main.height.saturating_sub(3).max(4);
+    let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
+    let card = c.hand.get(sel);
+    // 底部:能量+小结线 / 手牌行 / 成本+类型线 / 说明两行 / 收尾线
+    let desc_text = card.map(|x| x.display_text()).unwrap_or_default();
+    let desc_lines = 2u16;
+    let bottom_h = 3 + desc_lines + 1;
+    let top_h = main.height.saturating_sub(bottom_h).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
-    let char_w = CHAR_W.min(top.width.saturating_sub(20));
-    // 说明区占整宽的 1/4(向下取整,含边框),同时给角色和敌人各留出位置
-    let desc_w = (top.width / 4)
-        .max(10)
-        .min(top.width.saturating_sub(char_w + 2 + 10));
-    let desc = Rect::new(top.x, top.y, desc_w, top_h);
-    let ch = Rect::new(desc.x + desc_w + 1, top.y, char_w, top_h);
-    let foe_x = ch.x + char_w + 1;
+    // 角色区占一半宽,敌人区拿剩下
+    let char_w = top.width / 2;
+    render_character(buf, Rect::new(top.x, top.y, char_w, top_h), c);
+    let foe_x = top.x + char_w + 1;
     let foe = Rect::new(
         foe_x,
         top.y,
         (top.x + top.width).saturating_sub(foe_x),
         top_h,
     );
-    render_desc_box(buf, desc, app, c);
-    render_character(buf, ch, c);
     render_enemies(buf, foe, app, c);
-    // 第一行:线里嵌着能量和牌堆小结,形如 -3/3 energy-----draw 5---exhausted 0---discard 0
-    let sep_y = main.y + top_h;
-    let energy = format!("{}/{} energy", c.energy, c.max_energy);
+
+    let mut y = main.y + top_h;
+    // 第一行:能量在左,牌堆数量在右,中间用 ─ 补满
     let right = format!(
         "draw {}{}exhausted {}{}discard {}",
         c.draw.len(),
@@ -89,94 +88,108 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         c.discard.len()
     );
     let rw = display_width(&right) as u16;
-    put(buf, main.x, sep_y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
+    let energy0 = format!("{}/{} energy", c.energy, c.max_energy);
+    put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
     put(
         buf,
         main.x + 1,
-        sep_y,
-        &energy,
+        y,
+        &energy0,
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
     );
-    let used = 1 + display_width(&energy) as u16;
-    let rx = (main.x + main.width).saturating_sub(rw).max(main.x + used);
+    let used0 = 1 + display_width(&energy0) as u16;
+    let rx = (main.x + main.width).saturating_sub(rw).max(main.x + used0);
+    crate::ui::hline(
+        buf,
+        main.x + used0,
+        y,
+        rx.saturating_sub(main.x + used0),
+        crate::ui::BOX_H,
+        theme::fg(theme::BORDER),
+    );
+    put(buf, rx, y, &right, theme::fg(theme::INFO));
+    y += 1;
+    // 手牌一行
+    put_cards_row(buf, y, main, app, c);
+    y += 1;
+    // 这一行:卡牌自己的费用在左,类型在右
+    let cost_text = format!(
+        "{} energy",
+        card.map(|x| crate::ui::cost_label(x)).unwrap_or_else(|| "-".to_string())
+    );
+    put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
+    put(
+        buf,
+        main.x + 1,
+        y,
+        &cost_text,
+        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
+    );
+    let mut tail = 0u16;
+    if let Some(card) = card {
+        let kind = crate::ui::kind_label(card.kind());
+        let kw = display_width(&kind) as u16;
+        let kx = (main.x + main.width).saturating_sub(kw);
+        put(buf, kx, y, &kind, theme::fg(theme::FG));
+        tail = kw;
+    }
+    let used = 1 + display_width(&cost_text) as u16;
     crate::ui::hline(
         buf,
         main.x + used,
-        sep_y,
-        rx.saturating_sub(main.x + used),
+        y,
+        main.width.saturating_sub(used + tail),
         crate::ui::BOX_H,
         theme::fg(theme::BORDER),
     );
-    put(buf, rx, sep_y, &right, theme::fg(theme::INFO));
-    // 第二行:一行手牌,两头 │ 框起来
-    let cards_y = sep_y + 1;
-    put_cards_row(buf, cards_y, main, app, c);
-    // 第三行:收尾的横线
-    crate::ui::hline(
-        buf,
-        main.x,
-        sep_y + 2,
-        main.width,
-        crate::ui::BOX_H,
-        theme::fg(theme::BORDER),
-    );
+    y += 1;
+    // 说明文本:固定两行,居中,伤害/格挡上色
+    let words = crate::ui::desc_words(&desc_text);
+    let mut drawn = 0u16;
+    for line in crate::ui::wrap_words(&words, main.width as usize)
+        .into_iter()
+        .take(desc_lines as usize)
+    {
+        crate::ui::put_centered_words(buf, main.x, y, main.width as usize, &line);
+        y += 1;
+        drawn += 1;
+    }
+    y += desc_lines - drawn;
+    // 收尾线
+    crate::ui::hline(buf, main.x, y, main.width, crate::ui::BOX_H, theme::fg(theme::BORDER));
+
     render_info(buf, info, app, c);
     render_command(buf, command, app);
 }
 
-// ---- 说明区 ----
-
-/// 说明区:选中那张牌的说明,带框
-fn render_desc_box(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
-    if area.width < 6 || area.height < 3 {
-        return;
-    }
-    draw_box(buf, area, "card", theme::fg(theme::BORDER), theme::fg(theme::INFO));
-    let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
-    let Some(card) = c.hand.get(sel) else {
-        return;
-    };
-    let inner = Rect::new(
-        area.x + 1,
-        area.y + 1,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    crate::ui::card_desc(buf, inner, card);
-}
-
 // ---- 角色区 ----
 
-/// 角色区:30x10 的画像 + 一行增减益,不画框
+/// 角色区:画像 + 血条 + 增减益,三样都水平居中;区域占半个宽
 fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
-    if area.width == 0 || area.height == 0 {
+    if area.width == 0 || area.height < 14 {
         return;
     }
-    // 画像 + 增减益行整块在区域里垂直居中(上下就是遗物行和能量线)
-    let art_rows = ART_H.min(area.height as usize);
-    let block_h = art_rows + 1;
-    let off = (area.height as usize).saturating_sub(block_h) / 2;
-    // 左对齐整块画,逐字符用原图颜色
-    for (i, line) in HERO_ART.iter().take(art_rows).enumerate() {
+    let art_rows = ART_H;
+    let block_h = (art_rows + 1) as u16; // 画像 + 增减益(不再有血条)
+    let off = (area.height as usize).saturating_sub(block_h as usize) / 2;
+    let cx = area.x + (area.width as usize).saturating_sub(IMG_W) as u16 / 2;
+    // 画像
+    for (i, line) in HERO_ART.iter().enumerate() {
         let y = area.y + off as u16 + i as u16;
         for (j, ch) in line.char_indices() {
             if ch == ' ' || j >= area.width as usize {
                 continue;
             }
-            let c = HERO_FG[i][j];
+            let col = HERO_FG[i][j];
             let style = Style::default().fg(Color::Rgb(
-                (c >> 16) as u8,
-                ((c >> 8) & 0xff) as u8,
-                (c & 0xff) as u8,
+                (col >> 16) as u8,
+                ((col >> 8) & 0xff) as u8,
+                (col & 0xff) as u8,
             ));
-            put(buf, area.x + j as u16, y, &ch.to_string(), style);
+            put(buf, cx + j as u16, y, &ch.to_string(), style);
         }
     }
-    // 增减益行
     let buff_y = area.y + off as u16 + art_rows as u16;
-    if buff_y >= area.y + area.height {
-        return;
-    }
     let words: Vec<(String, Style)> = c
         .player
         .statuses
@@ -190,16 +203,14 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
         })
         .collect();
     let len: usize = words.iter().map(|(t, _)| display_width(t)).sum();
-    let mut cx = area.x + (area.width as usize).saturating_sub(len) as u16 / 2;
+    let mut bx = area.x + (area.width as usize).saturating_sub(len) as u16 / 2;
     for (t, st) in &words {
-        put(buf, cx, buff_y, t, *st);
-        cx += display_width(t) as u16;
+        put(buf, bx, buff_y, t, *st);
+        bx += display_width(t) as u16;
     }
 }
 
-// ---- 卡牌列表 ----
-
-/// 一行手牌:两头 │ 框住,每张等宽,名字放不下就截断
+/// 一行手牌:行首一个 │,每张牌后面跟一个 │,宽度贴着内容
 fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     let n = c.hand.len();
     if n == 0 || area.width < 3 {
@@ -209,7 +220,6 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
         put(buf, x, y, &crate::ui::BOX_V.to_string(), theme::fg(theme::BORDER));
     };
     bar(buf, area.x);
-    // 每格贴着文字宽度,放不下就截断名字
     let sel = app.hand_sel.min(n - 1);
     let mut cx = area.x + 1;
     let last_x = area.x + area.width - 1;
