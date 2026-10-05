@@ -59,9 +59,18 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     render_desc_box(buf, desc, app, c);
     render_character(buf, ch, c);
     render_enemies(buf, foe, app, c);
-    // 中间那条线:线里嵌着能量,形如 -2/3 energy--------
+    // 第一行:线里嵌着能量和牌堆小结,形如 -3/3 energy-----draw 5---exhausted 0---discard 0
     let sep_y = main.y + top_h;
     let energy = format!("{}/{} energy", c.energy, c.max_energy);
+    let right = format!(
+        "draw {}{}exhausted {}{}discard {}",
+        c.draw.len(),
+        crate::ui::BOX_H.to_string().repeat(3),
+        c.exhaust.len(),
+        crate::ui::BOX_H.to_string().repeat(3),
+        c.discard.len()
+    );
+    let rw = display_width(&right) as u16;
     put(buf, main.x, sep_y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
     put(
         buf,
@@ -71,21 +80,28 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
     );
     let used = 1 + display_width(&energy) as u16;
+    let rx = (main.x + main.width).saturating_sub(rw).max(main.x + used);
     crate::ui::hline(
         buf,
         main.x + used,
         sep_y,
-        main.width.saturating_sub(used),
+        rx.saturating_sub(main.x + used),
         crate::ui::BOX_H,
         theme::fg(theme::BORDER),
     );
-    let cards = Rect::new(
+    put(buf, rx, sep_y, &right, theme::fg(theme::INFO));
+    // 第二行:一行手牌,两头 │ 框起来
+    let cards_y = sep_y + 1;
+    put_cards_row(buf, cards_y, main, app, c);
+    // 第三行:收尾的横线
+    crate::ui::hline(
+        buf,
         main.x,
-        main.y + top_h + 1,
+        sep_y + 2,
         main.width,
-        main.height.saturating_sub(top_h + 1),
+        crate::ui::BOX_H,
+        theme::fg(theme::BORDER),
     );
-    render_card_list(buf, cards, app, c);
     render_info(buf, info, app, c);
     render_command(buf, command, app);
 }
@@ -154,46 +170,33 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
 
 // ---- 卡牌列表 ----
 
-/// 卡牌列表:一行手牌(等宽、用 │ 分开),下面紧挨着牌堆小结
-fn render_card_list(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
-    if area.width < 4 || area.height < 2 {
-        return;
-    }
-    // 一行铺开所有手牌,每张占 总宽/张数,名字放不下就截断
+/// 一行手牌:两头 │ 框住,每张等宽,名字放不下就截断
+fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     let n = c.hand.len();
-    if n > 0 {
-        let sel = app.hand_sel.min(n - 1);
-        let cell_w = (area.width / n as u16).max(2);
-        let y = area.y;
-        for (k, card) in c.hand.iter().enumerate() {
-            let x = area.x + k as u16 * cell_w;
-            if x >= area.x + area.width {
-                break;
-            }
-            let w = cell_w.min((area.x + area.width).saturating_sub(x));
-            let playable = c.blocked_reason(k).is_none();
-            // 最后一格留给分隔符
-            crate::ui::put_card_line(buf, x, y, w.saturating_sub(1), card, k == sel, !playable);
-            if k + 1 < n && w > 0 {
-                put(buf, x + w - 1, y, "│", theme::fg(theme::BORDER));
-            }
-        }
-    }
-    // 牌堆小结:紧挨在手牌下面一行
-    let cy = area.y + 1;
-    if cy >= area.y + area.height {
+    if n == 0 || area.width < 3 {
         return;
     }
-    let w = area.width as usize;
-    let left = format!("draw {}", c.draw.len());
-    let mid = format!("exhausted {}", c.exhaust.len());
-    let right = format!("discard {}", c.discard.len());
-    put_padded(buf, area.x, cy, "", w, Style::default());
-    put(buf, area.x, cy, &left, theme::fg(theme::INFO));
-    let mid_x = area.x + (w.saturating_sub(display_width(&mid)) / 2) as u16;
-    put(buf, mid_x, cy, &mid, theme::fg(theme::INFO));
-    let right_x = area.x + w.saturating_sub(display_width(&right)) as u16;
-    put(buf, right_x, cy, &right, theme::fg(theme::INFO));
+    let bar = |buf: &mut Buffer, x: u16| {
+        put(buf, x, y, &crate::ui::BOX_V.to_string(), theme::fg(theme::BORDER));
+    };
+    bar(buf, area.x);
+    // 每格贴着文字宽度,放不下就截断名字
+    let sel = app.hand_sel.min(n - 1);
+    let mut cx = area.x + 1;
+    let last_x = area.x + area.width - 1;
+    for (k, card) in c.hand.iter().enumerate() {
+        let want = display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label());
+        let remain = last_x.saturating_sub(cx) as usize;
+        if remain == 0 {
+            break;
+        }
+        let w = want.min(remain.saturating_sub(1)).max(1);
+        let playable = c.blocked_reason(k).is_none();
+        crate::ui::put_card_line(buf, cx, y, w as u16, card, k == sel, !playable);
+        cx += w as u16;
+        bar(buf, cx);
+        cx += 1;
+    }
 }
 
 // ---- 敌人区 ----
