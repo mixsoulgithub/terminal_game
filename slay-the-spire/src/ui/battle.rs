@@ -1,5 +1,5 @@
-// 战斗界面:上面是"角色区 | 敌人区",中间一条横线,下面是卡区.
-// 角色区:30x10 的画像 + 一行增减益;卡区:能量 / 手牌 | 说明 / 牌堆小结.
+// 战斗界面:上面是"说明区(带框) | 角色区 | 敌人区",中间一条横线,下面是卡牌列表.
+// 角色区:30x10 的画像 + 一行增减益,不画框;卡牌列表:能量 / 一行手牌(│ 分隔)/ 牌堆小结.
 // 敌人区按数量平分高度,每个敌人四行:血量 / 名字 / 缩进的动作 / 缩进的状态.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -11,10 +11,10 @@ use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
 use crate::ui::{display_width, draw_box, put, put_padded, truncate};
 
-/// 角色区宽度:30 宽的画像 + 左右边框
-const CHAR_W: u16 = 32;
-/// 角色区高度:10 高的画像 + 一行增减益 + 上下边框
-const CHAR_H: u16 = 13;
+/// 角色区宽度:画像 30 宽
+const CHAR_W: u16 = 30;
+/// 角色区高度:画像 10 行 + 一行增减益,无边框
+const CHAR_H: u16 = 11;
 /// 画像高度
 const ART_H: usize = 10;
 
@@ -44,35 +44,24 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let command = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
     let info = Rect::new(area.x, area.y + area.height - 2, area.width, 1);
     let main = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
-    // 上排:角色区 | 敌人区;中间一条横线;下面是卡区.
-    // 敌人多的时候上排要高一点,好让每个敌人都放得下框(每个要 4 行内容 + 2 行框)
+    // 上排:说明 | 角色 | 敌人;中间一条横线;下面卡牌列表
     let need_h = c.enemies.len().max(1) as u16 * 6;
-    // 卡区至少留 6 行
-    let top_h = CHAR_H
-        .max(need_h)
-        .min(main.height.saturating_sub(7))
-        .max(4);
-    if top_h < 4 {
-        // 太矮就只画卡区
-        render_card_area(buf, main, app, c);
-        render_info(buf, info, app, c);
-        render_command(buf, command, app);
-        return;
-    }
+    let top_h = CHAR_H.max(need_h).min(main.height.saturating_sub(3)).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
-    render_character_box(buf, Rect::new(top.x, top.y, CHAR_W, top_h), c);
-    let foe_x = top.x + CHAR_W + 1;
-    render_enemies(
-        buf,
-        Rect::new(
-            foe_x,
-            top.y,
-            top.width.saturating_sub(CHAR_W + 1),
-            top_h,
-        ),
-        app,
-        c,
+    let char_w = CHAR_W.min(top.width.saturating_sub(20));
+    let desc_w = 32u16.min(top.width.saturating_sub(char_w + 2 + 16));
+    let desc = Rect::new(top.x, top.y, desc_w, top_h);
+    let ch = Rect::new(desc.x + desc_w + 1, top.y, char_w, top_h);
+    let foe_x = ch.x + char_w + 1;
+    let foe = Rect::new(
+        foe_x,
+        top.y,
+        (top.x + top.width).saturating_sub(foe_x),
+        top_h,
     );
+    render_desc_box(buf, desc, app, c);
+    render_character(buf, ch, c);
+    render_enemies(buf, foe, app, c);
     crate::ui::hline(
         buf,
         main.x,
@@ -81,45 +70,56 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         crate::ui::BOX_H,
         theme::fg(theme::BORDER),
     );
-    let card = Rect::new(
+    let cards = Rect::new(
         main.x,
         main.y + top_h + 1,
         main.width,
         main.height.saturating_sub(top_h + 1),
     );
-    render_card_area(buf, card, app, c);
+    render_card_list(buf, cards, app, c);
     render_info(buf, info, app, c);
     render_command(buf, command, app);
 }
 
-// ---- 角色区 ----
+// ---- 说明区 ----
 
-/// 角色区:里面有 30x10 的画像,最下面一行是自己身上的增减益
-fn render_character_box(buf: &mut Buffer, area: Rect, c: &Combat) {
-    if area.width < 6 || area.height < 4 {
+/// 说明区:选中那张牌的说明,带框
+fn render_desc_box(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
+    if area.width < 6 || area.height < 3 {
         return;
     }
-    draw_box(buf, area, "you", theme::fg(theme::BORDER), theme::fg(theme::INFO));
+    draw_box(buf, area, "card", theme::fg(theme::BORDER), theme::fg(theme::INFO));
+    let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
+    let Some(card) = c.hand.get(sel) else {
+        return;
+    };
     let inner = Rect::new(
         area.x + 1,
         area.y + 1,
         area.width.saturating_sub(2),
         area.height.saturating_sub(2),
     );
-    if inner.width == 0 || inner.height == 0 {
+    crate::ui::card_desc(buf, inner, card);
+}
+
+// ---- 角色区 ----
+
+/// 角色区:30x10 的画像 + 一行增减益,不画框
+fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
+    if area.width == 0 || area.height == 0 {
         return;
     }
-    // 画像:占前面 ART_H 行,水平居中
-    let art_rows = (inner.height as usize).saturating_sub(1).min(ART_H);
+    let art_rows = (area.height as usize).saturating_sub(1).min(ART_H);
     for (i, line) in HERO_ART.iter().take(art_rows).enumerate() {
-        let text = truncate(line, inner.width as usize);
-        let w = display_width(&text);
-        let x = inner.x + (inner.width as usize).saturating_sub(w) as u16 / 2;
-        put(buf, x, inner.y + i as u16, &text, theme::fg(theme::FG));
+        let text = truncate(line, area.width as usize);
+        let x = area.x + (area.width as usize).saturating_sub(display_width(&text)) as u16 / 2;
+        put(buf, x, area.y + i as u16, &text, theme::fg(theme::FG));
     }
     // 增减益行
-    let buff_y = inner.y + inner.height - 1;
-    put_padded(buf, inner.x, buff_y, "", inner.width as usize, Style::default());
+    let buff_y = area.y + art_rows as u16;
+    if buff_y >= area.y + area.height {
+        return;
+    }
     let words: Vec<(String, Style)> = c
         .player
         .statuses
@@ -133,82 +133,62 @@ fn render_character_box(buf: &mut Buffer, area: Rect, c: &Combat) {
         })
         .collect();
     let len: usize = words.iter().map(|(t, _)| display_width(t)).sum();
-    let mut cx = inner.x + (inner.width as usize).saturating_sub(len) as u16 / 2;
+    let mut cx = area.x + (area.width as usize).saturating_sub(len) as u16 / 2;
     for (t, st) in &words {
         put(buf, cx, buff_y, t, *st);
         cx += display_width(t) as u16;
     }
 }
 
-// ---- 卡区 ----
+// ---- 卡牌列表 ----
 
-/// 卡区:第一行能量,中间"手牌 | 说明",最下面一行是牌堆小结
-fn render_card_area(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
-    if area.width < 8 || area.height < 3 {
+/// 卡牌列表:一行能量、一行卡牌(等宽、用 │ 分开)、最下面一行牌堆小结
+fn render_card_list(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
+    if area.width < 4 || area.height < 2 {
         return;
     }
-    draw_box(buf, area, "cards", theme::fg(theme::BORDER), theme::fg(theme::INFO));
-    let inner = Rect::new(
-        area.x + 1,
-        area.y + 1,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(2),
-    );
-    if inner.width < 4 || inner.height < 3 {
-        return;
-    }
-    // 能量行
     let energy = format!("{}/{} energy", c.energy, c.max_energy);
     put(
         buf,
-        inner.x,
-        inner.y,
+        area.x,
+        area.y,
         &energy,
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
     );
-    // 手牌 | 说明
-    let body = Rect::new(inner.x, inner.y + 1, inner.width, inner.height - 2);
-    if body.height > 0 {
-        let split = crate::ui::split_list_detail(body, c.hand.len() as u16);
-        crate::ui::draw_split_plain(buf, &split, theme::fg(theme::BORDER));
-        let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
-        let list = split.list;
-        if list.width > 0 && list.height > 0 {
-            let capacity = list.height as usize;
-            let start = if c.hand.len() > capacity {
-                sel.saturating_sub(capacity / 2).min(c.hand.len() - capacity)
-            } else {
-                0
-            };
-            for (i, card) in c.hand.iter().skip(start).take(capacity).enumerate() {
-                let slot = start + i;
-                let playable = c.blocked_reason(slot).is_none();
-                crate::ui::put_card_line(
-                    buf,
-                    list.x,
-                    list.y + i as u16,
-                    list.width,
-                    card,
-                    slot == sel,
-                    !playable,
-                );
+    // 一行铺开所有手牌,每张占 总宽/张数,名字放不下就截断
+    let n = c.hand.len();
+    if n > 0 && area.height >= 2 {
+        let sel = app.hand_sel.min(n - 1);
+        let cell_w = (area.width / n as u16).max(2);
+        let y = area.y + 1;
+        for (k, card) in c.hand.iter().enumerate() {
+            let x = area.x + k as u16 * cell_w;
+            if x >= area.x + area.width {
+                break;
             }
-        }
-        if let Some(card) = c.hand.get(sel) {
-            crate::ui::card_desc(buf, split.detail, card);
+            let w = cell_w.min((area.x + area.width).saturating_sub(x));
+            let playable = c.blocked_reason(k).is_none();
+            // 最后一格留给分隔符
+            crate::ui::put_card_line(buf, x, y, w.saturating_sub(1), card, k == sel, !playable);
+            if k + 1 < n && w > 0 {
+                put(buf, x + w - 1, y, "│", theme::fg(theme::BORDER));
+            }
         }
     }
     // 牌堆小结
-    let cy = inner.y + inner.height - 1;
-    let w = inner.width as usize;
+    let cy = area.y + area.height - 1;
+    if cy <= area.y {
+        return;
+    }
+    let w = area.width as usize;
     let left = format!("draw {}", c.draw.len());
     let mid = format!("exhausted {}", c.exhaust.len());
     let right = format!("discard {}", c.discard.len());
-    put_padded(buf, inner.x, cy, "", w, Style::default());
-    put(buf, inner.x, cy, &left, theme::fg(theme::INFO));
-    let mid_x = inner.x + (w.saturating_sub(display_width(&mid)) / 2) as u16;
+    put_padded(buf, area.x, cy, "", w, Style::default());
+    put(buf, area.x, cy, &left, theme::fg(theme::INFO));
+    let mid_x = area.x + (w.saturating_sub(display_width(&mid)) / 2) as u16;
     put(buf, mid_x, cy, &mid, theme::fg(theme::INFO));
-    let right_x = inner.x + w.saturating_sub(display_width(&right)) as u16;
+    let right_x = area.x + w.saturating_sub(display_width(&right)) as u16;
     put(buf, right_x, cy, &right, theme::fg(theme::INFO));
 }
 

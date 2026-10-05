@@ -363,28 +363,6 @@ pub fn draw_split(buf: &mut Buffer, area: Rect, split: &Split, style: Style) {
     }
 }
 
-/// 同上,但只是普通的一横/一竖,不接边框(用在盒子内部的子区域上)
-pub fn draw_split_plain(buf: &mut Buffer, split: &Split, style: Style) {
-    if split.horizontal {
-        hline(
-            buf,
-            split.detail.x,
-            split.detail.y.saturating_sub(1),
-            split.detail.width,
-            BOX_H,
-            style,
-        );
-    } else {
-        vline(
-            buf,
-            split.detail.x.saturating_sub(1),
-            split.list.y,
-            split.list.height,
-            BOX_V,
-            style,
-        );
-    }
-}
 
 /// 指定切分方向的对半切分:horizontal 为 true 时上下分(-),false 时左右分(|)
 pub fn split_two_with(area: Rect, horizontal: bool) -> (Rect, Rect, bool) {
