@@ -300,22 +300,12 @@ pub struct Split {
     pub horizontal: bool,
 }
 
-pub fn split_list_detail(area: Rect, list_h: u16) -> Split {
-    split_list_detail_with(area, list_h, false)
-}
-
-/// 同上,但强制上下分(战斗的卡区就是这么用的)
-pub fn split_list_detail_h(area: Rect, list_h: u16) -> Split {
-    split_list_detail_with(area, list_h, true)
-}
-
-/// `force_h` 为 true 时一定用横线上下分;否则按规则判断.
 /// 内容左右各留 1 格,分隔线仍然横跨整个 area.
-fn split_list_detail_with(area: Rect, list_h: u16, force_h: bool) -> Split {
+fn split_list_detail(area: Rect, list_h: u16) -> Split {
     let x = area.x + 1;
     let w = area.width.saturating_sub(2);
     // 够宽(宽 > 高 * 1.5)左右分,否则上下分
-    let horizontal = force_h || w as u32 <= area.height as u32 * 3 / 2;
+    let horizontal = w as u32 <= area.height as u32 * 3 / 2;
     if horizontal {
         let lh = list_h.min(area.height.saturating_sub(2));
         Split {
@@ -364,12 +354,35 @@ pub fn vsep(buf: &mut Buffer, inner: Rect, x: u16, style: Style) {
     put(buf, x, inner.y + inner.height, "┴", style);
 }
 
-/// 按切分结果画出中间那条分隔线(area 是盒子内部)
+/// 按切分结果画出中间那条分隔线(area 是盒子内部,线会接上盒子边框)
 pub fn draw_split(buf: &mut Buffer, area: Rect, split: &Split, style: Style) {
     if split.horizontal {
         hsep(buf, area, split.detail.y.saturating_sub(1), style);
     } else {
         vsep(buf, area, split.detail.x.saturating_sub(1), style);
+    }
+}
+
+/// 同上,但只是普通的一横/一竖,不接边框(用在盒子内部的子区域上)
+pub fn draw_split_plain(buf: &mut Buffer, split: &Split, style: Style) {
+    if split.horizontal {
+        hline(
+            buf,
+            split.detail.x,
+            split.detail.y.saturating_sub(1),
+            split.detail.width,
+            BOX_H,
+            style,
+        );
+    } else {
+        vline(
+            buf,
+            split.detail.x.saturating_sub(1),
+            split.list.y,
+            split.list.height,
+            BOX_V,
+            style,
+        );
     }
 }
 
@@ -734,8 +747,9 @@ mod tests {
             let c = app.run.combat_mut().unwrap();
             c.hand = vec![crate::core::cards::card("strike"); 10];
         }
-        let text = screen_text(&app, 120, 36);
-        // 手牌是固定 10 行速记,每行"费用 牌名"
+        // 终端给大一点,好让 10 张手牌都排得下
+        let text = screen_text(&app, 160, 50);
+        // 手牌一行一张,每行"费用 牌名"
         assert_eq!(
             text.matches("1 Strike").count(),
             10,
@@ -929,6 +943,7 @@ mod tests {
         let _ = screen_text(&app, 1, 1);
     }
 }
+
 
 
 
