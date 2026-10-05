@@ -548,8 +548,10 @@ pub fn render(f: &mut Frame, app: &App) {
     let potion_rect = hud::render(buf, hud_area, app);
     relic_bar(buf, relic_area, app);
     if app.run.screen == crate::core::run::Screen::Combat {
+        // 遗物行和战斗区之间也隔一条线
+        hline(buf, area.x, area.y + 2, area.width, BOX_H, theme::fg(theme::BORDER));
         // 战斗界面自带信息行和命令栏,顶栏以下整块都归它,不用全局底栏
-        let body = Rect::new(area.x, area.y + 2, area.width, area.height.saturating_sub(2));
+        let body = Rect::new(area.x, area.y + 3, area.width, area.height.saturating_sub(3));
         battle::render(buf, body, app);
     } else {
         let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);

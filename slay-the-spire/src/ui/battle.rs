@@ -250,8 +250,8 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     let gap = 4u16;
     let widths: Vec<u16> = (0..n).map(|i| enemy_block_w(c, i)).collect();
     let total: u16 = widths.iter().sum::<u16>() + gap * (n as u16 - 1);
-    // 整组重心放屏幕中间
-    let mut x0 = area.x as f32 + (area.width as f32 - total as f32) / 2.0;
+    // 整组重心和角色的 1/4 对称,放在屏幕 3/4 处
+    let mut x0 = area.x as f32 + area.width as f32 * 3.0 / 4.0 - total as f32 / 2.0;
     // 最右那个框的右边不能超过屏幕的 19/20
     let limit = area.x as f32 + area.width as f32 * 19.0 / 20.0;
     if x0 + total as f32 > limit {
