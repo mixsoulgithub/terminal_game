@@ -11,23 +11,38 @@ use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
 use crate::ui::{display_width, draw_box, put, put_padded, truncate};
 
-/// 角色区宽度:画像 30 宽
-const CHAR_W: u16 = 30;
+/// 角色区宽度:画像 20 宽
+const CHAR_W: u16 = 20;
 /// 画像高度
 const ART_H: usize = 10;
 
-/// 角色画像(30x10 的占位;以后换成真图只改这张表)
+/// 铁甲战士画像(20x10,由 assets/characters/tuned/ironclad-s4-auto-b1.30.png 转出)
 const HERO_ART: [&str; ART_H] = [
-    r"                              ",
-    r"            _____             ",
-    r"           /     \            ",
-    r"          | () () |           ",
-    r"           \  ^  /            ",
-    r"            |---|             ",
-    r"        ___/     \___         ",
-    r"       /   |     |   \        ",
-    r"           |     |            ",
-    r"          /_/   \_\           ",
+    r"      *=&*-",
+    r"     -&&&=/",
+    r"  -/&&+/++&=/",
+    r"--//*+////**/",
+    r"    -/////--",
+    r"   -++///++-",
+    r" -/+/-  -//+/",
+    r" *=+       -*=-",
+    r" -*          -++",
+    r" -            -/",
+];
+
+/// 画像每格的 RGB(由 ascii-image-converter -C 的输出解析而来,空格不画)
+const HERO_FG: [[u32; 20]; ART_H] = [
+    // 每格的 RGB(空格不画,颜色无所谓,留 0)
+    [0x000000, 0x000000, 0x010101, 0x010101, 0x000000, 0x000000, 0x8b8b89, 0xc3c18b, 0xd7cb7a, 0xa3a267, 0x282715, 0x000000, 0x030302, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x000000, 0x000000, 0x000000, 0x000000, 0x0d0d09, 0x38362c, 0xcac7c0, 0xd7d4ae, 0xd5cd87, 0xc9b96a, 0x504d2c, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x191d1e, 0x1b1f20, 0x233033, 0x434641, 0xddd6b1, 0xdcd9b5, 0x6d6e64, 0x494847, 0x646667, 0x7d7d79, 0xccc9a0, 0xc4be92, 0x4e4d3f, 0x000000, 0x010101, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x2d3738, 0x2e3637, 0x34454a, 0x474d50, 0x8e9191, 0x646d6e, 0x515658, 0x565b5e, 0x585b5c, 0x5d5f5c, 0x81837a, 0x9b9684, 0x514d43, 0x000000, 0x020201, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x000000, 0x000000, 0x000000, 0x000000, 0x2d2b28, 0x62534d, 0x574c3f, 0x4d4734, 0x4a402e, 0x4e4133, 0x281f1e, 0x343935, 0x1d1c19, 0x000000, 0x010101, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x010102, 0x000000, 0x070303, 0x592624, 0xb15751, 0xb34944, 0x9a4240, 0x904b44, 0x9a4643, 0xad4644, 0xad4845, 0x4e1d1c, 0x000000, 0x000000, 0x010101, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x030302, 0x3f2a23, 0x98403b, 0xba4f4a, 0xab3e3b, 0x682423, 0x32100f, 0x2b0c0b, 0x481817, 0x782927, 0xa53f3b, 0xaa4440, 0x7e2b2a, 0x0d0202, 0x000000, 0x020101, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x000000, 0x8d8066, 0xceb596, 0x897162, 0x2c1513, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x0f0606, 0x411f1d, 0xb6856e, 0xb4a48a, 0x3b3b35, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000],
+    [0x060606, 0x272826, 0x9d9e93, 0x1a1f1e, 0x000000, 0x020101, 0x010000, 0x010000, 0x020000, 0x010000, 0x000000, 0x000000, 0x131914, 0x353531, 0x7e786b, 0x6b675f, 0x050606, 0x000000, 0x000000, 0x000000],
+    [0x0d0d0d, 0x2e2c29, 0x1a1918, 0x040304, 0x020000, 0x000000, 0x000000, 0x000000, 0x000000, 0x000000, 0x010000, 0x010000, 0x000000, 0x000000, 0x35322e, 0x4b4944, 0x020202, 0x000000, 0x000000, 0x000000],
 ];
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
@@ -141,10 +156,21 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
     let art_rows = ART_H.min(area.height as usize);
     let block_h = art_rows + 1;
     let off = (area.height as usize).saturating_sub(block_h) / 2;
+    // 左对齐整块画,逐字符用原图颜色
     for (i, line) in HERO_ART.iter().take(art_rows).enumerate() {
-        let text = truncate(line, area.width as usize);
-        let x = area.x + (area.width as usize).saturating_sub(display_width(&text)) as u16 / 2;
-        put(buf, x, area.y + off as u16 + i as u16, &text, theme::fg(theme::FG));
+        let y = area.y + off as u16 + i as u16;
+        for (j, ch) in line.char_indices() {
+            if ch == ' ' || j >= area.width as usize {
+                continue;
+            }
+            let c = HERO_FG[i][j];
+            let style = Style::default().fg(Color::Rgb(
+                (c >> 16) as u8,
+                ((c >> 8) & 0xff) as u8,
+                (c & 0xff) as u8,
+            ));
+            put(buf, area.x + j as u16, y, &ch.to_string(), style);
+        }
     }
     // 增减益行
     let buff_y = area.y + off as u16 + art_rows as u16;
