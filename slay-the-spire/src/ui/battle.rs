@@ -13,8 +13,6 @@ use crate::ui::{display_width, draw_box, put, put_padded, truncate};
 
 /// 角色区宽度:画像 30 宽
 const CHAR_W: u16 = 30;
-/// 角色区高度:画像 10 行 + 一行增减益,无边框
-const CHAR_H: u16 = 11;
 /// 画像高度
 const ART_H: usize = 10;
 
@@ -44,9 +42,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let command = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
     let info = Rect::new(area.x, area.y + area.height - 2, area.width, 1);
     let main = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
-    // 上排:说明 | 角色 | 敌人;中间一条横线;下面卡牌列表
-    let need_h = c.enemies.len().max(1) as u16 * 6;
-    let top_h = CHAR_H.max(need_h).min(main.height.saturating_sub(3)).max(4);
+    // 上排:说明 | 角色 | 敌人;中间一条"能量线";下面两行:手牌 / 牌堆小结
+    let top_h = main.height.saturating_sub(3).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
     let char_w = CHAR_W.min(top.width.saturating_sub(20));
     let desc_w = 32u16.min(top.width.saturating_sub(char_w + 2 + 16));
@@ -62,11 +59,23 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     render_desc_box(buf, desc, app, c);
     render_character(buf, ch, c);
     render_enemies(buf, foe, app, c);
+    // 中间那条线:线里嵌着能量,形如 -2/3 energy--------
+    let sep_y = main.y + top_h;
+    let energy = format!("{}/{} energy", c.energy, c.max_energy);
+    put(buf, main.x, sep_y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
+    put(
+        buf,
+        main.x + 1,
+        sep_y,
+        &energy,
+        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
+    );
+    let used = 1 + display_width(&energy) as u16;
     crate::ui::hline(
         buf,
-        main.x,
-        main.y + top_h,
-        main.width,
+        main.x + used,
+        sep_y,
+        main.width.saturating_sub(used),
         crate::ui::BOX_H,
         theme::fg(theme::BORDER),
     );
@@ -109,14 +118,17 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let art_rows = (area.height as usize).saturating_sub(1).min(ART_H);
+    // 画像 + 增减益行整块在区域里垂直居中(上下就是遗物行和能量线)
+    let art_rows = ART_H.min(area.height as usize);
+    let block_h = art_rows + 1;
+    let off = (area.height as usize).saturating_sub(block_h) / 2;
     for (i, line) in HERO_ART.iter().take(art_rows).enumerate() {
         let text = truncate(line, area.width as usize);
         let x = area.x + (area.width as usize).saturating_sub(display_width(&text)) as u16 / 2;
-        put(buf, x, area.y + i as u16, &text, theme::fg(theme::FG));
+        put(buf, x, area.y + off as u16 + i as u16, &text, theme::fg(theme::FG));
     }
     // 增减益行
-    let buff_y = area.y + art_rows as u16;
+    let buff_y = area.y + off as u16 + art_rows as u16;
     if buff_y >= area.y + area.height {
         return;
     }
@@ -142,25 +154,17 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
 
 // ---- 卡牌列表 ----
 
-/// 卡牌列表:一行能量、一行卡牌(等宽、用 │ 分开)、最下面一行牌堆小结
+/// 卡牌列表:一行手牌(等宽、用 │ 分开),下面紧挨着牌堆小结
 fn render_card_list(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     if area.width < 4 || area.height < 2 {
         return;
     }
-    let energy = format!("{}/{} energy", c.energy, c.max_energy);
-    put(
-        buf,
-        area.x,
-        area.y,
-        &energy,
-        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
-    );
     // 一行铺开所有手牌,每张占 总宽/张数,名字放不下就截断
     let n = c.hand.len();
-    if n > 0 && area.height >= 2 {
+    if n > 0 {
         let sel = app.hand_sel.min(n - 1);
         let cell_w = (area.width / n as u16).max(2);
-        let y = area.y + 1;
+        let y = area.y;
         for (k, card) in c.hand.iter().enumerate() {
             let x = area.x + k as u16 * cell_w;
             if x >= area.x + area.width {
@@ -175,9 +179,9 @@ fn render_card_list(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
             }
         }
     }
-    // 牌堆小结
-    let cy = area.y + area.height - 1;
-    if cy <= area.y {
+    // 牌堆小结:紧挨在手牌下面一行
+    let cy = area.y + 1;
+    if cy >= area.y + area.height {
         return;
     }
     let w = area.width as usize;
