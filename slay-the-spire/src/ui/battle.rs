@@ -65,17 +65,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let bottom_h = 3 + desc_lines + 1;
     let top_h = main.height.saturating_sub(bottom_h).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
-    // 角色区占一半宽,敌人区拿剩下
-    let char_w = top.width / 2;
-    render_character(buf, Rect::new(top.x, top.y, char_w, top_h), c);
-    let foe_x = top.x + char_w + 1;
-    let foe = Rect::new(
-        foe_x,
-        top.y,
-        (top.x + top.width).saturating_sub(foe_x),
-        top_h,
-    );
-    render_enemies(buf, foe, app, c);
+    render_character(buf, top, c);
+    render_enemies(buf, top, app, c);
 
     let mut y = main.y + top_h;
     // 第一行:能量在左,牌堆数量在右,中间用 ─ 补满
@@ -125,23 +116,22 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         &cost_text,
         Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
     );
-    let mut tail = 0u16;
-    if let Some(card) = card {
-        let kind = crate::ui::kind_label(card.kind());
-        let kw = display_width(&kind) as u16;
-        let kx = (main.x + main.width).saturating_sub(kw);
-        put(buf, kx, y, &kind, theme::fg(theme::FG));
-        tail = kw;
-    }
     let used = 1 + display_width(&cost_text) as u16;
     crate::ui::hline(
         buf,
         main.x + used,
         y,
-        main.width.saturating_sub(used + tail),
+        main.width.saturating_sub(used),
         crate::ui::BOX_H,
         theme::fg(theme::BORDER),
     );
+    if let Some(card) = card {
+        // 类型居中,画在横线上面
+        let kind = crate::ui::kind_label(card.kind());
+        let kw = display_width(&kind) as u16;
+        let kx = main.x + (main.width.saturating_sub(kw)) / 2;
+        put(buf, kx, y, &kind, theme::fg(theme::FG));
+    }
     y += 1;
     // 说明文本:固定两行,居中,伤害/格挡上色
     let words = crate::ui::desc_words(&desc_text);
@@ -164,7 +154,16 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
 
 // ---- 角色区 ----
 
-/// 角色区:画像 + 血条 + 增减益,三样都水平居中;区域占半个宽
+/// 靠屏幕左半边向下取整,右半边向上取整
+fn round_by_side(v: f32, width: u16) -> u16 {
+    if v < width as f32 / 2.0 {
+        v.floor() as u16
+    } else {
+        v.ceil() as u16
+    }
+}
+
+/// 角色:画像的重心放在屏幕 1/4 处,增减益跟着画像中心
 fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
     if area.width == 0 || area.height < 14 {
         return;
@@ -172,7 +171,9 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
     let art_rows = ART_H;
     let block_h = (art_rows + 1) as u16; // 画像 + 增减益(不再有血条)
     let off = (area.height as usize).saturating_sub(block_h as usize) / 2;
-    let cx = area.x + (area.width as usize).saturating_sub(IMG_W) as u16 / 2;
+    // 画像中心落在屏幕 1/4 处
+    let center = area.x as f32 + area.width as f32 / 4.0;
+    let cx = round_by_side(center - IMG_W as f32 / 2.0, area.width);
     // 画像
     for (i, line) in HERO_ART.iter().enumerate() {
         let y = area.y + off as u16 + i as u16;
@@ -203,7 +204,7 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
         })
         .collect();
     let len: usize = words.iter().map(|(t, _)| display_width(t)).sum();
-    let mut bx = area.x + (area.width as usize).saturating_sub(len) as u16 / 2;
+    let mut bx = cx + (IMG_W.saturating_sub(len) / 2) as u16;
     for (t, st) in &words {
         put(buf, bx, buff_y, t, *st);
         bx += display_width(t) as u16;
@@ -242,20 +243,42 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
 
 /// 敌人区:每个敌人平分一段高度,块贴右,纯文本不画框
 fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
-    if area.width < 8 || area.height == 0 {
+    if area.width < 8 || area.height == 0 || c.enemies.is_empty() {
         return;
     }
-    let n = c.enemies.len().max(1);
-    let slot_h = (area.height as usize / n).max(1) as u16;
+    let n = c.enemies.len();
+    let gap = 4u16;
+    let widths: Vec<u16> = (0..n).map(|i| enemy_block_w(c, i)).collect();
+    let total: u16 = widths.iter().sum::<u16>() + gap * (n as u16 - 1);
+    // 整组重心放屏幕中间
+    let mut x0 = area.x as f32 + (area.width as f32 - total as f32) / 2.0;
+    // 最右那个框的右边不能超过屏幕的 19/20
+    let limit = area.x as f32 + area.width as f32 * 19.0 / 20.0;
+    if x0 + total as f32 > limit {
+        x0 = limit - total as f32;
+    }
+    let mut x = round_by_side(x0.max(area.x as f32), area.width);
     for (i, e) in c.enemies.iter().enumerate() {
-        let y0 = area.y + i as u16 * slot_h;
-        if y0 >= area.y + area.height {
+        if x >= area.x + area.width {
             break;
         }
         let selected = app.target_sel == i && e.alive();
         let lines = enemy_lines(c, i);
-        render_enemy_block(buf, area, y0, slot_h, &lines, selected);
+        let w = widths[i].min((area.x + area.width).saturating_sub(x)).max(1);
+        render_enemy_block(buf, Rect::new(x, area.y, w, area.height), &lines, selected);
+        x += widths[i] + gap;
     }
+}
+
+/// 敌人框的总宽(内容 + 左右边框)
+fn enemy_block_w(c: &Combat, i: usize) -> u16 {
+    let lines = enemy_lines(c, i);
+    let w = lines
+        .iter()
+        .map(|l| l.iter().map(|(t, _)| display_width(t)).sum::<usize>())
+        .max()
+        .unwrap_or(0);
+    w as u16 + 2
 }
 
 /// 一个敌人的四行:血量/上限/格挡、名字、本回合动作、身上的状态.
@@ -345,89 +368,66 @@ fn enemy_action_tokens(c: &Combat, i: usize) -> Vec<(String, Color)> {
 }
 
 /// 把一个敌人的几行贴右画出来;整块宽度取最长一行,选中时铺底色
-fn render_enemy_block(
-    buf: &mut Buffer,
-    area: Rect,
-    y0: u16,
-    max_rows: u16,
-    lines: &[Vec<(String, Style)>],
-    selected: bool,
-) {
+fn render_enemy_block(buf: &mut Buffer, slot: Rect, lines: &[Vec<(String, Style)>], selected: bool) {
     let line_w = |line: &Vec<(String, Style)>| -> usize {
         line.iter().map(|(t, _)| display_width(t)).sum()
     };
     let block_w = lines.iter().map(line_w).max().unwrap_or(0);
-    if block_w == 0 {
+    if block_w == 0 || slot.width == 0 || slot.height == 0 {
         return;
     }
-    let rows = lines.len().min(max_rows as usize) as u16;
-    if rows == 0 {
-        return;
-    }
-    // 本槽位放得下框才画;放不下就把槽位高度全给内容
-    let framed = rows + 2 <= max_rows;
-    // 敌人区占满右边的剩余宽度;内容放在区中间一个 3/4 宽(向上取整)的框里,
-    // 框的左右各留至少一格,不让文字贴到边上.
-    let w = area.width as usize;
-    let region_w = ((w * 3 + 3) / 4).min(w.saturating_sub(4)).max(1);
-    let region_x = area.x + ((w - region_w) / 2) as u16;
-    let centered = region_x + (region_w.saturating_sub(block_w) / 2) as u16;
-    let min_x = area.x + 2;
-    let max_x = (area.x + area.width)
-        .saturating_sub(2 + block_w as u16)
-        .max(min_x);
-    let x = centered.clamp(min_x, max_x);
+    let rows = lines.len() as u16;
     let bg = theme::BG;
-    let bottom = area.y + area.height;
-    // 每个敌人都有框;选中的那个只把四个角点亮,边还是暗的
-    if !framed {
-        // 放不下框:只写内容,用满槽位
-        for (r, line) in lines.iter().take(rows as usize).enumerate() {
-            if y0 + r as u16 >= bottom {
-                break;
-            }
-            put_padded(buf, x, y0 + r as u16, "", block_w, Style::default().bg(bg));
-            let mut cx = x;
-            for (text, style) in line {
-                put(buf, cx, y0 + r as u16, text, style.bg(bg));
-                cx += display_width(text) as u16;
-            }
-        }
-        return;
-    }
-    let box_area = Rect::new(x.saturating_sub(1), y0, block_w as u16 + 2, rows + 2);
-    let edge = theme::fg(theme::BORDER);
-    let corner = theme::fg(if selected { theme::SEL_FG } else { theme::BORDER });
-    let (bx, by) = (box_area.x, box_area.y);
-    let (bw, bh) = (box_area.width, box_area.height);
-    if bw >= 2 && bh >= 2 {
+    let box_w = block_w as u16 + 2;
+    let box_h = rows + 2;
+    // 槽位里居中;放不下框就只居中写内容
+    let framed = box_w <= slot.width && box_h <= slot.height;
+    let (x, y) = if framed {
+        (
+            slot.x + (slot.width - box_w) / 2 + 1,
+            slot.y + (slot.height - box_h) / 2 + 1,
+        )
+    } else {
+        let w = block_w.min(slot.width as usize) as u16;
+        (
+            slot.x + slot.width.saturating_sub(w) / 2,
+            slot.y + slot.height.saturating_sub(rows) / 2,
+        )
+    };
+    if framed {
+        let bx = x - 1;
+        let by = y - 1;
+        let edge = theme::fg(theme::BORDER);
+        let corner = theme::fg(if selected { theme::SEL_FG } else { theme::BORDER });
         let top = format!(
             "┌{}┐",
-            crate::ui::BOX_H.to_string().repeat((bw - 2) as usize)
+            crate::ui::BOX_H.to_string().repeat((box_w - 2) as usize)
         );
         let bottom = format!(
             "└{}┘",
-            crate::ui::BOX_H.to_string().repeat((bw - 2) as usize)
+            crate::ui::BOX_H.to_string().repeat((box_w - 2) as usize)
         );
         put(buf, bx, by, &top, edge);
-        put(buf, bx, by + bh - 1, &bottom, edge);
-        for y in by + 1..by + bh - 1 {
+        put(buf, bx, by + box_h - 1, &bottom, edge);
+        for yy in by + 1..by + box_h - 1 {
             let v = crate::ui::BOX_V.to_string();
-            put(buf, bx, y, &v, edge);
-            put(buf, bx + bw - 1, y, &v, edge);
+            put(buf, bx, yy, &v, edge);
+            put(buf, bx + box_w - 1, yy, &v, edge);
         }
-        // 四角单独上色
         put(buf, bx, by, "┌", corner);
-        put(buf, bx + bw - 1, by, "┐", corner);
-        put(buf, bx, by + bh - 1, "└", corner);
-        put(buf, bx + bw - 1, by + bh - 1, "┘", corner);
+        put(buf, bx + box_w - 1, by, "┐", corner);
+        put(buf, bx, by + box_h - 1, "└", corner);
+        put(buf, bx + box_w - 1, by + box_h - 1, "┘", corner);
     }
-    for (r, line) in lines.iter().take(rows as usize).enumerate() {
-        let y = y0 + 1 + r as u16;
-        put_padded(buf, x, y, "", block_w, Style::default().bg(bg));
+    for (r, line) in lines.iter().enumerate() {
+        let yy = y + r as u16;
+        if yy >= slot.y + slot.height {
+            break;
+        }
+        put_padded(buf, x, yy, "", block_w, Style::default().bg(bg));
         let mut cx = x;
         for (text, style) in line {
-            put(buf, cx, y, text, style.bg(bg));
+            put(buf, cx, yy, text, style.bg(bg));
             cx += display_width(text) as u16;
         }
     }
