@@ -306,7 +306,8 @@ impl App {
             .iter()
             .position(|i| *i == self.overlay_sel)
             .unwrap_or(0);
-        let np = (pos as i32 + delta).clamp(0, picks.len() as i32 - 1) as usize;
+        let n = picks.len() as i32;
+        let np = (pos as i32 + delta).rem_euclid(n) as usize;
         self.overlay_sel = picks[np];
     }
 
@@ -807,13 +808,15 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => {
                 if n > 0 {
                     if let Some(p) = self.run.picker.as_mut() {
-                        p.index = (p.index + 1).min(n - 1);
+                        p.index = (p.index + 1) % n;
                     }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if let Some(p) = self.run.picker.as_mut() {
-                    p.index = p.index.saturating_sub(1);
+                if n > 0 {
+                    if let Some(p) = self.run.picker.as_mut() {
+                        p.index = (p.index + n - 1) % n;
+                    }
                 }
             }
             KeyCode::Char('g') => {
@@ -1088,6 +1091,23 @@ mod tests {
 
     fn esc() -> KeyEvent {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn picker_keys_cycle_cards_around() {
+        let mut app = App::new(1);
+        app.run.rest_smith();
+        let n = app.run.picker_candidates().len();
+        assert!(n >= 2, "升级候选至少两张才能看出循环");
+        assert_eq!(app.run.picker.as_ref().unwrap().index, 0);
+        app.handle_key(key('k'));
+        assert_eq!(app.run.picker.as_ref().unwrap().index, n - 1);
+        app.handle_key(key('j'));
+        assert_eq!(app.run.picker.as_ref().unwrap().index, 0);
+        for _ in 0..n {
+            app.handle_key(key('j'));
+        }
+        assert_eq!(app.run.picker.as_ref().unwrap().index, 0);
     }
 
     #[test]
