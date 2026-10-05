@@ -92,15 +92,8 @@ fn render_character(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         return;
     };
     crate::ui::card_desc(buf, split.detail, card);
-    // 描述与增减益之间横一条分隔线
-    crate::ui::hline(
-        buf,
-        inner.x,
-        buff_y.saturating_sub(1),
-        inner.width,
-        crate::ui::BOX_H,
-        theme::fg(theme::BORDER),
-    );
+    // 描述与增减益之间横一条分隔线,两头接上框
+    crate::ui::hsep(buf, inner, buff_y.saturating_sub(1), theme::fg(theme::BORDER));
     // 增减益行:自己身上的 buff/debuff
     let status_words: Vec<(String, Style)> = c
         .player
@@ -278,8 +271,7 @@ fn render_enemy_block(
     let x = centered.clamp(min_x, max_x);
     let bg = theme::BG;
     let bottom = area.y + area.height;
-    // 每个敌人都有框;选中的那个亮起来
-    let border = if selected { theme::SEL_FG } else { theme::BORDER };
+    // 每个敌人都有框;选中的那个只把四个角点亮,边还是暗的
     let box_area = Rect::new(
         x.saturating_sub(1),
         y0,
@@ -297,7 +289,32 @@ fn render_enemy_block(
         }
         return;
     }
-    crate::ui::draw_box(buf, box_area, "", theme::fg(border), theme::fg(theme::INFO));
+    let edge = theme::fg(theme::BORDER);
+    let corner = theme::fg(if selected { theme::SEL_FG } else { theme::BORDER });
+    let (bx, by) = (box_area.x, box_area.y);
+    let (bw, bh) = (box_area.width, box_area.height);
+    if bw >= 2 && bh >= 2 {
+        let top = format!(
+            "┌{}┐",
+            crate::ui::BOX_H.to_string().repeat((bw - 2) as usize)
+        );
+        let bottom = format!(
+            "└{}┘",
+            crate::ui::BOX_H.to_string().repeat((bw - 2) as usize)
+        );
+        put(buf, bx, by, &top, edge);
+        put(buf, bx, by + bh - 1, &bottom, edge);
+        for y in by + 1..by + bh - 1 {
+            let v = crate::ui::BOX_V.to_string();
+            put(buf, bx, y, &v, edge);
+            put(buf, bx + bw - 1, y, &v, edge);
+        }
+        // 四角单独上色
+        put(buf, bx, by, "┌", corner);
+        put(buf, bx + bw - 1, by, "┐", corner);
+        put(buf, bx, by + bh - 1, "└", corner);
+        put(buf, bx + bw - 1, by + bh - 1, "┘", corner);
+    }
     for (r, line) in lines.iter().take(rows as usize).enumerate() {
         let y = y0 + 1 + r as u16;
         put_padded(buf, x, y, "", block_w, Style::default().bg(bg));

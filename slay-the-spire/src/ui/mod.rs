@@ -343,12 +343,33 @@ fn split_list_detail_with(area: Rect, list_h: u16, force_h: bool) -> Split {
     }
 }
 
-/// 按切分结果画出中间那条分隔线
+/// 盒子内部的横分隔线:两头用 ├ ┤ 顶掉那一行的左右边框.
+/// `inner` 是盒子内部(不含边框)的区域.
+pub fn hsep(buf: &mut Buffer, inner: Rect, y: u16, style: Style) {
+    if inner.width == 0 || inner.x == 0 {
+        return;
+    }
+    put(buf, inner.x - 1, y, "├", style);
+    hline(buf, inner.x, y, inner.width, BOX_H, style);
+    put(buf, inner.x + inner.width, y, "┤", style);
+}
+
+/// 盒子内部的竖分隔线:x 是分隔线所在的列,上下用 ┬ ┴ 顶掉边框
+pub fn vsep(buf: &mut Buffer, inner: Rect, x: u16, style: Style) {
+    if inner.height == 0 || inner.y == 0 {
+        return;
+    }
+    put(buf, x, inner.y - 1, "┬", style);
+    vline(buf, x, inner.y, inner.height, BOX_V, style);
+    put(buf, x, inner.y + inner.height, "┴", style);
+}
+
+/// 按切分结果画出中间那条分隔线(area 是盒子内部)
 pub fn draw_split(buf: &mut Buffer, area: Rect, split: &Split, style: Style) {
     if split.horizontal {
-        hline(buf, area.x, split.detail.y.saturating_sub(1), area.width, BOX_H, style);
+        hsep(buf, area, split.detail.y.saturating_sub(1), style);
     } else {
-        vline(buf, split.detail.x.saturating_sub(1), area.y, area.height, BOX_V, style);
+        vsep(buf, area, split.detail.x.saturating_sub(1), style);
     }
 }
 

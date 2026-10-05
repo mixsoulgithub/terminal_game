@@ -8,3 +8,6 @@
 /slay-the-spire/target
 local/
 __pycache__/
+assets/
+*.png
+*.jpg
