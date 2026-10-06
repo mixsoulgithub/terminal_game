@@ -1358,6 +1358,55 @@ impl Run {
         self.say(format!("relic: {}", def.name));
     }
 
+    /// 调试用:直接进某个房间。不改地图、不动位置,退出后照旧回到原来的地图。
+    /// what: shop / event / battle(随机 boss|elite|enemy) / boss / elite / enemy
+    pub fn debug_room(&mut self, what: &str) -> Result<String, String> {
+        match what {
+            "shop" => {
+                self.open_shop();
+                Ok(format!("debug room: {}", self.last_encounter_or("shop")))
+            }
+            "event" => {
+                self.open_event();
+                Ok(format!("debug room: {}", self.last_encounter_or("event")))
+            }
+            "battle" => {
+                let kind = match self.rng.below(3) {
+                    0 => EnemyKind::Boss,
+                    1 => EnemyKind::Elite,
+                    _ => EnemyKind::Normal,
+                };
+                let enc = self.pick_encounter(kind);
+                let id = enc.id;
+                self.start_combat(enc);
+                Ok(format!("debug room: battle {id}"))
+            }
+            "boss" | "elite" | "enemy" => {
+                let kind = match what {
+                    "boss" => EnemyKind::Boss,
+                    "elite" => EnemyKind::Elite,
+                    _ => EnemyKind::Normal,
+                };
+                let enc = self.pick_encounter(kind);
+                let id = enc.id;
+                self.start_combat(enc);
+                Ok(format!("debug room: battle {id}"))
+            }
+            other => Err(format!(
+                "unknown room '{other}', try: shop, event, battle, boss, elite, enemy"
+            )),
+        }
+    }
+
+    /// 调试用的名字:拿不到就退回默认
+    fn last_encounter_or(&self, fallback: &str) -> String {
+        if self.last_encounter.is_empty() {
+            fallback.to_string()
+        } else {
+            self.last_encounter.to_string()
+        }
+    }
+
     /// 从池子里取一个指定稀有度的遗物
     fn take_relic_of(&mut self, rarity: Rarity) -> Option<&'static RelicDef> {
         let idx = self

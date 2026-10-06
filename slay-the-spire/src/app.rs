@@ -1191,6 +1191,13 @@ impl App {
             "potions" | "p" => self.open_overlay(Overlay::Potions),
             "history" | "log" | "H" => self.open_overlay(Overlay::History),
             "seed" => self.info(format!("seed {}", self.run.seed)),
+            // :room shop / battle / event(调试用:直接进房间,不动地图)
+            "room" => {
+                let what = if rest.is_empty() { "battle" } else { rest };
+                let r = self.run.debug_room(what);
+                self.ok(r);
+                self.clamp();
+            }
             "win" => {
                 if self.run.combat().is_some() {
                     self.run.debug_win_battle();
@@ -1337,6 +1344,7 @@ impl App {
             (":help", "this help"),
             (":deck :relics :potions", "open those lists"),
             (":seed", "show the run seed"),
+            (":room shop|battle|event", "jump straight into that room (debug)"),
             (":win", "win the current battle (skip to the reward)"),
             (":quaff N :toss N", "use or discard potion N"),
             (":new [seed]", "start a new run"),
@@ -1576,6 +1584,28 @@ mod tests {
         app.handle_key(enter());
         assert_eq!(app.run.screen, Screen::Map);
         assert!(app.run.pos.is_none(), "叠加层里 enter 不能真的走");
+    }
+
+    /// :room 三条命令能直接进对应房间,而且不动地图和位置
+    #[test]
+    fn room_commands_jump_into_rooms_without_touching_the_map() {
+        let mut app = App::new(7);
+        let pos = app.run.pos;
+        let path = app.run.path.clone();
+        for (cmd, want) in [
+            ("room shop", Screen::Shop),
+            ("room event", Screen::Event),
+            ("room battle", Screen::Combat),
+        ] {
+            app.handle_key(key(':'));
+            for c in cmd.chars() {
+                app.handle_key(key(c));
+            }
+            app.handle_key(enter());
+            assert_eq!(app.run.screen, want, "{cmd} 没进对房间");
+            assert_eq!(app.run.pos, pos, "{cmd} 改了位置");
+            assert_eq!(app.run.path, path, "{cmd} 改了路径");
+        }
     }
 
     #[test]
