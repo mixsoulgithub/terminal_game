@@ -1657,6 +1657,106 @@ pub static CARDS: &[CardDef] = &[
             ]
         ),
     },
+    // ---- 铁甲战士:需要选牌的那几张 ----
+    CardDef {
+        id: "burning_pact",
+        name: "Burning Pact",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Exhaust a card. Draw 2 cards.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::Draw { n: 2 }, Effect::ExhaustFromHand],
+        upgrade: up!(None, "Exhaust a card. Draw 3 cards.", [Effect::Draw { n: 3 }, Effect::ExhaustFromHand]),
+    },
+    CardDef {
+        id: "warcry",
+        name: "Warcry",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Draw 1 card. Put a card from your hand onto the top of your draw pile. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::Draw { n: 1 }, Effect::TopFromHand],
+        upgrade: up!(
+            None,
+            "Draw 2 cards. Put a card from your hand onto the top of your draw pile. Exhaust.",
+            [Effect::Draw { n: 2 }, Effect::TopFromHand]
+        ),
+    },
+    CardDef {
+        id: "dual_wield",
+        name: "Dual Wield",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Copy an Attack or Power card in your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::CopyFromHand],
+        upgrade: up!(None, "Copy an Attack or Power card in your hand twice.", [Effect::CopyFromHand, Effect::CopyFromHand]),
+    },
+    CardDef {
+        id: "exhume",
+        name: "Exhume",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Put a card from your exhaust pile into your hand. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::FromExhaustToHand],
+        upgrade: up!(
+            Some(Cost::Fixed(0)),
+            "Put a card from your exhaust pile into your hand. Exhaust. Costs 0.",
+            [Effect::FromExhaustToHand]
+        ),
+    },
+    CardDef {
+        id: "headbutt",
+        name: "Headbutt",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 9 damage. Put a card from your discard pile on top of your draw pile.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::Damage {
+                amount: 9,
+                times: 1,
+            },
+            Effect::FromDiscardToDrawTop,
+        ],
+        upgrade: up!(
+            None,
+            "Deal 12 damage. Put a card from your discard pile on top of your draw pile.",
+            [
+                Effect::Damage {
+                    amount: 12,
+                    times: 1
+                },
+                Effect::FromDiscardToDrawTop
+            ]
+        ),
+    },
 ];
 
 /// 按 id 找卡牌定义

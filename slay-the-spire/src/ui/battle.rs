@@ -101,6 +101,20 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         crate::ui::BOX_H,
         theme::fg(theme::BORDER),
     );
+    // 中间空出来的地方:有待选择的牌就写提示
+    if let Some(hint) = app.select_hint() {
+        let hw = display_width(&hint) as u16;
+        let gap = rx.saturating_sub(main.x + used0);
+        if hw < gap {
+            put(
+                buf,
+                main.x + used0 + (gap - hw) / 2,
+                y,
+                &hint,
+                theme::fg(theme::YELLOW),
+            );
+        }
+    }
     put(buf, rx, y, &right, theme::fg(theme::INFO));
     y += 1;
     // 手牌一行
@@ -251,7 +265,9 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
         }
         let w = want.min(remain.saturating_sub(1)).max(1);
         let playable = c.blocked_reason(k).is_none();
-        crate::ui::put_card_cell(buf, cx, y, w as u16, card, k == sel, !playable);
+        // 选择模式里被选中的牌保持高亮
+        let picked = app.choice_sel.contains(&k);
+        crate::ui::put_card_cell(buf, cx, y, w as u16, card, k == sel || picked, !playable);
         cx += w as u16;
         bar(buf, cx);
         cx += 1;

@@ -124,6 +124,16 @@ pub enum Effect {
     AddCardToHand { id: &'static str, n: u8 },
     /// 往弃牌堆塞一张牌(愤怒)
     AddCardToDiscard { id: &'static str, n: u8 },
+    /// 从手牌选一张消耗(燃烧契约)
+    ExhaustFromHand,
+    /// 从手牌选一张放回抽牌堆顶(战吼)
+    TopFromHand,
+    /// 从手牌选一张攻击/能力牌,复制一份(二重身)
+    CopyFromHand,
+    /// 从消耗堆选一张回手牌(掘出)
+    FromExhaustToHand,
+    /// 从弃牌堆选一张放到抽牌堆顶(头槌)
+    FromDiscardToDrawTop,
     /// 这张牌被消耗时获得能量(哨卫)
     EnergyOnExhaust { n: i32 },
     /// 目标这回合打算攻击的话,给自己加力量(观察弱点)

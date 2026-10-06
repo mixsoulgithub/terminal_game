@@ -61,7 +61,7 @@ impl Overlay {
 }
 
 /// 牌组窗口的行:战斗中按抽牌/弃牌/消耗/手牌摊开,平时就是整副牌组
-pub fn deck_rows(app: &App) -> Vec<crate::ui::CardRow> {
+pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
     use crate::ui::CardRow;
     let run = &app.run;
     fn push(rows: &mut Vec<CardRow>, list: &[CardInstance]) {
@@ -73,7 +73,13 @@ pub fn deck_rows(app: &App) -> Vec<crate::ui::CardRow> {
         }
     }
     let mut rows = Vec::new();
-    push(&mut rows, &run.player.deck);
+    let pile: &[CardInstance] = match (ov, run.combat()) {
+        (Overlay::Draw, Some(c)) => &c.draw,
+        (Overlay::Discard, Some(c)) => &c.discard,
+        (Overlay::Exhaust, Some(c)) => &c.exhaust,
+        _ => &run.player.deck,
+    };
+    push(&mut rows, pile);
     rows
 }
 
@@ -170,8 +176,11 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     for y in rect.y..rect.y + rect.height {
         put_padded(buf, rect.x, y, "", rect.width as usize, Style::default().bg(theme::BG));
     }
-    if ov == Overlay::Deck {
-        let rows = deck_rows(app);
+    if matches!(
+        ov,
+        Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust
+    ) {
+        let rows = deck_rows(app, ov);
         let title = format!(
             "{}  (j/k pick, {} or esc close)",
             ov.title(),

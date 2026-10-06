@@ -113,7 +113,42 @@ pub struct Shake {
     pub amount: i32,
 }
 
+/// 选择卡牌的来源
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChoiceSource {
+    Hand,
+    Discard,
+    Exhaust,
+}
+
+/// 选完之后干什么
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChoiceAction {
+    /// 消耗掉
+    Exhaust,
+    /// 复制一份
+    Copy,
+    /// 拿回手牌
+    ToHand,
+    /// 放到抽牌堆顶
+    ToDrawTop,
+}
+
+/// 一次待选择:比如"从手牌选一张消耗"
+pub struct Choice {
+    pub source: ChoiceSource,
+    pub action: ChoiceAction,
+    /// 只能选攻击/能力牌(二重身)
+    pub attack_or_power_only: bool,
+    /// 是哪张牌引起的,信息栏提示用
+    pub label: String,
+    /// 还没收尾的那张牌 + 它花的能量:取消时原样退回
+    pub played: Option<(CardInstance, i32)>,
+}
+
 pub struct Combat {
+    /// 待选择(选牌窗口/手牌选择模式)
+    pub choice: Option<Choice>,
     /// 这一帧攒下来的抖动事件,表现层消费
     pub shakes: Vec<Shake>,
     pub enemies: Vec<Enemy>,
@@ -188,6 +223,7 @@ impl Combat {
             deck.into_iter().partition(|c| c.is_innate());
 
         let mut c = Combat {
+            choice: None,
             shakes: Vec::new(),
             enemies,
             player: PlayerBattle {
@@ -607,6 +643,108 @@ impl Combat {
         }
     }
 
+    /// 开一次选牌:记下来,等界面那边选完再 choose()
+    fn begin_choice(
+        &mut self,
+        source: ChoiceSource,
+        action: ChoiceAction,
+        attack_or_power_only: bool,
+        label: &str,
+    ) {
+        self.choice = Some(Choice {
+            source,
+            action,
+            attack_or_power_only,
+            label: label.to_string(),
+            played: None,
+        });
+    }
+
+    /// 这一堆里现在能选的卡(索引 + 卡)
+    pub fn choice_candidates(&self) -> Vec<(usize, &CardInstance)> {
+        let Some(ch) = self.choice.as_ref() else {
+            return Vec::new();
+        };
+        let pile: &[CardInstance] = match ch.source {
+            ChoiceSource::Hand => &self.hand,
+            ChoiceSource::Discard => &self.discard,
+            ChoiceSource::Exhaust => &self.exhaust,
+        };
+        pile.iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                !ch.attack_or_power_only
+                    || matches!(
+                        c.kind(),
+                        crate::core::card::CardType::Attack | crate::core::card::CardType::Power
+                    )
+            })
+            .collect()
+    }
+
+    /// 选完了:执行动作,然后把刚才那张牌按原样收尾(消耗/弃掉)
+    pub fn choose(&mut self, idx: usize) -> Result<(), String> {
+        if !self.choice_candidates().iter().any(|(i, _)| *i == idx) {
+            return Err("that card cannot be chosen".to_string());
+        }
+        let Some(mut ch) = self.choice.take() else {
+            return Err("nothing to choose".to_string());
+        };
+        match (ch.source, ch.action) {
+            (ChoiceSource::Hand, ChoiceAction::Exhaust) => {
+                let card = self.hand.remove(idx);
+                self.exhaust_card(card);
+            }
+            (ChoiceSource::Hand, ChoiceAction::Copy) => {
+                let card = self.hand[idx].clone();
+                self.hand.push(card);
+            }
+            (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
+                let card = self.hand.remove(idx);
+                self.draw.insert(0, card);
+            }
+            (ChoiceSource::Exhaust, ChoiceAction::ToHand) => {
+                let card = self.exhaust.remove(idx);
+                self.hand.push(card);
+            }
+            (ChoiceSource::Discard, ChoiceAction::ToDrawTop) => {
+                let card = self.discard.remove(idx);
+                self.draw.insert(0, card);
+            }
+            _ => {}
+        }
+        self.finish_played(ch.played.take());
+        Ok(())
+    }
+
+    /// 取消这次出牌:能量退回、牌回手牌
+    pub fn cancel_choice(&mut self) {
+        let Some(mut ch) = self.choice.take() else {
+            return;
+        };
+        if let Some((card, cost)) = ch.played.take() {
+            self.energy += cost;
+            self.hand.push(card);
+        }
+    }
+
+    /// 出牌收尾:该消耗的消耗,该弃的弃
+    fn finish_played(&mut self, played: Option<(CardInstance, i32)>) {
+        let Some((card, _)) = played else {
+            return;
+        };
+        let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
+            && self.player.statuses.has(Status::Corruption);
+        let exhaust_self = card.is_exhaust()
+            || card.effects().contains(&Effect::ExhaustSelf)
+            || corrupted_skill;
+        if exhaust_self {
+            self.exhaust_card(card);
+        } else {
+            self.discard.push(card);
+        }
+    }
+
     /// 记一次抖动:谁、往哪边(负左正右)、出手还是挨打
     fn shake(&mut self, who: ShakeWho, dir: i32, kind: ShakeKind, amount: i32) {
         self.shakes.push(Shake {
@@ -878,6 +1016,11 @@ impl Combat {
         if ctx.unblocked > 0 {
             self.push_log(LogKind::Info, format!("dealt {} damage", ctx.unblocked));
         }
+        // 有选牌待定:牌和花的能量先存着,等选完(choose)或取消(cancel)再收尾
+        if let Some(ch) = self.choice.as_mut() {
+            ch.played = Some((card, cost));
+            return Ok(());
+        }
         // 结算完后决定去处
         let exhaust_self = card.is_exhaust()
             || card.effects().contains(&Effect::ExhaustSelf)
@@ -1145,6 +1288,41 @@ impl Combat {
                         self.draw.push(CardInstance::new(def));
                     }
                 }
+                Effect::ExhaustFromHand => {
+                    self.begin_choice(ChoiceSource::Hand, ChoiceAction::Exhaust, false, "exhaust a card");
+                }
+                Effect::TopFromHand => {
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::ToDrawTop,
+                        false,
+                        "put a card on top of the draw pile",
+                    );
+                }
+                Effect::CopyFromHand => {
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::Copy,
+                        true,
+                        "copy an Attack or Power card",
+                    );
+                }
+                Effect::FromExhaustToHand => {
+                    self.begin_choice(
+                        ChoiceSource::Exhaust,
+                        ChoiceAction::ToHand,
+                        false,
+                        "take a card from the exhaust pile",
+                    );
+                }
+                Effect::FromDiscardToDrawTop => {
+                    self.begin_choice(
+                        ChoiceSource::Discard,
+                        ChoiceAction::ToDrawTop,
+                        false,
+                        "take a card from the discard pile",
+                    );
+                }
                 Effect::AddCardToHand { id, n } => {
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
@@ -1364,6 +1542,76 @@ mod tests {
         c.play_card(0, None).unwrap();
         c.play_card(0, Some(0)).unwrap();
         assert!(c.player.block >= 3, "暴怒给 3 点格挡");
+    }
+
+    /// 需要选牌的五张:开了选择、选完动作对、esc 能原样退回
+    #[test]
+    fn choice_cards_open_a_choice_and_apply_it() {
+        // 燃烧契约:先抽 2,再选一张手牌消耗
+        let mut c = combat_with("jaw_worm_solo", &["burning_pact"; 5]);
+        c.energy = 3;
+        let exhausted_before = c.exhaust.len();
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_some(), "应该等着选牌");
+        assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Hand);
+        let target = c.hand[0].def.id;
+        c.choose(0).unwrap();
+        assert!(c.choice.is_none());
+        assert_eq!(c.exhaust.len(), exhausted_before + 1, "选中的牌被消耗");
+        assert_eq!(c.exhaust.last().unwrap().def.id, target);
+
+        // 战吼:选一张手牌放回抽牌堆顶(它自己会消耗掉)
+        let mut c = combat_with("jaw_worm_solo", &["warcry"; 5]);
+        c.play_card(0, None).unwrap();
+        let picked = c.hand[0].def.id;
+        c.choose(0).unwrap();
+        assert_eq!(c.draw[0].def.id, picked, "放到抽牌堆顶");
+        assert_eq!(c.exhaust.len(), 1, "战吼自己被消耗");
+
+        // 二重身:复制一张手牌
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.hand = vec![
+            crate::core::cards::card("dual_wield"),
+            crate::core::cards::card("strike"),
+        ];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        let n = c.hand.len();
+        c.choose(0).unwrap();
+        assert_eq!(c.hand.len(), n + 1, "复制出一张");
+        assert_eq!(c.hand.last().unwrap().def.id, "strike");
+
+        // 掘出:从消耗堆拿回手牌
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.exhaust.push(crate::core::cards::card("bash"));
+        c.hand = vec![crate::core::cards::card("exhume")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Exhaust);
+        c.choose(0).unwrap();
+        assert!(c.hand.iter().any(|x| x.def.id == "bash"), "掘出的牌回到手牌");
+
+        // 头槌:打伤害 + 从弃牌堆拿一张到抽牌堆顶
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.discard.push(crate::core::cards::card("defend"));
+        c.hand = vec![crate::core::cards::card("headbutt")];
+        c.energy = 3;
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, e_hp - 9, "先打 9");
+        assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Discard);
+        c.choose(0).unwrap();
+        assert_eq!(c.draw[0].def.id, "defend");
+
+        // esc 取消:能量退回、牌回手牌
+        let mut c = combat_with("jaw_worm_solo", &["burning_pact"; 5]);
+        let hand_before = c.hand.len();
+        let energy_before = c.energy;
+        c.play_card(0, None).unwrap();
+        c.cancel_choice();
+        assert!(c.choice.is_none());
+        assert_eq!(c.energy, energy_before, "取消要把能量退回来");
+        assert_eq!(c.hand.len(), hand_before, "取消要把牌放回手牌");
     }
 
     #[test]
