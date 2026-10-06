@@ -81,7 +81,7 @@ pub static RELICS: &[RelicDef] = &[
     RelicDef {
         id: "lantern",
         name: "Lantern",
-        desc: "Gain 1 extra Energy at the start of each combat.",
+        desc: "Gain (1) extra at the start of each combat.",
         rarity: Rarity::Common,
         fx: RelicFx {
             combat_start_energy: 1,

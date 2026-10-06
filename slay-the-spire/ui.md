@@ -24,7 +24,7 @@ battle area
 
 card area
   energy
-  card list
+  card list (centered, no brackets around the cost)
   description
   buff 
   conclude info

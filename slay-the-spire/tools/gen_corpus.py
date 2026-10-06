@@ -50,7 +50,12 @@ def resolve_markup(text: str, upgraded: bool) -> str:
     s = pick_upgrade(text, upgraded)
     s = re.sub(r"\{\{([^{}]*)\}\}", lambda m: m.group(1).split("|")[-1], s)
     s = re.sub(r"\$([A-Za-z-]+)", r"\1", s)
-    s = re.sub(r"@[A-Z]+", "[E]", s)
+    # 连续的 @XX(@RE/@GE...)是能量符号, 合并成 (N): 得到几点能量就写几
+    s = re.sub(
+        r"@[A-Z]+(?:\s*@[A-Z]+)*",
+        lambda m: "(%d)" % len(re.findall(r"@[A-Z]+", m.group(0))),
+        s,
+    )
     lines = [re.sub(r"\s+", " ", ln).strip() for ln in s.split("\n")]
     return "\n".join(ln for ln in lines if ln)
 

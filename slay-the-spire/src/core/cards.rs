@@ -540,7 +540,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Attack,
         rarity: Rarity::Uncommon,
         target: Target::Enemy,
-        text: "Deal 5 damage. If the enemy is Vulnerable, gain 1 Energy and draw 1 card.",
+        text: "Deal 5 damage. If the enemy is Vulnerable, gain (1) and draw 1 card.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -552,7 +552,7 @@ pub static CARDS: &[CardDef] = &[
         }],
         upgrade: up!(
             None,
-            "Deal 8 damage. If the enemy is Vulnerable, gain 1 Energy and draw 1 card.",
+            "Deal 8 damage. If the enemy is Vulnerable, gain (1) and draw 1 card.",
             [Effect::DamageIfVulnerable {
                 amount: 8,
                 energy: 1,
@@ -689,7 +689,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Skill,
         rarity: Rarity::Uncommon,
         target: Target::None,
-        text: "Lose 3 HP. Gain 2 Energy.",
+        text: "Lose 3 HP. Gain (2).",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -697,7 +697,7 @@ pub static CARDS: &[CardDef] = &[
         effects: &[Effect::LoseHp { amount: 3 }, Effect::GainEnergy { n: 2 }],
         upgrade: up!(
             None,
-            "Lose 3 HP. Gain 3 Energy.",
+            "Lose 3 HP. Gain (3).",
             [Effect::LoseHp { amount: 3 }, Effect::GainEnergy { n: 3 }]
         ),
     },
@@ -752,7 +752,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Skill,
         rarity: Rarity::Uncommon,
         target: Target::None,
-        text: "Exhaust. Gain 2 Energy.",
+        text: "Exhaust. Gain (2).",
         exhaust: true,
         ethereal: false,
         innate: false,
@@ -760,7 +760,7 @@ pub static CARDS: &[CardDef] = &[
         effects: &[Effect::GainEnergy { n: 2 }],
         upgrade: up!(
             Some(Cost::Fixed(0)),
-            "Exhaust. Gain 2 Energy. Costs 0.",
+            "Exhaust. Gain (2). Costs 0.",
             [Effect::GainEnergy { n: 2 }]
         ),
     },
@@ -1201,7 +1201,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Skill,
         rarity: Rarity::Rare,
         target: Target::None,
-        text: "Exhaust. Lose 6 HP. Gain 2 Energy. Draw 3 cards.",
+        text: "Exhaust. Lose 6 HP. Gain (2). Draw 3 cards.",
         exhaust: true,
         ethereal: false,
         innate: false,
@@ -1213,7 +1213,7 @@ pub static CARDS: &[CardDef] = &[
         ],
         upgrade: up!(
             None,
-            "Exhaust. Lose 5 HP. Gain 2 Energy. Draw 3 cards.",
+            "Exhaust. Lose 5 HP. Gain (2). Draw 3 cards.",
             [
                 Effect::LoseHp { amount: 5 },
                 Effect::GainEnergy { n: 2 },

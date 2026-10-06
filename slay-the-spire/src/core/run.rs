@@ -666,10 +666,19 @@ impl Run {
             EnemyKind::Boss => (95, 105),
         };
         let gold = self.rng.range_inclusive(gold_lo, gold_hi);
-        let cards: Vec<CardInstance> = (0..3)
-            .filter_map(|_| self.roll_card())
-            .map(CardInstance::new)
-            .collect();
+        // 三选一不重样:同一张牌一次奖励里只出现一遍
+        let mut cards: Vec<CardInstance> = Vec::new();
+        let mut guard = 0;
+        while cards.len() < 3 && guard < 40 {
+            guard += 1;
+            let Some(def) = self.roll_card() else {
+                break;
+            };
+            if cards.iter().any(|c| c.def.id == def.id) {
+                continue;
+            }
+            cards.push(CardInstance::new(def));
+        }
         let relic = match kind {
             EnemyKind::Elite => self.roll_relic_by_odds(50, 33, 17),
             EnemyKind::Boss => self.roll_relic_by_odds(0, 0, 100),
@@ -838,18 +847,21 @@ impl Run {
 
     fn open_shop(&mut self) {
         let mut items: Vec<ShopItem> = Vec::new();
+        // 店里卖的牌也不重样
+        let mut sold: Vec<&'static str> = Vec::new();
         for (rarity, count) in [
             (Rarity::Common, 2),
             (Rarity::Uncommon, 2),
             (Rarity::Rare, 1),
         ] {
             for _ in 0..count {
-                if let Some(def) = self.roll_card_of(rarity) {
+                if let Some(def) = self.roll_card_of_distinct(rarity, &sold) {
                     let base = match rarity {
                         Rarity::Common => self.rng.range_inclusive(45, 55),
                         Rarity::Uncommon => self.rng.range_inclusive(68, 82),
                         _ => self.rng.range_inclusive(135, 165),
                     };
+                    sold.push(def.id);
                     items.push(ShopItem::Card(CardInstance::new(def), self.discount(base)));
                 }
             }
@@ -1377,6 +1389,22 @@ impl Run {
         self.roll_card_of(rarity)
     }
 
+    /// 同一次奖励/商店里不重复:已经在 sold 里的就重抽
+    fn roll_card_of_distinct(
+        &mut self,
+        rarity: Rarity,
+        sold: &[&'static str],
+    ) -> Option<&'static CardDef> {
+        let pool: Vec<&'static CardDef> = cards::reward_pool(rarity)
+            .into_iter()
+            .filter(|c| !sold.contains(&c.id))
+            .collect();
+        if pool.is_empty() {
+            return None;
+        }
+        Some(*self.rng.pick(&pool))
+    }
+
     fn roll_card_of(&mut self, rarity: Rarity) -> Option<&'static CardDef> {
         let pool = cards::reward_pool(rarity);
         if pool.is_empty() {
@@ -1487,6 +1515,30 @@ mod tests {
         let last = r.pos.expect("应该有落点");
         assert_eq!(r.map.node(last).kind, NodeKind::Boss);
         assert!(r.floor_reached >= FLOORS - 1);
+    }
+
+    /// 三选一不该出现同一张牌(抽很多局来看)
+    #[test]
+    fn reward_cards_never_repeat() {
+        for seed in 0..120u64 {
+            let mut r = run(seed);
+            let start = r.reachable()[0];
+            r.enter_node(start).unwrap();
+            {
+                let c = r.combat.as_mut().unwrap();
+                for e in c.enemies.iter_mut() {
+                    e.hp = 0;
+                }
+                c.phase = Phase::Won;
+            }
+            r.sync_combat();
+            let cards = &r.reward.as_ref().unwrap().cards;
+            let mut ids: Vec<&str> = cards.iter().map(|c| c.def.id).collect();
+            let before = ids.len();
+            ids.sort_unstable();
+            ids.dedup();
+            assert_eq!(before, ids.len(), "seed {seed}: 奖励里出现了重复的牌");
+        }
     }
 
     #[test]

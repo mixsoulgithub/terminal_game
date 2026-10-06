@@ -18,6 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 GAME = os.path.abspath(os.path.join(HERE, ".."))
 
 FIELD_RE = re.compile(r'(\w+): "((?:[^"\\]|\\.)*)"')
+# 参考实现把能量符号渲染成 "[E]", 本游戏统一成 "(N)": 对账时把参考那边也换算过来
+ENERGY_RE = re.compile(r"\[E\](?:\s*\[E\])*")
 
 
 def unescape(s: str) -> str:
@@ -82,10 +84,15 @@ def reference(tsv: str):
         if len(parts) < 6:
             continue
         kind, cid, name, base, up, meta = parts[:6]
+        def energy_fix(t: str) -> str:
+            return ENERGY_RE.sub(
+                lambda m: "(%d)" % m.group(0).count("[E]"), t.replace("\\n", "\n")
+            )
+
         out.setdefault(kind, {})[cid] = {
             "name": name,
-            "base": base.replace("\\n", "\n"),
-            "up": up.replace("\\n", "\n"),
+            "base": energy_fix(base),
+            "up": energy_fix(up),
             "meta": json.loads(meta),
         }
     return out

@@ -219,12 +219,24 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     let bar = |buf: &mut Buffer, x: u16| {
         put(buf, x, y, &crate::ui::BOX_V.to_string(), theme::fg(theme::BORDER));
     };
-    bar(buf, area.x);
+    // 每张牌占的格数(按内容),整行连竖线一起居中
+    let widths: Vec<usize> = c
+        .hand
+        .iter()
+        .map(|card| display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label()))
+        .collect();
+    let total: usize = widths.iter().sum::<usize>() + n + 1;
+    let mut cx = if total <= area.width as usize {
+        area.x + ((area.width as usize - total) / 2) as u16
+    } else {
+        area.x
+    };
     let sel = app.hand_sel.min(n - 1);
-    let mut cx = area.x + 1;
     let last_x = area.x + area.width - 1;
+    bar(buf, cx);
+    cx += 1;
     for (k, card) in c.hand.iter().enumerate() {
-        let want = display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label());
+        let want = widths[k];
         let remain = last_x.saturating_sub(cx) as usize;
         if remain == 0 {
             break;

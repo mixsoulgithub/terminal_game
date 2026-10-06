@@ -54,7 +54,7 @@ pub static POTIONS: &[PotionDef] = &[
     PotionDef {
         id: "energy_potion",
         name: "Energy Potion",
-        desc: "Gain 2 Energy.",
+        desc: "Gain (2).",
         rarity: Rarity::Common,
         target: Target::None,
         out_of_combat: false,
