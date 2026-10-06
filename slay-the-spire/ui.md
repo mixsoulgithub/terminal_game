@@ -8,6 +8,8 @@ start window (full screen, no top/relic/status bar)
         price on the right with a [sold out] / [can't afford] tag in front of the $,
         the whole line goes gray in those two cases,
         detail on the right centered (name / [rarity] / description)
+        pressing enter on a gray line shakes the whole line (name, tag, $) for ~6 frames,
+1 column each way
 
   library: full-screen box
     row 1: tab row (one tab per group, colored background)

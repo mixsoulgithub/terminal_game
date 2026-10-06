@@ -132,14 +132,24 @@ fn run(seed: u64) -> io::Result<()> {
             if app.quit {
                 break;
             }
-            match event::read()? {
-                Event::Key(k) => {
-                    app.handle_key(k);
-                    app.clamp();
-                    app.maybe_save();
+            // 抖动动画期间用带超时的轮询,超时就重画一帧
+            let has_event = if app.ticking() {
+                event::poll(std::time::Duration::from_millis(100))?
+            } else {
+                true
+            };
+            if has_event {
+                match event::read()? {
+                    Event::Key(k) => {
+                        app.handle_key(k);
+                        app.clamp();
+                        app.maybe_save();
+                    }
+                    Event::Resize(..) => {}
+                    _ => {}
                 }
-                Event::Resize(..) => {}
-                _ => {}
+            } else {
+                app.tick();
             }
         }
         Ok(())

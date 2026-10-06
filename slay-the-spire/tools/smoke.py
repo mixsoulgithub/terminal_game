@@ -7,12 +7,15 @@
 它读取底栏的 `-- SCREEN --` 判断当前界面,然后发对应的按键,最后要求这一局
 落到 VICTORY 或 DEATH(不做策略,死了也算通过:重点是流程不能卡住)。
 """
+import os
 import re
 import subprocess
 import sys
 import time
 
 SESSION = "spire_smoke"
+# 按键之后最短等多久再抓屏(等界面稳定下来用的采样间隔)
+SAMPLE = 0.03
 
 
 def tmux(*args: str) -> str:
@@ -38,9 +41,31 @@ def screen() -> str:
     return tmux("capture-pane", "-t", SESSION, "-p")
 
 
+KEYS_SENT = 0
+
+
 def send(*keys: str) -> None:
+    """发一次键,然后等到界面稳定再返回。
+
+    原来是无脑 sleep 0.28s,一局要按两百次键,光等就一分钟;
+    现在改成每 50ms 抓一次屏,连续两次一样就当画完了(不动的键大约 0.1s 就走人),
+    最慢 2s 兜底。
+    """
+    global KEYS_SENT
+    KEYS_SENT += len(keys)
     subprocess.run(["tmux", "send-keys", "-t", SESSION, *keys], check=True)
-    time.sleep(0.28)
+    # 至少给游戏一帧的时间,然后等画面稳定(不再无脑 0.28s)
+    time.sleep(0.03)
+    deadline = time.time() + 2.0
+    prev = screen()
+    settled = 0
+    while time.time() < deadline:
+        time.sleep(SAMPLE)
+        cur = screen()
+        settled = settled + 1 if cur == prev else 0
+        prev = cur
+        if settled >= 3:
+            return
 
 
 CARD_RE = re.compile(r"\|\s*(\d+)\.\s+([^|]*?)\s*\|")
@@ -85,9 +110,17 @@ def current(screen_text: str) -> str:
 
 
 def enter_the_game() -> None:
-    """从开始界面进一局:new game -> 第一个角色 -> Neow 的第一个祝福。"""
-    for _ in range(24):
+    """从开始界面进一局:new game -> 第一个角色 -> Neow 的第一个祝福。
+
+    抓屏偶尔会抓到半帧,所以认不出界面时不要直接返回,歇一下重来。
+    """
+    for step in range(40):
         text = screen()
+        if os.environ.get("SMOKE_DEBUG"):
+            head = [l for l in text.splitlines() if l.strip()][:2]
+            print(f"  [enter {step}] {head}", file=sys.stderr)
+        if "Merchant" in text:
+            return
         if "slay the spire" in text and "new game" in text:
             send("j")          # 光标默认停在 continue,挪到 new game
             send("Enter")
@@ -95,10 +128,10 @@ def enter_the_game() -> None:
             send("Enter")      # 第一个角色
         elif "Neow's Blessing" in text:
             send("Enter")      # 第一个祝福
-        elif "press enter" in text and "you are here" not in text:
+        elif "press enter" in text:
             send("Enter")
         else:
-            return
+            time.sleep(0.2)
 
 
 def wait_for_map(timeout: float = 8.0) -> str:
@@ -126,6 +159,14 @@ def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
     for _ in range(steps):
         text = screen()
         where = current(text)
+        if where == "?":
+            # 抓屏有概率抓到半帧,重抓几次再判定
+            for _ in range(8):
+                time.sleep(0.15)
+                text = screen()
+                where = current(text)
+                if where != "?":
+                    break
         seen.add(where)
         if where in ("VICTORY", "DEATH"):
             stop()
@@ -188,7 +229,10 @@ def main() -> int:
             print(f"FAIL seed {seed}: 整局没出现过奖励界面")
             ok = False
             continue
-        print(f"ok seed {seed}: 结局 {where},走过的界面 {sorted(seen)}")
+        print(
+            f"ok seed {seed}: 结局 {where},走过的界面 {sorted(seen)},"
+            f"按了 {KEYS_SENT} 次键"
+        )
         print("   最后一行:", [l for l in text.splitlines() if l.strip()][-1][:100])
     print("smoke:", "PASS" if ok else "FAIL")
     return 0 if ok else 1

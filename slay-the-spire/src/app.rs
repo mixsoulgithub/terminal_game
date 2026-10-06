@@ -51,6 +51,10 @@ pub struct App {
     pub comp_sel: usize,
     /// 当前看的图鉴种类
     pub library: Library,
+    /// 商店里买不成时抖一下动画:还剩几帧
+    pub shake: u8,
+    /// 抖的是哪一行
+    pub shake_row: Option<usize>,
     /// 图鉴当前标签页
     pub lib_tab: usize,
     /// 图鉴光标(当前页里的条目下标)
@@ -81,6 +85,8 @@ impl App {
             title_sel: 0,
             char_sel: 0,
             comp_sel: 0,
+            shake: 0,
+            shake_row: None,
             library: Library::Cards,
             lib_tab: 0,
             lib_sel: 0,
@@ -320,6 +326,33 @@ impl App {
         self.potion_pending = None;
         self.toss_pending = false;
         self.info(format!("new run, seed {seed}"));
+    }
+
+    /// 抖动动画总共几帧(每帧间隔见 main.rs 的轮询时间)
+    pub const SHAKE_FRAMES: u8 = 6;
+
+    /// 还在抖:事件循环要用超时轮询,好一帧帧重画
+    pub fn ticking(&self) -> bool {
+        self.shake > 0
+    }
+
+    /// 走一帧;返回是否还要继续
+    pub fn tick(&mut self) -> bool {
+        self.shake = self.shake.saturating_sub(1);
+        self.shake > 0
+    }
+
+    /// 这一行现在往右挪几格:慢慢点两下(每次 1 格),然后回位。
+    /// 只往右挪,右边超出去的部分由渲染那层截掉。
+    pub fn shake_offset(&self, row: usize) -> i32 {
+        if self.shake == 0 || self.shake_row != Some(row) {
+            return 0;
+        }
+        if (Self::SHAKE_FRAMES - self.shake) % 2 == 0 {
+            1
+        } else {
+            0
+        }
     }
 
     fn info(&mut self, text: impl Into<String>) {
@@ -949,6 +982,13 @@ impl App {
             }
             KeyCode::Enter => {
                 let r = self.run.buy_selected();
+                // 灰行(卖光了 / 钱不够):抖一下提示买不了
+                if let Err(e) = &r {
+                    if e == "sold out" || e.starts_with("needs ") {
+                        self.shake = App::SHAKE_FRAMES;
+                        self.shake_row = self.run.shop.as_ref().map(|s| s.index);
+                    }
+                }
                 self.ok(r);
                 self.run.shop_clamp();
             }

@@ -228,6 +228,8 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
     };
     for (i, item) in s.items.iter().skip(start).take(capacity).enumerate() {
         let idx = start + i;
+        // 买不成那一行会抖:只抖左边的名字,价钱和标记不动
+        let off = app.shake_offset(idx);
         shop_row(
             buf,
             list.x,
@@ -237,6 +239,7 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
             idx == s.index,
             s.sold.get(idx).copied().unwrap_or(false),
             app.run.player.gold,
+            off,
         );
     }
     // 说明
@@ -285,6 +288,7 @@ fn shop_row(
     selected: bool,
     sold: bool,
     gold: i32,
+    off: i32,
 ) {
     if w == 0 {
         return;
@@ -304,10 +308,13 @@ fn shop_row(
     };
     let price = format!("{}{:<4}", tag, format!("${}", item.price()));
     let field_w = display_width(&price).min(w as usize);
-    let name_w = (w as usize).saturating_sub(field_w + 1);
+    // 抖动:整行(名字 + 标记 + 价钱)一起往右挪 shift 格,右边超出去的那截截掉
+    let shift = off.max(0) as u16;
+    let nx = x + shift;
+    let name_w = (w as usize).saturating_sub(field_w + 1 + shift as usize);
     match item {
         ShopItem::Card(card, _) => {
-            crate::ui::put_card_line(buf, x, y, name_w as u16, card, selected, dead);
+            crate::ui::put_card_line(buf, nx, y, name_w as u16, card, selected, dead);
         }
         ShopItem::Relic(def, _) => {
             // 稀有度不用写出来,名字的颜色就是稀有度
@@ -316,7 +323,7 @@ fn shop_row(
             } else {
                 theme::fg(theme::relic_color(def.rarity)).bg(bg)
             };
-            put(buf, x, y, &truncate(def.name, name_w), style);
+            put(buf, nx, y, &truncate(def.name, name_w), style);
         }
         ShopItem::Potion(def, _) => {
             // 药水用 () 括起来
@@ -325,15 +332,18 @@ fn shop_row(
             } else {
                 theme::fg(theme::relic_color(def.rarity)).bg(bg)
             };
-            put(buf, x, y, &truncate(&format!("({})", def.name), name_w), style);
+            put(buf, nx, y, &truncate(&format!("({})", def.name), name_w), style);
         }
         ShopItem::Remove(_) => {
             let style = if dead { theme::dim().bg(bg) } else { theme::fg(theme::GOOD).bg(bg) };
-            put(buf, x, y, &truncate("Card Removal Service", name_w), style);
+            put(buf, nx, y, &truncate("Card Removal Service", name_w), style);
         }
     }
     let style = if dead { theme::dim().bg(bg) } else { theme::fg(theme::GOLD).bg(bg) };
-    put(buf, x + (w as usize - field_w) as u16, y, &price, style);
+    // 价钱按原位 + 抖动摆,右端超出行的部分截掉(只剩 4 格以下就直接截短)
+    let price_x = x + (w as usize - field_w) as u16 + shift;
+    let price_w = field_w.saturating_sub(shift as usize).max(1);
+    put(buf, price_x, y, &truncate(&price, price_w), style);
 }
 
 /// 左对齐写几行说明,按宽度折行
