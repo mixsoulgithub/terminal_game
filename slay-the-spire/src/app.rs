@@ -15,11 +15,15 @@ pub enum Mode {
     Command,
 }
 
-/// 战斗里的一次抖动动画:谁、往哪边、还剩几帧
+/// 战斗里的一次抖动动画:谁、往哪边、还剩几帧、起步延迟几帧、还要重抖几次
 pub struct BattleShake {
     pub who: crate::core::combat::ShakeWho,
     pub dir: i32,
     pub frames: u8,
+    /// 起步前先等几帧(挨打的比出手的晚一帧)
+    pub delay: u8,
+    /// 连击/多段:抖完一轮再来几轮(3x7 就抖 3 次,X 费就抖 X 次)
+    pub repeats: u8,
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
@@ -65,7 +69,7 @@ pub struct App {
     pub comp_sel: usize,
     /// 当前看的图鉴种类
     pub library: Library,
-    /// 战斗里的抖动(掉血/出手),自带帧数
+    /// 战斗里的抖动(掉血/出手),自带帧数与重复次数
     pub battle_shakes: Vec<BattleShake>,
     /// 商店里买不成时抖一下动画:还剩几帧
     pub shake: u8,
@@ -367,6 +371,8 @@ impl App {
 
     /// 抖动动画总共几帧(每帧间隔见 main.rs 的轮询时间)
     pub const SHAKE_FRAMES: u8 = 6;
+    /// 挨打的比出手的晚几帧起步
+    pub const HURT_DELAY: u8 = 6;
 
     /// 还在抖:事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
@@ -377,7 +383,16 @@ impl App {
     pub fn tick(&mut self) -> bool {
         self.shake = self.shake.saturating_sub(1);
         for b in self.battle_shakes.iter_mut() {
+            if b.delay > 0 {
+                b.delay -= 1;
+                continue;
+            }
             b.frames = b.frames.saturating_sub(1);
+            if b.frames == 0 && b.repeats > 0 {
+                // 多段/连击:再来一轮
+                b.repeats -= 1;
+                b.frames = Self::SHAKE_FRAMES;
+            }
         }
         self.battle_shakes.retain(|b| b.frames > 0);
         self.ticking()
@@ -388,6 +403,9 @@ impl App {
         let Some(b) = self.battle_shakes.iter().find(|b| b.who == who) else {
             return 0;
         };
+        if b.delay > 0 {
+            return 0;
+        }
         // 幅度递减:2 2 1 1 0 0
         let step = (Self::SHAKE_FRAMES - b.frames) as usize;
         let amp = match step {
@@ -398,21 +416,31 @@ impl App {
         b.dir * amp
     }
 
-    /// 把战斗引擎攒下的抖动事件收进来(同一目标只留一条,刷新帧数)
+    /// 把战斗引擎攒下的抖动事件收进来。
+    /// 同一目标已有动画就累加"还要抖几次"(3x7 抖 3 次,X 费抖 X 次);
+    /// 挨打比出手晚一帧起步,所以先看到攻击方冲出去,再看到对面挨退。
     fn collect_battle_shakes(&mut self) {
+        use crate::core::combat::ShakeKind;
         let Some(c) = self.run.combat_mut() else {
             return;
         };
         for s in std::mem::take(&mut c.shakes) {
+            let delay = if s.kind == ShakeKind::Hurt {
+                Self::HURT_DELAY
+            } else {
+                0
+            };
             match self.battle_shakes.iter_mut().find(|b| b.who == s.who) {
                 Some(b) => {
                     b.dir = s.dir;
-                    b.frames = Self::SHAKE_FRAMES;
+                    b.repeats = (b.repeats + 1).min(8);
                 }
                 None => self.battle_shakes.push(BattleShake {
                     who: s.who,
                     dir: s.dir,
                     frames: Self::SHAKE_FRAMES,
+                    delay,
+                    repeats: 0,
                 }),
             }
         }
@@ -1721,19 +1749,48 @@ mod tests {
                 .any(|b| matches!(b.who, ShakeWho::Enemy(0)) && b.dir > 0),
             "挨打的敌人应该往右退"
         );
-        // 轮到敌人出手:敌人往左冲,玩家挨打往左退
+        // 轮到敌人出手:敌人先往左冲,玩家晚一帧才往左退
         app.battle_shakes.clear();
         app.handle_key(key('e'));
         assert!(
-            app.battle_shake_offset(ShakeWho::Hero) < 0,
-            "挨打时角色应该往左退"
-        );
-        assert!(
             app.battle_shakes
                 .iter()
-                .any(|b| matches!(b.who, ShakeWho::Enemy(_)) && b.dir < 0),
-            "敌人出手应该往左冲"
+                .any(|b| matches!(b.who, ShakeWho::Enemy(_)) && b.dir < 0 && b.delay == 0),
+            "敌人出手应该先往左冲"
         );
+        assert_eq!(
+            app.battle_shake_offset(ShakeWho::Hero),
+            0,
+            "挨打的要晚几帧才动"
+        );
+        for _ in 0..App::HURT_DELAY {
+            app.tick();
+        }
+        assert!(
+            app.battle_shake_offset(ShakeWho::Hero) < 0,
+            "延迟走完之后角色应该往左退"
+        );
+
+        // 多段攻击(3x7 这种):同一个目标连挨 3 下,要抖 3 轮
+        app.battle_shakes.clear();
+        {
+            let c = app.run.combat_mut().unwrap();
+            c.shakes.clear();
+            for _ in 0..3 {
+                c.shakes.push(crate::core::combat::Shake {
+                    who: ShakeWho::Enemy(0),
+                    dir: 1,
+                    kind: crate::core::combat::ShakeKind::Hurt,
+                });
+            }
+        }
+        app.clamp();
+        let b = app
+            .battle_shakes
+            .iter()
+            .find(|b| matches!(b.who, ShakeWho::Enemy(0)))
+            .expect("应该有敌人的抖动");
+        assert_eq!(b.repeats, 2, "3 段攻击 = 先抖 1 轮 + 再抖 2 轮");
     }
 
     #[test]

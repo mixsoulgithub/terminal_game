@@ -126,7 +126,7 @@ fn run(seed: u64) -> io::Result<()> {
             }
             // 抖动动画期间用带超时的轮询,超时就重画一帧
             let has_event = if app.ticking() {
-                event::poll(std::time::Duration::from_millis(100))?
+                event::poll(std::time::Duration::from_millis(60))?
             } else {
                 true
             };
