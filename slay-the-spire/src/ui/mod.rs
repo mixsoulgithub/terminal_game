@@ -731,7 +731,7 @@ pub fn render(f: &mut Frame, app: &App) {
 }
 
 /// 命令行补全提示:摆在命令行上面,最多 5 行、每行最多 10 列
-fn command_hints(buf: &mut Buffer, status_area: Rect, app: &App) {
+pub fn command_hints(buf: &mut Buffer, status_area: Rect, app: &App) {
     if app.mode != crate::app::Mode::Command {
         return;
     }

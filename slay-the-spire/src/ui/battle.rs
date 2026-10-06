@@ -148,6 +148,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
 
     render_info(buf, info, app, c);
     render_command(buf, command, app);
+    // 战斗里也要有命令行补全提示
+    crate::ui::command_hints(buf, command, app);
 }
 
 // ---- 角色区 ----
