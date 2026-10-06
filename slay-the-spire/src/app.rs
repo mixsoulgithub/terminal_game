@@ -15,6 +15,15 @@ pub enum Mode {
     Command,
 }
 
+/// 命令名(第一层补全用),按字典序不排序也行,补全时会排
+const COMMANDS: &[&str] = &[
+    "cards", "d", "deck", "H", "help", "history", "log", "m", "map", "new", "p", "potion",
+    "potions", "q", "qa", "quaff", "quit", "r", "relics", "restart", "room", "seed", "toss",
+    "win", "wq", "x",
+];
+/// :room 的参数
+const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
+
 pub struct App {
     pub run: Run,
     pub mode: Mode,
@@ -326,6 +335,24 @@ impl App {
         self.potion_pending = None;
         self.toss_pending = false;
         self.info(format!("new run, seed {seed}"));
+    }
+
+    /// 命令行的补全候选:只算当前这一层。
+    /// 还没敲空格 -> 补命令名;敲了空格 -> 补这条命令的参数。
+    pub fn completions(&self) -> Vec<String> {
+        let text = self.cmd.as_str();
+        match text.split_once(' ') {
+            None => matching(COMMANDS, text),
+            Some((head, rest)) => {
+                let cur = rest.rsplit(' ').next().unwrap_or("");
+                // 命令名只敲了一半(ro)也算,唯一匹配才认
+                let args: &[&str] = match resolve_command(head).as_deref() {
+                    Some("room") => ROOM_ARGS,
+                    _ => &[],
+                };
+                matching(args, cur)
+            }
+        }
     }
 
     /// 抖动动画总共几帧(每帧间隔见 main.rs 的轮询时间)
@@ -1372,6 +1399,37 @@ fn digit_slot(c: char) -> Option<usize> {
 }
 
 /// 叠加层的全局开关
+/// 把敲了一半的命令名补成完整命令名(唯一匹配才认)
+fn resolve_command(head: &str) -> Option<String> {
+    if COMMANDS.contains(&head) {
+        return Some(head.to_string());
+    }
+    let mut hits: Vec<&str> = COMMANDS
+        .iter()
+        .copied()
+        .filter(|c| c.starts_with(head))
+        .collect();
+    hits.sort_unstable();
+    hits.dedup();
+    if hits.len() == 1 {
+        Some(hits[0].to_string())
+    } else {
+        None
+    }
+}
+
+/// 前缀匹配:字典序、去重、不把完全相同的那条算进去(敲全了就不再提示)
+fn matching(pool: &[&str], prefix: &str) -> Vec<String> {
+    let mut v: Vec<&str> = pool
+        .iter()
+        .copied()
+        .filter(|c| c.starts_with(prefix) && *c != prefix)
+        .collect();
+    v.sort_unstable();
+    v.dedup();
+    v.into_iter().map(|s| s.to_string()).collect()
+}
+
 fn overlay_key_of(code: KeyCode) -> Option<Overlay> {
     match code {
         KeyCode::Char('d') => Some(Overlay::Deck),
@@ -1606,6 +1664,29 @@ mod tests {
             assert_eq!(app.run.pos, pos, "{cmd} 改了位置");
             assert_eq!(app.run.path, path, "{cmd} 改了路径");
         }
+    }
+
+    /// 命令行补全:只给这一层的可能、字典序、敲全了不提示
+    #[test]
+    fn command_line_completions_are_one_layer_sorted() {
+        let mut app = App::new(7);
+        app.handle_key(key(':'));
+        for c in "ro".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(app.completions(), vec!["room"], "只提示这一层的可能");
+        app.handle_key(key(' '));
+        assert_eq!(
+            app.completions(),
+            vec!["battle", "boss", "elite", "enemy", "event", "shop"],
+            "参数按字典序"
+        );
+        app.handle_key(key('s'));
+        assert_eq!(app.completions(), vec!["shop"]);
+        app.handle_key(key('h'));
+        app.handle_key(key('o'));
+        app.handle_key(key('p'));
+        assert!(app.completions().is_empty(), "敲全了就不该再提示");
     }
 
     #[test]

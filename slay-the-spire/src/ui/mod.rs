@@ -721,11 +721,30 @@ pub fn render(f: &mut Frame, app: &App) {
             _ => menu::render(buf, body, app),
         };
         status(buf, status_area, app);
+        command_hints(buf, status_area, app);
     }
     // 选药水时,顶栏药水区下面浮一个无边框说明
     potion_popup(buf, area, potion_rect, app);
     if let Some(ov) = app.overlay {
         overlay::render(buf, area, app, ov);
+    }
+}
+
+/// 命令行补全提示:摆在命令行上面,最多 5 行、每行最多 10 列
+fn command_hints(buf: &mut Buffer, status_area: Rect, app: &App) {
+    if app.mode != crate::app::Mode::Command {
+        return;
+    }
+    let hints = app.completions();
+    if hints.is_empty() {
+        return;
+    }
+    let rows = hints.len().min(5) as u16;
+    let w = 10.min(status_area.width as usize);
+    let style = Style::default().fg(theme::INFO).bg(theme::BG);
+    for (i, hint) in hints.iter().take(5).enumerate() {
+        let y = status_area.y.saturating_sub(rows - i as u16);
+        put_padded(buf, status_area.x, y, hint, w, style);
     }
 }
 
