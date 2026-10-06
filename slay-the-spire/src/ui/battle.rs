@@ -65,7 +65,12 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let bottom_h = 3 + desc_lines + 1;
     let top_h = main.height.saturating_sub(bottom_h).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
-    render_character(buf, top, c);
+    render_character(
+        buf,
+        top,
+        c,
+        app.battle_shake_offset(crate::core::combat::ShakeWho::Hero),
+    );
     render_enemies(buf, top, app, c);
 
     let mut y = main.y + top_h;
@@ -163,20 +168,22 @@ fn round_by_side(v: f32, width: u16) -> u16 {
     }
 }
 
-/// 角色:画像的重心放在屏幕 1/4 处,增减益跟着画像中心
-fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
+/// 角色:画像的重心放在屏幕 1/4 处,增减益跟着画像中心。
+/// off 是抖动偏移(掉血往左退、出手往右冲)。
+fn render_character(buf: &mut Buffer, area: Rect, c: &Combat, off: i32) {
     if area.width == 0 || area.height < 14 {
         return;
     }
     let art_rows = ART_H;
     let block_h = (art_rows + 1) as u16; // 画像 + 增减益(不再有血条)
-    let off = (area.height as usize).saturating_sub(block_h as usize) / 2;
+    let voff = (area.height as usize).saturating_sub(block_h as usize) / 2;
     // 画像中心落在屏幕 1/4 处
     let center = area.x as f32 + area.width as f32 / 4.0;
     let cx = round_by_side(center - IMG_W as f32 / 2.0, area.width);
+    let cx = (cx as i32 + off).max(area.x as i32) as u16;
     // 画像
     for (i, line) in HERO_ART.iter().enumerate() {
-        let y = area.y + off as u16 + i as u16;
+        let y = area.y + voff as u16 + i as u16;
         for (j, ch) in line.char_indices() {
             if ch == ' ' || j >= area.width as usize {
                 continue;
@@ -190,7 +197,7 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat) {
             put(buf, cx + j as u16, y, &ch.to_string(), style);
         }
     }
-    let buff_y = area.y + off as u16 + art_rows as u16;
+    let buff_y = area.y + voff as u16 + art_rows as u16;
     let words: Vec<(String, Style)> = c
         .player
         .statuses
@@ -284,7 +291,10 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         let selected = app.target_sel == i && e.alive();
         let lines = enemy_lines(c, i);
         let w = widths[i].min((area.x + area.width).saturating_sub(x)).max(1);
-        render_enemy_block(buf, Rect::new(x, area.y, w, area.height), &lines, selected);
+        // 抖动:这个敌人在挨打时往右退、出手时往左冲
+        let off = app.battle_shake_offset(crate::core::combat::ShakeWho::Enemy(i));
+        let bx = (x as i32 + off).clamp(area.x as i32, (area.x + area.width) as i32 - 1) as u16;
+        render_enemy_block(buf, Rect::new(bx, area.y, w, area.height), &lines, selected);
         x += widths[i] + gap;
     }
 }

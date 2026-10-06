@@ -90,7 +90,22 @@ pub struct CombatSetup {
     pub relics: Vec<&'static RelicDef>,
 }
 
+/// 抖动:谁在抖、往哪边(负 = 左,正 = 右)。表现层取走后自己清空。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShakeWho {
+    Hero,
+    Enemy(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Shake {
+    pub who: ShakeWho,
+    pub dir: i32,
+}
+
 pub struct Combat {
+    /// 这一帧攒下来的抖动事件,表现层消费
+    pub shakes: Vec<Shake>,
     pub enemies: Vec<Enemy>,
     pub player: PlayerBattle,
     pub hand: Vec<CardInstance>,
@@ -163,6 +178,7 @@ impl Combat {
             deck.into_iter().partition(|c| c.is_innate());
 
         let mut c = Combat {
+            shakes: Vec::new(),
             enemies,
             player: PlayerBattle {
                 hp: setup.hp,
@@ -408,6 +424,7 @@ impl Combat {
             for fx in effects {
                 match *fx {
                     EnemyFx::Attack { amount, times } => {
+                        self.shake(ShakeWho::Enemy(idx), -1);
                         let per = self.enemy_attack_damage(idx, amount);
                         let mut blocked_total = 0;
                         for _ in 0..times.max(1) {
@@ -547,12 +564,18 @@ impl Combat {
         }
     }
 
+    /// 记一次抖动:谁、往哪边(负左正右)
+    fn shake(&mut self, who: ShakeWho, dir: i32) {
+        self.shakes.push(Shake { who, dir });
+    }
+
     /// 玩家直接掉血(不吃格挡);from_card 用于渴望的触发判断
     fn lose_hp_player(&mut self, amount: i32, from_card: bool) {
         if amount <= 0 {
             return;
         }
         self.player.hp -= amount;
+        self.shake(ShakeWho::Hero, -1);
         let rupt = self.player.statuses.get(Status::Rupture);
         if from_card && rupt > 0 {
             self.player.statuses.add(Status::Strength, rupt);
@@ -572,6 +595,7 @@ impl Combat {
         let taken = dmg - blocked;
         if taken > 0 {
             self.player.hp -= taken;
+            self.shake(ShakeWho::Hero, -1);
         }
         if self.player.hp <= 0 {
             self.player.hp = 0;
@@ -646,6 +670,7 @@ impl Combat {
         if taken > 0 {
             self.enemies[idx].hp -= taken;
             self.damage_dealt += taken;
+            self.shake(ShakeWho::Enemy(idx), 1);
         }
         // 睡眠中的敌人被打醒
         if taken > 0 && !self.enemies[idx].awake && self.enemies[idx].sleep_left > 0 {
@@ -760,6 +785,9 @@ impl Combat {
         };
         let label = card.label();
         let is_skill = card.kind() == crate::core::card::CardType::Skill;
+        if card.kind() == crate::core::card::CardType::Attack {
+            self.shake(ShakeWho::Hero, 1);
+        }
         self.push_log(LogKind::Player, format!("you play {label}"));
         let blocked_before = self.player.block;
         self.resolve(&mut card, chosen, &mut ctx);

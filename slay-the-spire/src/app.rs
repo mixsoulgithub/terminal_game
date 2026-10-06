@@ -15,6 +15,13 @@ pub enum Mode {
     Command,
 }
 
+/// 战斗里的一次抖动动画:谁、往哪边、还剩几帧
+pub struct BattleShake {
+    pub who: crate::core::combat::ShakeWho,
+    pub dir: i32,
+    pub frames: u8,
+}
+
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
 const COMMANDS: &[&str] = &["help", "q", "quit", "restart", "room", "seed", "win"];
 /// :room 的参数
@@ -58,6 +65,8 @@ pub struct App {
     pub comp_sel: usize,
     /// 当前看的图鉴种类
     pub library: Library,
+    /// 战斗里的抖动(掉血/出手),自带帧数
+    pub battle_shakes: Vec<BattleShake>,
     /// 商店里买不成时抖一下动画:还剩几帧
     pub shake: u8,
     /// 抖的是哪一行
@@ -93,6 +102,7 @@ impl App {
             title_sel: 0,
             char_sel: 0,
             comp_sel: 0,
+            battle_shakes: Vec::new(),
             shake: 0,
             shake_row: None,
             library: Library::Cards,
@@ -360,13 +370,52 @@ impl App {
 
     /// 还在抖:事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
-        self.shake > 0
+        self.shake > 0 || !self.battle_shakes.is_empty()
     }
 
     /// 走一帧;返回是否还要继续
     pub fn tick(&mut self) -> bool {
         self.shake = self.shake.saturating_sub(1);
-        self.shake > 0
+        for b in self.battle_shakes.iter_mut() {
+            b.frames = b.frames.saturating_sub(1);
+        }
+        self.battle_shakes.retain(|b| b.frames > 0);
+        self.ticking()
+    }
+
+    /// 战斗里某个目标现在往哪边挪几格(攻击方朝对面冲,挨打的往反方向退)
+    pub fn battle_shake_offset(&self, who: crate::core::combat::ShakeWho) -> i32 {
+        let Some(b) = self.battle_shakes.iter().find(|b| b.who == who) else {
+            return 0;
+        };
+        // 幅度递减:2 2 1 1 0 0
+        let step = (Self::SHAKE_FRAMES - b.frames) as usize;
+        let amp = match step {
+            0 | 1 => 2,
+            2 | 3 => 1,
+            _ => 0,
+        };
+        b.dir * amp
+    }
+
+    /// 把战斗引擎攒下的抖动事件收进来(同一目标只留一条,刷新帧数)
+    fn collect_battle_shakes(&mut self) {
+        let Some(c) = self.run.combat_mut() else {
+            return;
+        };
+        for s in std::mem::take(&mut c.shakes) {
+            match self.battle_shakes.iter_mut().find(|b| b.who == s.who) {
+                Some(b) => {
+                    b.dir = s.dir;
+                    b.frames = Self::SHAKE_FRAMES;
+                }
+                None => self.battle_shakes.push(BattleShake {
+                    who: s.who,
+                    dir: s.dir,
+                    frames: Self::SHAKE_FRAMES,
+                }),
+            }
+        }
     }
 
     /// 这一行现在往右挪几格:慢慢点两下(每次 1 格),然后回位。
@@ -1252,6 +1301,7 @@ impl App {
 
     /// 每次操作后把光标限制在合法范围内
     pub fn clamp(&mut self) {
+        self.collect_battle_shakes();
         if let Some(c) = self.run.combat() {
             if c.hand.is_empty() {
                 self.hand_sel = 0;
@@ -1644,6 +1694,48 @@ mod tests {
     }
 
     /// 命令行补全:只给这一层的可能、字典序、敲全了不提示
+    /// 战斗抖动:出手自己往右冲、敌人挨打往右退;敌人打过来则相反
+    #[test]
+    fn battle_shakes_follow_attack_and_damage() {
+        use crate::core::combat::ShakeWho;
+        let mut app = App::new(7);
+        app.handle_key(enter()); // 进第一场战斗
+        assert_eq!(app.run.screen, Screen::Combat);
+        let idx = app
+            .run
+            .combat()
+            .unwrap()
+            .hand
+            .iter()
+            .position(|c| c.kind() == crate::core::card::CardType::Attack);
+        let Some(idx) = idx else { return };
+        app.hand_sel = idx;
+        app.handle_key(enter()); // 打出这张攻击牌
+        assert!(
+            app.battle_shake_offset(ShakeWho::Hero) > 0,
+            "出手时角色应该往右冲"
+        );
+        assert!(
+            app.battle_shakes
+                .iter()
+                .any(|b| matches!(b.who, ShakeWho::Enemy(0)) && b.dir > 0),
+            "挨打的敌人应该往右退"
+        );
+        // 轮到敌人出手:敌人往左冲,玩家挨打往左退
+        app.battle_shakes.clear();
+        app.handle_key(key('e'));
+        assert!(
+            app.battle_shake_offset(ShakeWho::Hero) < 0,
+            "挨打时角色应该往左退"
+        );
+        assert!(
+            app.battle_shakes
+                .iter()
+                .any(|b| matches!(b.who, ShakeWho::Enemy(_)) && b.dir < 0),
+            "敌人出手应该往左冲"
+        );
+    }
+
     #[test]
     fn command_line_completions_are_one_layer_sorted() {
         let mut app = App::new(7);
