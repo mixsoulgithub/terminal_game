@@ -1265,6 +1265,398 @@ pub static CARDS: &[CardDef] = &[
             }]
         ),
     },
+    // ---- 铁甲战士:补全语料里剩下的 ----
+    CardDef {
+        id: "ghostly_armor",
+        name: "Ghostly Armor",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Ethereal. Gain 10 Block.",
+        exhaust: false,
+        ethereal: true,
+        innate: false,
+        retain: false,
+        effects: &[Effect::Block { amount: 10 }],
+        upgrade: up!(None, "Ethereal. Gain 13 Block.", [Effect::Block { amount: 13 }]),
+    },
+    CardDef {
+        id: "hemokinesis",
+        name: "Hemokinesis",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Lose 2 HP. Deal 15 damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::LoseHp { amount: 2 },
+            Effect::Damage {
+                amount: 15,
+                times: 1,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Lose 2 HP. Deal 20 damage.",
+            [
+                Effect::LoseHp { amount: 2 },
+                Effect::Damage {
+                    amount: 20,
+                    times: 1
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "immolate",
+        name: "Immolate",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Rare,
+        target: Target::All,
+        text: "Deal 21 damage to ALL enemies. Add a Burn to your discard pile.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::DamageAll {
+                amount: 21,
+                times: 1,
+            },
+            Effect::AddCardToDiscard { id: "burn", n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 28 damage to ALL enemies. Add a Burn to your discard pile.",
+            [
+                Effect::DamageAll {
+                    amount: 28,
+                    times: 1
+                },
+                Effect::AddCardToDiscard { id: "burn", n: 1 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "pummel",
+        name: "Pummel",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 2 damage 4 times. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::Damage {
+            amount: 2,
+            times: 4,
+        }],
+        upgrade: up!(
+            None,
+            "Deal 2 damage 5 times. Exhaust.",
+            [Effect::Damage {
+                amount: 2,
+                times: 5
+            }]
+        ),
+    },
+    CardDef {
+        id: "reckless_charge",
+        name: "Reckless Charge",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 7 damage. Shuffle a Dazed into your draw pile.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::Damage {
+                amount: 7,
+                times: 1,
+            },
+            Effect::AddCardToDraw { id: "dazed", n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 10 damage. Shuffle a Dazed into your draw pile.",
+            [
+                Effect::Damage {
+                    amount: 10,
+                    times: 1
+                },
+                Effect::AddCardToDraw { id: "dazed", n: 1 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "power_through",
+        name: "Power Through",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Add 2 Wounds to your hand. Gain 15 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::AddCardToHand { id: "wound", n: 2 },
+            Effect::Block { amount: 15 },
+        ],
+        upgrade: up!(
+            None,
+            "Add 2 Wounds to your hand. Gain 20 Block.",
+            [
+                Effect::AddCardToHand { id: "wound", n: 2 },
+                Effect::Block { amount: 20 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "flame_barrier",
+        name: "Flame Barrier",
+        cost: Cost::Fixed(2),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Gain 12 Block. Whenever you are attacked this turn, deal 4 damage back.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::Block { amount: 12 },
+            Effect::AddSelfStatus {
+                status: Status::FlameBarrier,
+                n: 4,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 16 Block. Whenever you are attacked this turn, deal 6 damage back.",
+            [
+                Effect::Block { amount: 16 },
+                Effect::AddSelfStatus {
+                    status: Status::FlameBarrier,
+                    n: 6
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "berserk",
+        name: "Berserk",
+        cost: Cost::Fixed(0),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Gain 2 Vulnerable. At the start of your turn, gain (1).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::AddSelfStatus {
+                status: Status::Vulnerable,
+                n: 2,
+            },
+            Effect::AddSelfStatus {
+                status: Status::Berserk,
+                n: 1,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 1 Vulnerable. At the start of your turn, gain (1).",
+            [
+                Effect::AddSelfStatus {
+                    status: Status::Vulnerable,
+                    n: 1
+                },
+                Effect::AddSelfStatus {
+                    status: Status::Berserk,
+                    n: 1
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "combust",
+        name: "Combust",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "At the end of your turn, lose 1 HP and deal 5 damage to ALL enemies.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Combust,
+            n: 5,
+        }],
+        upgrade: up!(
+            None,
+            "At the end of your turn, lose 1 HP and deal 7 damage to ALL enemies.",
+            [Effect::AddSelfStatus {
+                status: Status::Combust,
+                n: 7
+            }]
+        ),
+    },
+    CardDef {
+        id: "corruption",
+        name: "Corruption",
+        cost: Cost::Fixed(3),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Skills cost 0. Whenever you play a Skill, Exhaust it.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Corruption,
+            n: 1,
+        }],
+        upgrade: up!(
+            Some(Cost::Fixed(2)),
+            "Skills cost 0. Whenever you play a Skill, Exhaust it. Costs 2.",
+            [Effect::AddSelfStatus {
+                status: Status::Corruption,
+                n: 1
+            }]
+        ),
+    },
+    CardDef {
+        id: "double_tap",
+        name: "Double Tap",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "This turn, your next Attack is played twice.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::AddSelfStatus {
+            status: Status::DoubleTap,
+            n: 1,
+        }],
+        upgrade: up!(
+            None,
+            "This turn, your next 2 Attacks are played twice.",
+            [Effect::AddSelfStatus {
+                status: Status::DoubleTap,
+                n: 2
+            }]
+        ),
+    },
+    CardDef {
+        id: "juggernaut",
+        name: "Juggernaut",
+        cost: Cost::Fixed(2),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Whenever you gain Block, deal 5 damage to a random enemy.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Juggernaut,
+            n: 5,
+        }],
+        upgrade: up!(
+            None,
+            "Whenever you gain Block, deal 7 damage to a random enemy.",
+            [Effect::AddSelfStatus {
+                status: Status::Juggernaut,
+                n: 7
+            }]
+        ),
+    },
+    CardDef {
+        id: "rage",
+        name: "Rage",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Whenever you play an Attack this turn, gain 3 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Rage,
+            n: 3,
+        }],
+        upgrade: up!(
+            None,
+            "Whenever you play an Attack this turn, gain 5 Block.",
+            [Effect::AddSelfStatus {
+                status: Status::Rage,
+                n: 5
+            }]
+        ),
+    },
+    CardDef {
+        id: "spot_weakness",
+        name: "Spot Weakness",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "If the enemy intends to attack, gain 3 Strength.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[Effect::StrengthIfTargetAttacks { n: 3 }],
+        upgrade: up!(None, "If the enemy intends to attack, gain 4 Strength.", [Effect::StrengthIfTargetAttacks { n: 4 }]),
+    },
+    CardDef {
+        id: "sentinel",
+        name: "Sentinel",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Gain 5 Block. If this card is Exhausted, gain (2).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        effects: &[
+            Effect::Block { amount: 5 },
+            Effect::EnergyOnExhaust { n: 2 },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 8 Block. If this card is Exhausted, gain (2).",
+            [
+                Effect::Block { amount: 8 },
+                Effect::EnergyOnExhaust { n: 2 }
+            ]
+        ),
+    },
 ];
 
 /// 按 id 找卡牌定义

@@ -120,8 +120,14 @@ pub enum Effect {
     ExhaustSelf,
     /// 往抽牌堆塞一张牌(状态牌常用)
     AddCardToDraw { id: &'static str, n: u8 },
+    /// 往手牌塞一张牌(如伤口)
+    AddCardToHand { id: &'static str, n: u8 },
     /// 往弃牌堆塞一张牌(愤怒)
     AddCardToDiscard { id: &'static str, n: u8 },
+    /// 这张牌被消耗时获得能量(哨卫)
+    EnergyOnExhaust { n: i32 },
+    /// 目标这回合打算攻击的话,给自己加力量(观察弱点)
+    StrengthIfTargetAttacks { n: i32 },
     UpgradeRandomInHand { n: u8 },
 }
 

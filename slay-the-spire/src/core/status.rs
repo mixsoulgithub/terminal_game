@@ -23,6 +23,13 @@ pub enum Status {
     Rupture,
     Regenerate,
     Thorns,
+    Berserk,
+    Combust,
+    Corruption,
+    DoubleTap,
+    Juggernaut,
+    Rage,
+    FlameBarrier,
     // 敌人能力
     Ritual,
     Enrage,
@@ -49,6 +56,13 @@ impl Status {
             Rupture => "Rupture",
             Regenerate => "Regenerate",
             Thorns => "Thorns",
+            Berserk => "Berserk",
+            Combust => "Combust",
+            Corruption => "Corruption",
+            DoubleTap => "Double Tap",
+            Juggernaut => "Juggernaut",
+            Rage => "Rage",
+            FlameBarrier => "Flame Barrier",
             Ritual => "Ritual",
             Enrage => "Enrage",
         }
@@ -75,6 +89,13 @@ impl Status {
             Rupture => "RUPT",
             Regenerate => "REGEN",
             Thorns => "THORN",
+            Berserk => "BSRK",
+            Combust => "CMBS",
+            Corruption => "CORR",
+            DoubleTap => "DBLT",
+            Juggernaut => "JUGG",
+            Rage => "RAGE",
+            FlameBarrier => "FLMB",
             Ritual => "RITUAL",
             Enrage => "ENRAGE",
         }
@@ -83,7 +104,11 @@ impl Status {
     /// 回合结束时层数减一
     pub fn is_debuff(self) -> bool {
         use Status::*;
-        matches!(self, Vulnerable | Weak | Frail | Entangled)
+        // 本回合就失效的也放这儿,靠回合结束时递减
+        matches!(
+            self,
+            Vulnerable | Weak | Frail | Entangled | DoubleTap | Rage | FlameBarrier
+        )
     }
 
 }

@@ -295,6 +295,10 @@ impl Combat {
         if !self.player.statuses.has(Status::Barricade) {
             self.player.block = 0;
         }
+        let berserk = self.player.statuses.get(Status::Berserk);
+        if berserk > 0 {
+            self.energy += berserk;
+        }
         let demon = self.player.statuses.get(Status::DemonForm);
         if demon > 0 {
             self.player.statuses.add(Status::Strength, demon);
@@ -368,6 +372,18 @@ impl Combat {
 
     /// 消耗一张牌,并结算"消耗时"的能力
     fn exhaust_card(&mut self, card: CardInstance) {
+        let back: i32 = card
+            .effects()
+            .iter()
+            .map(|e| match *e {
+                Effect::EnergyOnExhaust { n } => n,
+                _ => 0,
+            })
+            .sum();
+        if back > 0 {
+            self.energy += back;
+            self.push_log(LogKind::Player, format!("exhausted: +{back} energy"));
+        }
         self.exhaust.push(card);
         let fnp = self.player.statuses.get(Status::FeelNoPain);
         if fnp > 0 {
@@ -386,6 +402,16 @@ impl Combat {
         let metal = self.player.statuses.get(Status::Metallicize);
         if metal > 0 {
             self.gain_block(metal, false);
+        }
+        let combust = self.player.statuses.get(Status::Combust);
+        if combust > 0 {
+            self.lose_hp_player(1, false);
+            let n = self.enemies.len();
+            for i in 0..n {
+                if self.damage_enemy(i, combust) > 0 {
+                    self.push_log(LogKind::Player, format!("Combust: {combust} to all enemies"));
+                }
+            }
         }
         let regen = self.player.statuses.get(Status::Regenerate);
         if regen > 0 {
@@ -560,6 +586,13 @@ impl Combat {
             return;
         }
         self.player.block += n;
+        let jug = self.player.statuses.get(Status::Juggernaut);
+        if jug > 0 {
+            if let Some(t) = self.pick_random_alive() {
+                self.damage_enemy(t, jug);
+                self.push_log(LogKind::Player, format!("Juggernaut: {jug} damage"));
+            }
+        }
     }
 
     fn heal_player(&mut self, amount: i32) {
@@ -673,7 +706,22 @@ impl Combat {
         }
     }
 
-    /// 打敌人:damage 是已算好的最终值;返回扣格挡后实际造成的伤害
+    /// 这个敌人这回合是不是要攻击(观察弱点用)
+    fn enemy_intends_attack(&self, idx: usize) -> bool {
+        use crate::core::enemy::Intent;
+        let Some(e) = self.enemies.get(idx) else {
+            return false;
+        };
+        let Some(m) = e.def.moves.get(e.next_move) else {
+            return false;
+        };
+        matches!(
+            m.intent(),
+            Intent::Attack { .. } | Intent::AttackDefend { .. } | Intent::AttackDebuff { .. }
+        )
+    }
+
+    /// 打敌人:damage 是算好的最终值;返回扣格挡后实际造成的伤害
     fn damage_enemy(&mut self, idx: usize, damage: i32) -> i32 {
         if idx >= self.enemies.len() || self.enemies[idx].dead() {
             return 0;
@@ -758,7 +806,10 @@ impl Combat {
         if !card.playable() {
             return Err("unplayable");
         }
-        if card.cost_value(self.energy) > self.energy {
+        // 腐化:技能都是 0 费,所以这里不能按原价拦
+        let corrupted = card.kind() == crate::core::card::CardType::Skill
+            && self.player.statuses.has(Status::Corruption);
+        if !corrupted && card.cost_value(self.energy) > self.energy {
             return Err("not enough energy");
         }
         if card.kind() == crate::core::card::CardType::Attack
@@ -781,7 +832,9 @@ impl Combat {
     pub fn play_card(&mut self, hand_idx: usize, target: Option<usize>) -> Result<(), &'static str> {
         self.playable(hand_idx)?;
         let mut card = self.hand.remove(hand_idx);
-        let cost = card.cost_value(self.energy);
+        let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
+            && self.player.statuses.has(Status::Corruption);
+        let cost = if corrupted_skill { 0 } else { card.cost_value(self.energy) };
         self.energy -= cost.min(self.energy);
         let is_x = card.cost() == Cost::X;
         let mut ctx = PlayCtx {
@@ -806,6 +859,18 @@ impl Combat {
         self.push_log(LogKind::Player, format!("you play {label}"));
         let blocked_before = self.player.block;
         self.resolve(&mut card, chosen, &mut ctx);
+        // 双发:这一击再打一次
+        if card.kind() == crate::core::card::CardType::Attack {
+            let dt = self.player.statuses.get(Status::DoubleTap);
+            if dt > 0 {
+                self.player.statuses.add(Status::DoubleTap, -1);
+                self.resolve(&mut card, chosen, &mut ctx);
+            }
+            let rage = self.player.statuses.get(Status::Rage);
+            if rage > 0 {
+                self.gain_block(rage, false);
+            }
+        }
         if self.player.block > blocked_before {
             let gained = self.player.block - blocked_before;
             self.push_log(LogKind::Player, format!("you gain {gained} Block"));
@@ -814,7 +879,9 @@ impl Combat {
             self.push_log(LogKind::Info, format!("dealt {} damage", ctx.unblocked));
         }
         // 结算完后决定去处
-        let exhaust_self = card.is_exhaust() || card.effects().contains(&Effect::ExhaustSelf);
+        let exhaust_self = card.is_exhaust()
+            || card.effects().contains(&Effect::ExhaustSelf)
+            || corrupted_skill;
         if exhaust_self {
             self.exhaust_card(card);
         } else {
@@ -1078,6 +1145,26 @@ impl Combat {
                         self.draw.push(CardInstance::new(def));
                     }
                 }
+                Effect::AddCardToHand { id, n } => {
+                    let def = cards::card_def_or_panic(id);
+                    for _ in 0..n {
+                        if self.hand.len() >= HAND_LIMIT {
+                            break;
+                        }
+                        self.hand.push(CardInstance::new(def));
+                    }
+                }
+                Effect::EnergyOnExhaust { .. } => {
+                    // 在 exhaust_card 里结算
+                }
+                Effect::StrengthIfTargetAttacks { n } => {
+                    // 目标这回合打算攻击才给力量
+                    if let Some(t) = target {
+                        if self.enemy_intends_attack(t) {
+                            self.player.statuses.add(Status::Strength, n);
+                        }
+                    }
+                }
                 Effect::AddCardToDiscard { id, n } => {
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
@@ -1195,6 +1282,88 @@ mod tests {
 
     fn combat_with(encounter: &'static str, ids: &[&str]) -> Combat {
         Combat::new(enc(encounter), setup(80, ids, &[]), 1)
+    }
+
+    /// 新补的红卡:几个关键钩子各验一条
+    #[test]
+    fn new_ironclad_cards_hook_into_the_engine() {
+        // 放血:掉 2 血 + 15 伤
+        let mut c = combat_with("jaw_worm_solo", &["hemokinesis"; 5]);
+        c.energy = 3;
+        let hp_before = c.player.hp;
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.player.hp, hp_before - 2, "先掉 2 血");
+        assert_eq!(c.enemies[0].hp, e_hp - 15, "再打 15");
+
+        // 硬撑:手里多两张伤口,还给了格挡
+        let mut c = combat_with("jaw_worm_solo", &["power_through"; 5]);
+        c.energy = 3;
+        let hand0 = c.hand.len();
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), hand0 - 1 + 2, "打出去一张,再进两张伤口");
+        assert!(c.player.block >= 15, "还应该给格挡");
+
+        // 燃烧:回合结束掉 1 血并对所有敌人造成 5
+        let mut c = combat_with("three_sentries", &["combust"; 5]);
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        let hp_before = c.player.hp;
+        let e_hp: Vec<i32> = c.enemies.iter().map(|e| e.hp).collect();
+        c.end_turn();
+        // end_turn 之后敌人也会出手,所以玩家血量只能断言"至少掉了自伤这 1 点"
+        assert!(c.player.hp <= hp_before - 1, "结束回合自伤 1 点");
+        for (i, hp) in e_hp.iter().enumerate() {
+            assert_eq!(c.enemies[i].hp, hp - 5, "所有敌人吃 5");
+        }
+
+        // 主宰:拿到格挡就对随机敌人来一下
+        let mut c = combat_with("jaw_worm_solo", &["defend"; 4]);
+        c.energy = 5;
+        c.hand = vec![
+            crate::core::cards::card("juggernaut"),
+            crate::core::cards::card("defend"),
+        ];
+        c.play_card(0, None).unwrap();
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.enemies[0].hp, e_hp - 5, "主宰补了 5 点");
+
+        // 腐化:技能 0 费,而且打出就被消耗
+        let mut c = combat_with("jaw_worm_solo", &["defend"; 4]);
+        c.energy = 3;
+        c.hand = vec![
+            crate::core::cards::card("corruption"),
+            crate::core::cards::card("defend"),
+        ];
+        c.play_card(0, None).unwrap();
+        let energy_before = c.energy;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.energy, energy_before, "技能不再花能量");
+        assert_eq!(c.exhaust.len(), 1, "打出的技能被消耗");
+
+        // 双发:这一击打两次
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.energy = 5;
+        c.hand = vec![
+            crate::core::cards::card("double_tap"),
+            crate::core::cards::card("strike"),
+        ];
+        c.play_card(0, None).unwrap();
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, e_hp - 12, "双发打两次 6 点");
+
+        // 暴怒:这回合每次攻击都给格挡
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.energy = 5;
+        c.hand = vec![
+            crate::core::cards::card("rage"),
+            crate::core::cards::card("strike"),
+        ];
+        c.play_card(0, None).unwrap();
+        c.play_card(0, Some(0)).unwrap();
+        assert!(c.player.block >= 3, "暴怒给 3 点格挡");
     }
 
     #[test]
