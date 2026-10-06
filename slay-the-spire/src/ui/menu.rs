@@ -247,15 +247,29 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
         ShopItem::Card(card, _) => {
             crate::ui::card_desc(buf, detail, card, crate::ui::run_energy_color(&app.run))
         }
-        ShopItem::Relic(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
-        ShopItem::Potion(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
-        ShopItem::Remove(_) => put_lines(
+        ShopItem::Relic(def, _) => put_centered_detail(
             buf,
             detail,
-            &[
-                "Card Removal Service".to_string(),
-                "Remove a card from your deck permanently.".to_string(),
-            ],
+            def.name,
+            theme::fg(theme::relic_color(def.rarity)),
+            Some(def.rarity.name()),
+            def.desc,
+        ),
+        ShopItem::Potion(def, _) => put_centered_detail(
+            buf,
+            detail,
+            &format!("({})", def.name),
+            theme::fg(theme::relic_color(def.rarity)),
+            Some(def.rarity.name()),
+            def.desc,
+        ),
+        ShopItem::Remove(_) => put_centered_detail(
+            buf,
+            detail,
+            "Card Removal Service",
+            theme::fg(theme::GOOD),
+            None,
+            "Remove a card from your deck permanently.",
         ),
     }
 }
@@ -277,16 +291,22 @@ fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected:
             crate::ui::put_card_line(buf, x, y, name_w as u16, card, selected, sold);
         }
         ShopItem::Relic(def, _) => {
+            // 稀有度不用写出来,名字的颜色就是稀有度
             let style = if sold {
                 theme::dim().bg(bg)
             } else {
                 theme::fg(theme::relic_color(def.rarity)).bg(bg)
             };
-            put(buf, x, y, &truncate(&format!("{} [{}]", def.name, def.rarity.name()), name_w), style);
+            put(buf, x, y, &truncate(def.name, name_w), style);
         }
         ShopItem::Potion(def, _) => {
-            let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::BUFF).bg(bg) };
-            put(buf, x, y, &truncate(&def.name, name_w), style);
+            // 药水用 () 括起来
+            let style = if sold {
+                theme::dim().bg(bg)
+            } else {
+                theme::fg(theme::relic_color(def.rarity)).bg(bg)
+            };
+            put(buf, x, y, &truncate(&format!("({})", def.name), name_w), style);
         }
         ShopItem::Remove(_) => {
             let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::GOOD).bg(bg) };
@@ -298,23 +318,40 @@ fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected:
 }
 
 /// 左对齐写几行说明,按宽度折行
-fn put_lines(buf: &mut Buffer, rect: Rect, lines: &[String]) {
+/// 遗物/药水/服务的说明:名字一行、"[稀有度]"一行、介绍若干行,全部居中
+fn put_centered_detail(
+    buf: &mut Buffer,
+    rect: Rect,
+    title: &str,
+    title_style: Style,
+    rarity: Option<&'static str>,
+    text: &str,
+) {
     let w = rect.width as usize;
-    if w == 0 {
+    if w == 0 || rect.height == 0 {
         return;
     }
     let bottom = rect.y + rect.height;
     let mut y = rect.y;
-    for line in lines {
-        for wrapped in wrap_text(line, w, usize::MAX) {
-            if y >= bottom {
-                return;
-            }
-            put_padded(buf, rect.x, y, &wrapped, w, theme::fg(theme::FG));
-            y += 1;
+    crate::ui::put_centered(buf, rect.x, y, w, title, title_style);
+    y += 1;
+    if let Some(r) = rarity {
+        if y >= bottom {
+            return;
         }
+        crate::ui::put_centered(buf, rect.x, y, w, &format!("[{}]", r), title_style);
+        y += 1;
+    }
+    y += 1;
+    for line in wrap_text(text, w, usize::MAX) {
+        if y >= bottom {
+            return;
+        }
+        crate::ui::put_centered(buf, rect.x, y, w, &line, theme::fg(theme::FG));
+        y += 1;
     }
 }
+
 
 // ---- 营火 ----
 

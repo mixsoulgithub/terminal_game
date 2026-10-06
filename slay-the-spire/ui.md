@@ -4,6 +4,9 @@ start window (full screen, no top/relic/status bar)
   title: spire art on top, menu box below (continue / new game / compendium / quit), seed line at the bottom of the box
   character select: one centered box, one line per character (name, hp, starting relic, deck size)
   compendium: one centered box, one line per book (card library / relic collection / potion lab)
+  shop: list on the left (relic = name colored by rarity, potion = (name)),
+        detail on the right centered (name / [rarity] / description)
+
   library: full-screen box
     row 1: tab row (one tab per group, colored background)
     row 2: separator joining both borders, with a T joint above the vertical line
