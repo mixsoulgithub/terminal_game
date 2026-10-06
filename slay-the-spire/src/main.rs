@@ -120,8 +120,9 @@ fn main() -> ExitCode {
 
 fn run(seed: u64) -> io::Result<()> {
     let mut terminal = ratatui::try_init()?;
-    let mut app = App::new(seed);
+    let mut app = App::start(seed);
     app.clamp();
+    app.maybe_save();
     let result = (|| -> io::Result<()> {
         loop {
             // 地图要用终端宽度算一屏放几层,所以每轮都把尺寸交给 App
@@ -135,6 +136,7 @@ fn run(seed: u64) -> io::Result<()> {
                 Event::Key(k) => {
                     app.handle_key(k);
                     app.clamp();
+                    app.maybe_save();
                 }
                 Event::Resize(..) => {}
                 _ => {}

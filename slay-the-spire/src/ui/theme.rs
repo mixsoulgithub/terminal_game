@@ -65,6 +65,29 @@ pub fn relic_color(rarity: crate::core::card::Rarity) -> Color {
     }
 }
 
+/// 语料里的稀有度/阶字符串 -> 颜色(卡牌、遗物、药水共用)
+pub fn corpus_color(rarity: &str) -> Color {
+    match rarity {
+        "uncommon" => Color::Rgb(120, 170, 240),
+        "rare" | "boss" => Color::Rgb(250, 186, 66),
+        "special" | "event" | "shop" => BUFF,
+        "curse" => DEBUFF,
+        _ => FG,
+    }
+}
+
+/// 角色主色(语料 color 字段)
+pub fn role_color(color: &str) -> Color {
+    match color {
+        "red" => Color::Rgb(236, 96, 108),
+        "green" => Color::Rgb(120, 222, 140),
+        "blue" => Color::Rgb(122, 176, 240),
+        "purple" => Color::Rgb(206, 150, 255),
+        "curse" => DEBUFF,
+        _ => FG,
+    }
+}
+
 /// 卡牌名字的颜色:只看稀有度——Basic/Common 白,Uncommon 蓝,Rare 橙黄,Special 也当白
 pub fn card_color(rarity: crate::core::card::Rarity) -> Color {
     use crate::core::card::Rarity;

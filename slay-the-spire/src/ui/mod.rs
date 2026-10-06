@@ -2,6 +2,8 @@
 // 所有框线只用 ASCII,颜色承担全部视觉效果(和 neon 保持一致).
 pub mod battle;
 pub mod hud;
+pub mod library;
+pub mod start;
 pub mod mapview;
 pub mod menu;
 pub mod overlay;
@@ -301,7 +303,7 @@ pub struct Split {
 }
 
 /// 内容左右各留 1 格,分隔线仍然横跨整个 area.
-fn split_list_detail(area: Rect, list_h: u16) -> Split {
+pub(crate) fn split_list_detail(area: Rect, list_h: u16) -> Split {
     let x = area.x + 1;
     let w = area.width.saturating_sub(2);
     // 够宽(宽 > 高 * 1.5)左右分,否则上下分
@@ -542,6 +544,26 @@ pub fn render(f: &mut Frame, app: &App) {
         let y = area.y + area.height / 2;
         put(buf, x, y, &msg, theme::fg(theme::WARN));
         return;
+    }
+    // 开始界面/角色选择/图鉴占满整屏,没有顶栏、遗物行和状态栏
+    match app.run.screen {
+        crate::core::run::Screen::Title => {
+            start::title(buf, area, app);
+            return;
+        }
+        crate::core::run::Screen::CharSelect => {
+            start::char_select(buf, area, app);
+            return;
+        }
+        crate::core::run::Screen::Compendium => {
+            start::compendium(buf, area, app);
+            return;
+        }
+        crate::core::run::Screen::Library => {
+            library::render(buf, area, app);
+            return;
+        }
+        _ => {}
     }
     let hud_area = Rect::new(area.x, area.y, area.width, 1);
     let relic_area = Rect::new(area.x, area.y + 1, area.width, 1);

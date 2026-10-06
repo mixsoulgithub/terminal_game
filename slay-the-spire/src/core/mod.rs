@@ -2,21 +2,75 @@
 pub mod card;
 pub mod cards;
 pub mod combat;
+pub mod compendium;
+pub mod corpus;
 pub mod enemy;
 pub mod enemies;
 pub mod events;
 pub mod map;
 pub mod potions;
 pub mod relics;
+pub mod roster;
 pub mod run;
+pub mod save;
 pub mod status;
 
 #[cfg(test)]
 mod content_tests {
     //! 跨文件的内容契约:单个数据文件自己测不出"引用的 id 是否存在",
     //! 这里把各文件之间的引用关系钉死.
-    use crate::core::{cards, enemies, events, potions, relics};
+    use crate::core::{cards, corpus, enemies, events, potions, relics, roster};
     use crate::core::card::Rarity;
+
+    /// 已经实现的卡/遗物/药水/事件,id 必须能在语料里找到(导入对得上)
+    #[test]
+    fn implemented_content_exists_in_the_corpus() {
+        let card_ids: Vec<&str> = corpus::CARDS.iter().map(|c| c.id).collect();
+        for c in cards::CARDS {
+            assert!(
+                card_ids.contains(&c.id),
+                "卡牌 {} 在语料里没有对应条目",
+                c.id
+            );
+        }
+        let relic_ids: Vec<&str> = corpus::RELICS.iter().map(|r| r.id).collect();
+        for r in relics::RELICS {
+            assert!(relic_ids.contains(&r.id), "遗物 {} 在语料里没有对应条目", r.id);
+        }
+        let potion_ids: Vec<&str> = corpus::POTIONS.iter().map(|p| p.id).collect();
+        for p in potions::POTIONS {
+            assert!(
+                potion_ids.contains(&p.id),
+                "药水 {} 在语料里没有对应条目",
+                p.id
+            );
+        }
+        let event_ids: Vec<&str> = corpus::EVENTS.iter().map(|e| e.id).collect();
+        for e in events::EVENTS {
+            assert!(event_ids.contains(&e.id), "事件 {} 在语料里没有对应条目", e.id);
+        }
+    }
+
+    /// 四个角色的起始牌组都要在卡池里查得到(没实现的会被 roster 挡住)
+    #[test]
+    fn character_starting_decks_reference_known_cards() {
+        for ch in roster::all() {
+            for (id, n) in ch.deck {
+                assert!(*n > 0, "{} 的起始牌组里 {} 张数为 0", ch.name, id);
+                assert!(
+                    cards::card_def(id).is_some() || roster::missing_cards(ch).contains(id),
+                    "{} 的起始牌 {} 既没实现也不是已知缺失",
+                    ch.name,
+                    id
+                );
+            }
+            assert!(
+                roster::playable(ch) || roster::blocked_reason(ch).is_some(),
+                "{} 不可玩但没给出原因",
+                ch.name
+            );
+        }
+    }
 
     #[test]
     fn event_outcomes_reference_existing_ids() {

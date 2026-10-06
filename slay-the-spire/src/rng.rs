@@ -26,6 +26,16 @@ impl Rng {
         Rng { s }
     }
 
+    /// 存档用:取当前内部状态
+    pub fn state(&self) -> [u64; 4] {
+        self.s
+    }
+
+    /// 存档用:恢复内部状态
+    pub fn set_state(&mut self, s: [u64; 4]) {
+        self.s = s;
+    }
+
     pub fn next_u64(&mut self) -> u64 {
         let result = self.s[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
         let t = self.s[1] << 17;

@@ -3,19 +3,23 @@
 use crate::core::card::{CardDef, CardInstance, Rarity};
 use crate::core::cards;
 use crate::core::combat::{Combat, CombatSetup, Phase};
+use crate::core::corpus;
 use crate::core::enemies;
 use crate::core::enemy::{EnemyKind, Encounter};
 use crate::core::events::{EventDef, Outcome};
 use crate::core::map::{ActMap, NodeKind};
 use crate::core::potions::{self, PotionDef, PotionFx};
 use crate::core::relics::{self, RelicDef, RelicFx};
+use crate::core::roster;
 use crate::rng::Rng;
 
 /// 药水格子数
 pub const POTION_SLOTS: usize = 3;
-/// 起始生命
+/// 起始生命(铁甲战士的,只有测试还在用;实际数值来自语料)
+#[cfg(test)]
 pub const STARTING_HP: i32 = 80;
-/// 起始金币
+/// 起始金币(同上)
+#[cfg(test)]
 pub const STARTING_GOLD: i32 = 99;
 /// 营火休息回复比例(百分比)
 pub const REST_HEAL_PCT: i32 = 30;
@@ -45,6 +49,14 @@ pub struct HistoryEntry {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
+    /// 开始界面:continue / new game / compendium
+    Title,
+    /// 选角色
+    CharSelect,
+    /// 图鉴子菜单:卡片库/遗物册/药水间
+    Compendium,
+    /// 图鉴列表(具体看哪一种由 App::library 决定)
+    Library,
     Map,
     Combat,
     Reward,
@@ -61,6 +73,10 @@ pub enum Screen {
 impl Screen {
     pub fn name(self) -> &'static str {
         match self {
+            Screen::Title => "TITLE",
+            Screen::CharSelect => "CHARACTER",
+            Screen::Compendium => "COMPENDIUM",
+            Screen::Library => "LIBRARY",
             Screen::Map => "MAP",
             Screen::Combat => "COMBAT",
             Screen::Reward => "REWARD",
@@ -183,6 +199,8 @@ pub struct Stats {
 
 pub struct Run {
     pub seed: u64,
+    /// 开局选的角色的语料 id
+    pub character: &'static str,
     pub rng: Rng,
     pub player: Player,
     pub map: ActMap,
@@ -212,17 +230,29 @@ pub struct Run {
 }
 
 impl Run {
+    /// 默认角色(铁甲战士)开一局,测试和 :new 用
     pub fn new(seed: u64) -> Run {
+        let ch = roster::find("ironclad").expect("ironclad 必须在语料里");
+        Run::new_for(seed, ch).expect("铁甲战士的起始牌组必须是已实现的")
+    }
+
+    /// 按角色开一局:起始牌组/血量/金币/遗物都来自语料
+    pub fn new_for(seed: u64, ch: &'static corpus::CharacterInfo) -> Result<Run, String> {
+        let missing = roster::missing_cards(ch);
+        if !missing.is_empty() {
+            return Err(format!("{} 还没实现: {}", ch.name, missing.join(" ")));
+        }
+        if !roster::has_starter_relic(ch) {
+            return Err(format!("{} 的起始遗物 {} 还没实现", ch.name, ch.relic));
+        }
         let mut rng = Rng::new(seed);
         let mut deck: Vec<CardInstance> = Vec::new();
-        for _ in 0..5 {
-            deck.push(cards::card("strike"));
+        for (id, n) in ch.deck {
+            for _ in 0..*n {
+                deck.push(cards::card(id));
+            }
         }
-        for _ in 0..4 {
-            deck.push(cards::card("defend"));
-        }
-        deck.push(cards::card("bash"));
-        let starter = relics::starter_relic();
+        let starter = relics::relic_def_or_panic(ch.relic);
         let relic_pool: Vec<&'static RelicDef> = relics::RELICS
             .iter()
             .filter(|r| r.id != starter.id)
@@ -231,11 +261,12 @@ impl Run {
         let boss_enc: &'static Encounter = rng.pick(enemies::BOSSES);
         let mut run = Run {
             seed,
+            character: ch.id,
             rng,
             player: Player {
-                hp: STARTING_HP,
-                max_hp: STARTING_HP,
-                gold: STARTING_GOLD,
+                hp: ch.max_hp,
+                max_hp: ch.max_hp,
+                gold: ch.gold,
                 deck,
                 relics: vec![starter],
                 potions: vec![None; POTION_SLOTS],
@@ -263,7 +294,159 @@ impl Run {
         let starter_fx = starter.fx;
         run.apply_relic_pickup(starter_fx);
         run.say(format!("seed {seed}: climb the spire"));
-        run
+        Ok(run)
+    }
+
+    /// 存档文本:只存"这一层刚开始"的状态(地图界面才存)
+    pub fn save_text(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("seed={}\n", self.seed));
+        out.push_str(&format!("char={}\n", self.character));
+        out.push_str(&format!("hp={}\n", self.player.hp));
+        out.push_str(&format!("max_hp={}\n", self.player.max_hp));
+        out.push_str(&format!("gold={}\n", self.player.gold));
+        let r = self.rng.state();
+        out.push_str(&format!("rng={},{},{},{}\n", r[0], r[1], r[2], r[3]));
+        out.push_str(&format!(
+            "pos={}\n",
+            self.pos.map(|p| p.to_string()).unwrap_or_else(|| "none".to_string())
+        ));
+        let path: Vec<String> = self.path.iter().map(|n| n.to_string()).collect();
+        out.push_str(&format!("path={}\n", path.join(",")));
+        out.push_str(&format!("floor={}\n", self.floor_reached));
+        let deck: Vec<String> = self
+            .player
+            .deck
+            .iter()
+            .map(|c| format!("{}:{}", c.def.id, if c.upgraded { 1 } else { 0 }))
+            .collect();
+        out.push_str(&format!("deck={}\n", deck.join(",")));
+        let relics: Vec<&str> = self.player.relics.iter().map(|r| r.id).collect();
+        out.push_str(&format!("relics={}\n", relics.join(",")));
+        let potions: Vec<&str> = self
+            .player
+            .potions
+            .iter()
+            .map(|p| p.map(|d| d.id).unwrap_or("-"))
+            .collect();
+        out.push_str(&format!("potions={}\n", potions.join(",")));
+        out
+    }
+
+    /// 从存档文本恢复一局
+    pub fn from_save(text: &str) -> Result<Run, String> {
+        let mut seed = 0u64;
+        let mut char_id = "ironclad".to_string();
+        let mut num: Vec<(&str, &str)> = Vec::new();
+        for line in text.lines() {
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
+            num.push((k, v));
+            if k == "seed" {
+                seed = v.trim().parse().map_err(|_| "存档里的种子坏了".to_string())?;
+            } else if k == "char" {
+                char_id = v.trim().to_string();
+            }
+        }
+        let get = |k: &str| -> Option<&str> { num.iter().find(|(a, _)| *a == k).map(|(_, b)| *b) };
+        let int = |k: &str, d: i32| -> i32 { get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d) };
+        let ch = roster::find(&char_id).ok_or_else(|| format!("存档里的角色 {char_id} 不认识"))?;
+        let mut run = Run::new_for(seed, ch)?;
+        run.player.hp = int("hp", run.player.hp);
+        run.player.max_hp = int("max_hp", run.player.max_hp);
+        run.player.gold = int("gold", run.player.gold);
+        run.floor_reached = int("floor", 0).max(0) as usize;
+        if let Some(v) = get("rng") {
+            let parts: Vec<u64> = v
+                .split(',')
+                .filter_map(|x| x.trim().parse().ok())
+                .collect();
+            if parts.len() == 4 {
+                run.rng.set_state([parts[0], parts[1], parts[2], parts[3]]);
+            }
+        }
+        if let Some(v) = get("deck") {
+            let mut deck: Vec<CardInstance> = Vec::new();
+            for item in v.split(',').filter(|s| !s.is_empty()) {
+                let (id, up) = item.split_once(':').unwrap_or((item, "0"));
+                let Some(def) = cards::card_def(id) else {
+                    return Err(format!("存档里的卡 {id} 不认识"));
+                };
+                let mut inst = cards::card(def.id);
+                if up.trim() == "1" {
+                    inst.upgrade();
+                }
+                deck.push(inst);
+            }
+            if !deck.is_empty() {
+                run.player.deck = deck;
+            }
+        }
+        if let Some(v) = get("relics") {
+            let mut relics_out: Vec<&'static RelicDef> = Vec::new();
+            for id in v.split(',').filter(|s| !s.is_empty()) {
+                let Some(def) = relics::relic_def(id) else {
+                    return Err(format!("存档里的遗物 {id} 不认识"));
+                };
+                relics_out.push(def);
+            }
+            if !relics_out.is_empty() {
+                run.player.relics = relics_out;
+            }
+        }
+        if let Some(v) = get("potions") {
+            let mut slots: Vec<Option<&'static PotionDef>> = vec![None; POTION_SLOTS];
+            for (i, id) in v.split(',').enumerate().take(POTION_SLOTS) {
+                if id == "-" || id.is_empty() {
+                    continue;
+                }
+                let def = potions::POTIONS
+                    .iter()
+                    .find(|p| p.id == id)
+                    .ok_or_else(|| format!("存档里的药水 {id} 不认识"))?;
+                slots[i] = Some(def);
+            }
+            run.player.potions = slots;
+        }
+        if let Some(v) = get("pos") {
+            run.pos = if v.trim() == "none" {
+                None
+            } else {
+                v.trim().parse::<usize>().ok()
+            };
+        }
+        if let Some(v) = get("path") {
+            run.path = v
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .filter_map(|x| x.trim().parse().ok())
+                .collect();
+        }
+        // 还没出现过的遗物:重建一遍(已经拿到的都排掉)
+        run.relic_pool = relics::RELICS
+            .iter()
+            .filter(|r| !run.player.relics.iter().any(|o| o.id == r.id))
+            .collect();
+        run.screen = Screen::Map;
+        run.event = None;
+        run.combat = None;
+        run.reward = None;
+        run.shop = None;
+        run.picker = None;
+        run.treasure = None;
+        run.say(format!("continued run, seed {seed}"));
+        Ok(run)
+    }
+
+    /// 开局第一件事:Neow 的祝福(四选一)
+    pub fn open_neow(&mut self) {
+        self.event = Some(EventState {
+            def: crate::core::events::neow(),
+            index: 0,
+            result: None,
+        });
+        self.screen = Screen::Event;
     }
 
     /// 记一笔:既进历史记录,也更新界面上的提示
@@ -843,6 +1026,13 @@ impl Run {
             let def = relics::relic_def_or_panic(id);
             self.gain_relic(def);
         }
+        if let Some(rarity) = o.add_random_card {
+            let pool: Vec<&'static CardDef> = cards::reward_pool(rarity);
+            if !pool.is_empty() {
+                let def = self.rng.pick(&pool);
+                self.player.deck.push(cards::card(def.id));
+            }
+        }
         if let Some(rarity) = o.random_relic_rarity {
             if let Some(def) = self.take_relic_of(rarity) {
                 self.gain_relic(def);
@@ -1287,6 +1477,10 @@ mod tests {
                 Screen::Treasure => r.take_treasure(),
                 Screen::Victory => break,
                 Screen::Death => break,
+                // 开始界面那几个不会出现在这条流程里
+                Screen::Title | Screen::CharSelect | Screen::Compendium | Screen::Library => {
+                    panic!("整局流程里不该出现开始界面")
+                }
             }
         }
         assert_eq!(r.screen, Screen::Victory, "走到 Boss 应获胜");

@@ -255,6 +255,7 @@ pub fn relics_of(rarity: Rarity) -> Vec<&'static RelicDef> {
 }
 
 /// 起始遗物(如燃烧之血)
+#[cfg(test)]
 pub fn starter_relic() -> &'static RelicDef {
     relic_def_or_panic("burning_blood")
 }

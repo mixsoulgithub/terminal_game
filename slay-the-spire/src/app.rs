@@ -2,7 +2,11 @@
 // 操作风格向 vim 靠:地图用 h/l 往前后看路、j/k 选岔路,enter 确认,esc 取消,: 开命令行.
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::core::compendium::{self, Library};
+use crate::core::corpus::CharacterInfo;
+use crate::core::roster;
 use crate::core::run::{RewardSlot, Run, Screen};
+use crate::core::save;
 use crate::ui::overlay::Overlay;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -39,6 +43,16 @@ pub struct App {
     pub msg: String,
     pub warn: bool,
     pub quit: bool,
+    /// 开始界面光标
+    pub title_sel: usize,
+    /// 角色选择光标
+    pub char_sel: usize,
+    /// 图鉴子菜单光标
+    pub comp_sel: usize,
+    /// 当前看的图鉴种类
+    pub library: Library,
+    /// 图鉴光标(条目在 items() 里的下标,能停在标题行上)
+    pub lib_sel: usize,
 }
 
 impl App {
@@ -62,6 +76,236 @@ impl App {
             msg: "h/l look along the road, j/k pick a fork, enter to go".to_string(),
             warn: false,
             quit: false,
+            title_sel: 0,
+            char_sel: 0,
+            comp_sel: 0,
+            library: Library::Cards,
+            lib_sel: 0,
+        }
+    }
+
+    /// 真正的入口:从开始界面进(开始界面/角色选择/图鉴)
+    pub fn start(seed: u64) -> App {
+        let mut app = App::new(seed);
+        app.run.screen = Screen::Title;
+        app.msg = "j/k pick, enter confirm".to_string();
+        app
+    }
+
+    /// 开始界面的键位:不碰 run 的其它状态
+    fn start_key(&mut self, key: KeyEvent) {
+        match self.run.screen {
+            Screen::Title => self.title_key(key),
+            Screen::CharSelect => self.char_key(key),
+            Screen::Compendium => self.comp_key(key),
+            Screen::Library => self.lib_key(key),
+            _ => {}
+        }
+    }
+
+    /// 开始界面上的条目:(名字, 能不能选, 说明)
+    pub fn title_entries(&self) -> Vec<(&'static str, bool, &'static str)> {
+        vec![
+            ("continue", save::exists(), "resume the saved run"),
+            ("new game", true, "pick a character"),
+            ("compendium", true, "cards, relics and potions"),
+            ("quit", true, "leave the spire"),
+        ]
+    }
+
+    fn title_key(&mut self, key: KeyEvent) {
+        let n = self.title_entries().len();
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.title_sel = (self.title_sel + 1) % n,
+            KeyCode::Char('k') | KeyCode::Up => self.title_sel = (self.title_sel + n - 1) % n,
+            KeyCode::Char('g') => self.title_sel = 0,
+            KeyCode::Char('G') => self.title_sel = n - 1,
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let (label, ok, _) = self.title_entries()[self.title_sel];
+                if !ok {
+                    self.warn("no saved run");
+                    return;
+                }
+                match label {
+                    "continue" => self.load_save(),
+                    "new game" => {
+                        self.run.screen = Screen::CharSelect;
+                        self.char_sel = 0;
+                        self.msg = "j/k pick a character, enter confirm".to_string();
+                        self.warn = false;
+                    }
+                    "compendium" => {
+                        self.run.screen = Screen::Compendium;
+                        self.comp_sel = 0;
+                        self.info("j/k pick a section, enter open, esc back");
+                    }
+                    _ => self.quit = true,
+                }
+            }
+            KeyCode::Esc => self.quit = true,
+            _ => {}
+        }
+    }
+
+    fn char_key(&mut self, key: KeyEvent) {
+        let n = roster::all().len();
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.char_sel = (self.char_sel + 1) % n,
+            KeyCode::Char('k') | KeyCode::Up => self.char_sel = (self.char_sel + n - 1) % n,
+            KeyCode::Char('g') => self.char_sel = 0,
+            KeyCode::Char('G') => self.char_sel = n - 1,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.run.screen = Screen::Title;
+                self.info("j/k pick, enter confirm");
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let ch: &'static CharacterInfo = roster::by_index(self.char_sel);
+                match roster::blocked_reason(ch) {
+                    Some(reason) => self.warn(format!("{} not playable yet: {}", ch.name, reason)),
+                    None => self.start_run(ch),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 开一局新游戏:建 run,然后进 Neow 的祝福
+    pub fn start_run(&mut self, ch: &'static CharacterInfo) {
+        let seed = self.run.seed;
+        match Run::new_for(seed, ch) {
+            Ok(mut run) => {
+                run.open_neow();
+                self.run = run;
+                self.hand_sel = 0;
+                self.target_sel = 0;
+                self.map_sel = 0;
+                self.map_scroll = 0;
+                self.rest_index = 0;
+                self.potion_sel = None;
+                self.potion_pending = None;
+                save::clear();
+                self.info(format!("{}: seed {seed}", ch.name));
+            }
+            Err(e) => self.warn(e),
+        }
+    }
+
+    fn comp_key(&mut self, key: KeyEvent) {
+        let n = Library::ALL.len();
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.comp_sel = (self.comp_sel + 1) % n,
+            KeyCode::Char('k') | KeyCode::Up => self.comp_sel = (self.comp_sel + n - 1) % n,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.run.screen = Screen::Title;
+                self.info("j/k pick, enter confirm");
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.library = Library::ALL[self.comp_sel % n];
+                self.lib_sel = 0;
+                self.skip_header(1);
+                self.run.screen = Screen::Library;
+                self.info("j/k scroll, esc back");
+            }
+            _ => {}
+        }
+    }
+
+    /// 图鉴里 1/2/3 直接切三种, h/l 前后切
+    fn lib_key(&mut self, key: KeyEvent) {
+        let items = compendium::items(self.library);
+        let n = items.len();
+        let step = |cur: usize, d: i32| -> usize {
+            if n == 0 {
+                return 0;
+            }
+            (cur as i32 + d).rem_euclid(n as i32) as usize
+        };
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.lib_sel = step(self.lib_sel, 1),
+            KeyCode::Char('k') | KeyCode::Up => self.lib_sel = step(self.lib_sel, -1),
+            KeyCode::Char('g') => self.lib_sel = 0,
+            KeyCode::Char('G') => self.lib_sel = n.saturating_sub(1),
+            KeyCode::Char('h') | KeyCode::Char('l') => {
+                let all = Library::ALL;
+                let cur = all.iter().position(|l| *l == self.library).unwrap_or(0);
+                let d = if key.code == KeyCode::Char('l') { 1 } else { -1 };
+                let i = (cur as i32 + d).rem_euclid(all.len() as i32) as usize;
+                self.library = all[i];
+                self.lib_sel = 0;
+                self.info(self.library.title());
+            }
+            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') => {
+                let i = match key.code {
+                    KeyCode::Char('1') => 0,
+                    KeyCode::Char('2') => 1,
+                    _ => 2,
+                };
+                self.library = Library::ALL[i];
+                self.lib_sel = 0;
+                self.info(self.library.title());
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.run.screen = Screen::Compendium;
+                self.info("j/k pick a section, enter open, esc back");
+            }
+            _ => {}
+        }
+        self.skip_header(0);
+    }
+
+    /// 图鉴光标别停在分组标题上(d=0 表示只修正,不动)
+    fn skip_header(&mut self, d: i32) {
+        let items = compendium::items(self.library);
+        if items.is_empty() {
+            self.lib_sel = 0;
+            return;
+        }
+        let n = items.len();
+        let mut i = self.lib_sel.min(n - 1);
+        if d != 0 {
+            i = (i as i32 + d).rem_euclid(n as i32) as usize;
+        }
+        let start = i;
+        while items[i].header {
+            i = (i + 1) % n;
+            if i == start {
+                break;
+            }
+        }
+        self.lib_sel = i;
+    }
+
+    fn load_save(&mut self) {
+        let Some(text) = save::read() else {
+            self.warn("no saved run");
+            return;
+        };
+        match Run::from_save(&text) {
+            Ok(run) => {
+                self.run = run;
+                self.hand_sel = 0;
+                self.target_sel = 0;
+                self.map_sel = 0;
+                self.map_scroll = 0;
+                self.rest_index = 0;
+                self.potion_sel = None;
+                self.potion_pending = None;
+                self.info("continued run");
+            }
+            Err(e) => self.warn(e),
+        }
+    }
+
+    /// 在地图界面(每层开头)自动存档;结算时清掉存档。
+    /// 只有真正的事件循环会调它,单测不该碰磁盘。
+    pub fn maybe_save(&mut self) {
+        match self.run.screen {
+            Screen::Map => {
+                let _ = save::write(&self.run.save_text());
+            }
+            Screen::Victory | Screen::Death => save::clear(),
+            _ => {}
         }
     }
 
@@ -124,6 +368,14 @@ impl App {
             }
             Mode::Normal => {}
         }
+        // 开始界面/角色选择/图鉴:只有菜单键,别的都别碰
+        if matches!(
+            self.run.screen,
+            Screen::Title | Screen::CharSelect | Screen::Compendium | Screen::Library
+        ) {
+            self.start_key(key);
+            return;
+        }
         // 正在顶栏挑药水:键都交给它
         if self.potion_sel.is_some() {
             self.potion_sel_key(key);
@@ -179,6 +431,8 @@ impl App {
             Screen::Treasure => self.treasure_key(key),
             Screen::Pick => self.pick_key(key),
             Screen::Victory | Screen::Death => self.over_key(key),
+            // 开始界面那几个在上面就返回了
+            Screen::Title | Screen::CharSelect | Screen::Compendium | Screen::Library => {}
         }
     }
 
@@ -985,6 +1239,15 @@ impl App {
             return vec![("j/k", "target"), ("enter", "use"), ("esc", "cancel")];
         }
         match self.run.screen {
+            Screen::Title => vec![("j/k", "pick"), ("enter", "confirm"), ("q", "quit")],
+            Screen::CharSelect => vec![("j/k", "pick"), ("enter", "start"), ("esc", "back")],
+            Screen::Compendium => vec![("j/k", "pick"), ("enter", "open"), ("esc", "back")],
+            Screen::Library => vec![
+                ("j/k", "scroll"),
+                ("h/l 1-3", "switch"),
+                ("g/G", "top/bottom"),
+                ("esc", "back"),
+            ],
             Screen::Map => vec![
                 ("h/l", "look"),
                 ("j/k", "fork"),

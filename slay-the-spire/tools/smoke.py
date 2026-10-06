@@ -47,15 +47,17 @@ CARD_RE = re.compile(r"\|\s*(\d+)\.\s+([^|]*?)\s*\|")
 TYPE_RE = re.compile(r"\|\s*(Attack|Skill|Power|Status|Curse)\s+c\S*")
 
 
-DETAIL_RE = re.compile(r"^(\S[^|]*?)\s{2,}(Attack|Skill|Power|Status|Curse)\s{2,}cost\s+(\S+)\s*$")
+# 战斗界面里选中的牌的类型写成 <Attack> / [Skill] / (Power)
+KIND_RE = re.compile(r"[<\[(](Attack|Skill|Power|Status|Curse)[>\])]")
+ENERGY_RE = re.compile(r"\d+/\d+ energy")
 
 
 def selected_kind(text: str) -> str | None:
-    """从手牌区右侧的详情行里读出选中那张牌的类型(找不到就返回 None)。"""
+    """从说明区那一行读出选中那张牌的类型(找不到就返回 None)。"""
     for line in text.splitlines():
-        m = DETAIL_RE.match(line.strip())
+        m = KIND_RE.search(line)
         if m:
-            return m.group(2)
+            return m.group(1)
     return None
 
 
@@ -72,11 +74,31 @@ def play_one_turn(text: str) -> None:
 
 
 def current(screen_text: str) -> str:
-    for name in ("VICTORY", "DEATH", "COMBAT", "REWARD", "SHOP", "REST", "EVENT",
+    for name in ("VICTORY", "DEATH", "REWARD", "SHOP", "REST", "EVENT",
                  "TREASURE", "PICK", "MAP"):
         if f"-- {name} --" in screen_text:
             return name
+    # 战斗界面自带信息行和命令栏,没有 -- COMBAT -- 标记,靠能量行认
+    if ENERGY_RE.search(screen_text):
+        return "COMBAT"
     return "?"
+
+
+def enter_the_game() -> None:
+    """从开始界面进一局:new game -> 第一个角色 -> Neow 的第一个祝福。"""
+    for _ in range(24):
+        text = screen()
+        if "slay the spire" in text and "new game" in text:
+            send("j")          # 光标默认停在 continue,挪到 new game
+            send("Enter")
+        elif "choose a character" in text:
+            send("Enter")      # 第一个角色
+        elif "Neow's Blessing" in text:
+            send("Enter")      # 第一个祝福
+        elif "press enter" in text and "you are here" not in text:
+            send("Enter")
+        else:
+            return
 
 
 def wait_for_map(timeout: float = 8.0) -> str:
@@ -91,9 +113,10 @@ def wait_for_map(timeout: float = 8.0) -> str:
 
 def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
     start(binary, seed)
+    enter_the_game()
     seen: set[str] = set()
     text = wait_for_map()
-    if "merchant" not in text:
+    if "merchant" not in text.lower():
         raise AssertionError(f"seed {seed}: 地图没有图例,首屏如下:\n{text}")
     seen.add("MAP")
     # 战斗里的节奏:打最多 4 张攻击牌,找不到攻击牌连续挪 5 次就结束回合

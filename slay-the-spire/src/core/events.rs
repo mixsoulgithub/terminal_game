@@ -22,6 +22,8 @@ pub struct Outcome {
     pub add_card: Option<&'static str>,
     /// 加入牌组的诅咒牌
     pub add_curse: Option<&'static str>,
+    /// 随机加一张该稀有度的卡(Neow 的祝福)
+    pub add_random_card: Option<Rarity>,
     /// 随机一张诅咒
     pub add_random_curse: bool,
     /// 随机升级牌组里的一张牌
@@ -49,6 +51,7 @@ impl Outcome {
         random_relic_rarity: None,
         add_card: None,
         add_curse: None,
+        add_random_card: None,
         add_random_curse: false,
         upgrade_random_card: false,
         upgrade_card: false,
@@ -255,7 +258,7 @@ pub static EVENTS: &[EventDef] = &[
         ],
     },
     EventDef {
-        id: "the_sssserpent",
+        id: "the_ssssserpent",
         name: "The Sssserpent",
         body: &[
             "A giant serpent coils across the road.",
@@ -313,6 +316,50 @@ pub static EVENTS: &[EventDef] = &[
         ],
     },
 ];
+
+
+/// 开局祝福(Neow)。不进 EVENTS,只在开局时单独打开。
+pub fn neow() -> &'static EventDef {
+    &NEOW
+}
+
+pub static NEOW: EventDef = EventDef {
+    id: "neow",
+    name: "Neow's Blessing",
+    body: &[
+        "You wake at the foot of the spire.",
+        "A whale-shaped thing looms over you and offers a blessing.",
+    ],
+    choices: &[
+        EventChoice {
+            label: "Gain 100 gold",
+            cost_gold: 0,
+            cost_hp: 0,
+            outcome: outcome!(gold: 100, text: "Coins rain down on you."),
+        },
+        EventChoice {
+            label: "Max HP +8",
+            cost_gold: 0,
+            cost_hp: 0,
+            outcome: outcome!(max_hp: 8, text: "You feel tougher than before."),
+        },
+        EventChoice {
+            label: "Remove a card from your deck",
+            cost_gold: 0,
+            cost_hp: 0,
+            outcome: outcome!(remove_card: true, text: "One card is unmade."),
+        },
+        EventChoice {
+            label: "Take 10 damage: gain a random rare relic",
+            cost_gold: 0,
+            cost_hp: 10,
+            outcome: outcome!(
+                random_relic_rarity: Some(Rarity::Rare),
+                text: "Pain for power: a rare relic is yours."
+            ),
+        },
+    ],
+};
 
 /// 按 id 找事件(自检用)
 #[cfg(test)]
