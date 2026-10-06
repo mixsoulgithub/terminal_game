@@ -26,6 +26,10 @@ pub struct BattleShake {
     pub repeats: u8,
     /// true = 这次是自己出手(要顶到最大幅度停几帧),false = 挨打
     pub attacking: bool,
+    /// 这次抖动的最大幅度(挨打按伤害分档,出手固定 2)
+    pub amp: i32,
+    /// 这次抖动的总帧数:幅度越大帧数越多,看着才平滑
+    pub total: u8,
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
@@ -373,29 +377,74 @@ impl App {
 
     /// 抖动动画总共几帧(每帧间隔见 main.rs 的轮询时间)
     pub const SHAKE_FRAMES: u8 = 6;
-    /// 挨打的比出手的晚几帧起步:要落在出手方"顶住最大幅度"的那几帧里
+    /// 挨打的比出手的晚几帧起步
     pub const HURT_DELAY: u8 = 2;
-    /// 出手方顶在最大幅度上停几帧
-    pub const ATTACK_HOLD: u8 = 4;
+    /// 出手方收回来用几帧:1 帧(松手就直接弹回原位,不拖)
+    pub const ATTACK_RETURN: u8 = 1;
+    /// 挨打的伤害分档:达到 5 / 20 / 50 各涨一档幅度
+    pub const HURT_STEPS: [i32; 3] = [5, 20, 50];
+
+    /// 挨打该抖多大:伤害越高幅度越大(不够 5 点就是最小的一档)
+    pub fn hurt_amp(damage: i32) -> i32 {
+        1 + Self::HURT_STEPS.iter().filter(|t| damage >= **t).count() as i32
+    }
+
+    /// 幅度越大越要多给几帧,不然大抖会显得一跳一跳
+    fn hurt_total(amp: i32) -> u8 {
+        Self::SHAKE_FRAMES + (amp.max(2) - 2) as u8 * 2
+    }
+    /// 对面还剩几帧就松手:比对面抖完稍微早一点开始收
+    pub const RELEASE_EARLY: u8 = 2;
 
     /// 还在抖:事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
         self.shake > 0 || !self.battle_shakes.is_empty()
     }
 
-    /// 走一帧;返回是否还要继续
+    /// 走一帧;返回是否还要继续。
+    /// 出手方会一直顶在最大幅度上,直到对面把自己的抖动演完才收回来。
     pub fn tick(&mut self) -> bool {
+        use crate::core::combat::ShakeWho;
         self.shake = self.shake.saturating_sub(1);
+        // 两侧挨打的抖动还剩几帧(出手方要盯着对面这个数)
+        let hurt_left = |hero: bool| -> u8 {
+            self.battle_shakes
+                .iter()
+                .filter(|b| !b.attacking && matches!(b.who, ShakeWho::Hero) == hero)
+                .map(|b| b.frames)
+                .max()
+                .unwrap_or(0)
+        };
+        let hero_hurt = hurt_left(true);
+        let enemy_hurt = hurt_left(false);
         for b in self.battle_shakes.iter_mut() {
             if b.delay > 0 {
                 b.delay -= 1;
                 continue;
             }
+            if b.attacking {
+                let left = match b.who {
+                    ShakeWho::Hero => enemy_hurt,
+                    ShakeWho::Enemy(_) => hero_hurt,
+                };
+                // 对面还剩得多就继续顶住;快演完了(留 RELEASE_EARLY 帧)就松手
+                let waiting = left > Self::RELEASE_EARLY;
+                if waiting {
+                    // 顶住:帧数不走,对面演完再开始收
+                    b.frames = b.total;
+                    continue;
+                }
+                if b.frames >= b.total {
+                    // 对面演完了:进入收回阶段
+                    b.frames = Self::ATTACK_RETURN;
+                    continue;
+                }
+            }
             b.frames = b.frames.saturating_sub(1);
             if b.frames == 0 && b.repeats > 0 {
                 // 多段/连击:再来一轮
                 b.repeats -= 1;
-                b.frames = Self::SHAKE_FRAMES;
+                b.frames = b.total;
             }
         }
         self.battle_shakes.retain(|b| b.frames > 0);
@@ -410,23 +459,19 @@ impl App {
         if b.delay > 0 {
             return 0;
         }
-        // 出手:先顶在最大幅度停几帧(挨打方就在这几帧里反应),再收回来
-        // 挨打:一路递减
-        let step = (Self::SHAKE_FRAMES - b.frames) as usize;
+        // 出手:顶在最大幅度上(帧数由 tick 控制,对面演完才收回来)
+        // 挨打:从自己的最大幅度平滑递减到 0
+        let step = (b.total - b.frames) as f32;
         let amp = if b.attacking {
-            if step < Self::ATTACK_HOLD as usize {
-                2
-            } else if step == Self::ATTACK_HOLD as usize {
-                1
+            // 松手即弹回:顶住时是最大幅度,一进入收回阶段就是 0
+            if b.frames > Self::ATTACK_RETURN {
+                b.amp
             } else {
                 0
             }
         } else {
-            match step {
-                0 | 1 => 2,
-                2 | 3 => 1,
-                _ => 0,
-            }
+            let frac = (step / b.total.max(1) as f32).clamp(0.0, 1.0);
+            (b.amp as f32 * (1.0 - frac)).round() as i32
         };
         b.dir * amp
     }
@@ -442,6 +487,13 @@ impl App {
         for s in std::mem::take(&mut c.shakes) {
             let attacking = s.kind == ShakeKind::Attack;
             let delay = if attacking { 0 } else { Self::HURT_DELAY };
+            // 挨打按伤害分档:伤害越大抖得越狠,帧数也跟着加,保持平滑
+            let amp = if attacking { 2 } else { Self::hurt_amp(s.amount) };
+            let total = if attacking {
+                Self::SHAKE_FRAMES
+            } else {
+                Self::hurt_total(amp)
+            };
             match self.battle_shakes.iter_mut().find(|b| b.who == s.who) {
                 Some(b) => {
                     b.dir = s.dir;
@@ -450,10 +502,12 @@ impl App {
                 None => self.battle_shakes.push(BattleShake {
                     who: s.who,
                     dir: s.dir,
-                    frames: Self::SHAKE_FRAMES,
+                    frames: total,
                     delay,
                     repeats: 0,
                     attacking,
+                    amp,
+                    total,
                 }),
             }
         }
@@ -1762,21 +1816,36 @@ mod tests {
                 .any(|b| matches!(b.who, ShakeWho::Enemy(0)) && b.dir > 0),
             "挨打的敌人应该往右退"
         );
-        // 出手方要顶在最大幅度上停几帧,挨打方就在这几帧里反应
-        let peak = app.battle_shake_offset(ShakeWho::Hero);
-        assert_eq!(peak, 2, "出手应该顶到最大幅度");
-        for _ in 0..App::ATTACK_HOLD - 1 {
+        // 出手方顶在最大幅度上:对面还没抖完就一直顶住
+        assert_eq!(
+            app.battle_shake_offset(ShakeWho::Hero),
+            2,
+            "出手应该顶到最大幅度"
+        );
+        let mut held = 0;
+        while app.battle_shake_offset(ShakeWho::Hero) == 2 && held < 40 {
             app.tick();
-            assert_eq!(
-                app.battle_shake_offset(ShakeWho::Hero),
-                peak,
-                "这几帧要停在最大幅度"
-            );
+            held += 1;
         }
-        app.tick();
         assert!(
-            app.battle_shake_offset(ShakeWho::Hero) < peak,
-            "顶完之后收回来"
+            held >= App::SHAKE_FRAMES - App::RELEASE_EARLY,
+            "顶住的时间不该这么短({held} 帧)"
+        );
+        assert!(
+            app.battle_shakes
+                .iter()
+                .any(|b| !b.attacking && matches!(b.who, ShakeWho::Enemy(_))),
+            "松手时对面应该还没抖完(要略早于对面结束)"
+        );
+        // 对面演完后出手方收回来并结束
+        for _ in 0..(App::SHAKE_FRAMES + App::ATTACK_RETURN + 2) {
+            app.tick();
+        }
+        assert!(
+            !app.battle_shakes
+                .iter()
+                .any(|b| b.attacking && matches!(b.who, ShakeWho::Hero)),
+            "对面演完并收回之后,出手动画该结束了"
         );
         // 轮到敌人出手:敌人先往左冲,玩家晚一帧才往左退
         app.battle_shakes.clear();
@@ -1810,6 +1879,7 @@ mod tests {
                     who: ShakeWho::Enemy(0),
                     dir: 1,
                     kind: crate::core::combat::ShakeKind::Hurt,
+                    amount: 7,
                 });
             }
         }
@@ -1820,6 +1890,16 @@ mod tests {
             .find(|b| matches!(b.who, ShakeWho::Enemy(0)))
             .expect("应该有敌人的抖动");
         assert_eq!(b.repeats, 2, "3 段攻击 = 先抖 1 轮 + 再抖 2 轮");
+
+        // 伤害越大抖得越狠,帧数也跟着加(保持平滑)
+        assert_eq!(App::hurt_amp(4), 1, "不到 5 点是最小一档");
+        assert_eq!(App::hurt_amp(5), 2);
+        assert_eq!(App::hurt_amp(19), 2);
+        assert_eq!(App::hurt_amp(20), 3);
+        assert_eq!(App::hurt_amp(50), 4);
+        assert!(App::hurt_total(4) > App::hurt_total(2), "幅度大要多给帧数");
+        assert_eq!(b.amp, 2, "7 点伤害是第 2 档");
+        assert_eq!(b.total, App::hurt_total(2));
     }
 
     #[test]
