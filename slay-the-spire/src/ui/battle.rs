@@ -71,11 +71,10 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let mut y = main.y + top_h;
     // 第一行:能量在左,牌堆数量在右,中间用 ─ 补满
     let right = format!(
-        "draw {}{}exhausted {}{}discard {}",
+        "in hand {}/undrawn {}/exhausted {}/discard {}",
+        c.hand.len(),
         c.draw.len(),
-        crate::ui::BOX_H.to_string().repeat(3),
         c.exhaust.len(),
-        crate::ui::BOX_H.to_string().repeat(3),
         c.discard.len()
     );
     let rw = display_width(&right) as u16;

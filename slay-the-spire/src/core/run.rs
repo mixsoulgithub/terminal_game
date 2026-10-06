@@ -849,6 +849,7 @@ impl Run {
         let mut items: Vec<ShopItem> = Vec::new();
         // 店里卖的牌也不重样
         let mut sold: Vec<&'static str> = Vec::new();
+        let mut sold_potions: Vec<&'static str> = Vec::new();
         for (rarity, count) in [
             (Rarity::Common, 2),
             (Rarity::Uncommon, 2),
@@ -873,7 +874,17 @@ impl Run {
             }
         }
         for _ in 0..2 {
-            let def = potions::random_potion(&mut self.rng);
+            // 两瓶药水不重复
+            let mut def = potions::random_potion(&mut self.rng);
+            let mut guard = 0;
+            while sold_potions.contains(&def.id) && guard < 40 {
+                guard += 1;
+                def = potions::random_potion(&mut self.rng);
+            }
+            if sold_potions.contains(&def.id) {
+                continue;
+            }
+            sold_potions.push(def.id);
             let base = self.rng.range_inclusive(48, 72);
             items.push(ShopItem::Potion(def, self.discount(base)));
         }
@@ -1515,6 +1526,40 @@ mod tests {
         let last = r.pos.expect("应该有落点");
         assert_eq!(r.map.node(last).kind, NodeKind::Boss);
         assert!(r.floor_reached >= FLOORS - 1);
+    }
+
+    /// 商店不卖重复的东西, 也不卖已经拿到的遗物
+    #[test]
+    fn shop_has_no_duplicates_and_no_owned_relics() {
+        for seed in 0..80u64 {
+            let mut r = run(seed);
+            r.open_shop();
+            let mut keys: Vec<String> = Vec::new();
+            for it in &r.shop.as_ref().unwrap().items {
+                let key = match it {
+                    ShopItem::Card(c, _) => format!("card:{}", c.def.id),
+                    ShopItem::Relic(d, _) => format!("relic:{}", d.id),
+                    ShopItem::Potion(d, _) => format!("potion:{}", d.id),
+                    ShopItem::Remove(_) => "remove".to_string(),
+                };
+                assert!(!keys.contains(&key), "seed {seed}: 商店里重复了 {key}");
+                keys.push(key);
+            }
+            for it in &r.shop.as_ref().unwrap().items {
+                if let ShopItem::Relic(d, _) = it {
+                    assert!(
+                        !r.player.relics.iter().any(|x| x.id == d.id),
+                        "seed {seed}: 卖了已经有的遗物 {}",
+                        d.id
+                    );
+                }
+            }
+            // 池子里不该留着已经拿到的遗物(全局不重复)
+            assert!(r
+                .relic_pool
+                .iter()
+                .all(|p| !r.player.relics.iter().any(|o| o.id == p.id)));
+        }
     }
 
     /// 三选一不该出现同一张牌(抽很多局来看)

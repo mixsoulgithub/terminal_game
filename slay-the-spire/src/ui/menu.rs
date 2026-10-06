@@ -236,6 +236,7 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
             item,
             idx == s.index,
             s.sold.get(idx).copied().unwrap_or(false),
+            app.run.player.gold,
         );
     }
     // 说明
@@ -275,24 +276,42 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
 }
 
 /// 商品行的名字部分:卡牌用战斗里那套(费用+牌名),其它就一行文字
-fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected: bool, sold: bool) {
+fn shop_row(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    w: u16,
+    item: &ShopItem,
+    selected: bool,
+    sold: bool,
+    gold: i32,
+) {
     if w == 0 {
         return;
     }
     let bg = if selected { theme::SEL_BG } else { theme::BG };
     let base = Style::default().bg(bg);
     put_padded(buf, x, y, "", w as usize, base);
-    // 价钱最多 $999,固定 4 格,靠右摆
-    let price = format!("{:<4}", format!("${}", item.price()));
+    // 卖光了、或者钱不够:整行压暗,价钱前面挂个标记
+    let affordable = gold >= item.price();
+    let dead = sold || !affordable;
+    let tag = if sold {
+        "[sold out] "
+    } else if !affordable {
+        "[can't afford] "
+    } else {
+        ""
+    };
+    let price = format!("{}{:<4}", tag, format!("${}", item.price()));
     let field_w = display_width(&price).min(w as usize);
     let name_w = (w as usize).saturating_sub(field_w + 1);
     match item {
         ShopItem::Card(card, _) => {
-            crate::ui::put_card_line(buf, x, y, name_w as u16, card, selected, sold);
+            crate::ui::put_card_line(buf, x, y, name_w as u16, card, selected, dead);
         }
         ShopItem::Relic(def, _) => {
             // 稀有度不用写出来,名字的颜色就是稀有度
-            let style = if sold {
+            let style = if dead {
                 theme::dim().bg(bg)
             } else {
                 theme::fg(theme::relic_color(def.rarity)).bg(bg)
@@ -301,7 +320,7 @@ fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected:
         }
         ShopItem::Potion(def, _) => {
             // 药水用 () 括起来
-            let style = if sold {
+            let style = if dead {
                 theme::dim().bg(bg)
             } else {
                 theme::fg(theme::relic_color(def.rarity)).bg(bg)
@@ -309,11 +328,11 @@ fn shop_row(buf: &mut Buffer, x: u16, y: u16, w: u16, item: &ShopItem, selected:
             put(buf, x, y, &truncate(&format!("({})", def.name), name_w), style);
         }
         ShopItem::Remove(_) => {
-            let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::GOOD).bg(bg) };
+            let style = if dead { theme::dim().bg(bg) } else { theme::fg(theme::GOOD).bg(bg) };
             put(buf, x, y, &truncate("Card Removal Service", name_w), style);
         }
     }
-    let style = if sold { theme::dim().bg(bg) } else { theme::fg(theme::GOLD).bg(bg) };
+    let style = if dead { theme::dim().bg(bg) } else { theme::fg(theme::GOLD).bg(bg) };
     put(buf, x + (w as usize - field_w) as u16, y, &price, style);
 }
 

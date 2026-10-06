@@ -82,17 +82,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     if !tip.is_empty() {
         put(buf, area.x, area.y + area.height.saturating_sub(2), &tip, theme::fg(theme::WARN));
     }
-    // 地图下面一行:亮暗和当前位置怎么读
-    let hint = "bright = you can go there next    green = you are here";
-    put(
-        buf,
-        area.x,
-        area.y + area.height.saturating_sub(2),
-        &truncate(hint, area.width as usize),
-        theme::dim(),
-    );
+    // 右边空着就摆图例(不再写"亮暗怎么读"那行)
     if legend_shown {
-        // 右边空着,图例就摆在那里
         for (i, (text, style)) in legend.iter().enumerate() {
             put(buf, right_x, legend_y + i as u16, text, *style);
         }

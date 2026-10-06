@@ -5,6 +5,8 @@ start window (full screen, no top/relic/status bar)
   character select: one centered box, one line per character (name, hp, starting relic, deck size)
   compendium: one centered box, one line per book (card library / relic collection / potion lab)
   shop: list on the left (relic = name colored by rarity, potion = (name)),
+        price on the right with a [sold out] / [can't afford] tag in front of the $,
+        the whole line goes gray in those two cases,
         detail on the right centered (name / [rarity] / description)
 
   library: full-screen box
@@ -20,6 +22,7 @@ top bar: blood / blood limitation / block ...
 relic bar
 battle area
 info bar
+  battle: energy counter on the left, "in hand n/undrawn n/exhausted n/discard n" on the right
 command bar
 
 battle area
