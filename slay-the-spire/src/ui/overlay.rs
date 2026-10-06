@@ -14,8 +14,14 @@ use crate::ui::{draw_box, put, put_padded, truncate};
 pub enum Overlay {
     /// 整条路的样子,只读
     Map,
-    /// 战斗里连抽牌堆/手牌/弃牌堆/消耗堆一起看
+    /// 整副牌组(战斗中也是整副)
     Deck,
+    /// 只看待抽的牌
+    Draw,
+    /// 只看弃牌堆
+    Discard,
+    /// 只看消耗堆
+    Exhaust,
     Relics,
     Potions,
     /// 一整局发生过的事
@@ -27,7 +33,10 @@ impl Overlay {
     pub fn title(self) -> &'static str {
         match self {
             Overlay::Map => "map",
-            Overlay::Deck => "cards",
+            Overlay::Deck => "deck",
+            Overlay::Draw => "undrawn",
+            Overlay::Discard => "discarded",
+            Overlay::Exhaust => "exhausted",
             Overlay::Relics => "relics",
             Overlay::Potions => "potions",
             Overlay::History => "history",
@@ -39,7 +48,10 @@ impl Overlay {
     pub fn close_key(self) -> &'static str {
         match self {
             Overlay::Map => "m",
-            Overlay::Deck => "d",
+            Overlay::Deck => "D",
+            Overlay::Draw => "u",
+            Overlay::Discard => "d",
+            Overlay::Exhaust => "e",
             Overlay::Relics => "r",
             Overlay::Potions => "p",
             Overlay::History => "H",
@@ -61,20 +73,7 @@ pub fn deck_rows(app: &App) -> Vec<crate::ui::CardRow> {
         }
     }
     let mut rows = Vec::new();
-    match run.combat() {
-        Some(c) => {
-            for (name, pile) in [
-                ("hand", &c.hand),
-                ("draw pile", &c.draw),
-                ("discard pile", &c.discard),
-                ("exhausted", &c.exhaust),
-            ] {
-                rows.push(CardRow::Header(format!("{name} ({})", pile.len())));
-                push(&mut rows, pile);
-            }
-        }
-        None => push(&mut rows, &run.player.deck),
-    }
+    push(&mut rows, &run.player.deck);
     rows
 }
 
@@ -86,6 +85,20 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
         Overlay::Map => {}
         Overlay::Deck => {
             // 牌组窗口改用"列表 + 说明",这里不再产生行
+        }
+        Overlay::Draw | Overlay::Discard | Overlay::Exhaust => {
+            let pile: &[CardInstance] = match (ov, run.combat()) {
+                (Overlay::Draw, Some(c)) => &c.draw,
+                (Overlay::Discard, Some(c)) => &c.discard,
+                (Overlay::Exhaust, Some(c)) => &c.exhaust,
+                _ => &[],
+            };
+            for (i, card) in pile.iter().enumerate() {
+                out.push((
+                    format!("{:>3}. {:<20} {}", i + 1, card.label(), card.display_text()),
+                    theme::fg(theme::card_color(card.rarity())),
+                ));
+            }
         }
         Overlay::Relics => {
             for (i, r) in run.player.relics.iter().enumerate() {

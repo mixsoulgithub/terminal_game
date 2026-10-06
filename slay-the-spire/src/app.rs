@@ -582,7 +582,7 @@ impl App {
         }
         // 叠加层:再按同一个键就关掉,按另一个叠加层键就直接切过去
         if let Some(ov) = self.overlay {
-            if let Some(other) = overlay_key_of(key.code) {
+            if let Some(other) = overlay_key_of(self, key.code) {
                 self.potion_pending = None;
                 self.toss_pending = false;
                 if other == ov {
@@ -616,7 +616,7 @@ impl App {
             return;
         }
         // 全局叠加层开关:任何阶段(含结算界面)都能看牌组/地图/遗物/药水
-        if let Some(ov) = overlay_key_of(key.code) {
+        if let Some(ov) = overlay_key_of(self, key.code) {
             self.open_overlay(ov);
             return;
         }
@@ -978,7 +978,10 @@ impl App {
             }
             KeyCode::Char('j') | KeyCode::Down => self.move_target(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_target(-1),
-            KeyCode::Char('e') | KeyCode::Char(' ') => {
+            // 空格 = 打出选中的牌(原来的 enter)
+            KeyCode::Char(' ') => self.play(),
+            // 回车 = 结束回合(原来的 e)
+            KeyCode::Enter => {
                 if let Some(c) = self.run.combat_mut() {
                     c.end_turn();
                 }
@@ -986,7 +989,6 @@ impl App {
                 self.info("enemies act...");
                 self.clamp();
             }
-            KeyCode::Enter => self.play(),
             KeyCode::Char(c) => {
                 if let Some(slot) = hand_slot(c) {
                     if slot < hand_len {
@@ -1452,7 +1454,13 @@ impl App {
                 ("?", "help"),
                 (":", "cmd"),
             ],
-            Screen::Combat => vec![("?", "help"), (":", "cmd")],
+            Screen::Combat => vec![
+                ("space", "play"),
+                ("enter", "end turn"),
+                ("D u d e", "deck/undrawn/discarded/exhausted"),
+                ("?", "help"),
+                (":", "cmd"),
+            ],
             Screen::Reward => vec![
                 ("j/k", "gold/cards/relic/potion"),
                 ("h/l", "card"),
@@ -1481,7 +1489,10 @@ impl App {
             ("enter", "confirm / play the selected card"),
             ("esc", "cancel / close"),
             ("1-9 0", "combat: select and play the nth card"),
-            ("e space", "combat: end your turn"),
+            ("space", "combat: play the selected card"),
+            ("enter", "combat: end your turn"),
+            ("D", "combat: the whole deck"),
+            ("u d e", "combat: undrawn / discarded / exhausted piles"),
             ("d", "cards: deck; in combat all four piles"),
             ("m", "map, look along the road with h/l"),
             ("r", "relics"),
@@ -1552,7 +1563,23 @@ fn matching(pool: &[&str], prefix: &str) -> Vec<String> {
     v.into_iter().map(|s| s.to_string()).collect()
 }
 
-fn overlay_key_of(code: KeyCode) -> Option<Overlay> {
+/// 叠加层开关。战斗里 d/e 让给"弃牌堆/消耗堆",所以牌组改用 D,
+/// 另外 u 看待抽、d 看弃牌、e 看消耗;平时还是 d 看牌组那一套。
+fn overlay_key_of(app: &App, code: KeyCode) -> Option<Overlay> {
+    let in_combat = app.run.combat().is_some() && app.run.screen == Screen::Combat;
+    if in_combat {
+        return match code {
+            KeyCode::Char('D') => Some(Overlay::Deck),
+            KeyCode::Char('u') => Some(Overlay::Draw),
+            KeyCode::Char('d') => Some(Overlay::Discard),
+            KeyCode::Char('e') => Some(Overlay::Exhaust),
+            KeyCode::Char('m') => Some(Overlay::Map),
+            KeyCode::Char('r') => Some(Overlay::Relics),
+            KeyCode::Char('p') => Some(Overlay::Potions),
+            KeyCode::Char('H') => Some(Overlay::History),
+            _ => None,
+        };
+    }
     match code {
         KeyCode::Char('d') => Some(Overlay::Deck),
         KeyCode::Char('m') => Some(Overlay::Map),
@@ -1687,7 +1714,7 @@ mod tests {
         let mut app = App::new(5);
         app.handle_key(enter());
         let turn = app.run.combat().unwrap().turn;
-        app.handle_key(key('e'));
+        app.handle_key(enter()); // 回车 = 结束回合
         let c = app.run.combat().unwrap();
         assert_eq!(c.turn, turn + 1);
         assert_eq!(c.phase, crate::core::combat::Phase::PlayerTurn);
@@ -1805,7 +1832,7 @@ mod tests {
             .position(|c| c.kind() == crate::core::card::CardType::Attack);
         let Some(idx) = idx else { return };
         app.hand_sel = idx;
-        app.handle_key(enter()); // 打出这张攻击牌
+        app.handle_key(key(' ')); // 空格 = 打出这张攻击牌
         assert!(
             app.battle_shake_offset(ShakeWho::Hero) > 0,
             "出手时角色应该往右冲"
@@ -1849,7 +1876,7 @@ mod tests {
         );
         // 轮到敌人出手:敌人先往左冲,玩家晚一帧才往左退
         app.battle_shakes.clear();
-        app.handle_key(key('e'));
+        app.handle_key(enter()); // 回车 = 结束回合
         assert!(
             app.battle_shakes
                 .iter()

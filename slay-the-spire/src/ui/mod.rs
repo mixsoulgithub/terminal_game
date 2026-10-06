@@ -576,8 +576,6 @@ pub fn put_card_line(
 
 /// 卡牌窗口里的一行
 pub enum CardRow {
-    /// 分组标题(战斗里各堆的名字)
-    Header(String),
     Card {
         card: crate::core::card::CardInstance,
         /// 不可选的行会压暗,光标跳过
@@ -624,9 +622,6 @@ pub fn card_window(
         let idx = start + i;
         let y = list.y + i as u16;
         match row {
-            CardRow::Header(text) => {
-                put_padded(buf, list.x, y, text, lw as usize, theme::fg(theme::INFO));
-            }
             CardRow::Card { card, selectable } => {
                 put_card_line(buf, list.x, y, lw, card, idx == sel, !selectable);
             }
