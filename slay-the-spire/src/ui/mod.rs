@@ -1059,6 +1059,27 @@ mod tests {
         assert!(crate::ui::mapview::edge_lit(&future, Some(2), 2, 1));
     }
 
+    /// 叠加层滚到底之后再按 j 不该继续累加(不然按 k 要先把多按的还回去)
+    #[test]
+    fn overlay_scroll_stops_at_the_bottom() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        let mut app = App::new(7);
+        app.handle_key(key('H'));
+        let _ = screen_text(&app, 100, 30); // 渲染一帧,最大滚动量才会写回
+        for _ in 0..200 {
+            app.handle_key(key('j'));
+        }
+        let bottom = app.overlay_scroll;
+        assert_eq!(bottom, app.overlay_max.get(), "到底之后再按 j 不该继续加");
+        app.handle_key(key('k'));
+        assert_eq!(
+            app.overlay_scroll,
+            bottom.saturating_sub(1),
+            "按一次 k 就该往回走一格"
+        );
+    }
+
     #[test]
     fn minimum_terminal_is_80x24() {
         let app = App::new(5);

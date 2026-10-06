@@ -141,6 +141,7 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
 
 pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     if ov == Overlay::Map {
+        app.overlay_max.set(0);
         render_map(buf, area, app);
         return;
     }
@@ -183,7 +184,9 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     let rows = lines(app, ov);
     let inner_h = rect.height.saturating_sub(2) as usize;
     // 夹在"最多能滚到最后一屏"的位置:历史记录打开时就是直接看最新几条
-    let scroll = (app.overlay_scroll as usize).min(rows.len().saturating_sub(inner_h));
+    let max_scroll = rows.len().saturating_sub(inner_h);
+    app.overlay_max.set(max_scroll as u16);
+    let scroll = (app.overlay_scroll as usize).min(max_scroll);
     let inner_w = rect.width.saturating_sub(4) as usize;
     for i in 0..inner_h {
         let Some((text, style)) = rows.get(scroll + i) else {

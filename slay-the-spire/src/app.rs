@@ -16,9 +16,7 @@ pub enum Mode {
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
-const COMMANDS: &[&str] = &[
-    "new", "q", "qa", "quit", "restart", "room", "seed", "win", "wq", "x",
-];
+const COMMANDS: &[&str] = &["help", "q", "quit", "restart", "room", "seed", "win"];
 /// :room 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
 
@@ -28,6 +26,8 @@ pub struct App {
     pub cmd: String,
     pub overlay: Option<Overlay>,
     pub overlay_scroll: u16,
+    /// 上一次渲染算出的最大滚动量:到底之后再按 j 不会继续累加
+    pub overlay_max: std::cell::Cell<u16>,
     /// 看牌组窗口里的光标(行下标,跳过分组标题)
     pub overlay_sel: usize,
     /// 手牌光标
@@ -76,6 +76,7 @@ impl App {
             cmd: String::new(),
             overlay: None,
             overlay_scroll: 0,
+            overlay_max: std::cell::Cell::new(0),
             overlay_sel: 0,
             hand_sel: 0,
             target_sel: 0,
@@ -323,6 +324,7 @@ impl App {
         self.cmd.clear();
         self.overlay = None;
         self.overlay_scroll = 0;
+        self.overlay_max.set(0);
         self.overlay_sel = 0;
         self.hand_sel = 0;
         self.target_sel = 0;
@@ -516,7 +518,11 @@ impl App {
                 if self.overlay == Some(Overlay::Deck) {
                     self.move_deck_cursor(1);
                 } else {
-                    self.overlay_scroll = self.overlay_scroll.saturating_add(1);
+                    // 夹在底部:到底之后继续按 j 不会攒着,免得按 k 要先"还回去"
+                    self.overlay_scroll = self
+                        .overlay_scroll
+                        .saturating_add(1)
+                        .min(self.overlay_max.get());
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -1208,7 +1214,8 @@ impl App {
             None => (cmd, ""),
         };
         match head {
-            "q" | "qa" | "quit" | "wq" | "x" => self.quit = true,
+            "q" | "quit" => self.quit = true,
+            "help" => self.open_overlay(Overlay::Help),
             "seed" => self.info(format!("seed {}", self.run.seed)),
             // :room shop / battle / event(调试用:直接进房间,不动地图)
             "room" => {
@@ -1225,13 +1232,16 @@ impl App {
                     self.warn("not in a battle");
                 }
             }
-            "new" | "restart" => {
-                let seed = if rest.is_empty() {
-                    self.run.seed.wrapping_add(0x2545_F491)
+            // 重开一局:不给种子就随机,给了就用给的
+            "restart" => {
+                if rest.is_empty() {
+                    self.restart(crate::rng::random_seed());
                 } else {
-                    rest.parse::<u64>().unwrap_or(self.run.seed)
-                };
-                self.restart(seed);
+                    match rest.parse::<u64>() {
+                        Ok(seed) => self.restart(seed),
+                        Err(_) => self.warn("usage: restart [seed]"),
+                    }
+                }
             }
             "" => {}
             other => self.warn(format!("unknown command: {other}")),
@@ -1337,10 +1347,11 @@ impl App {
             ("?", "this help"),
             (":", "command line"),
             (":q", "quit"),
+            (":help", "this help"),
             (":seed", "show the run seed"),
             (":room shop|battle|event", "jump straight into that room (debug)"),
             (":win", "win the current battle (skip to the reward)"),
-            (":new [seed]", "start a new run"),
+            (":restart [seed]", "restart from the beginning (random seed if omitted)"),
             ("R n", "after the run ends: restart with the same / a new seed"),
             ("ctrl-c", "quit at any time"),
         ]
@@ -1705,12 +1716,19 @@ mod tests {
         app.handle_key(enter());
         assert_eq!(app.run.screen, Screen::Combat);
         app.handle_key(key(':'));
-        for c in "new 77".chars() {
+        for c in "restart 77".chars() {
             app.handle_key(key(c));
         }
         app.handle_key(enter());
         assert_eq!(app.run.screen, Screen::Map);
         assert_eq!(app.run.seed, 77);
+        // 不给种子就是随机种子
+        app.handle_key(key(':'));
+        for c in "restart".chars() {
+            app.handle_key(key(c));
+        }
+        app.handle_key(enter());
+        assert_ne!(app.run.seed, 77, "不给种子应该换一个随机种子");
     }
 
     #[test]

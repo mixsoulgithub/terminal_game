@@ -1,5 +1,15 @@
 // 确定性伪随机:xoshiro256** + splitmix64 播种.
 // 不引入 rand 依赖,同一 seed 永远产生同一条时间线,便于复现一局与写单测.
+/// 随机种子:时间纳秒混上进程号,不用第三方的 rand
+pub fn random_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    nanos ^ (std::process::id() as u64) << 32
+}
+
 pub struct Rng {
     s: [u64; 4],
 }

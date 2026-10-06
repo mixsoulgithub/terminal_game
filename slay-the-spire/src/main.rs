@@ -8,7 +8,6 @@ mod ui;
 use std::env;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event};
 
@@ -71,13 +70,6 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
     Ok(args)
 }
 
-fn random_seed() -> u64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    nanos ^ (std::process::id() as u64) << 32
-}
 
 fn main() -> ExitCode {
     let args = match parse(env::args().skip(1)) {
@@ -108,7 +100,7 @@ fn main() -> ExitCode {
         eprintln!("spire: needs a terminal (stdout is not a tty)");
         return ExitCode::from(1);
     }
-    let seed = args.seed.unwrap_or_else(random_seed);
+    let seed = args.seed.unwrap_or_else(crate::rng::random_seed);
     match run(seed) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
