@@ -251,7 +251,7 @@ fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
     // 正文居中折行,伤害/格挡数字上色;语料的正文本身带换行,按行分开折
     let text = if upgraded { &item.text_up } else { &item.text };
     for para in text.split('\n') {
-        let words = crate::ui::desc_words(para);
+        let words = crate::ui::desc_words(para, theme::energy_color(item.color_key));
         for line in crate::ui::wrap_words(&words, w) {
             if y >= bottom {
                 return;

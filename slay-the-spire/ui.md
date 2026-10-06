@@ -21,6 +21,7 @@ command bar
 
 battle area
   card area | enemy area
+  enemy: no box, only the chosen one gets four lit corners
 
 card area
   energy

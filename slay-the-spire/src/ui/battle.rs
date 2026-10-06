@@ -133,7 +133,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
     y += 1;
     // 说明文本:固定两行,居中,伤害/格挡上色
-    let words = crate::ui::desc_words(&desc_text);
+    let words = crate::ui::desc_words(&desc_text, crate::ui::run_energy_color(&app.run));
     let mut drawn = 0u16;
     for line in crate::ui::wrap_words(&words, main.width as usize)
         .into_iter()
@@ -412,26 +412,11 @@ fn render_enemy_block(buf: &mut Buffer, slot: Rect, lines: &[Vec<(String, Style)
             slot.y + slot.height.saturating_sub(rows) / 2,
         )
     };
-    if framed {
+    // 不画灰色的框,只有选中的那个敌人才点四个角
+    if framed && selected {
         let bx = x - 1;
         let by = y - 1;
-        let edge = theme::fg(theme::BORDER);
-        let corner = theme::fg(if selected { theme::SEL_FG } else { theme::BORDER });
-        let top = format!(
-            "┌{}┐",
-            crate::ui::BOX_H.to_string().repeat((box_w - 2) as usize)
-        );
-        let bottom = format!(
-            "└{}┘",
-            crate::ui::BOX_H.to_string().repeat((box_w - 2) as usize)
-        );
-        put(buf, bx, by, &top, edge);
-        put(buf, bx, by + box_h - 1, &bottom, edge);
-        for yy in by + 1..by + box_h - 1 {
-            let v = crate::ui::BOX_V.to_string();
-            put(buf, bx, yy, &v, edge);
-            put(buf, bx + box_w - 1, yy, &v, edge);
-        }
+        let corner = theme::fg(theme::SEL_FG);
         put(buf, bx, by, "┌", corner);
         put(buf, bx + box_w - 1, by, "┐", corner);
         put(buf, bx, by + box_h - 1, "└", corner);

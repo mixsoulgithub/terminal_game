@@ -163,7 +163,15 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
             ov.title(),
             ov.close_key()
         );
-        crate::ui::card_window(buf, rect, &title, &rows, app.overlay_sel, None);
+        crate::ui::card_window(
+            buf,
+            rect,
+            &title,
+            &rows,
+            app.overlay_sel,
+            None,
+            crate::ui::run_energy_color(&app.run),
+        );
         return;
     }
     let title = format!(

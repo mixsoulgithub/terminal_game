@@ -248,10 +248,31 @@ fn put_centered(buf: &mut Buffer, x: u16, y: u16, w: usize, text: &str, style: S
 }
 
 /// 把描述按词切开:数字后面跟 damage/block 时分别上血色/蓝色
-fn desc_words(text: &str) -> Vec<(String, Style)> {
+pub(crate) fn desc_words(text: &str, energy: ratatui::style::Color) -> Vec<(String, Style)> {
     let words: Vec<&str> = text.split(' ').collect();
     let mut out = Vec::new();
+    // "(2)" 是获得能量的记号:括号用能量色,数字保持默认色。
+    // 记号后面可能跟着句号/逗号("(2)."),尾巴要原样接回去。
+    let token = |w: &str| -> Option<(String, String)> {
+        let rest = w.strip_prefix('(')?;
+        let close = rest.find(')')?;
+        let num: String = rest[..close].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if num.is_empty() {
+            return None;
+        }
+        Some((format!("({num})"), rest[close + 1..].to_string()))
+    };
     for (i, w) in words.iter().enumerate() {
+        if let Some((tok, tail)) = token(w) {
+            let num = &tok[1..tok.len() - 1];
+            out.push(("(".to_string(), theme::fg(energy)));
+            out.push((num.to_string(), theme::fg(theme::FG)));
+            out.push((")".to_string(), theme::fg(energy)));
+            if !tail.is_empty() {
+                out.push((tail, theme::fg(theme::FG)));
+            }
+            continue;
+        }
         let next = words.get(i + 1).map(|n| n.to_ascii_lowercase()).unwrap_or_default();
         let is_num = w.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false);
         let color = if is_num && next.starts_with("damage") {
@@ -270,19 +291,47 @@ fn desc_words(text: &str) -> Vec<(String, Style)> {
     out
 }
 
+/// 玩家能量括号的颜色(按角色);说明里的 (N) 也用它
+pub fn run_energy_color(run: &crate::core::run::Run) -> ratatui::style::Color {
+    theme::energy_color(
+        crate::core::roster::find(run.character)
+            .map(|c| c.color)
+            .unwrap_or("gray"),
+    )
+}
+
 /// 按宽度把带样式的词折行
+/// 两段之间要不要空格:括号和标点前后都不该插空格("(2)." 这种)
+fn needs_space(prev: &str, next: &str) -> bool {
+    if prev.is_empty() || next.is_empty() {
+        return false;
+    }
+    if prev.ends_with('(') || prev.ends_with('[') {
+        return false;
+    }
+    !matches!(next.chars().next(), Some(')') | Some(']') | Some('.') | Some(',') | Some(';'))
+}
+
 fn wrap_words(words: &[(String, Style)], width: usize) -> Vec<Vec<(String, Style)>> {
     let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
     let mut cur: Vec<(String, Style)> = Vec::new();
     let mut cur_w = 0usize;
     for (w, st) in words {
         let ww = display_width(w);
-        let extra = if cur.is_empty() { 0 } else { 1 };
+        let space = cur
+            .last()
+            .map(|(t, _)| needs_space(t, w))
+            .unwrap_or(false);
+        let extra = if space { 1 } else { 0 };
         if cur_w + ww + extra > width && !cur.is_empty() {
             lines.push(std::mem::take(&mut cur));
             cur_w = 0;
         }
-        if !cur.is_empty() {
+        let space = cur
+            .last()
+            .map(|(t, _)| needs_space(t, w))
+            .unwrap_or(false);
+        if space {
             cur.push((" ".to_string(), theme::fg(theme::FG)));
             cur_w += 1;
         }
@@ -317,7 +366,12 @@ fn kind_label(kind: crate::core::card::CardType) -> String {
 }
 
 /// 一张牌的说明主体:名字、类型、描述都居中(不含费用)
-pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
+pub fn card_body(
+    buf: &mut Buffer,
+    rect: Rect,
+    card: &crate::core::card::CardInstance,
+    energy: ratatui::style::Color,
+) {
     let w = rect.width as usize;
     if w == 0 || rect.height == 0 {
         return;
@@ -337,7 +391,7 @@ pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
     put_centered(buf, rect.x, y, w, &kind_label(card.kind()), theme::fg(theme::FG));
     y += 1;
     // 描述居中,按宽度折行;伤害数字上血色、格挡数字上蓝色
-    let words = desc_words(&card.display_text());
+    let words = desc_words(&card.display_text(), energy);
     let max = (bottom - y) as usize;
     for line in wrap_words(&words, w).into_iter().take(max) {
         if y >= bottom {
@@ -349,7 +403,12 @@ pub fn card_body(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
 }
 
 /// 一张牌的完整说明:费用靠左,剩下交给 card_body
-pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardInstance) {
+pub fn card_desc(
+    buf: &mut Buffer,
+    rect: Rect,
+    card: &crate::core::card::CardInstance,
+    energy: ratatui::style::Color,
+) {
     let w = rect.width as usize;
     if w == 0 || rect.height == 0 {
         return;
@@ -361,6 +420,7 @@ pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
         buf,
         Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
         card,
+        energy,
     );
 }
 
@@ -534,6 +594,7 @@ pub fn card_window(
     rows: &[CardRow],
     sel: usize,
     after: Option<&crate::core::card::CardInstance>,
+    energy: ratatui::style::Color,
 ) {
     draw_box(buf, area, title, theme::fg(theme::SEL_FG), theme::fg(theme::INFO));
     if area.width < 4 || area.height < 4 {
@@ -597,10 +658,10 @@ pub fn card_window(
                 theme::fg(theme::BORDER),
             );
         }
-        card_desc(buf, first, card);
-        card_desc(buf, second, after);
+        card_desc(buf, first, card, energy);
+        card_desc(buf, second, after, energy);
     } else {
-        card_desc(buf, split.detail, card);
+        card_desc(buf, split.detail, card, energy);
     }
 }
 
@@ -801,6 +862,28 @@ mod tests {
         assert!(text.contains('B'), "缺少 Boss 节点");
         assert!(text.contains("$99"), "顶栏没画出来");
         assert!(text.contains("80/80"), "血量数字没画出来");
+    }
+
+    /// 说明里的 (N) 要按能量色上色,数字保持默认色
+    #[test]
+    fn energy_tokens_in_text_take_the_energy_color() {
+        let words = crate::ui::desc_words("Lose 3 HP. Gain (2).", crate::ui::theme::BLOOD);
+        let marks: Vec<&str> = words
+            .iter()
+            .filter(|(t, _)| t == "(" || t == ")")
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert_eq!(marks, vec!["(", ")"], "两个括号都要单独成段");
+        for (t, st) in &words {
+            if t == "(" || t == ")" {
+                assert_eq!(st.fg, Some(crate::ui::theme::BLOOD), "括号要上能量色");
+            }
+            if t == "2" {
+                assert_eq!(st.fg, Some(crate::ui::theme::FG), "数字保持默认色");
+            }
+        }
+        assert!(words.iter().any(|(t, _)| t == "."), "句号要接回去");
+        assert!(!words.iter().any(|(t, _)| t == "(2)."), "不该留下没拆开的 (2).");
     }
 
     #[test]

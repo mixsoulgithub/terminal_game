@@ -93,7 +93,13 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                     _ => continue,
                 };
                 let x = area.x + k as u16 * (cw + gap);
-                card_box(buf, Rect::new(x, y, cw, card_h), card, r.index == si);
+                card_box(
+                    buf,
+                    Rect::new(x, y, cw, card_h),
+                    card,
+                    r.index == si,
+                    crate::ui::run_energy_color(&app.run),
+                );
             }
         }
         y += card_h;
@@ -154,7 +160,13 @@ fn marker(selected: bool) -> &'static str {
 }
 
 /// 一张卡的小框:框里用和战斗一样的说明版式(费用行 + 名字/类型/描述居中)
-fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
+fn card_box(
+    buf: &mut Buffer,
+    rect: Rect,
+    card: &CardInstance,
+    selected: bool,
+    energy: ratatui::style::Color,
+) {
     if rect.width < 6 || rect.height < 3 {
         return;
     }
@@ -182,7 +194,7 @@ fn card_box(buf: &mut Buffer, rect: Rect, card: &CardInstance, selected: bool) {
             );
         }
     }
-    crate::ui::card_desc(buf, inner, card);
+    crate::ui::card_desc(buf, inner, card, energy);
 }
 
 // ---- 商店 ----
@@ -232,7 +244,9 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
     };
     let detail = split.detail;
     match item {
-        ShopItem::Card(card, _) => crate::ui::card_desc(buf, detail, card),
+        ShopItem::Card(card, _) => {
+            crate::ui::card_desc(buf, detail, card, crate::ui::run_energy_color(&app.run))
+        }
         ShopItem::Relic(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
         ShopItem::Potion(def, _) => put_lines(buf, detail, &[def.name.to_string(), def.desc.to_string()]),
         ShopItem::Remove(_) => put_lines(
@@ -510,6 +524,7 @@ fn pick(buf: &mut Buffer, area: Rect, app: &App) {
         &rows,
         sel,
         after.as_ref(),
+        crate::ui::run_energy_color(&app.run),
     );
 }
 
