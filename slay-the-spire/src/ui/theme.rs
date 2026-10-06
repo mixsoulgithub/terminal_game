@@ -15,7 +15,6 @@ pub const BAD: Color = Color::Rgb(236, 96, 108);
 pub const BLOOD: Color = Color::Rgb(236, 96, 108);
 pub const YELLOW: Color = Color::Rgb(238, 226, 104);
 pub const BLOCK: Color = Color::Rgb(122, 176, 240);
-pub const ENERGY: Color = Color::Rgb(238, 226, 104);
 pub const GOLD: Color = Color::Rgb(250, 186, 66);
 pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
@@ -62,6 +61,26 @@ pub fn relic_color(rarity: crate::core::card::Rarity) -> Color {
         Rarity::Rare => Color::Rgb(250, 186, 66),
         Rarity::Special => GOLD,
         _ => FG,
+    }
+}
+
+/// 费用/能量里括号的颜色:红绿蓝紫白各按自己,其它一律灰
+pub fn energy_color(key: &str) -> Color {
+    match key {
+        "red" => Color::Rgb(236, 96, 108),
+        "green" => Color::Rgb(120, 222, 140),
+        "blue" => Color::Rgb(122, 176, 240),
+        "purple" => Color::Rgb(206, 150, 255),
+        "white" => Color::Rgb(232, 238, 250),
+        _ => Color::Rgb(150, 156, 170),
+    }
+}
+
+/// 标签页选中时的字色:底色亮的页(白/灰)用深黄,不然黄字看不清
+pub fn tab_fg(key: &str) -> Color {
+    match key {
+        "white" | "gray" => Color::Rgb(150, 110, 0),
+        _ => YELLOW,
     }
 }
 

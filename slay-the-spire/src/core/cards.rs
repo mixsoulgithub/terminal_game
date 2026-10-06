@@ -1268,6 +1268,22 @@ pub static CARDS: &[CardDef] = &[
 ];
 
 /// 按 id 找卡牌定义
+/// 卡牌属于哪个颜色(费用括号上色用):查语料,红绿蓝紫白各按自己,其它灰
+pub fn color_key(def: &CardDef) -> &'static str {
+    crate::core::corpus::CARDS
+        .iter()
+        .find(|c| c.id == def.id)
+        .map(|c| match c.color {
+            "red" => "red",
+            "green" => "green",
+            "blue" => "blue",
+            "purple" => "purple",
+            "colorless" => "white",
+            _ => "gray",
+        })
+        .unwrap_or("gray")
+}
+
 pub fn card_def(id: &str) -> Option<&'static CardDef> {
     CARDS.iter().find(|c| c.id == id)
 }

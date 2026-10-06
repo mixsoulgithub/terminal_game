@@ -68,6 +68,24 @@ pub fn potion_label(name: &str) -> String {
 }
 
 /// 卡牌费用记号:数字 / X / -
+/// 画一个费用/能量记号 "(1)":括号用 color,数字保持默认色,返回画完的 x.
+/// 后面要接 " energy" 之类自己接。
+pub fn put_cost_token(buf: &mut Buffer, x: u16, y: u16, num: &str, color: ratatui::style::Color) -> u16 {
+    let num_w = display_width(num) as u16;
+    put(buf, x, y, "(", theme::fg(color));
+    put(buf, x + 1, y, num, theme::fg(theme::FG));
+    put(buf, x + 1 + num_w, y, ")", theme::fg(color));
+    x + num_w + 2
+}
+
+/// 一张牌费用的记号 "(1)"(括号按卡牌颜色上色)
+pub fn card_cost_token(card: &crate::core::card::CardInstance) -> (String, ratatui::style::Color) {
+    (
+        cost_label(card),
+        theme::energy_color(crate::core::cards::color_key(card.def)),
+    )
+}
+
 pub fn cost_label(card: &crate::core::card::CardInstance) -> String {
     match card.cost() {
         crate::core::card::Cost::Fixed(n) => n.to_string(),
@@ -281,10 +299,9 @@ pub fn card_desc(buf: &mut Buffer, rect: Rect, card: &crate::core::card::CardIns
     if w == 0 || rect.height == 0 {
         return;
     }
-    // 费用左对齐,写成 (1) 并保持能量色;说明永远不压暗
-    let cost_style =
-        Style::default().fg(theme::ENERGY).add_modifier(ratatui::style::Modifier::BOLD);
-    put(buf, rect.x, rect.y, &format!("({})", cost_label(card)), cost_style);
+    // 费用左对齐,写成 (1):括号按卡牌颜色,数字默认色;说明永远不压暗
+    let (num, kind) = card_cost_token(card);
+    put_cost_token(buf, rect.x, rect.y, &num, kind);
     card_body(
         buf,
         Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
@@ -411,11 +428,6 @@ pub fn put_card_line(
     let bg = if selected { theme::SEL_BG } else { theme::BG };
     let base = Style::default().bg(bg);
     put_padded(buf, x, y, "", w as usize, base);
-    let cost_style = if dim {
-        theme::dim().bg(bg)
-    } else {
-        Style::default().fg(theme::ENERGY).bg(bg)
-    };
     let name_style = if dim {
         theme::dim().bg(bg)
     } else {
@@ -425,9 +437,16 @@ pub fn put_card_line(
     };
     let mut cx = x;
     let mut left = w as usize;
-    let cost = truncate(&cost_label(card), left);
-    put(buf, cx, y, &cost, cost_style);
+    // 费用写成 (1):括号按卡牌颜色,数字默认色
+    let (cost_num, cost_kind) = card_cost_token(card);
+    let cost_kind = if dim { theme::DIM } else { cost_kind };
+    let cost = format!("({})", truncate(&cost_num, left.saturating_sub(2)));
     let cw = display_width(&cost);
+    if dim {
+        put(buf, cx, y, &cost, theme::dim().bg(bg));
+    } else {
+        put_cost_token(buf, cx, y, &cost_num, cost_kind);
+    }
     cx += cw as u16;
     left = left.saturating_sub(cw);
     if left == 0 {
@@ -736,7 +755,7 @@ mod tests {
         for e in app.run.combat().unwrap().enemies.iter() {
             assert!(text.contains(&e.name), "敌人 {} 没画出来:\n{text}", e.name);
         }
-        assert!(text.contains("3/3"), "没有能量显示");
+        assert!(text.contains("(3)/(3) energy"), "没有能量显示");
         assert!(!text.contains("##"), "不该再出现血条");
         let name = app.run.combat().unwrap().hand[0].label();
         assert!(text.contains(&name), "手牌 {name} 没画出来:\n{text}");
@@ -751,9 +770,9 @@ mod tests {
         }
         // 终端给大一点,好让 10 张手牌都排得下
         let text = screen_text(&app, 160, 50);
-        // 手牌一行一张,每行"费用 牌名"
+        // 手牌一行一张,每行"(费用) 牌名"
         assert_eq!(
-            text.matches("1 Strike").count(),
+            text.matches("(1) Strike").count(),
             10,
             "手牌应该正好十行速记:\n{text}"
         );

@@ -9,6 +9,8 @@ start window (full screen, no top/relic/status bar)
     row 2: separator joining both borders, with a T joint above the vertical line
     below: list on the left, detail on the right, one vertical line between
     the current tab's count sits at the right end of the tab row
+    list row: (cost) + name on the left, target tag right aligned, (not implemented) centered
+    detail: same as the upgrade window, base on top / upgraded below, separator joins the borders
 
 top bar: blood / blood limitation / block ...
 relic bar

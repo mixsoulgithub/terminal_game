@@ -43,7 +43,7 @@ fn tabs(buf: &mut Buffer, row: Rect, gs: &[Group], cur: usize) {
             break;
         }
         let style = if i == cur {
-            Style::default().fg(theme::YELLOW).bg(theme::tab_color(g.color))
+            Style::default().fg(theme::tab_fg(g.color)).bg(theme::tab_color(g.color))
         } else {
             Style::default().fg(theme::DIM).bg(theme::tab_bg(g.color))
         };
@@ -137,44 +137,141 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             theme::corpus_color(item.rarity_key)
         };
         put_padded(buf, list.x, y, "", list.width as usize, style);
-        let tag = format!("{:>2} ", item.tag);
-        put(buf, list.x, y, &tag, style.fg(theme::DIM));
+        // 左边:费用 + 名字
+        let mut x = list.x;
+        if !item.show_cost {
+            let tag = format!("{:>2} ", item.tag);
+            put(buf, x, y, &tag, style.fg(theme::DIM));
+            x += display_width(&tag) as u16;
+        } else {
+            x = crate::ui::put_cost_token(
+                buf,
+                x,
+                y,
+                &item.tag,
+                if selected {
+                    theme::energy_color(item.color_key)
+                } else {
+                    theme::DIM
+                },
+            );
+            put(buf, x, y, " ", style);
+            x += 1;
+        }
+        let right_w = if item.target_tag.is_empty() {
+            0
+        } else {
+            display_width(&item.target_tag)
+        };
+        let name_w = (list.width as usize).saturating_sub((x - list.x) as usize + right_w + 1);
         put(
             buf,
-            list.x + display_width(&tag) as u16,
+            x,
             y,
-            &truncate(item.name, list.width as usize - 4),
+            &truncate(item.name, name_w.max(1)),
             style.fg(name_color),
         );
+        // 中间:没实现
+        if !item.done {
+            let mid = "(not implemented)";
+            let mw = display_width(mid);
+            let mx = list.x + ((list.width as usize).saturating_sub(mw) / 2) as u16;
+            if mx > x + display_width(item.name) as u16 {
+                put(
+                    buf,
+                    mx,
+                    y,
+                    mid,
+                    if selected {
+                        theme::selected()
+                    } else {
+                        Style::default().fg(theme::WARN).bg(theme::BG)
+                    },
+                );
+            }
+        }
+        // 右边:目标
+        if !item.target_tag.is_empty() {
+            let tw = display_width(&item.target_tag) as u16;
+            let tx = list.x + list.width.saturating_sub(tw + 1);
+            put(
+                buf,
+                tx,
+                y,
+                &item.target_tag,
+                if selected {
+                    theme::selected()
+                } else {
+                    Style::default().fg(theme::DIM).bg(theme::BG)
+                },
+            );
+        }
     }
 
-    // 详情
-    let Some(item): Option<&Item> = items.get(app.lib_sel) else {
+    // 详情:和升级界面一样,上面本体、下面升过级的(没有升级就只画一块)
+    let Some(item) = items.get(app.lib_sel) else {
         return;
     };
-    let w = detail.width as usize;
-    if w < 4 {
+    if item.text_up.is_empty() {
+        put_card_block(buf, detail, item, false);
+    } else {
+        let (first, second, horizontal) = crate::ui::split_two_with(detail, true);
+        if horizontal {
+            hsep(
+                buf,
+                detail,
+                second.y.saturating_sub(1),
+                theme::fg(theme::BORDER),
+            );
+        }
+        put_card_block(buf, first, item, false);
+        put_card_block(buf, second, item, true);
+    }
+}
+
+/// 详情里的一块:费用 + 名字 / 类型 / 语料字段 / 正文
+fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
+    let w = rect.width as usize;
+    if w < 4 || rect.height == 0 {
         return;
     }
-    let bottom = detail.y + detail.height;
+    let bottom = rect.y + rect.height;
+    let mut y = rect.y;
+    let (cost, name) = if upgraded {
+        (item.tag_up.as_str(), format!("{}+", item.name))
+    } else {
+        (item.tag.as_str(), item.name.to_string())
+    };
+    let mut x = rect.x;
+    if item.show_cost {
+        x = crate::ui::put_cost_token(buf, x, y, cost, theme::energy_color(item.color_key));
+        put(buf, x, y, " ", Style::default().bg(theme::BG));
+        x += 1;
+    }
     let name_style = Style::default()
         .fg(theme::corpus_color(item.rarity_key))
         .bg(theme::BG)
         .add_modifier(Modifier::BOLD);
-    put(buf, detail.x, detail.y, &truncate(item.name, w), name_style);
-    let mut y = detail.y + 1;
-    for text in [&item.sub, &item.origin] {
+    put(
+        buf,
+        x,
+        y,
+        &truncate(&name, w.saturating_sub((x - rect.x) as usize)),
+        name_style,
+    );
+    y += 1;
+    // 语料字段只在上半块写一次,下半块(升级后)不重复
+    let mut lines: Vec<(&str, ratatui::style::Color)> = vec![(item.sub.as_str(), theme::DIM)];
+    if !upgraded {
+        lines.push((item.origin.as_str(), theme::BORDER));
+    }
+    for (text, color) in lines {
         if y >= bottom {
             return;
         }
-        let color = if text == &item.sub {
-            theme::DIM
-        } else {
-            theme::BORDER
-        };
         put(
             buf,
-            detail.x,
+            rect.x,
             y,
             &truncate(text, w),
             Style::default().fg(color).bg(theme::BG),
@@ -182,44 +279,14 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         y += 1;
     }
     y += 1;
-    y = put_paras(
-        buf,
-        bottom,
-        detail.x,
-        y,
-        w,
-        &item.text,
-        Style::default().fg(theme::FG).bg(theme::BG),
-    );
-    if !item.text_up.is_empty() {
-        y += 1;
-        if y < bottom {
-            put(
-                buf,
-                detail.x,
-                y,
-                "upgraded",
-                Style::default().fg(theme::INFO).bg(theme::BG),
-            );
-            y += 1;
-            y = put_paras(
-                buf,
-                bottom,
-                detail.x,
-                y,
-                w,
-                &item.text_up,
-                Style::default().fg(theme::GOOD).bg(theme::BG),
-            );
-        }
-    }
-    y += 1;
-    if y < bottom {
-        let (mark, style) = if item.done {
-            ("implemented", theme::fg(theme::GOOD))
-        } else {
-            ("not implemented yet", theme::fg(theme::WARN))
-        };
-        put(buf, detail.x, y, mark, style.bg(theme::BG));
-    }
+    let (text, style) = if upgraded {
+        (
+            &item.text_up,
+            Style::default().fg(theme::GOOD).bg(theme::BG),
+        )
+    } else {
+        (&item.text, Style::default().fg(theme::FG).bg(theme::BG))
+    };
+    put_paras(buf, bottom, rect.x, y, w, text, style);
 }
+

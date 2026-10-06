@@ -49,7 +49,7 @@ TYPE_RE = re.compile(r"\|\s*(Attack|Skill|Power|Status|Curse)\s+c\S*")
 
 # 战斗界面里选中的牌的类型写成 <Attack> / [Skill] / (Power)
 KIND_RE = re.compile(r"[<\[(](Attack|Skill|Power|Status|Curse)[>\])]")
-ENERGY_RE = re.compile(r"\d+/\d+ energy")
+ENERGY_RE = re.compile(r"\(\d+\)/\(\d+\) energy")
 
 
 def selected_kind(text: str) -> str | None:

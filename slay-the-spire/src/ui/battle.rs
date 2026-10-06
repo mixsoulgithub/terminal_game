@@ -79,16 +79,15 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         c.discard.len()
     );
     let rw = display_width(&right) as u16;
-    let energy0 = format!("{}/{} energy", c.energy, c.max_energy);
     put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
-    put(
-        buf,
-        main.x + 1,
-        y,
-        &energy0,
-        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
-    );
-    let used0 = 1 + display_width(&energy0) as u16;
+    let ecolor = theme::energy_color(energy_key(app));
+    let mut ex = crate::ui::put_cost_token(buf, main.x + 1, y, &c.energy.to_string(), ecolor);
+    put(buf, ex, y, "/", theme::fg(theme::BORDER));
+    ex += 1;
+    ex = crate::ui::put_cost_token(buf, ex, y, &c.max_energy.to_string(), ecolor);
+    put(buf, ex, y, " energy", theme::fg(theme::DIM));
+    ex += display_width(" energy") as u16;
+    let used0 = ex - main.x;
     let rx = (main.x + main.width).saturating_sub(rw).max(main.x + used0);
     crate::ui::hline(
         buf,
@@ -104,19 +103,19 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     put_cards_row(buf, y, main, app, c);
     y += 1;
     // 这一行:卡牌自己的费用在左,类型在右
-    let cost_text = format!(
-        "{} energy",
-        card.map(|x| crate::ui::cost_label(x)).unwrap_or_else(|| "-".to_string())
-    );
     put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
-    put(
-        buf,
-        main.x + 1,
-        y,
-        &cost_text,
-        Style::default().fg(theme::ENERGY).add_modifier(Modifier::BOLD),
-    );
-    let used = 1 + display_width(&cost_text) as u16;
+    let used = match card {
+        Some(card) => {
+            let (num, kind) = crate::ui::card_cost_token(card);
+            let ex = crate::ui::put_cost_token(buf, main.x + 1, y, &num, kind);
+            put(buf, ex, y, " energy", theme::fg(theme::DIM));
+            1 + display_width(&num) as u16 + 2 + display_width(" energy") as u16
+        }
+        None => {
+            put(buf, main.x + 1, y, "-", theme::dim());
+            2
+        }
+    };
     crate::ui::hline(
         buf,
         main.x + used,
@@ -225,7 +224,9 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     let mut cx = area.x + 1;
     let last_x = area.x + area.width - 1;
     for (k, card) in c.hand.iter().enumerate() {
-        let want = display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label());
+        // 费用写成 (1),所以宽度要算上两个括号
+        let want =
+            display_width(&crate::ui::cost_label(card)) + 3 + display_width(&card.label());
         let remain = last_x.saturating_sub(cx) as usize;
         if remain == 0 {
             break;
@@ -242,6 +243,13 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
 // ---- 敌人区 ----
 
 /// 敌人区:每个敌人平分一段高度,块贴右,纯文本不画框
+/// 玩家能量括号用角色自己的颜色
+fn energy_key(app: &App) -> &'static str {
+    crate::core::roster::find(app.run.character)
+        .map(|c| c.color)
+        .unwrap_or("gray")
+}
+
 fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     if area.width < 8 || area.height == 0 || c.enemies.is_empty() {
         return;

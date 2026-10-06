@@ -53,6 +53,14 @@ pub struct Item {
     pub rarity_key: &'static str,
     /// 语料里的原始字段,对账用
     pub origin: String,
+    /// 升级后的费用(卡牌才有)
+    pub tag_up: String,
+    /// 目标标签(卡牌才有): "[all enemy]" 这类,没有就空
+    pub target_tag: String,
+    /// 费用括号的颜色键
+    pub color_key: &'static str,
+    /// tag 是不是"费用"(卡牌是,遗物/药水不是)
+    pub show_cost: bool,
 }
 
 /// 卡牌分组:和参考实现的 src/content/cards/ 一致 —— 状态牌、诅咒牌各自成组,
@@ -158,8 +166,19 @@ fn card_items(tab: &str) -> Vec<Item> {
             };
             Item {
                 name: c.name,
-                sub: format!("{} / {} / {}", kind, title_case(c.rarity), c.target),
+                sub: format!("{} / {}", kind, title_case(c.rarity)),
                 tag: c.cost.to_string(),
+                tag_up: if c.cost_up.is_empty() { c.cost.to_string() } else { c.cost_up.to_string() },
+                target_tag: target_tag(c.target).to_string(),
+                show_cost: true,
+                color_key: match c.color {
+                    "red" => "red",
+                    "green" => "green",
+                    "blue" => "blue",
+                    "purple" => "purple",
+                    "colorless" => "white",
+                    _ => "gray",
+                },
                 text: c.text.to_string(),
                 text_up: c.text_up.to_string(),
                 done: card_implemented(c),
@@ -187,6 +206,10 @@ fn relic_items(tab: &str) -> Vec<Item> {
             done: relics::relic_def(r.id).is_some(),
             rarity_key: r.tier,
             origin: format!("corpus: tier {} / pool {}", r.tier, r.pool),
+            tag_up: String::new(),
+            target_tag: String::new(),
+            color_key: "gray",
+            show_cost: false,
         })
         .collect()
 }
@@ -214,8 +237,24 @@ fn potion_items(tab: &str) -> Vec<Item> {
             done: potions::POTIONS.iter().any(|d| d.id == p.id),
             rarity_key: p.rarity,
             origin: format!("corpus: class {} / rarity {}", p.color, p.rarity),
+            tag_up: String::new(),
+            target_tag: String::new(),
+            color_key: "gray",
+            show_cost: false,
         })
         .collect()
+}
+
+/// 语料里的 target -> 列表右边的小标签
+fn target_tag(target: &str) -> &'static str {
+    match target {
+        "enemy" => "[enemy]",
+        "allenemy" => "[all enemy]",
+        "self" => "[self]",
+        "selfandenemy" => "[self & enemy]",
+        "all" => "[all]",
+        _ => "",
+    }
 }
 
 fn title_case(s: &str) -> String {
