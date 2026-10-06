@@ -78,6 +78,61 @@ pub fn put_cost_token(buf: &mut Buffer, x: u16, y: u16, num: &str, color: ratatu
     x + num_w + 2
 }
 
+/// 手牌那种要省地方的地方:只写费用数字,不带括号,数字照样按卡牌颜色
+pub fn put_card_cell(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    w: u16,
+    card: &crate::core::card::CardInstance,
+    selected: bool,
+    dim: bool,
+) {
+    if w == 0 {
+        return;
+    }
+    let bg = if selected { theme::SEL_BG } else { theme::BG };
+    let base = Style::default().bg(bg);
+    put_padded(buf, x, y, "", w as usize, base);
+    let (num, kind) = card_cost_token(card);
+    let cost = truncate(&num, w as usize);
+    let cost_w = display_width(&cost);
+    let cost_style = if dim {
+        theme::dim().bg(bg)
+    } else {
+        Style::default().fg(kind).bg(bg)
+    };
+    put(buf, x, y, &cost, cost_style);
+    if cost_w >= w as usize {
+        return;
+    }
+    put(buf, x + cost_w as u16, y, " ", base);
+    let name_style = if dim {
+        theme::dim().bg(bg)
+    } else {
+        Style::default().fg(theme::card_color(card.rarity())).bg(bg)
+    };
+    put(
+        buf,
+        x + cost_w as u16 + 1,
+        y,
+        &truncate(&card.label(), w as usize - cost_w - 1),
+        name_style,
+    );
+}
+
+/// 语料里的类型字符串 -> 带括号的写法(和 kind_label 一致)
+pub fn kind_label_str(kind: &str) -> String {
+    match kind {
+        "attack" => "<Attack>".to_string(),
+        "skill" => "[Skill]".to_string(),
+        "power" => "(Power)".to_string(),
+        "status" => "Status".to_string(),
+        "curse" => "Curse".to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// 一张牌费用的记号 "(1)"(括号按卡牌颜色上色)
 pub fn card_cost_token(card: &crate::core::card::CardInstance) -> (String, ratatui::style::Color) {
     (
@@ -770,9 +825,9 @@ mod tests {
         }
         // 终端给大一点,好让 10 张手牌都排得下
         let text = screen_text(&app, 160, 50);
-        // 手牌一行一张,每行"(费用) 牌名"
+        // 手牌一行一张,每行"费用 牌名"(手牌省地方,费用不带括号)
         assert_eq!(
-            text.matches("(1) Strike").count(),
+            text.matches("1 Strike").count(),
             10,
             "手牌应该正好十行速记:\n{text}"
         );

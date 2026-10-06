@@ -8,30 +8,9 @@ use crate::app::App;
 use crate::core::compendium::{self, Group, Item};
 use crate::ui::theme;
 use crate::ui::{
-    display_width, draw_box, hsep, put, put_padded, truncate, vsep, wrap_text,
+    display_width, draw_box, hsep, put, put_centered, put_padded, truncate,
+    vsep,
 };
-
-/// 把一段带换行的文本按行宽写下去,返回写完后的 y
-fn put_paras(
-    buf: &mut Buffer,
-    bottom: u16,
-    x: u16,
-    mut y: u16,
-    w: usize,
-    text: &str,
-    style: Style,
-) -> u16 {
-    for para in text.split('\n') {
-        for line in wrap_text(para, w, usize::MAX) {
-            if y >= bottom {
-                return y;
-            }
-            put(buf, x, y, &line, style);
-            y += 1;
-        }
-    }
-    y
-}
 
 /// 标签页那一行:选中的字是黄的、底色是本色;没选中的字灰、底色掺灰
 fn tabs(buf: &mut Buffer, row: Rect, gs: &[Group], cur: usize) {
@@ -229,64 +208,56 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
 }
 
-/// 详情里的一块:费用 + 名字 / 类型 / 语料字段 / 正文
+/// 详情里的一块,和升级界面的说明一个版式:
+/// 费用在左,名字/类型/正文居中(数字照样上色)
 fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
     let w = rect.width as usize;
     if w < 4 || rect.height == 0 {
         return;
     }
     let bottom = rect.y + rect.height;
-    let mut y = rect.y;
     let (cost, name) = if upgraded {
         (item.tag_up.as_str(), format!("{}+", item.name))
     } else {
         (item.tag.as_str(), item.name.to_string())
     };
-    let mut x = rect.x;
     if item.show_cost {
-        x = crate::ui::put_cost_token(buf, x, y, cost, theme::energy_color(item.color_key));
-        put(buf, x, y, " ", Style::default().bg(theme::BG));
-        x += 1;
+        crate::ui::put_cost_token(
+            buf,
+            rect.x,
+            rect.y,
+            cost,
+            theme::energy_color(item.color_key),
+        );
     }
     let name_style = Style::default()
         .fg(theme::corpus_color(item.rarity_key))
         .bg(theme::BG)
         .add_modifier(Modifier::BOLD);
-    put(
-        buf,
-        x,
-        y,
-        &truncate(&name, w.saturating_sub((x - rect.x) as usize)),
-        name_style,
-    );
+    let mut y = rect.y;
+    put_centered(buf, rect.x, y, w, &name, name_style);
     y += 1;
-    // 语料字段只在上半块写一次,下半块(升级后)不重复
-    let mut lines: Vec<(&str, ratatui::style::Color)> = vec![(item.sub.as_str(), theme::DIM)];
-    if !upgraded {
-        lines.push((item.origin.as_str(), theme::BORDER));
+    if y >= bottom {
+        return;
     }
-    for (text, color) in lines {
-        if y >= bottom {
-            return;
-        }
-        put(
-            buf,
-            rect.x,
-            y,
-            &truncate(text, w),
-            Style::default().fg(color).bg(theme::BG),
-        );
-        y += 1;
-    }
-    y += 1;
-    let (text, style) = if upgraded {
-        (
-            &item.text_up,
-            Style::default().fg(theme::GOOD).bg(theme::BG),
-        )
+    // 卡牌的类型带括号(<Attack> 这种),遗物/药水就用副标题
+    let kind_line = if item.show_cost {
+        crate::ui::kind_label_str(item.kind)
     } else {
-        (&item.text, Style::default().fg(theme::FG).bg(theme::BG))
+        item.sub.clone()
     };
-    put_paras(buf, bottom, rect.x, y, w, text, style);
+    put_centered(buf, rect.x, y, w, &kind_line, theme::fg(theme::FG));
+    y += 1;
+    // 正文居中折行,伤害/格挡数字上色;语料的正文本身带换行,按行分开折
+    let text = if upgraded { &item.text_up } else { &item.text };
+    for para in text.split('\n') {
+        let words = crate::ui::desc_words(para);
+        for line in crate::ui::wrap_words(&words, w) {
+            if y >= bottom {
+                return;
+            }
+            crate::ui::put_centered_words(buf, rect.x, y, w, &line);
+            y += 1;
+        }
+    }
 }
-

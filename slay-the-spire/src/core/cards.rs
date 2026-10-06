@@ -1270,9 +1270,11 @@ pub static CARDS: &[CardDef] = &[
 /// 按 id 找卡牌定义
 /// 卡牌属于哪个颜色(费用括号上色用):查语料,红绿蓝紫白各按自己,其它灰
 pub fn color_key(def: &CardDef) -> &'static str {
-    crate::core::corpus::CARDS
+    let hit = crate::core::corpus::CARDS
         .iter()
-        .find(|c| c.id == def.id)
+        .find(|c| c.id == def.id && c.color == "red")
+        .or_else(|| crate::core::corpus::CARDS.iter().find(|c| c.id == def.id));
+    hit
         .map(|c| match c.color {
             "red" => "red",
             "green" => "green",

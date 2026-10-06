@@ -224,16 +224,14 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     let mut cx = area.x + 1;
     let last_x = area.x + area.width - 1;
     for (k, card) in c.hand.iter().enumerate() {
-        // 费用写成 (1),所以宽度要算上两个括号
-        let want =
-            display_width(&crate::ui::cost_label(card)) + 3 + display_width(&card.label());
+        let want = display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label());
         let remain = last_x.saturating_sub(cx) as usize;
         if remain == 0 {
             break;
         }
         let w = want.min(remain.saturating_sub(1)).max(1);
         let playable = c.blocked_reason(k).is_none();
-        crate::ui::put_card_line(buf, cx, y, w as u16, card, k == sel, !playable);
+        crate::ui::put_card_cell(buf, cx, y, w as u16, card, k == sel, !playable);
         cx += w as u16;
         bar(buf, cx);
         cx += 1;

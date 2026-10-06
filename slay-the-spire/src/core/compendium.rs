@@ -51,10 +51,10 @@ pub struct Item {
     pub done: bool,
     /// 上色用的稀有度/阶词
     pub rarity_key: &'static str,
-    /// 语料里的原始字段,对账用
-    pub origin: String,
     /// 升级后的费用(卡牌才有)
     pub tag_up: String,
+    /// 语料里的类型(attack/skill/power/status/curse)
+    pub kind: &'static str,
     /// 目标标签(卡牌才有): "[all enemy]" 这类,没有就空
     pub target_tag: String,
     /// 费用括号的颜色键
@@ -169,6 +169,7 @@ fn card_items(tab: &str) -> Vec<Item> {
                 sub: format!("{} / {}", kind, title_case(c.rarity)),
                 tag: c.cost.to_string(),
                 tag_up: if c.cost_up.is_empty() { c.cost.to_string() } else { c.cost_up.to_string() },
+                kind: c.kind,
                 target_tag: target_tag(c.target).to_string(),
                 show_cost: true,
                 color_key: match c.color {
@@ -183,10 +184,6 @@ fn card_items(tab: &str) -> Vec<Item> {
                 text_up: c.text_up.to_string(),
                 done: card_implemented(c),
                 rarity_key: c.rarity,
-                origin: format!(
-                    "corpus: color {} / type {} / pool {}",
-                    c.color, c.kind, c.pool
-                ),
             }
         })
         .collect()
@@ -205,8 +202,8 @@ fn relic_items(tab: &str) -> Vec<Item> {
             text_up: String::new(),
             done: relics::relic_def(r.id).is_some(),
             rarity_key: r.tier,
-            origin: format!("corpus: tier {} / pool {}", r.tier, r.pool),
             tag_up: String::new(),
+            kind: "",
             target_tag: String::new(),
             color_key: "gray",
             show_cost: false,
@@ -236,8 +233,8 @@ fn potion_items(tab: &str) -> Vec<Item> {
             text_up: String::new(),
             done: potions::POTIONS.iter().any(|d| d.id == p.id),
             rarity_key: p.rarity,
-            origin: format!("corpus: class {} / rarity {}", p.color, p.rarity),
             tag_up: String::new(),
+            kind: "",
             target_tag: String::new(),
             color_key: "gray",
             show_cost: false,
