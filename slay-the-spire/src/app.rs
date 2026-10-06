@@ -51,7 +51,9 @@ pub struct App {
     pub comp_sel: usize,
     /// 当前看的图鉴种类
     pub library: Library,
-    /// 图鉴光标(条目在 items() 里的下标,能停在标题行上)
+    /// 图鉴当前标签页
+    pub lib_tab: usize,
+    /// 图鉴光标(当前页里的条目下标)
     pub lib_sel: usize,
 }
 
@@ -80,6 +82,7 @@ impl App {
             char_sel: 0,
             comp_sel: 0,
             library: Library::Cards,
+            lib_tab: 0,
             lib_sel: 0,
         }
     }
@@ -202,19 +205,19 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.library = Library::ALL[self.comp_sel % n];
+                self.lib_tab = 0;
                 self.lib_sel = 0;
-                self.skip_header(1);
                 self.run.screen = Screen::Library;
-                self.info("j/k scroll, esc back");
+                self.info("j/k pick a card, h/l change tab, esc back");
             }
             _ => {}
         }
     }
 
-    /// 图鉴里 1/2/3 直接切三种, h/l 前后切
+    /// 图鉴:h/l/Tab 换标签页(循环),j/k 在页内选(循环),1/2/3 换册子
     fn lib_key(&mut self, key: KeyEvent) {
-        let items = compendium::items(self.library);
-        let n = items.len();
+        let tabs = compendium::groups(self.library).len().max(1);
+        let n = compendium::items(self.library, self.lib_tab).len();
         let step = |cur: usize, d: i32| -> usize {
             if n == 0 {
                 return 0;
@@ -226,14 +229,15 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.lib_sel = step(self.lib_sel, -1),
             KeyCode::Char('g') => self.lib_sel = 0,
             KeyCode::Char('G') => self.lib_sel = n.saturating_sub(1),
-            KeyCode::Char('h') | KeyCode::Char('l') => {
-                let all = Library::ALL;
-                let cur = all.iter().position(|l| *l == self.library).unwrap_or(0);
-                let d = if key.code == KeyCode::Char('l') { 1 } else { -1 };
-                let i = (cur as i32 + d).rem_euclid(all.len() as i32) as usize;
-                self.library = all[i];
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
+                self.lib_tab = (self.lib_tab + 1) % tabs;
                 self.lib_sel = 0;
-                self.info(self.library.title());
+                self.info(self.tab_title());
+            }
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
+                self.lib_tab = (self.lib_tab + tabs - 1) % tabs;
+                self.lib_sel = 0;
+                self.info(self.tab_title());
             }
             KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') => {
                 let i = match key.code {
@@ -242,6 +246,7 @@ impl App {
                     _ => 2,
                 };
                 self.library = Library::ALL[i];
+                self.lib_tab = 0;
                 self.lib_sel = 0;
                 self.info(self.library.title());
             }
@@ -251,29 +256,19 @@ impl App {
             }
             _ => {}
         }
-        self.skip_header(0);
+        // 换页之后光标要落在本页条目里
+        let n = compendium::items(self.library, self.lib_tab).len();
+        self.lib_sel = if n == 0 { 0 } else { self.lib_sel.min(n - 1) };
     }
 
-    /// 图鉴光标别停在分组标题上(d=0 表示只修正,不动)
-    fn skip_header(&mut self, d: i32) {
-        let items = compendium::items(self.library);
-        if items.is_empty() {
-            self.lib_sel = 0;
-            return;
-        }
-        let n = items.len();
-        let mut i = self.lib_sel.min(n - 1);
-        if d != 0 {
-            i = (i as i32 + d).rem_euclid(n as i32) as usize;
-        }
-        let start = i;
-        while items[i].header {
-            i = (i + 1) % n;
-            if i == start {
-                break;
-            }
-        }
-        self.lib_sel = i;
+    /// 当前标签页的名字,状态栏显示用
+    pub fn tab_title(&self) -> String {
+        let gs = compendium::groups(self.library);
+        let g = gs
+            .get(self.lib_tab % gs.len().max(1))
+            .map(|g| g.name)
+            .unwrap_or("");
+        format!("{} / {}", self.library.title(), g)
     }
 
     fn load_save(&mut self) {
@@ -1243,8 +1238,9 @@ impl App {
             Screen::CharSelect => vec![("j/k", "pick"), ("enter", "start"), ("esc", "back")],
             Screen::Compendium => vec![("j/k", "pick"), ("enter", "open"), ("esc", "back")],
             Screen::Library => vec![
-                ("j/k", "scroll"),
-                ("h/l 1-3", "switch"),
+                ("j/k", "pick"),
+                ("h/l tab", "change tab"),
+                ("1-3", "cards/relics/potions"),
                 ("g/G", "top/bottom"),
                 ("esc", "back"),
             ],

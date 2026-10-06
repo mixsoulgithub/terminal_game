@@ -52,16 +52,3 @@ pub fn blocked_reason(c: &corpus::CharacterInfo) -> Option<String> {
         Some(parts.join(", "))
     }
 }
-
-/// 语料里的颜色字段转成界面上用的分组名
-pub fn color_group(color: &str) -> &'static str {
-    match color {
-        "red" => "Ironclad",
-        "green" => "Silent",
-        "blue" => "Defect",
-        "purple" => "Watcher",
-        "colorless" => "Colorless",
-        "curse" => "Curse",
-        _ => "Other",
-    }
-}
