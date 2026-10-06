@@ -24,6 +24,8 @@ pub struct BattleShake {
     pub delay: u8,
     /// 连击/多段:抖完一轮再来几轮(3x7 就抖 3 次,X 费就抖 X 次)
     pub repeats: u8,
+    /// true = 这次是自己出手(要顶到最大幅度停几帧),false = 挨打
+    pub attacking: bool,
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
@@ -371,8 +373,10 @@ impl App {
 
     /// 抖动动画总共几帧(每帧间隔见 main.rs 的轮询时间)
     pub const SHAKE_FRAMES: u8 = 6;
-    /// 挨打的比出手的晚几帧起步
-    pub const HURT_DELAY: u8 = 6;
+    /// 挨打的比出手的晚几帧起步:要落在出手方"顶住最大幅度"的那几帧里
+    pub const HURT_DELAY: u8 = 2;
+    /// 出手方顶在最大幅度上停几帧
+    pub const ATTACK_HOLD: u8 = 4;
 
     /// 还在抖:事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
@@ -406,12 +410,23 @@ impl App {
         if b.delay > 0 {
             return 0;
         }
-        // 幅度递减:2 2 1 1 0 0
+        // 出手:先顶在最大幅度停几帧(挨打方就在这几帧里反应),再收回来
+        // 挨打:一路递减
         let step = (Self::SHAKE_FRAMES - b.frames) as usize;
-        let amp = match step {
-            0 | 1 => 2,
-            2 | 3 => 1,
-            _ => 0,
+        let amp = if b.attacking {
+            if step < Self::ATTACK_HOLD as usize {
+                2
+            } else if step == Self::ATTACK_HOLD as usize {
+                1
+            } else {
+                0
+            }
+        } else {
+            match step {
+                0 | 1 => 2,
+                2 | 3 => 1,
+                _ => 0,
+            }
         };
         b.dir * amp
     }
@@ -425,11 +440,8 @@ impl App {
             return;
         };
         for s in std::mem::take(&mut c.shakes) {
-            let delay = if s.kind == ShakeKind::Hurt {
-                Self::HURT_DELAY
-            } else {
-                0
-            };
+            let attacking = s.kind == ShakeKind::Attack;
+            let delay = if attacking { 0 } else { Self::HURT_DELAY };
             match self.battle_shakes.iter_mut().find(|b| b.who == s.who) {
                 Some(b) => {
                     b.dir = s.dir;
@@ -441,6 +453,7 @@ impl App {
                     frames: Self::SHAKE_FRAMES,
                     delay,
                     repeats: 0,
+                    attacking,
                 }),
             }
         }
@@ -1748,6 +1761,22 @@ mod tests {
                 .iter()
                 .any(|b| matches!(b.who, ShakeWho::Enemy(0)) && b.dir > 0),
             "挨打的敌人应该往右退"
+        );
+        // 出手方要顶在最大幅度上停几帧,挨打方就在这几帧里反应
+        let peak = app.battle_shake_offset(ShakeWho::Hero);
+        assert_eq!(peak, 2, "出手应该顶到最大幅度");
+        for _ in 0..App::ATTACK_HOLD - 1 {
+            app.tick();
+            assert_eq!(
+                app.battle_shake_offset(ShakeWho::Hero),
+                peak,
+                "这几帧要停在最大幅度"
+            );
+        }
+        app.tick();
+        assert!(
+            app.battle_shake_offset(ShakeWho::Hero) < peak,
+            "顶完之后收回来"
         );
         // 轮到敌人出手:敌人先往左冲,玩家晚一帧才往左退
         app.battle_shakes.clear();
