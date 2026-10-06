@@ -124,6 +124,10 @@ pub enum Effect {
     AddCardToHand { id: &'static str, n: u8 },
     /// 往弃牌堆塞一张牌(愤怒)
     AddCardToDiscard { id: &'static str, n: u8 },
+    /// 随机往手牌加一张攻击牌,本回合 0 费(炼狱之刃)
+    AddRandomAttackToHand,
+    /// 打出抽牌堆顶那张并消耗(浩劫)
+    PlayTopOfDraw,
     /// 从手牌选一张消耗(燃烧契约)
     ExhaustFromHand,
     /// 从手牌选一张放回抽牌堆顶(战吼)
@@ -167,6 +171,8 @@ pub struct CardDef {
     pub ethereal: bool,
     pub innate: bool,
     pub retain: bool,
+    /// 可以无限升级(灼热攻击)
+    pub multi_upgrade: bool,
     pub effects: &'static [Effect],
     pub upgrade: Option<CardUpgrade>,
 }
@@ -184,6 +190,12 @@ pub struct CardInstance {
     pub def: &'static CardDef,
     pub upgraded: bool,
     pub bonus: i32,
+    /// 费用增减(负=更便宜),嗜血这类按失血次数往下减
+    pub cost_delta: i32,
+    /// 本回合费用为 0(炼狱之刃给的牌)
+    pub free_this_turn: bool,
+    /// 升级次数:可以多次升级的牌(灼热攻击)才 >1
+    pub plus: u8,
 }
 
 impl CardInstance {
@@ -192,12 +204,17 @@ impl CardInstance {
             def,
             upgraded: false,
             bonus: 0,
+            cost_delta: 0,
+            free_this_turn: false,
+            plus: 0,
         }
     }
 
     /// 展示用名字,升级后带加号
     pub fn label(&self) -> String {
-        if self.upgraded {
+        if self.plus > 1 {
+            format!("{}+{}", self.def.name, self.plus)
+        } else if self.upgraded {
             format!("{}+", self.def.name)
         } else {
             self.def.name.to_string()
@@ -230,8 +247,11 @@ impl CardInstance {
 
     /// 能量不足时能否打出;X 费用始终可打
     pub fn cost_value(&self, energy: i32) -> i32 {
+        if self.free_this_turn {
+            return 0;
+        }
         match self.cost() {
-            Cost::Fixed(n) => n as i32,
+            Cost::Fixed(n) => (n as i32 + self.cost_delta).max(0),
             Cost::X => energy.max(0),
             Cost::Unplayable => i32::MAX,
         }
@@ -283,7 +303,15 @@ impl CardInstance {
         }
     }
 
+    /// 能无限升级的牌(灼热攻击)
+    pub fn multi_upgrade(&self) -> bool {
+        self.def.multi_upgrade
+    }
+
     pub fn can_upgrade(&self) -> bool {
+        if self.multi_upgrade() {
+            return true;
+        }
         !self.upgraded && self.def.upgradable()
     }
 
@@ -293,6 +321,11 @@ impl CardInstance {
             return false;
         }
         self.upgraded = true;
+        if self.multi_upgrade() {
+            // 每升一级 += 当前等级 + 3(1 级 +4、2 级 +5……),和原作一致
+            self.plus += 1;
+            self.bonus += self.plus as i32 + 3;
+        }
         true
     }
 

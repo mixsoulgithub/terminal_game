@@ -85,10 +85,10 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let rw = display_width(&right) as u16;
     put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
     let ecolor = theme::energy_color(energy_key(app));
-    let mut ex = crate::ui::put_cost_token(buf, main.x + 1, y, &c.energy.to_string(), ecolor);
+    let mut ex = crate::ui::put_cost_token(buf, main.x + 1, y, &c.energy.to_string(), ecolor, theme::FG);
     put(buf, ex, y, "/", theme::fg(theme::BORDER));
     ex += 1;
-    ex = crate::ui::put_cost_token(buf, ex, y, &c.max_energy.to_string(), ecolor);
+    ex = crate::ui::put_cost_token(buf, ex, y, &c.max_energy.to_string(), ecolor, theme::FG);
     put(buf, ex, y, " energy", theme::fg(theme::DIM));
     ex += display_width(" energy") as u16;
     let used0 = ex - main.x;
@@ -124,8 +124,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
     let used = match card {
         Some(card) => {
-            let (num, kind) = crate::ui::card_cost_token(card);
-            let ex = crate::ui::put_cost_token(buf, main.x + 1, y, &num, kind);
+            let (num, kind, digit) = crate::ui::card_cost_token(card);
+            let ex = crate::ui::put_cost_token(buf, main.x + 1, y, &num, kind, digit);
             put(buf, ex, y, " energy", theme::fg(theme::DIM));
             1 + display_width(&num) as u16 + 2 + display_width(" energy") as u16
         }

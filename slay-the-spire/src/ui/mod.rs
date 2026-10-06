@@ -70,12 +70,37 @@ pub fn potion_label(name: &str) -> String {
 /// 卡牌费用记号:数字 / X / -
 /// 画一个费用/能量记号 "(1)":括号用 color,数字保持默认色,返回画完的 x.
 /// 后面要接 " energy" 之类自己接。
-pub fn put_cost_token(buf: &mut Buffer, x: u16, y: u16, num: &str, color: ratatui::style::Color) -> u16 {
+pub fn put_cost_token(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    num: &str,
+    color: ratatui::style::Color,
+    digit: ratatui::style::Color,
+) -> u16 {
     let num_w = display_width(num) as u16;
     put(buf, x, y, "(", theme::fg(color));
-    put(buf, x + 1, y, num, theme::fg(theme::FG));
+    put(buf, x + 1, y, num, theme::fg(digit));
     put(buf, x + 1 + num_w, y, ")", theme::fg(color));
     x + num_w + 2
+}
+
+/// 费用数字的颜色:比原始费用便宜就绿,贵就红,一样(X/不可打)就用默认色
+pub fn cost_digit_color(card: &crate::core::card::CardInstance) -> ratatui::style::Color {
+    use crate::core::card::Cost;
+    let base = match card.def.cost {
+        Cost::Fixed(n) => n as i32,
+        _ => return theme::FG,
+    };
+    // 用"实际显示的费用"和原始费用比:降了就绿,涨了就红
+    if !matches!(card.cost(), Cost::Fixed(_)) {
+        return theme::FG;
+    }
+    match cost_label(card).parse::<i32>() {
+        Ok(now) if now < base => theme::GOOD,
+        Ok(now) if now > base => theme::BAD,
+        _ => theme::FG,
+    }
 }
 
 /// 手牌那种要省地方的地方:只写费用数字,不带括号,数字照样按卡牌颜色
@@ -94,13 +119,13 @@ pub fn put_card_cell(
     let bg = if selected { theme::SEL_BG } else { theme::BG };
     let base = Style::default().bg(bg);
     put_padded(buf, x, y, "", w as usize, base);
-    let (num, kind) = card_cost_token(card);
+    let (num, _kind, digit) = card_cost_token(card);
     let cost = truncate(&num, w as usize);
     let cost_w = display_width(&cost);
     let cost_style = if dim {
         theme::dim().bg(bg)
     } else {
-        Style::default().fg(kind).bg(bg)
+        Style::default().fg(digit).bg(bg)
     };
     put(buf, x, y, &cost, cost_style);
     if cost_w >= w as usize {
@@ -134,16 +159,22 @@ pub fn kind_label_str(kind: &str) -> String {
 }
 
 /// 一张牌费用的记号 "(1)"(括号按卡牌颜色上色)
-pub fn card_cost_token(card: &crate::core::card::CardInstance) -> (String, ratatui::style::Color) {
+pub fn card_cost_token(
+    card: &crate::core::card::CardInstance,
+) -> (String, ratatui::style::Color, ratatui::style::Color) {
     (
         cost_label(card),
         theme::energy_color(crate::core::cards::color_key(card.def)),
+        cost_digit_color(card),
     )
 }
 
 pub fn cost_label(card: &crate::core::card::CardInstance) -> String {
+    if card.free_this_turn {
+        return "0".to_string();
+    }
     match card.cost() {
-        crate::core::card::Cost::Fixed(n) => n.to_string(),
+        crate::core::card::Cost::Fixed(n) => (n as i32 + card.cost_delta).max(0).to_string(),
         crate::core::card::Cost::X => "X".to_string(),
         crate::core::card::Cost::Unplayable => "-".to_string(),
     }
@@ -414,8 +445,8 @@ pub fn card_desc(
         return;
     }
     // 费用左对齐,写成 (1):括号按卡牌颜色,数字默认色;说明永远不压暗
-    let (num, kind) = card_cost_token(card);
-    put_cost_token(buf, rect.x, rect.y, &num, kind);
+    let (num, kind, digit) = card_cost_token(card);
+    put_cost_token(buf, rect.x, rect.y, &num, kind, digit);
     card_body(
         buf,
         Rect::new(rect.x, rect.y + 1, rect.width, rect.height.saturating_sub(1)),
@@ -553,14 +584,14 @@ pub fn put_card_line(
     let mut cx = x;
     let mut left = w as usize;
     // 费用写成 (1):括号按卡牌颜色,数字默认色
-    let (cost_num, cost_kind) = card_cost_token(card);
+    let (cost_num, cost_kind, cost_digit) = card_cost_token(card);
     let cost_kind = if dim { theme::DIM } else { cost_kind };
     let cost = format!("({})", truncate(&cost_num, left.saturating_sub(2)));
     let cw = display_width(&cost);
     if dim {
         put(buf, cx, y, &cost, theme::dim().bg(bg));
     } else {
-        put_cost_token(buf, cx, y, &cost_num, cost_kind);
+        put_cost_token(buf, cx, y, &cost_num, cost_kind, cost_digit);
     }
     cx += cw as u16;
     left = left.saturating_sub(cw);

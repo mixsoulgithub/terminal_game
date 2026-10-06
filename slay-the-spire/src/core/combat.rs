@@ -326,6 +326,10 @@ impl Combat {
 
     fn start_turn(&mut self, extra_draw: usize) {
         self.turn += 1;
+        // 上回合"本回合 0 费"的牌恢复原价
+        for card in self.hand.iter_mut() {
+            card.free_this_turn = false;
+        }
         self.energy = self.max_energy;
         // 格挡在回合开始清空,除非有壁垒
         if !self.player.statuses.has(Status::Barricade) {
@@ -762,6 +766,7 @@ impl Combat {
         }
         self.player.hp -= amount;
         self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, amount);
+        self.note_hp_loss();
         let rupt = self.player.statuses.get(Status::Rupture);
         if from_card && rupt > 0 {
             self.player.statuses.add(Status::Strength, rupt);
@@ -782,6 +787,7 @@ impl Combat {
         if taken > 0 {
             self.player.hp -= taken;
             self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, taken);
+            self.note_hp_loss();
         }
         if self.player.hp <= 0 {
             self.player.hp = 0;
@@ -841,6 +847,21 @@ impl Combat {
                 total
             }
             _ => 0,
+        }
+    }
+
+    /// 玩家掉了血:嗜血的费用跟着降(手牌/抽牌堆/弃牌堆/消耗堆里那些)
+    fn note_hp_loss(&mut self) {
+        for card in self
+            .hand
+            .iter_mut()
+            .chain(self.draw.iter_mut())
+            .chain(self.discard.iter_mut())
+            .chain(self.exhaust.iter_mut())
+        {
+            if card.def.id == "blood_for_blood" {
+                card.cost_delta -= 1;
+            }
         }
     }
 
@@ -943,6 +964,15 @@ impl Combat {
         };
         if !card.playable() {
             return Err("unplayable");
+        }
+        // 冲撞:手里只要有一张不是攻击牌就打不出去
+        if card.def.id == "clash"
+            && self
+                .hand
+                .iter()
+                .any(|c| c.kind() != crate::core::card::CardType::Attack)
+        {
+            return Err("clash needs a hand of only attacks");
         }
         // 腐化:技能都是 0 费,所以这里不能按原价拦
         let corrupted = card.kind() == crate::core::card::CardType::Skill
@@ -1323,6 +1353,31 @@ impl Combat {
                         "take a card from the discard pile",
                     );
                 }
+                Effect::AddRandomAttackToHand => {
+                    let pool: Vec<&'static crate::core::card::CardDef> = cards::CARDS
+                        .iter()
+                        .filter(|c| c.kind == crate::core::card::CardType::Attack)
+                        .collect();
+                    if !pool.is_empty() && self.hand.len() < HAND_LIMIT {
+                        let def = self.rng.pick(&pool);
+                        let mut inst = CardInstance::new(def);
+                        inst.free_this_turn = true;
+                        let label = inst.label();
+                        self.hand.push(inst);
+                        self.push_log(LogKind::Player, format!("{label} appears (costs 0)"));
+                    }
+                }
+                Effect::PlayTopOfDraw => {
+                    if let Some(mut card) = self.draw.pop() {
+                        let label = card.label();
+                        self.push_log(LogKind::Player, format!("Havoc plays {label}"));
+                        let target = self.pick_random_alive();
+                        let mut top_ctx = PlayCtx::default();
+                        self.resolve(&mut card, target, &mut top_ctx);
+                        card.free_this_turn = false;
+                        self.exhaust_card(card);
+                    }
+                }
                 Effect::AddCardToHand { id, n } => {
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
@@ -1612,6 +1667,53 @@ mod tests {
         assert!(c.choice.is_none());
         assert_eq!(c.energy, energy_before, "取消要把能量退回来");
         assert_eq!(c.hand.len(), hand_before, "取消要把牌放回手牌");
+    }
+
+    /// 最后四张红卡:嗜血降费、炼狱之刃给 0 费攻击、浩劫打出顶上那张、灼热可反复升
+    #[test]
+    fn last_four_ironclad_cards_work() {
+        // 嗜血:每掉一次血便宜 1
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 5]);
+        c.hand = vec![crate::core::cards::card("blood_for_blood")];
+        let before = c.hand[0].cost_value(c.energy);
+        c.hit_player(5);
+        assert_eq!(c.hand[0].cost_value(c.energy), before - 1, "掉血后便宜 1");
+
+        // 炼狱之刃:手里多一张本回合 0 费的攻击牌
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.hand = vec![crate::core::cards::card("infernal_blade")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        let added = c
+            .hand
+            .iter()
+            .find(|x| x.free_this_turn)
+            .expect("应该多一张 0 费牌");
+        assert_eq!(added.kind(), crate::core::card::CardType::Attack);
+        assert_eq!(added.cost_value(c.energy), 0, "本回合 0 费");
+
+        // 浩劫:把抽牌堆顶那张打出来并消耗
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.hand = vec![crate::core::cards::card("havoc")];
+        c.draw = vec![crate::core::cards::card("strike")];
+        c.energy = 3;
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.enemies[0].hp, e_hp - 6, "顶上那张 Strike 被打出来了");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "strike"),
+            "打出的牌应该被消耗"
+        );
+
+        // 灼热攻击:一直能升,伤害跟着涨
+        let mut card = crate::core::cards::card("searing_blow");
+        let base = card.bonus_damage();
+        card.upgrade();
+        card.upgrade();
+        assert_eq!(card.plus, 2, "升了两次");
+        assert!(card.bonus_damage() > base, "越升越痛");
+        assert!(card.can_upgrade(), "还能继续升");
+        assert_eq!(card.label(), "Searing Blow+2");
     }
 
     #[test]

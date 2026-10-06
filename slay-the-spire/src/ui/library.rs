@@ -133,6 +133,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
                 } else {
                     theme::DIM
                 },
+                theme::FG,
             );
             put(buf, x, y, " ", style);
             x += 1;
@@ -210,6 +211,14 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
 
 /// 详情里的一块,和升级界面的说明一个版式:
 /// 费用在左,名字/类型/正文居中(数字照样上色)
+/// 升级后的费用比原来小?("3" > "2" 这种)
+fn cost_num_less(up: &str, base: &str) -> bool {
+    match (up.parse::<i32>(), base.parse::<i32>()) {
+        (Ok(u), Ok(b)) => u < b,
+        _ => false,
+    }
+}
+
 fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
     let w = rect.width as usize;
     if w < 4 || rect.height == 0 {
@@ -222,13 +231,13 @@ fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
         (item.tag.as_str(), item.name.to_string())
     };
     if item.show_cost {
-        crate::ui::put_cost_token(
-            buf,
-            rect.x,
-            rect.y,
-            cost,
-            theme::energy_color(item.color_key),
-        );
+        // 升级后费用变便宜就绿,否则默认色
+        let digit = if cost_num_less(item.tag_up.as_str(), item.tag.as_str()) {
+            theme::GOOD
+        } else {
+            theme::FG
+        };
+        crate::ui::put_cost_token(buf, rect.x, rect.y, cost, theme::energy_color(item.color_key), digit);
     }
     let name_style = Style::default()
         .fg(theme::corpus_color(item.rarity_key))

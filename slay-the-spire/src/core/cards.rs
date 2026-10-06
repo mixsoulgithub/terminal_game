@@ -32,6 +32,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Damage { amount: 6, times: 1 }],
         upgrade: up!(None, "Deal 9 damage.", [Effect::Damage { amount: 9, times: 1 }]),
     },
@@ -47,6 +48,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Block { amount: 5 }],
         upgrade: up!(None, "Gain 8 Block.", [Effect::Block { amount: 8 }]),
     },
@@ -62,6 +64,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 8, times: 1 },
             Effect::AddTargetStatus { status: Status::Vulnerable, n: 2 },
@@ -88,6 +91,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -103,6 +107,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -118,6 +123,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: true,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -133,6 +139,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -149,6 +156,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -164,6 +172,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -179,6 +188,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[],
         upgrade: None,
     },
@@ -195,6 +205,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 6, times: 1 },
             Effect::AddCardToDiscard { id: "anger", n: 1 },
@@ -220,6 +231,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageEqualBlock],
         upgrade: up!(
             Some(Cost::Fixed(0)),
@@ -239,6 +251,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageAll { amount: 8, times: 1 }],
         upgrade: up!(
             None,
@@ -258,6 +271,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 12, times: 1 },
             Effect::AddTargetStatus { status: Status::Weak, n: 2 },
@@ -283,6 +297,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 5, times: 1 },
             Effect::Block { amount: 5 },
@@ -308,6 +323,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 9, times: 1 },
             Effect::Draw { n: 1 },
@@ -333,6 +349,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageRandom { amount: 3, times: 3 }],
         upgrade: up!(
             None,
@@ -352,6 +369,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::DamageAll { amount: 4, times: 1 },
             Effect::AddAllEnemiesStatus { status: Status::Vulnerable, n: 1 },
@@ -377,6 +395,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Damage { amount: 5, times: 2 }],
         upgrade: up!(
             None,
@@ -396,6 +415,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 12, times: 1 },
             Effect::AddCardToDraw { id: "wound", n: 1 },
@@ -422,6 +442,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Block { amount: 5 },
             Effect::UpgradeRandomInHand { n: 1 },
@@ -447,6 +468,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus { status: Status::Strength, n: 2 }],
         upgrade: up!(
             None,
@@ -466,6 +488,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Block { amount: 8 }, Effect::Draw { n: 1 }],
         upgrade: up!(
             None,
@@ -485,6 +508,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Block { amount: 7 },
             Effect::ExhaustRandomInHand { n: 1 },
@@ -510,6 +534,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Draw { n: 3 }],
         upgrade: up!(None, "Draw 4 cards.", [Effect::Draw { n: 4 }]),
     },
@@ -526,6 +551,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: true,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Damage { amount: 20, times: 1 }],
         upgrade: up!(
             None,
@@ -545,6 +571,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageIfVulnerable {
             amount: 5,
             energy: 1,
@@ -572,6 +599,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageStrengthMult {
             amount: 14,
             mult: 3,
@@ -597,6 +625,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamagePerStrike { base: 6, per: 2 }],
         upgrade: up!(
             None,
@@ -616,6 +645,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::DamageWithBonus {
                 amount: 8,
@@ -647,6 +677,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage { amount: 13, times: 1 },
             Effect::AddTargetStatus { status: Status::Weak, n: 1 },
@@ -674,6 +705,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::ExhaustNonAttacks { damage: 16 }],
         upgrade: up!(
             None,
@@ -694,6 +726,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::LoseHp { amount: 3 }, Effect::GainEnergy { n: 2 }],
         upgrade: up!(
             None,
@@ -713,6 +746,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DoubleBlock],
         upgrade: up!(
             Some(Cost::Fixed(1)),
@@ -732,6 +766,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::ExhaustNonAttacks { damage: 0 },
             Effect::BlockPerExhausted { per: 5 },
@@ -757,6 +792,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::GainEnergy { n: 2 }],
         upgrade: up!(
             Some(Cost::Fixed(0)),
@@ -776,6 +812,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::AddAllEnemiesStatus { status: Status::Weak, n: 3 },
             Effect::AddAllEnemiesStatus {
@@ -807,6 +844,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddTargetStatus {
             status: Status::Strength,
             n: -2,
@@ -832,6 +870,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddAllEnemiesStatus { status: Status::Weak, n: 1 }],
         upgrade: up!(
             None,
@@ -852,6 +891,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::DarkEmbrace,
             n: 1,
@@ -877,6 +917,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Evolve,
             n: 1,
@@ -902,6 +943,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::FeelNoPain,
             n: 3,
@@ -927,6 +969,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::FireBreathing,
             n: 6,
@@ -952,6 +995,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Strength,
             n: 3,
@@ -977,6 +1021,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Metallicize,
             n: 3,
@@ -1002,6 +1047,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Rupture,
             n: 1,
@@ -1028,6 +1074,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Damage { amount: 32, times: 1 }],
         upgrade: up!(
             None,
@@ -1047,6 +1094,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::ExhaustHand,
             Effect::DamagePerExhausted { per: 7 },
@@ -1072,6 +1120,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageAndKillMaxHp {
             amount: 10,
             times: 1,
@@ -1099,6 +1148,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Reaper { amount: 4 }],
         upgrade: up!(
             None,
@@ -1118,6 +1168,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DamageAllX { per: 5 }],
         upgrade: up!(
             None,
@@ -1137,6 +1188,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::DemonForm,
             n: 2,
@@ -1162,6 +1214,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Barricade,
             n: 1,
@@ -1187,6 +1240,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::DoubleSelfStatus(Status::Strength)],
         upgrade: up!(
             Some(Cost::Fixed(0)),
@@ -1206,6 +1260,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::LoseHp { amount: 6 },
             Effect::GainEnergy { n: 2 },
@@ -1233,6 +1288,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Block { amount: 30 }],
         upgrade: up!(
             None,
@@ -1252,6 +1308,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Brutality,
             n: 1,
@@ -1278,6 +1335,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: true,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Block { amount: 10 }],
         upgrade: up!(None, "Ethereal. Gain 13 Block.", [Effect::Block { amount: 13 }]),
     },
@@ -1293,6 +1351,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::LoseHp { amount: 2 },
             Effect::Damage {
@@ -1324,6 +1383,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::DamageAll {
                 amount: 21,
@@ -1355,6 +1415,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Damage {
             amount: 2,
             times: 4,
@@ -1380,6 +1441,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage {
                 amount: 7,
@@ -1411,6 +1473,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::AddCardToHand { id: "wound", n: 2 },
             Effect::Block { amount: 15 },
@@ -1436,6 +1499,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Block { amount: 12 },
             Effect::AddSelfStatus {
@@ -1467,6 +1531,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::AddSelfStatus {
                 status: Status::Vulnerable,
@@ -1504,6 +1569,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Combust,
             n: 5,
@@ -1529,6 +1595,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Corruption,
             n: 1,
@@ -1554,6 +1621,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::DoubleTap,
             n: 1,
@@ -1579,6 +1647,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Juggernaut,
             n: 5,
@@ -1604,6 +1673,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::AddSelfStatus {
             status: Status::Rage,
             n: 3,
@@ -1629,6 +1699,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::StrengthIfTargetAttacks { n: 3 }],
         upgrade: up!(None, "If the enemy intends to attack, gain 4 Strength.", [Effect::StrengthIfTargetAttacks { n: 4 }]),
     },
@@ -1644,6 +1715,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Block { amount: 5 },
             Effect::EnergyOnExhaust { n: 2 },
@@ -1670,6 +1742,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Draw { n: 2 }, Effect::ExhaustFromHand],
         upgrade: up!(None, "Exhaust a card. Draw 3 cards.", [Effect::Draw { n: 3 }, Effect::ExhaustFromHand]),
     },
@@ -1685,6 +1758,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::Draw { n: 1 }, Effect::TopFromHand],
         upgrade: up!(
             None,
@@ -1704,6 +1778,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::CopyFromHand],
         upgrade: up!(None, "Copy an Attack or Power card in your hand twice.", [Effect::CopyFromHand, Effect::CopyFromHand]),
     },
@@ -1719,6 +1794,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[Effect::FromExhaustToHand],
         upgrade: up!(
             Some(Cost::Fixed(0)),
@@ -1738,6 +1814,7 @@ pub static CARDS: &[CardDef] = &[
         ethereal: false,
         innate: false,
         retain: false,
+        multi_upgrade: false,
         effects: &[
             Effect::Damage {
                 amount: 9,
@@ -1755,6 +1832,120 @@ pub static CARDS: &[CardDef] = &[
                 },
                 Effect::FromDiscardToDrawTop
             ]
+        ),
+    },
+    CardDef {
+        id: "clash",
+        name: "Clash",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Can only be played if every card in your hand is an Attack. Deal 14 damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        effects: &[Effect::Damage {
+            amount: 14,
+            times: 1,
+        }],
+        upgrade: up!(
+            None,
+            "Can only be played if every card in your hand is an Attack. Deal 18 damage.",
+            [Effect::Damage {
+                amount: 18,
+                times: 1
+            }]
+        ),
+    },
+    CardDef {
+        id: "blood_for_blood",
+        name: "Blood for Blood",
+        cost: Cost::Fixed(4),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Costs (1) less for each time you lose HP this combat. Deal 18 damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        effects: &[Effect::Damage {
+            amount: 18,
+            times: 1,
+        }],
+        upgrade: up!(
+            Some(Cost::Fixed(3)),
+            "Costs (1) less for each time you lose HP this combat. Deal 22 damage. Costs 3.",
+            [Effect::Damage {
+                amount: 22,
+                times: 1
+            }]
+        ),
+    },
+    CardDef {
+        id: "havoc",
+        name: "Havoc",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Play the top card of your draw pile and Exhaust it.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        effects: &[Effect::PlayTopOfDraw],
+        upgrade: up!(Some(Cost::Fixed(0)), "Play the top card of your draw pile and Exhaust it. Costs 0.", [Effect::PlayTopOfDraw]),
+    },
+    CardDef {
+        id: "infernal_blade",
+        name: "Infernal Blade",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Add a random Attack into your hand. It costs 0 this turn. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        effects: &[Effect::AddRandomAttackToHand],
+        upgrade: up!(
+            Some(Cost::Fixed(0)),
+            "Add a random Attack into your hand. It costs 0 this turn. Exhaust. Costs 0.",
+            [Effect::AddRandomAttackToHand]
+        ),
+    },
+    CardDef {
+        id: "searing_blow",
+        name: "Searing Blow",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal {d} damage. Can be upgraded any number of times.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: true,
+        effects: &[Effect::DamageWithBonus {
+            amount: 12,
+            times: 1,
+        }],
+        upgrade: up!(
+            None,
+            "Deal {d} damage. Can be upgraded any number of times.",
+            [Effect::DamageWithBonus {
+                amount: 12,
+                times: 1
+            }]
         ),
     },
 ];
@@ -1909,6 +2100,11 @@ mod tests {
     fn upgrades_change_the_card() {
         for c in CARDS {
             let Some(u) = &c.upgrade else { continue };
+            // 可无限升级的牌(灼热攻击)伤害写在 {d} 占位符里,文本与效果都不变,
+            // 涨的是实例上的 bonus,所以这条规矩对它不适用
+            if c.multi_upgrade {
+                continue;
+            }
             assert_ne!(u.text, c.text, "{} 升级后描述没变", c.id);
             let up_effects = u.effects.unwrap_or(c.effects);
             let cost_changed = u.cost.map_or(false, |x| x != c.cost);
