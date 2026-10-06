@@ -17,9 +17,7 @@ pub enum Mode {
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
 const COMMANDS: &[&str] = &[
-    "cards", "d", "deck", "H", "help", "history", "log", "m", "map", "new", "p", "potion",
-    "potions", "q", "qa", "quaff", "quit", "r", "relics", "restart", "room", "seed", "toss",
-    "win", "wq", "x",
+    "new", "q", "qa", "quit", "restart", "room", "seed", "win", "wq", "x",
 ];
 /// :room 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
@@ -1211,12 +1209,6 @@ impl App {
         };
         match head {
             "q" | "qa" | "quit" | "wq" | "x" => self.quit = true,
-            "help" => self.open_overlay(Overlay::Help),
-            "deck" | "d" | "cards" => self.open_overlay(Overlay::Deck),
-            "map" | "m" => self.open_overlay(Overlay::Map),
-            "relics" | "r" => self.open_overlay(Overlay::Relics),
-            "potions" | "p" => self.open_overlay(Overlay::Potions),
-            "history" | "log" | "H" => self.open_overlay(Overlay::History),
             "seed" => self.info(format!("seed {}", self.run.seed)),
             // :room shop / battle / event(调试用:直接进房间,不动地图)
             "room" => {
@@ -1240,29 +1232,6 @@ impl App {
                     rest.parse::<u64>().unwrap_or(self.run.seed)
                 };
                 self.restart(seed);
-            }
-            "quaff" => {
-                if let Ok(slot) = rest.parse::<usize>() {
-                    if slot >= 1 && slot <= self.run.player.potions.len() {
-                        self.drink(slot - 1);
-                    } else {
-                        self.warn("no such potion slot");
-                    }
-                } else {
-                    self.warn("usage: quaff <1-3>");
-                }
-            }
-            "toss" => {
-                if let Ok(slot) = rest.parse::<usize>() {
-                    if slot >= 1 && slot <= self.run.player.potions.len() {
-                        let r = self.run.toss_potion(slot - 1);
-                        self.ok(r);
-                    } else {
-                        self.warn("no such potion slot");
-                    }
-                } else {
-                    self.warn("usage: toss <1-3>");
-                }
             }
             "" => {}
             other => self.warn(format!("unknown command: {other}")),
@@ -1368,12 +1337,9 @@ impl App {
             ("?", "this help"),
             (":", "command line"),
             (":q", "quit"),
-            (":help", "this help"),
-            (":deck :relics :potions", "open those lists"),
             (":seed", "show the run seed"),
             (":room shop|battle|event", "jump straight into that room (debug)"),
             (":win", "win the current battle (skip to the reward)"),
-            (":quaff N :toss N", "use or discard potion N"),
             (":new [seed]", "start a new run"),
             ("R n", "after the run ends: restart with the same / a new seed"),
             ("ctrl-c", "quit at any time"),
