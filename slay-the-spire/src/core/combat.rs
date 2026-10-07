@@ -142,6 +142,8 @@ pub struct Choice {
     pub action: ChoiceAction,
     /// 只能选攻击/能力牌(二重身)
     pub attack_or_power_only: bool,
+    /// 一共要选几张(目前这些牌都只要选 1 张)
+    pub need: usize,
     /// 是哪张牌引起的,信息栏提示用
     pub label: String,
     /// 还没收尾的那张牌 + 它花的能量:取消时原样退回
@@ -671,6 +673,7 @@ impl Combat {
             source,
             action,
             attack_or_power_only,
+            need: 1,
             label: label.to_string(),
             played: None,
         });

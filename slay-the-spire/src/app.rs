@@ -1039,7 +1039,18 @@ impl App {
                 if let Some(pos) = self.choice_sel.iter().position(|i| *i == cur) {
                     self.choice_sel.remove(pos);
                 } else {
-                    self.choice_sel.push(cur);
+                    // 选够张数就不让再选,得先取消一张
+                    let need = self
+                        .run
+                        .combat()
+                        .and_then(|c| c.choice.as_ref())
+                        .map(|c| c.need)
+                        .unwrap_or(1);
+                    if self.choice_sel.len() >= need {
+                        self.warn(format!("already picked {need}, unselect one first"));
+                    } else {
+                        self.choice_sel.push(cur);
+                    }
                 }
             }
             KeyCode::Enter if source == ChoiceSource::Hand => {
@@ -1053,7 +1064,7 @@ impl App {
     /// 有待选择时,能量行中间那句提示
     pub fn select_hint(&self) -> Option<String> {
         let ch = self.run.combat()?.choice.as_ref()?;
-        Some(format!("select 1 card(s)  ({})", ch.label))
+        Some(format!("select {} card(s)  ({})", ch.need, ch.label))
     }
 
     /// 确认选择:把手牌选择模式里选中的那张交出去

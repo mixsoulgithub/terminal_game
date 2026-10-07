@@ -254,7 +254,9 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
         .iter()
         .map(|card| display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label()))
         .collect();
-    let marked = |k: usize| k == sel || app.choice_sel.contains(&k);
+    // {} 只画在光标那张;已经选中的(背景色)不画括号
+    let marked = |k: usize| k == sel;
+    let highlighted = |k: usize| k == sel || app.choice_sel.contains(&k);
     let widths: Vec<usize> = lengths.clone();
     // 分隔符:选中的牌把它左右两根竖线换成 [ 和 ](宽度不变)
     let bar_at = |before: usize| -> &'static str {
@@ -283,7 +285,7 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
         }
         let w = want.min(remain.saturating_sub(1)).max(1);
         let playable = c.blocked_reason(k).is_none();
-        crate::ui::put_card_cell(buf, cx, y, w as u16, card, marked(k), !playable);
+        crate::ui::put_card_cell(buf, cx, y, w as u16, card, highlighted(k), !playable);
         cx += w as u16;
         bar(buf, cx, bar_at(k + 1));
         cx += 1;
