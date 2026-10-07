@@ -30,6 +30,13 @@ pub enum Status {
     Juggernaut,
     Rage,
     FlameBarrier,
+    Artifact,
+    /// 本回合起一段时间内不能从卡牌获得格挡(紧急按钮)
+    NoBlock,
+    Mayhem,
+    Magnetism,
+    Panache,
+    SadisticNature,
     // 敌人能力
     Ritual,
     Enrage,
@@ -63,6 +70,12 @@ impl Status {
             Juggernaut => "Juggernaut",
             Rage => "Rage",
             FlameBarrier => "Flame Barrier",
+            Artifact => "Artifact",
+            NoBlock => "No Block",
+            Mayhem => "Mayhem",
+            Magnetism => "Magnetism",
+            Panache => "Panache",
+            SadisticNature => "Sadistic Nature",
             Ritual => "Ritual",
             Enrage => "Enrage",
         }
@@ -96,6 +109,12 @@ impl Status {
             Juggernaut => "JUGG",
             Rage => "RAGE",
             FlameBarrier => "FLMB",
+            Artifact => "ARTF",
+            NoBlock => "NBLK",
+            Mayhem => "MAYH",
+            Magnetism => "MAGN",
+            Panache => "PAN",
+            SadisticNature => "SAD",
             Ritual => "RITUAL",
             Enrage => "ENRAGE",
         }
@@ -107,7 +126,14 @@ impl Status {
         // 本回合就失效的也放这儿,靠回合结束时递减
         matches!(
             self,
-            Vulnerable | Weak | Frail | Entangled | DoubleTap | Rage | FlameBarrier
+            Vulnerable
+                | Weak
+                | Frail
+                | Entangled
+                | DoubleTap
+                | Rage
+                | FlameBarrier
+                | NoBlock
         )
     }
 

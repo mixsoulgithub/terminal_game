@@ -762,7 +762,7 @@ impl App {
         self.overlay_scroll = if ov == Overlay::History { u16::MAX / 2 } else { 0 };
         if matches!(
             ov,
-            Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust
+            Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust | Overlay::Offered
         ) {
             // 光标要停在第一张牌上,别停在小标题上
             self.deck_cursor_end(false);
@@ -775,7 +775,10 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
                 let picking = matches!(
                     self.overlay,
-                    Some(Overlay::Draw) | Some(Overlay::Discard) | Some(Overlay::Exhaust)
+                    Some(Overlay::Draw)
+                        | Some(Overlay::Discard)
+                        | Some(Overlay::Exhaust)
+                        | Some(Overlay::Offered)
                 );
                 self.overlay = None;
                 self.potion_pending = None;
@@ -796,17 +799,27 @@ impl App {
             KeyCode::Char('G') if on_map => self.jump_map(true),
             // 选牌窗口里空格和回车都算"选中光标下那张"(跟手牌模式的空格一致)
             KeyCode::Enter | KeyCode::Char(' ')
-                if matches!(
-                    self.overlay,
-                    Some(Overlay::Draw) | Some(Overlay::Discard) | Some(Overlay::Exhaust)
-                ) && self.run.combat().is_some_and(|c| c.choice.is_some()) =>
+                if self.choice_overlay().is_some() && self.overlay == self.choice_overlay() =>
             {
-                let idx = self.overlay_sel;
-                let r = self
+                // 窗口行号 = 候选序号,换回牌堆里的真实下标
+                let idx = self
                     .run
-                    .combat_mut()
-                    .map(|c| c.choose(idx))
-                    .unwrap_or_else(|| Err("not in a battle".to_string()));
+                    .combat()
+                    .and_then(|c| c.choice_candidates().get(self.overlay_sel).map(|(i, _)| *i));
+                let r = match idx {
+                    Some(idx) => self
+                        .run
+                        .combat_mut()
+                        .map(|c| c.choose(idx))
+                        .unwrap_or_else(|| Err("not in a battle".to_string())),
+                    None => {
+                        // 候选都选完了,这一下当"收工"
+                        if let Some(c) = self.run.combat_mut() {
+                            c.finish_choice();
+                        }
+                        Ok(())
+                    }
+                };
                 self.ok_unit(r);
                 if self.run.combat().map(|c| c.choice.is_none()).unwrap_or(false) {
                     self.overlay = None;
@@ -938,7 +951,7 @@ impl App {
     /// 当前叠加层的卡片行(牌组 / 三个牌堆)
     fn overlay_rows(&self) -> Vec<crate::ui::CardRow> {
         match self.overlay {
-            Some(ov @ (Overlay::Draw | Overlay::Discard | Overlay::Exhaust)) => {
+            Some(ov @ (Overlay::Draw | Overlay::Discard | Overlay::Exhaust | Overlay::Offered)) => {
                 crate::ui::overlay::deck_rows(self, ov)
             }
             _ => crate::ui::overlay::deck_rows(self, Overlay::Deck),
@@ -1220,12 +1233,12 @@ impl App {
                 .and_then(|c| c.choice.as_ref())
                 .map(|c| c.need)
                 .unwrap_or(1);
-            if self.choice_sel.len() >= need {
+            if need > 0 && self.choice_sel.len() >= need {
                 self.warn(format!("already picked {need}, unselect one first"));
             } else {
                 self.choice_sel.push(cur);
-                // 选满就立刻生效,不用再按回车
-                if self.choice_sel.len() >= need {
+                // 选满就立刻生效,不用再按回车;"不限张数"的得自己按回车
+                if need > 0 && self.choice_sel.len() >= need {
                     self.confirm_choice();
                 }
             }
@@ -1235,26 +1248,39 @@ impl App {
     /// 有待选择时,能量行中间那句提示
     pub fn select_hint(&self) -> Option<String> {
         let ch = self.run.combat()?.choice.as_ref()?;
-        Some(format!("select {} card(s)", ch.need))
+        Some(if ch.need == 0 {
+            "select any number, enter when done".to_string()
+        } else {
+            format!("select up to {} card(s)", ch.need)
+        })
     }
 
-    /// 确认选择:把手牌选择模式里选中的那张交出去
+    /// 确认选择:把选中的几张交出去(从后往前,免得前面的选择挪动后面的下标)
     fn confirm_choice(&mut self) {
-        let Some(idx) = self.choice_sel.first().copied() else {
-            self.warn("pick a card first");
-            return;
-        };
-        let r = self
-            .run
-            .combat_mut()
-            .map(|c| c.choose(idx))
-            .unwrap_or_else(|| Err("not in a battle".to_string()));
-        match r {
-            Ok(()) => {
-                self.choice_sel.clear();
-                self.info("done");
+        let mut picks = self.choice_sel.clone();
+        // 一张都没选:直接收工(多选类的牌允许少选)
+        let any = !picks.is_empty();
+        picks.sort_unstable();
+        picks.reverse();
+        let mut err: Option<String> = None;
+        if let Some(c) = self.run.combat_mut() {
+            for idx in picks {
+                if let Err(e) = c.choose(idx) {
+                    err = Some(e);
+                    break;
+                }
             }
-            Err(e) => self.warn(e),
+            // 该消耗/该弃掉的牌在这里收尾
+            c.finish_choice();
+        }
+        match err {
+            Some(e) => self.warn(e),
+            None => {
+                self.choice_sel.clear();
+                if any {
+                    self.info("done");
+                }
+            }
         }
         self.clamp();
     }
@@ -1315,17 +1341,22 @@ impl App {
         }
     }
 
-    /// 有待选择且来源不是手牌时,自动弹出对应的牌堆窗口
-    fn open_choice_window(&mut self) {
+    /// 当前待选择对应的窗口(手牌选择直接用底下的手牌栏,不开窗口)
+    fn choice_overlay(&self) -> Option<Overlay> {
         use crate::core::combat::ChoiceSource;
-        let Some(ch) = self.run.combat().and_then(|c| c.choice.as_ref()) else {
-            return;
-        };
-        self.overlay = match ch.source {
+        let ch = self.run.combat().and_then(|c| c.choice.as_ref())?;
+        match ch.source {
             ChoiceSource::Discard => Some(Overlay::Discard),
             ChoiceSource::Exhaust => Some(Overlay::Exhaust),
+            ChoiceSource::Draw => Some(Overlay::Draw),
+            ChoiceSource::Offered => Some(Overlay::Offered),
             ChoiceSource::Hand => None,
-        };
+        }
+    }
+
+    /// 有待选择且来源不是手牌时,自动弹出对应的牌堆窗口
+    fn open_choice_window(&mut self) {
+        self.overlay = self.choice_overlay();
         if self.overlay.is_some() {
             self.overlay_sel = 0;
             self.choice_sel.clear();

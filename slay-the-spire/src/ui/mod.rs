@@ -170,13 +170,12 @@ pub fn card_cost_token(
 }
 
 pub fn cost_label(card: &crate::core::card::CardInstance) -> String {
-    if card.free_this_turn {
-        return "0".to_string();
-    }
-    match card.cost() {
-        crate::core::card::Cost::Fixed(n) => (n as i32 + card.cost_delta).max(0).to_string(),
-        crate::core::card::Cost::X => "X".to_string(),
-        crate::core::card::Cost::Unplayable => "-".to_string(),
+    match card.fixed_cost() {
+        Some(n) => n.to_string(),
+        None => match card.cost() {
+            crate::core::card::Cost::X => "X".to_string(),
+            _ => "-".to_string(),
+        },
     }
 }
 
@@ -1151,6 +1150,65 @@ mod tests {
             bottom.saturating_sub(1),
             "按一次 k 就该往回走一格"
         );
+    }
+
+    /// 从抽牌堆/亮牌里挑牌:窗口要列出候选,选中要落到正确的那张
+    #[test]
+    fn pile_and_offered_choices_open_a_pickable_window() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let count_cards = |rows: &[crate::ui::CardRow]| {
+            rows.iter()
+                .filter(|r| matches!(r, crate::ui::CardRow::Card { .. }))
+                .count()
+        };
+
+        // 秘技:窗口里只列抽牌堆里的技能
+        let mut app = app_in_combat(3, "jaw_worm_solo");
+        {
+            let c = app.run.combat_mut().expect("战斗中");
+            c.hand.clear();
+            c.draw.clear();
+            c.hand.push(crate::core::cards::card("secret_technique"));
+            c.draw.push(crate::core::cards::card("strike"));
+            c.draw.push(crate::core::cards::card("defend"));
+            c.energy = 9;
+        }
+        app.hand_sel = 0;
+        app.handle_key(enter);
+        assert_eq!(app.overlay, Some(Overlay::Draw), "秘技要开出抽牌堆窗口");
+        let rows = crate::ui::overlay::deck_rows(&app, Overlay::Draw);
+        assert_eq!(count_cards(&rows), 1, "只有技能可挑");
+        let text = screen_text(&app, 110, 34);
+        assert!(text.contains("Defend"), "候选该列出来:\n{text}");
+        assert!(!text.contains("Strike"), "攻击牌不该出现在候选里:\n{text}");
+        app.handle_key(enter);
+        let c = app.run.combat().expect("战斗中");
+        assert!(c.choice.is_none(), "选完就收工");
+        assert!(c.hand.iter().any(|x| x.def.id == "defend"));
+        assert!(c.draw.iter().any(|x| x.def.id == "strike"));
+
+        // 发现:亮三张,选中哪张就进哪张
+        let mut app = app_in_combat(4, "jaw_worm_solo");
+        {
+            let c = app.run.combat_mut().expect("战斗中");
+            c.hand.clear();
+            c.draw.clear();
+            c.hand.push(crate::core::cards::card("discovery"));
+            c.energy = 9;
+        }
+        app.hand_sel = 0;
+        app.handle_key(enter);
+        assert_eq!(app.overlay, Some(Overlay::Offered), "发现要开亮牌窗口");
+        let rows = crate::ui::overlay::deck_rows(&app, Overlay::Offered);
+        assert_eq!(count_cards(&rows), 3, "亮三张");
+        let text = screen_text(&app, 110, 34);
+        assert!(text.contains("offered"), "亮牌窗口没打开:\n{text}");
+        app.handle_key(enter);
+        let c = app.run.combat().expect("战斗中");
+        assert!(c.choice.is_none());
+        assert_eq!(c.hand.len(), 1, "挑中的那张进手");
+        assert!(c.hand[0].free_this_turn, "本回合 0 费");
     }
 
     #[test]

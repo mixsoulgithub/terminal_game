@@ -143,6 +143,50 @@ pub enum Effect {
     /// 目标这回合打算攻击的话,给自己加力量(观察弱点)
     StrengthIfTargetAttacks { n: i32 },
     UpgradeRandomInHand { n: u8 },
+    /// 回复生命(包扎)
+    Heal { amount: i32 },
+    /// 伤害等于抽牌堆张数 * per(心灵冲击)
+    DamagePerDrawPile { per: i32 },
+    /// 造成伤害;若因此击杀则获得金币(贪婪之手)
+    DamageAndGoldOnKill {
+        amount: i32,
+        times: u8,
+        gold: i32,
+    },
+    /// 手里没有攻击牌才抽 n 张(急躁)
+    DrawIfNoAttacks { n: u8 },
+    /// 随机无色牌进手牌(杂耍);free 表示本回合 0 费,upgraded 表示直接给升级版
+    AddRandomColorlessToHand {
+        n: u8,
+        free: bool,
+        upgraded: bool,
+    },
+    /// 随机无色牌进手牌,张数取 X(嬗变);upgraded 表示给升级版
+    AddRandomColorlessXToHand { upgraded: bool },
+    /// n 张随机本职业牌(按类型)洗进抽牌堆,本场战斗 0 费(化茧/变形)
+    AddRandomToDrawFree { kind: CardType, n: u8 },
+    /// 弃牌堆洗回抽牌堆(深呼吸)
+    ShuffleDiscardIntoDraw,
+    /// 手牌随机一张本场战斗 0 费(疯狂)
+    FreeRandomInHand,
+    /// 手牌费用降到不超过 cap;combat 为真持续整场战斗,否则只到回合结束(启迪)
+    CapHandCost { cap: u8, combat: bool },
+    /// 本场战斗内所有牌升级(神化)
+    UpgradeAllForCombat,
+    /// 目标本回合失去 n 点力量(黑暗镣铐)
+    TargetLoseStrengthThisTurn { n: i32 },
+    /// 亮出 n 张随机本职业牌,让玩家挑一张进手牌(发现)
+    OfferRandomCardsFromClass { n: u8 },
+    /// 从手牌最多消耗 n 张(净化)
+    ExhaustUpTo { n: u8 },
+    /// 从手牌把 n 张放到底部,并让它们 0 费直到打出;n 为 0 表示不限张数(预谋)
+    ToDrawBottomFromHand { n: u8 },
+    /// 从抽牌堆挑一张指定类型的牌进手牌(秘技/秘密武器)
+    TakeFromDrawToHand { kind: CardType },
+    /// 抽牌堆里 n 张指定类型的牌随机进手牌(暴动)
+    RandomFromDrawToHand { kind: CardType, n: u8 },
+    /// n 回合后对所有敌人造成 damage(定时炸弹)
+    Bomb { turns: u8, damage: i32 },
 }
 
 /// 升级后的覆盖项:None 表示沿用基础值
@@ -194,6 +238,12 @@ pub struct CardInstance {
     pub cost_delta: i32,
     /// 本回合费用为 0(炼狱之刃给的牌)
     pub free_this_turn: bool,
+    /// 本场战斗剩余时间内费用为 0(疯狂/化茧/变形/嬗变给的牌)
+    pub free_combat: bool,
+    /// 本回合费用上限,0 表示没有上限(启迪)
+    pub cost_cap_this_turn: u8,
+    /// 本场战斗内费用上限,0 表示没有上限(启迪+)
+    pub cost_cap_combat: u8,
     /// 升级次数:可以多次升级的牌(灼热攻击)才 >1
     pub plus: u8,
     /// 被明确"放到抽牌堆顶"的次序(0 = 没放过),数字越大越靠顶
@@ -208,6 +258,9 @@ impl CardInstance {
             bonus: 0,
             cost_delta: 0,
             free_this_turn: false,
+            free_combat: false,
+            cost_cap_this_turn: 0,
+            cost_cap_combat: 0,
             plus: 0,
             topped: 0,
         }
@@ -248,15 +301,33 @@ impl CardInstance {
         }
     }
 
-    /// 能量不足时能否打出;X 费用始终可打
-    pub fn cost_value(&self, energy: i32) -> i32 {
-        if self.free_this_turn {
-            return 0;
+    /// 已经算上各种降费/费用上限的固定费用;X 费与不可打出返回 None
+    pub fn fixed_cost(&self) -> Option<i32> {
+        // 不可打出的牌永远是 "-",降费也救不回来
+        if matches!(self.cost(), Cost::Unplayable) {
+            return None;
+        }
+        if self.free_this_turn || self.free_combat {
+            return Some(0);
         }
         match self.cost() {
-            Cost::Fixed(n) => (n as i32 + self.cost_delta).max(0),
-            Cost::X => energy.max(0),
-            Cost::Unplayable => i32::MAX,
+            Cost::Fixed(n) => {
+                let base = (n as i32 + self.cost_delta).max(0);
+                let cap = self.cost_cap_combat.max(self.cost_cap_this_turn);
+                Some(if cap > 0 { base.min(cap as i32) } else { base })
+            }
+            _ => None,
+        }
+    }
+
+    /// 能量不足时能否打出;X 费用始终可打
+    pub fn cost_value(&self, energy: i32) -> i32 {
+        match self.fixed_cost() {
+            Some(n) => n,
+            None => match self.cost() {
+                Cost::X => energy.max(0),
+                _ => i32::MAX,
+            },
         }
     }
 

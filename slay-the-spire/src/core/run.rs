@@ -763,7 +763,7 @@ impl Run {
     /// 每次战斗内操作之后调用:同步生命、处理胜负
     pub fn sync_combat(&mut self) {
         self.absorb_combat_log();
-        let Some(c) = self.combat.as_ref() else {
+        let Some(c) = self.combat.as_mut() else {
             return;
         };
         let phase = c.phase;
@@ -771,8 +771,15 @@ impl Run {
         let max_hp = c.player.max_hp;
         let damage = c.damage_dealt;
         let turns = c.turn;
+        // 战斗里赚到的金币(贪婪之手)在这里收走,收一次就清零
+        let looted = c.gold_gained;
+        c.gold_gained = 0;
         self.player.hp = hp;
         self.player.max_hp = max_hp;
+        if looted > 0 {
+            self.gain_gold(looted);
+            self.say(format!("you loot {looted} gold"));
+        }
         match phase {
             // 赢了先留在战场上看 2 秒(死亡/结算动画),由 tick_win_hold 收尾
             Phase::Won => {
@@ -827,6 +834,9 @@ impl Run {
         };
         let kind = c.kind;
         self.stats.damage_dealt += c.damage_dealt;
+        if c.gold_gained > 0 {
+            self.gain_gold(c.gold_gained);
+        }
         let healed = self.post_combat_heal();
         if healed > 0 {
             self.say(format!("relics heal you for {healed}"));
@@ -2063,6 +2073,39 @@ mod tests {
         }
         assert!(got_gold);
         assert!(r.player.gold > STARTING_GOLD);
+    }
+
+    /// 贪婪之手赚到的金币要真的进到这一局的钱包里,而且只进一次
+    #[test]
+    fn hand_of_greed_gold_reaches_the_run() {
+        let mut r = run(17);
+        let start = r.reachable()[0];
+        r.enter_node(start).unwrap();
+        assert_eq!(r.screen, Screen::Combat);
+        let gold_before = r.player.gold;
+        {
+            let c = r.combat.as_mut().unwrap();
+            c.enemies[0].hp = 1;
+            c.energy = 9;
+        }
+        r.debug_add_card("Hand of Greed").unwrap();
+        let idx = r
+            .combat
+            .as_ref()
+            .unwrap()
+            .hand
+            .iter()
+            .position(|c| c.def.id == "hand_of_greed")
+            .expect("调试加的牌该在手牌里");
+        r.combat
+            .as_mut()
+            .unwrap()
+            .play_card(idx, Some(0))
+            .unwrap();
+        r.sync_combat();
+        assert_eq!(r.player.gold, gold_before + 20, "致命一击的金币要落袋");
+        r.sync_combat();
+        assert_eq!(r.player.gold, gold_before + 20, "同一笔钱不能入账两次");
     }
 
     #[test]

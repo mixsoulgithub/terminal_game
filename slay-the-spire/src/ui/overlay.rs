@@ -6,6 +6,7 @@ use ratatui::style::Style;
 
 use crate::app::App;
 use crate::core::card::CardInstance;
+use crate::core::combat::ChoiceSource;
 use crate::core::run::HistoryKind;
 use crate::ui::theme;
 use crate::ui::{draw_box, put, put_padded, truncate};
@@ -22,6 +23,8 @@ pub enum Overlay {
     Discard,
     /// 只看消耗堆
     Exhaust,
+    /// 挑一张亮出来的候选牌(发现)
+    Offered,
     Relics,
     Potions,
     /// 一整局发生过的事
@@ -37,6 +40,7 @@ impl Overlay {
             Overlay::Draw => "undrawn",
             Overlay::Discard => "discarded",
             Overlay::Exhaust => "exhausted",
+            Overlay::Offered => "offered",
             Overlay::Relics => "relics",
             Overlay::Potions => "potions",
             Overlay::History => "history",
@@ -52,6 +56,7 @@ impl Overlay {
             Overlay::Draw => "U",
             Overlay::Discard => "D",
             Overlay::Exhaust => "E",
+            Overlay::Offered => "esc",
             Overlay::Relics => "r",
             Overlay::Potions => "p",
             Overlay::History => "H",
@@ -73,6 +78,29 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
         }
     }
     let mut rows = Vec::new();
+    // 正在选牌:只列能选的那些,行号就是候选序号
+    if let (Some(c), Some(ch)) = (run.combat(), run.combat().and_then(|c| c.choice.as_ref())) {
+        let picking = matches!(
+            (ch.source, ov),
+            (ChoiceSource::Draw, Overlay::Draw)
+                | (ChoiceSource::Discard, Overlay::Discard)
+                | (ChoiceSource::Exhaust, Overlay::Exhaust)
+                | (ChoiceSource::Offered, Overlay::Offered)
+        );
+        if picking {
+            let list: Vec<CardInstance> = c
+                .choice_candidates()
+                .into_iter()
+                .map(|(_, card)| card.clone())
+                .collect();
+            let mut rows = Vec::new();
+            if list.is_empty() {
+                rows.push(CardRow::Header("nothing to pick".to_string()));
+            }
+            push(&mut rows, &list);
+            return rows;
+        }
+    }
     let pile: &[CardInstance] = match (ov, run.combat()) {
         (Overlay::Draw, Some(c)) => &c.draw,
         (Overlay::Discard, Some(c)) => &c.discard,
@@ -111,8 +139,8 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
     let mut out: Vec<(String, Style)> = Vec::new();
     match ov {
         Overlay::Map => {}
-        Overlay::Deck => {
-            // 牌组窗口改用"列表 + 说明",这里不再产生行
+        Overlay::Deck | Overlay::Offered => {
+            // 牌组窗口与"亮牌挑选"都改用"列表 + 说明",这里不再产生行
         }
         Overlay::Draw | Overlay::Discard | Overlay::Exhaust => {
             let pile: &[CardInstance] = match (ov, run.combat()) {
@@ -200,7 +228,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
     }
     if matches!(
         ov,
-        Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust
+        Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust | Overlay::Offered
     ) {
         let rows = deck_rows(app, ov);
         // 正在选牌:空格/回车选中,esc 是取消这次出牌
@@ -235,6 +263,8 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
         .filter(|ch| match (ch.source, ov) {
             (crate::core::combat::ChoiceSource::Discard, Overlay::Discard) => true,
             (crate::core::combat::ChoiceSource::Exhaust, Overlay::Exhaust) => true,
+            (crate::core::combat::ChoiceSource::Draw, Overlay::Draw) => true,
+            (crate::core::combat::ChoiceSource::Offered, Overlay::Offered) => true,
             _ => false,
         })
         .map(|ch| format!("  ({})", ch.label))

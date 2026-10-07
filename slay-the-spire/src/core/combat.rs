@@ -55,6 +55,8 @@ pub struct Enemy {
     pub awake: bool,
     /// 死亡触发是否已结算,避免重复触发
     pub death_done: bool,
+    /// 本回合被扣掉的力量(黑暗镣铐),回合结束回补
+    pub temp_strength: i32,
 }
 
 impl Enemy {
@@ -120,6 +122,33 @@ pub enum ChoiceSource {
     Hand,
     Discard,
     Exhaust,
+    /// 抽牌堆(秘技/秘密武器)
+    Draw,
+    /// 亮出来的几张候选(发现)
+    Offered,
+}
+
+/// 哪些牌可以被选中
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChoiceFilter {
+    Any,
+    AttackOrPower,
+    AttackOnly,
+    SkillOnly,
+}
+
+impl ChoiceFilter {
+    pub fn allows(self, card: &CardInstance) -> bool {
+        use crate::core::card::CardType;
+        match self {
+            ChoiceFilter::Any => true,
+            ChoiceFilter::AttackOrPower => {
+                matches!(card.kind(), CardType::Attack | CardType::Power)
+            }
+            ChoiceFilter::AttackOnly => card.kind() == CardType::Attack,
+            ChoiceFilter::SkillOnly => card.kind() == CardType::Skill,
+        }
+    }
 }
 
 /// 选完之后干什么
@@ -133,6 +162,8 @@ pub enum ChoiceAction {
     ToHand,
     /// 放到抽牌堆顶
     ToDrawTop,
+    /// 放到抽牌堆底
+    ToDrawBottom,
     /// 直接移出这局(调试用)
     Remove,
 }
@@ -142,14 +173,18 @@ pub enum ChoiceAction {
 pub struct Choice {
     pub source: ChoiceSource,
     pub action: ChoiceAction,
-    /// 只能选攻击/能力牌(二重身)
-    pub attack_or_power_only: bool,
-    /// 一共要选几张(目前这些牌都只要选 1 张)
+    /// 能选中哪些类型
+    pub filter: ChoiceFilter,
+    /// 最多选几张;0 表示不限张数(选到玩家主动结束为止)
     pub need: usize,
+    /// 已经选了几张
+    pub taken: usize,
     /// 是哪张牌引起的,信息栏提示用
     pub label: String,
     /// 还没收尾的那张牌 + 它花的能量:取消时原样退回
     pub played: Option<(CardInstance, i32)>,
+    /// ChoiceSource::Offered 时亮出来的候选牌
+    pub offered: Vec<CardInstance>,
 }
 
 #[derive(Clone)]
@@ -183,6 +218,14 @@ pub struct Combat {
     pub damage_dealt: i32,
     /// 已经产出的日志条数(日志会截断,所以用序号而不是长度)
     pub log_seq: u64,
+    /// 本场战斗通过卡牌赚到的金币,由一局流程收走(贪婪之手)
+    pub gold_gained: i32,
+    /// 本场战斗的牌都算已升级(神化);之后新加进来的牌也直接升级
+    all_upgraded: bool,
+    /// 本回合已经打出几张牌(浮夸每 5 张结算一次)
+    cards_played: i32,
+    /// 定时炸弹:(剩余回合, 伤害)
+    bombs: Vec<(u8, i32)>,
     relic_thorns: i32,
 }
 
@@ -227,6 +270,7 @@ impl Combat {
                 sleep_left,
                 awake: sleep_left == 0,
                 death_done: false,
+                temp_strength: 0,
             });
         }
 
@@ -264,6 +308,10 @@ impl Combat {
             kind: enc.kind,
             damage_dealt: 0,
             log_seq: 0,
+            gold_gained: 0,
+            all_upgraded: false,
+            cards_played: 0,
+            bombs: Vec::new(),
             relic_thorns: 0,
         };
 
@@ -344,8 +392,9 @@ impl Combat {
 
     fn start_turn(&mut self, extra_draw: usize) {
         self.turn += 1;
-        // 上回合"本回合 0 费"的牌恢复原价;
-        // 四个牌堆都要清:牌可能已经不在手里(弃掉/洗完/被消耗)
+        // 上回合"本回合 0 费 / 本回合降到 1 费"的效果恢复原样;
+        // 四个牌堆都要清:牌可能已经不在手里(弃掉/洗完/被消耗).
+        // 本场战斗的 0 费与费用上限(cost_cap_combat)不受影响.
         for pile in [
             &mut self.hand,
             &mut self.draw,
@@ -354,8 +403,17 @@ impl Combat {
         ] {
             for card in pile.iter_mut() {
                 card.free_this_turn = false;
+                card.cost_cap_this_turn = 0;
             }
         }
+        // 上回合被黑暗镣铐扣掉的力量到期回补
+        for e in self.enemies.iter_mut() {
+            if e.temp_strength != 0 {
+                e.statuses.add(Status::Strength, e.temp_strength);
+                e.temp_strength = 0;
+            }
+        }
+        self.cards_played = 0;
         self.energy = self.max_energy;
         // 格挡在回合开始清空,除非有壁垒
         if !self.player.statuses.has(Status::Barricade) {
@@ -381,6 +439,80 @@ impl Combat {
             self.lose_hp_player(1, false);
             self.draw_cards(brutal as usize);
         }
+        // 混乱:回合开始打出抽牌堆顶那张(打完按它自己的规矩去弃牌堆/消耗堆)
+        if self.player.statuses.has(Status::Mayhem) {
+            self.play_top_of_draw(false);
+        }
+        // 磁力:回合开始随机给一张无色牌
+        let mag = self.player.statuses.get(Status::Magnetism);
+        for _ in 0..mag {
+            self.add_random_colorless_to_hand(false, false);
+        }
+    }
+
+    /// 随机无色牌进手牌;free 表示本回合 0 费,upgraded 表示直接给升级版
+    fn add_random_colorless_to_hand(&mut self, free: bool, upgraded: bool) {
+        if self.hand.len() >= HAND_LIMIT {
+            return;
+        }
+        let pool = cards::colorless_pool();
+        if pool.is_empty() {
+            return;
+        }
+        let def = self.rng.pick(&pool);
+        let mut inst = CardInstance::new(def);
+        if upgraded {
+            inst.upgrade();
+        }
+        self.fix_new_card(&mut inst);
+        inst.free_this_turn = free;
+        let label = inst.label();
+        self.hand.push(inst);
+        self.push_log(LogKind::Player, format!("{label} appears"));
+    }
+
+    /// 打出抽牌堆顶那张;exhaust_after 为真时打完直接消耗(浩劫)
+    fn play_top_of_draw(&mut self, exhaust_after: bool) {
+        let Some(mut card) = self.draw.pop() else {
+            return;
+        };
+        let label = card.label();
+        self.push_log(
+            LogKind::Player,
+            format!("{} plays {label}", if exhaust_after { "Havoc" } else { "Mayhem" }),
+        );
+        // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
+        self.havoc_depth = self.havoc_depth.saturating_add(1);
+        self.havoc_chain.push((self.havoc_depth, label));
+        let target = self.pick_random_alive();
+        let mut top_ctx = PlayCtx::default();
+        self.resolve(&mut card, target, &mut top_ctx);
+        self.havoc_depth = self.havoc_depth.saturating_sub(1);
+        card.free_this_turn = false;
+        if exhaust_after || card.is_exhaust() {
+            self.exhaust_card(card);
+        } else {
+            self.discard.push(card);
+        }
+        self.note_card_played();
+        self.check_win();
+    }
+
+    /// 记一张打出的牌;浮夸每打满 5 张就对所有敌人来一下
+    fn note_card_played(&mut self) {
+        self.cards_played += 1;
+        let pan = self.player.statuses.get(Status::Panache);
+        if pan <= 0 || self.cards_played % 5 != 0 {
+            return;
+        }
+        for i in self.alive_enemies() {
+            self.damage_enemy(i, pan);
+        }
+        self.push_log(
+            LogKind::Player,
+            format!("Panache deals {pan} to all enemies"),
+        );
+        self.settle_deaths();
     }
 
     /// 抽牌;抽牌堆空了就把弃牌堆洗回来
@@ -453,7 +585,7 @@ impl Combat {
         self.exhaust.push(card);
         let fnp = self.player.statuses.get(Status::FeelNoPain);
         if fnp > 0 {
-            self.gain_block(fnp, false);
+            self.gain_block(fnp, false, false);
         }
         let dark = self.player.statuses.get(Status::DarkEmbrace);
         if dark > 0 {
@@ -465,9 +597,30 @@ impl Combat {
         if self.phase != Phase::PlayerTurn {
             return;
         }
+        // 定时炸弹:回合数减一,归零就炸
+        let mut boom: Vec<i32> = Vec::new();
+        for b in self.bombs.iter_mut() {
+            b.0 = b.0.saturating_sub(1);
+            if b.0 == 0 {
+                boom.push(b.1);
+            }
+        }
+        self.bombs.retain(|b| b.0 > 0);
+        for dmg in boom {
+            for i in self.alive_enemies() {
+                let d = self.player_attack_damage(dmg, i);
+                self.damage_enemy(i, d);
+            }
+            self.push_log(LogKind::Player, format!("The Bomb explodes for {dmg}"));
+            self.settle_deaths();
+        }
+        self.check_win();
+        if self.phase != Phase::PlayerTurn {
+            return;
+        }
         let metal = self.player.statuses.get(Status::Metallicize);
         if metal > 0 {
-            self.gain_block(metal, false);
+            self.gain_block(metal, false, false);
         }
         let combust = self.player.statuses.get(Status::Combust);
         if combust > 0 {
@@ -574,7 +727,7 @@ impl Combat {
                         );
                     }
                     EnemyFx::PlayerStatus { status, n } => {
-                        self.player.statuses.add(status, n);
+                        self.add_player_status_from_enemy(status, n);
                         self.push_log(
                             LogKind::Enemy,
                             format!("{name} applies {n} {} to you", status.name()),
@@ -640,7 +793,15 @@ impl Combat {
 
     // ---- 数值结算 ----
 
-    fn gain_block(&mut self, amount: i32, doubled: bool) {
+    /// from_card 为真表示这次格挡来自卡牌,会受"紧急按钮"的限制
+    fn gain_block(&mut self, amount: i32, doubled: bool, from_card: bool) {
+        if from_card && self.player.statuses.has(Status::NoBlock) {
+            self.push_log(
+                LogKind::Info,
+                "No Block: cannot gain Block from cards".to_string(),
+            );
+            return;
+        }
         let mut n = amount.max(0);
         if !doubled {
             n += self.player.statuses.get(Status::Dexterity);
@@ -673,7 +834,7 @@ impl Combat {
         }
     }
 
-    /// 战斗中后来拿到的牌:把本场已有的降费补给嗜血
+    /// 战斗中后来拿到的牌:把本场已有的降费补给嗜血;神化之后一律直接升级
     pub fn fix_new_card(&self, card: &mut CardInstance) {
         if card.def.id == "blood_for_blood" {
             let base = match card.def.cost {
@@ -682,6 +843,9 @@ impl Combat {
             };
             card.cost_delta = -(self.hp_losses.min(base));
         }
+        if self.all_upgraded {
+            card.upgrade();
+        }
     }
 
     /// 调试用:开一个"从手牌里删牌"的选择
@@ -689,59 +853,67 @@ impl Combat {
         self.begin_choice(
             ChoiceSource::Hand,
             ChoiceAction::Remove,
-            false,
+            ChoiceFilter::Any,
+            1,
             "remove a card from your hand",
         );
     }
 
     /// 开一次选牌:记下来,等界面那边选完再 choose()
+    /// need 是最多选几张,0 表示不限张数
     fn begin_choice(
         &mut self,
         source: ChoiceSource,
         action: ChoiceAction,
-        attack_or_power_only: bool,
+        filter: ChoiceFilter,
+        need: usize,
         label: &str,
     ) {
         self.choice = Some(Choice {
             source,
             action,
-            attack_or_power_only,
-            need: 1,
+            filter,
+            need,
+            taken: 0,
             label: label.to_string(),
             played: None,
+            offered: Vec::new(),
         });
     }
 
-    /// 这一堆里现在能选的卡(索引 + 卡)
-    pub fn choice_candidates(&self) -> Vec<(usize, &CardInstance)> {
-        let Some(ch) = self.choice.as_ref() else {
-            return Vec::new();
-        };
+    /// 这次选择里还能选的卡(索引 + 卡);发现模式下列的是亮出来的那几张
+    fn candidates_of<'a>(&'a self, ch: &'a Choice) -> Vec<(usize, &'a CardInstance)> {
         let pile: &[CardInstance] = match ch.source {
             ChoiceSource::Hand => &self.hand,
             ChoiceSource::Discard => &self.discard,
             ChoiceSource::Exhaust => &self.exhaust,
+            ChoiceSource::Draw => &self.draw,
+            ChoiceSource::Offered => &ch.offered,
         };
         pile.iter()
             .enumerate()
-            .filter(|(_, c)| {
-                !ch.attack_or_power_only
-                    || matches!(
-                        c.kind(),
-                        crate::core::card::CardType::Attack | crate::core::card::CardType::Power
-                    )
-            })
+            .filter(|(_, c)| ch.filter.allows(c))
             .collect()
     }
 
-    /// 选完了:执行动作,然后把刚才那张牌按原样收尾(消耗/弃掉)
-    pub fn choose(&mut self, idx: usize) -> Result<(), String> {
-        if !self.choice_candidates().iter().any(|(i, _)| *i == idx) {
-            return Err("that card cannot be chosen".to_string());
+    /// 这一堆里现在能选的卡(索引 + 卡)
+    pub fn choice_candidates(&self) -> Vec<(usize, &CardInstance)> {
+        match self.choice.as_ref() {
+            Some(ch) => self.candidates_of(ch),
+            None => Vec::new(),
         }
+    }
+
+    /// 选完了:执行动作;还要继续选(多选)时选择窗口留着
+    pub fn choose(&mut self, idx: usize) -> Result<(), String> {
         let Some(mut ch) = self.choice.take() else {
             return Err("nothing to choose".to_string());
         };
+        let ok = self.candidates_of(&ch).iter().any(|(i, _)| *i == idx);
+        if !ok {
+            self.choice = Some(ch);
+            return Err("that card cannot be chosen".to_string());
+        }
         match (ch.source, ch.action) {
             (ChoiceSource::Hand, ChoiceAction::Exhaust) => {
                 let card = self.hand.remove(idx);
@@ -749,7 +921,9 @@ impl Combat {
             }
             (ChoiceSource::Hand, ChoiceAction::Copy) => {
                 let card = self.hand[idx].clone();
-                self.hand.push(card);
+                if self.hand.len() < HAND_LIMIT {
+                    self.hand.push(card);
+                }
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
                 // 抽牌堆的"顶"是 Vec 末尾(draw_cards 从末尾 pop),所以 push 才是放顶上
@@ -758,9 +932,36 @@ impl Combat {
                 card.topped = self.top_seq;
                 self.draw.push(card);
             }
+            (ChoiceSource::Hand, ChoiceAction::ToDrawBottom) => {
+                // "底"就是抽牌堆的开头,没被放到顶上的牌都从末尾抽
+                let mut card = self.hand.remove(idx);
+                // 预谋:放到堆底之后一直 0 费,直到被打出(打出时才清掉)
+                card.free_combat = true;
+                self.draw.insert(0, card);
+            }
             (ChoiceSource::Exhaust, ChoiceAction::ToHand) => {
-                let card = self.exhaust.remove(idx);
-                self.hand.push(card);
+                if self.hand.len() < HAND_LIMIT {
+                    let card = self.exhaust.remove(idx);
+                    self.hand.push(card);
+                }
+            }
+            (ChoiceSource::Draw, ChoiceAction::ToHand) => {
+                if self.hand.len() < HAND_LIMIT {
+                    let card = self.draw.remove(idx);
+                    let label = card.label();
+                    self.hand.push(card);
+                    self.push_log(LogKind::Player, format!("{label} rises to your hand"));
+                }
+            }
+            (ChoiceSource::Offered, ChoiceAction::ToHand) => {
+                let mut card = ch.offered.remove(idx);
+                // 发现:挑中的那张本回合 0 费,剩下的几张就此消失
+                card.free_this_turn = true;
+                let label = card.label();
+                if self.hand.len() < HAND_LIMIT {
+                    self.hand.push(card);
+                }
+                self.push_log(LogKind::Player, format!("{label} is added to your hand"));
             }
             (ChoiceSource::Discard, ChoiceAction::ToDrawTop) => {
                 let mut card = self.discard.remove(idx);
@@ -773,15 +974,34 @@ impl Combat {
             }
             _ => {}
         }
-        self.finish_played(ch.played.take());
+        ch.taken += 1;
+        let full = ch.need != 0 && ch.taken >= ch.need;
+        let empty = self.candidates_of(&ch).is_empty();
+        if full || empty {
+            self.finish_played(ch.played.take());
+        } else {
+            self.choice = Some(ch);
+        }
         Ok(())
     }
 
-    /// 取消这次出牌:能量退回、牌回手牌
+    /// 多选模式下玩家主动收工(比如"最多消耗 3 张",只消耗 1 张就结束)
+    pub fn finish_choice(&mut self) {
+        if let Some(mut ch) = self.choice.take() {
+            self.finish_played(ch.played.take());
+        }
+    }
+
+    /// 取消这次出牌:能量退回、牌回手牌;已经选出结果的几次收不回来
     pub fn cancel_choice(&mut self) {
         let Some(mut ch) = self.choice.take() else {
             return;
         };
+        if ch.taken > 0 {
+            // 前面几次已经生效了,这时 esc 只能当"选完了"
+            self.finish_played(ch.played.take());
+            return;
+        }
         if let Some((card, cost)) = ch.played.take() {
             self.energy += cost;
             self.hand.push(card);
@@ -978,7 +1198,7 @@ impl Combat {
                 for fx in on_death {
                     match *fx {
                         EnemyFx::PlayerStatus { status, n } => {
-                            self.player.statuses.add(status, n);
+                            self.add_player_status_from_enemy(status, n);
                             self.push_log(
                                 LogKind::Enemy,
                                 format!("{name} bursts: you gain {n} {}", status.name()),
@@ -1095,7 +1315,7 @@ impl Combat {
             }
             let rage = self.player.statuses.get(Status::Rage);
             if rage > 0 {
-                self.gain_block(rage, false);
+                self.gain_block(rage, false, false);
             }
         }
         if self.player.block > blocked_before {
@@ -1105,6 +1325,8 @@ impl Combat {
         if ctx.unblocked > 0 {
             self.push_log(LogKind::Info, format!("dealt {} damage", ctx.unblocked));
         }
+        // 浮夸按"本回合打出的牌数"结算(被人替打出来的牌也算)
+        self.note_card_played();
         // 有选牌待定:牌和花的能量先存着,等选完(choose)或取消(cancel)再收尾
         if let Some(ch) = self.choice.as_mut() {
             ch.played = Some((card, cost));
@@ -1294,14 +1516,14 @@ impl Combat {
                     card.bonus += n;
                 }
                 Effect::Block { amount } => {
-                    self.gain_block(amount, false);
+                    self.gain_block(amount, false, true);
                 }
                 Effect::BlockPerExhausted { per } => {
-                    self.gain_block(per * ctx.exhausted, false);
+                    self.gain_block(per * ctx.exhausted, false, true);
                 }
                 Effect::DoubleBlock => {
                     let b = self.player.block;
-                    self.gain_block(b, true);
+                    self.gain_block(b, true, true);
                 }                Effect::LoseHp { amount } => {
                     self.lose_hp_player(amount, true);
                 }
@@ -1316,14 +1538,12 @@ impl Combat {
                 }
                 Effect::AddTargetStatus { status, n } => {
                     if let Some(t) = target {
-                        if self.enemies[t].alive() {
-                            self.enemies[t].statuses.add(status, n);
-                        }
+                        self.add_enemy_status(t, status, n);
                     }
                 }
                 Effect::AddAllEnemiesStatus { status, n } => {
                     for i in self.alive_enemies() {
-                        self.enemies[i].statuses.add(status, n);
+                        self.add_enemy_status(i, status, n);
                     }
                 }
                 Effect::DoubleSelfStatus(status) => {
@@ -1380,13 +1600,20 @@ impl Combat {
                     }
                 }
                 Effect::ExhaustFromHand => {
-                    self.begin_choice(ChoiceSource::Hand, ChoiceAction::Exhaust, false, "exhaust a card");
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::Exhaust,
+                        ChoiceFilter::Any,
+                        1,
+                        "exhaust a card",
+                    );
                 }
                 Effect::TopFromHand => {
                     self.begin_choice(
                         ChoiceSource::Hand,
                         ChoiceAction::ToDrawTop,
-                        false,
+                        ChoiceFilter::Any,
+                        1,
                         "put a card on top of the draw pile",
                     );
                 }
@@ -1394,7 +1621,8 @@ impl Combat {
                     self.begin_choice(
                         ChoiceSource::Hand,
                         ChoiceAction::Copy,
-                        true,
+                        ChoiceFilter::AttackOrPower,
+                        1,
                         "copy an Attack or Power card",
                     );
                 }
@@ -1402,7 +1630,8 @@ impl Combat {
                     self.begin_choice(
                         ChoiceSource::Exhaust,
                         ChoiceAction::ToHand,
-                        false,
+                        ChoiceFilter::Any,
+                        1,
                         "take a card from the exhaust pile",
                     );
                 }
@@ -1410,7 +1639,8 @@ impl Combat {
                     self.begin_choice(
                         ChoiceSource::Discard,
                         ChoiceAction::ToDrawTop,
-                        false,
+                        ChoiceFilter::Any,
+                        1,
                         "take a card from the discard pile",
                     );
                 }
@@ -1430,19 +1660,7 @@ impl Combat {
                     }
                 }
                 Effect::PlayTopOfDraw => {
-                    if let Some(mut card) = self.draw.pop() {
-                        let label = card.label();
-                        self.push_log(LogKind::Player, format!("Havoc plays {label}"));
-                        // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
-                        self.havoc_depth = self.havoc_depth.saturating_add(1);
-                        self.havoc_chain.push((self.havoc_depth, label));
-                        let target = self.pick_random_alive();
-                        let mut top_ctx = PlayCtx::default();
-                        self.resolve(&mut card, target, &mut top_ctx);
-                        self.havoc_depth = self.havoc_depth.saturating_sub(1);
-                        card.free_this_turn = false;
-                        self.exhaust_card(card);
-                    }
+                    self.play_top_of_draw(true);
                 }
                 Effect::AddCardToHand { id, n } => {
                     let def = cards::card_def_or_panic(id);
@@ -1492,8 +1710,283 @@ impl Combat {
                         self.push_log(LogKind::Info, format!("{name} is upgraded for this combat"));
                     }
                 }
+                Effect::Heal { amount } => {
+                    self.heal_player(amount);
+                }
+                Effect::DamagePerDrawPile { per } => {
+                    if let Some(t) = target {
+                        let raw = per * self.draw.len() as i32;
+                        let d = self.player_attack_damage(raw, t);
+                        ctx.unblocked += self.damage_enemy(t, d);
+                    }
+                }
+                Effect::DamageAndGoldOnKill {
+                    amount,
+                    times,
+                    gold,
+                } => {
+                    if let Some(t) = target {
+                        let before = self.enemies[t].hp;
+                        for _ in 0..times.max(1) {
+                            if self.enemies[t].dead() {
+                                break;
+                            }
+                            let d = self.player_attack_damage(amount, t);
+                            ctx.unblocked += self.damage_enemy(t, d);
+                        }
+                        if before > 0 && self.enemies[t].dead() {
+                            self.gold_gained += gold;
+                            self.push_log(
+                                LogKind::Player,
+                                format!("you loot {gold} gold"),
+                            );
+                        }
+                    }
+                }
+                Effect::DrawIfNoAttacks { n } => {
+                    let has_attack = self
+                        .hand
+                        .iter()
+                        .any(|c| c.kind() == crate::core::card::CardType::Attack);
+                    if !has_attack {
+                        self.draw_cards(n as usize);
+                    }
+                }
+                Effect::AddRandomColorlessToHand { n, free, upgraded } => {
+                    for _ in 0..n {
+                        self.add_random_colorless_to_hand(free, upgraded);
+                    }
+                }
+                Effect::AddRandomColorlessXToHand { upgraded } => {
+                    for _ in 0..ctx.x {
+                        self.add_random_colorless_to_hand(true, upgraded);
+                    }
+                }
+                Effect::AddRandomToDrawFree { kind, n } => {
+                    let pool = cards::class_pool_of_kind(kind);
+                    if pool.is_empty() {
+                        continue;
+                    }
+                    for _ in 0..n {
+                        let def = self.rng.pick(&pool);
+                        let mut inst = CardInstance::new(def);
+                        self.fix_new_card(&mut inst);
+                        inst.free_combat = true;
+                        let label = inst.label();
+                        self.draw.push(inst);
+                        self.push_log(
+                            LogKind::Info,
+                            format!("{label} is shuffled in (costs 0 this combat)"),
+                        );
+                    }
+                    self.rng.shuffle(&mut self.draw);
+                }
+                Effect::ShuffleDiscardIntoDraw => {
+                    if !self.discard.is_empty() {
+                        let n = self.discard.len();
+                        self.draw.append(&mut self.discard);
+                        self.rng.shuffle(&mut self.draw);
+                        self.push_log(
+                            LogKind::Info,
+                            format!("shuffled {n} cards into the draw pile"),
+                        );
+                    }
+                }
+                Effect::FreeRandomInHand => {
+                    if !self.hand.is_empty() {
+                        let pick = self.rng.below(self.hand.len() as u32) as usize;
+                        self.hand[pick].free_combat = true;
+                        let name = self.hand[pick].label();
+                        self.push_log(
+                            LogKind::Info,
+                            format!("{name} costs 0 for the rest of combat"),
+                        );
+                    }
+                }
+                Effect::CapHandCost { cap, combat } => {
+                    for c in self.hand.iter_mut() {
+                        if let Some(base) = c.fixed_cost() {
+                            if base > cap as i32 {
+                                if combat {
+                                    c.cost_cap_combat = cap;
+                                } else {
+                                    c.cost_cap_this_turn = cap;
+                                }
+                            }
+                        }
+                    }
+                }
+                Effect::UpgradeAllForCombat => {
+                    self.all_upgraded = true;
+                    for pile in [
+                        &mut self.hand,
+                        &mut self.draw,
+                        &mut self.discard,
+                        &mut self.exhaust,
+                    ] {
+                        for c in pile.iter_mut() {
+                            c.upgrade();
+                        }
+                    }
+                    self.push_log(
+                        LogKind::Player,
+                        "all your cards are upgraded for this combat".to_string(),
+                    );
+                }
+                Effect::TargetLoseStrengthThisTurn { n } => {
+                    if let Some(t) = target {
+                        if self.enemies[t].alive() {
+                            // 只能扣掉它当前真有的力量,回合结束按扣掉的量补回来
+                            let cur = self.enemies[t].statuses.get(Status::Strength);
+                            let loss = n.min(cur.max(0));
+                            if loss > 0 {
+                                self.enemies[t].statuses.add(Status::Strength, -loss);
+                                self.enemies[t].temp_strength += loss;
+                                self.push_log(
+                                    LogKind::Player,
+                                    format!(
+                                        "{} loses {loss} Strength this turn",
+                                        self.enemies[t].name
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+                Effect::OfferRandomCardsFromClass { n } => {
+                    let pool = cards::class_card_pool();
+                    if pool.is_empty() {
+                        continue;
+                    }
+                    let mut offered: Vec<CardInstance> = Vec::new();
+                    for _ in 0..n {
+                        let def = self.rng.pick(&pool);
+                        let mut inst = CardInstance::new(def);
+                        self.fix_new_card(&mut inst);
+                        offered.push(inst);
+                    }
+                    self.begin_choice(
+                        ChoiceSource::Offered,
+                        ChoiceAction::ToHand,
+                        ChoiceFilter::Any,
+                        1,
+                        "choose 1 of 3 random cards",
+                    );
+                    if let Some(ch) = self.choice.as_mut() {
+                        ch.offered = offered;
+                    }
+                }
+                Effect::ExhaustUpTo { n } => {
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::Exhaust,
+                        ChoiceFilter::Any,
+                        n as usize,
+                        &format!("exhaust up to {n} cards"),
+                    );
+                }
+                Effect::ToDrawBottomFromHand { n } => {
+                    let label = if n == 0 {
+                        "put any number of cards on the bottom of the draw pile"
+                    } else {
+                        "put a card on the bottom of the draw pile"
+                    };
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::ToDrawBottom,
+                        ChoiceFilter::Any,
+                        n as usize,
+                        label,
+                    );
+                }
+                Effect::TakeFromDrawToHand { kind } => {
+                    let hit = self.draw.iter().any(|c| c.kind() == kind);
+                    if !hit {
+                        self.push_log(
+                            LogKind::Info,
+                            format!("no {} left in the draw pile", kind.name().to_lowercase()),
+                        );
+                        continue;
+                    }
+                    let (filter, label) = match kind {
+                        crate::core::card::CardType::Attack => {
+                            (ChoiceFilter::AttackOnly, "put an Attack from your draw pile into your hand")
+                        }
+                        _ => (ChoiceFilter::SkillOnly, "put a Skill from your draw pile into your hand"),
+                    };
+                    self.begin_choice(
+                        ChoiceSource::Draw,
+                        ChoiceAction::ToHand,
+                        filter,
+                        1,
+                        label,
+                    );
+                }
+                Effect::RandomFromDrawToHand { kind, n } => {
+                    for _ in 0..n {
+                        if self.hand.len() >= HAND_LIMIT {
+                            break;
+                        }
+                        let cands: Vec<usize> = self
+                            .draw
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, c)| c.kind() == kind)
+                            .map(|(i, _)| i)
+                            .collect();
+                        if cands.is_empty() {
+                            break;
+                        }
+                        let pick = cands[self.rng.below(cands.len() as u32) as usize];
+                        let card = self.draw.remove(pick);
+                        let label = card.label();
+                        self.hand.push(card);
+                        self.push_log(LogKind::Player, format!("{label} rises to your hand"));
+                    }
+                }
+                Effect::Bomb { turns, damage } => {
+                    self.bombs.push((turns, damage));
+                    self.push_log(
+                        LogKind::Player,
+                        format!("a bomb is set: {damage} damage in {turns} turns"),
+                    );
+                }
             }
         }
+    }
+
+    /// 给敌人上状态;玩家造成的减益会触发残虐天性
+    fn add_enemy_status(&mut self, idx: usize, status: Status, n: i32) {
+        if idx >= self.enemies.len() || self.enemies[idx].dead() {
+            return;
+        }
+        self.enemies[idx].statuses.add(status, n);
+        if n <= 0 || !status.is_debuff() {
+            return;
+        }
+        let sad = self.player.statuses.get(Status::SadisticNature);
+        if sad <= 0 {
+            return;
+        }
+        self.damage_enemy(idx, sad);
+        self.push_log(
+            LogKind::Player,
+            format!("Sadistic Nature deals {sad} damage"),
+        );
+        self.settle_deaths();
+    }
+
+    /// 敌人给玩家上状态;有神器就先拿一层顶掉这次减益
+    fn add_player_status_from_enemy(&mut self, status: Status, n: i32) {
+        if n > 0 && status.is_debuff() && self.player.statuses.has(Status::Artifact) {
+            self.player.statuses.add(Status::Artifact, -1);
+            self.push_log(
+                LogKind::Player,
+                format!("Artifact blocks {}", status.name()),
+            );
+            return;
+        }
+        self.player.statuses.add(status, n);
     }
 
     /// 战斗中用药水
@@ -1518,7 +2011,7 @@ impl Combat {
                 }
             }
             PotionFx::Block { amount } => {
-                self.gain_block(amount, false);
+                self.gain_block(amount, false, false);
             }
             PotionFx::Energy { n } => {
                 self.energy += n;
@@ -1534,12 +2027,12 @@ impl Combat {
             }
             PotionFx::WeakAll { n } => {
                 for i in self.alive_enemies() {
-                    self.enemies[i].statuses.add(Status::Weak, n);
+                    self.add_enemy_status(i, Status::Weak, n);
                 }
             }
             PotionFx::VulnerableAll { n } => {
                 for i in self.alive_enemies() {
-                    self.enemies[i].statuses.add(Status::Vulnerable, n);
+                    self.add_enemy_status(i, Status::Vulnerable, n);
                 }
             }
             PotionFx::Heal { amount } => {
@@ -2152,5 +2645,520 @@ mod tests {
         c.play_card(0, Some(1)).unwrap();
         assert_eq!(c.enemies[0].hp, hp0);
         assert_eq!(c.enemies[1].hp, hp1 - 6);
+    }
+
+    // ---- 无色牌 ----
+
+    /// 手牌里某张牌的下标
+    fn hand_idx(c: &Combat, id: &str) -> usize {
+        c.hand
+            .iter()
+            .position(|x| x.def.id == id)
+            .unwrap_or_else(|| panic!("{id} 不在手牌里"))
+    }
+
+    /// 摆一副牌:hand 里的进手牌,其余按 deck 的顺序进抽牌堆
+    fn staged(deck: &[&str], hand: &[&str]) -> Combat {
+        let mut c = combat_with("jaw_worm_solo", deck);
+        c.hand.clear();
+        c.draw.clear();
+        c.discard.clear();
+        c.exhaust.clear();
+        for id in deck {
+            let inst = cards::card(id);
+            if hand.contains(id) && c.hand.len() < HAND_LIMIT {
+                c.hand.push(inst);
+            } else {
+                c.draw.push(inst);
+            }
+        }
+        c.energy = 9;
+        c
+    }
+
+    #[test]
+    fn apotheosis_upgrades_every_pile_and_later_cards() {
+        let mut c = staged(&["apotheosis", "strike", "defend", "bash"], &["apotheosis"]);
+        // 弃牌堆里也放一张,四个牌堆都要覆盖到(正在打出的这张自己不算)
+        c.discard.push(cards::card("defend"));
+        let idx = hand_idx(&c, "apotheosis");
+        c.play_card(idx, None).unwrap();
+        assert!(c.draw.iter().all(|x| x.upgraded), "抽牌堆没升级");
+        assert!(c.discard.iter().all(|x| x.upgraded), "弃牌堆没升级");
+        let defend = c.discard.iter().find(|x| x.def.id == "defend").unwrap();
+        assert_eq!(defend.effects(), &[Effect::Block { amount: 8 }]);
+        let strike = c.draw.iter().find(|x| x.def.id == "strike").unwrap();
+        assert_eq!(
+            strike.effects(),
+            &[Effect::Damage {
+                amount: 9,
+                times: 1
+            }],
+            "升级后的打击是 9 伤"
+        );
+        // 之后新拿到的牌也直接是升级版
+        let mut fresh = cards::card("strike");
+        c.fix_new_card(&mut fresh);
+        assert!(fresh.upgraded, "神化之后新拿到的牌应直接升级");
+    }
+
+    #[test]
+    fn madness_zeroes_a_card_for_the_whole_combat() {
+        let mut c = staged(&["madness", "bludgeon"], &["madness", "bludgeon"]);
+        let idx = hand_idx(&c, "madness");
+        c.play_card(idx, None).unwrap();
+        let b = c.hand.iter().find(|x| x.def.id == "bludgeon").unwrap();
+        assert_eq!(b.fixed_cost(), Some(0), "疯狂把手里那张降到 0");
+        // 过了回合依然是 0 费(本场战斗)
+        c.end_turn();
+        let b = [&c.hand, &c.draw, &c.discard, &c.exhaust]
+            .into_iter()
+            .flatten()
+            .find(|x| x.def.id == "bludgeon")
+            .unwrap();
+        assert_eq!(b.fixed_cost(), Some(0), "本场战斗的 0 费不该被回合开始清掉");
+    }
+
+    #[test]
+    fn enlightenment_caps_hand_cost() {
+        // 基础版:只到回合结束
+        let mut c = staged(
+            &["enlightenment", "bludgeon", "bludgeon"],
+            &["enlightenment", "bludgeon", "bludgeon"],
+        );
+        let idx = hand_idx(&c, "enlightenment");
+        c.play_card(idx, None).unwrap();
+        assert!(c.hand.iter().all(|x| x.fixed_cost() == Some(1)), "都降到 1 费");
+        c.end_turn();
+        let b = [&c.hand, &c.draw, &c.discard, &c.exhaust]
+            .into_iter()
+            .flatten()
+            .find(|x| x.def.id == "bludgeon")
+            .unwrap();
+        assert_eq!(b.fixed_cost(), Some(3), "只降本回合,回合结束恢复原价");
+
+        // 升级版:整场战斗都是 1 费
+        let mut c = staged(&["enlightenment", "bludgeon"], &["enlightenment", "bludgeon"]);
+        let idx = hand_idx(&c, "enlightenment");
+        c.hand[idx].upgrade();
+        c.play_card(idx, None).unwrap();
+        c.end_turn();
+        let b = [&c.hand, &c.draw, &c.discard, &c.exhaust]
+            .into_iter()
+            .flatten()
+            .find(|x| x.def.id == "bludgeon")
+            .unwrap();
+        assert_eq!(b.fixed_cost(), Some(1), "升级版整场战斗都是 1 费");
+    }
+
+    #[test]
+    fn hand_of_greed_pays_only_on_a_kill() {
+        let mut c = combat_with("jaw_worm_solo", &["hand_of_greed"; 5]);
+        c.enemies[0].hp = 5;
+        let idx = hand_idx(&c, "hand_of_greed");
+        c.play_card(idx, Some(0)).unwrap();
+        assert!(c.enemies[0].dead(), "20 伤打死 5 血");
+        assert_eq!(c.gold_gained, 20, "致命一击才给金币");
+
+        let mut c = combat_with("jaw_worm_solo", &["hand_of_greed"; 5]);
+        c.enemies[0].hp = 200;
+        c.enemies[0].max_hp = 200;
+        let idx = hand_idx(&c, "hand_of_greed");
+        c.play_card(idx, Some(0)).unwrap();
+        assert_eq!(c.gold_gained, 0, "打不死就没金币");
+        assert_eq!(c.enemies[0].hp, 180);
+    }
+
+    #[test]
+    fn panache_pays_out_on_every_fifth_card() {
+        let deck = ["panache", "defend", "defend", "defend", "defend", "defend"];
+        let mut c = staged(&deck, &deck);
+        let hp0 = c.enemies[0].hp;
+        let idx = hand_idx(&c, "panache");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.enemies[0].hp, hp0, "浮夸自己不打伤害");
+        for _ in 0..4 {
+            let i = hand_idx(&c, "defend");
+            c.play_card(i, None).unwrap();
+        }
+        // 浮夸 + 4 张防御 = 本回合第 5 张牌,触发 10 点全体伤害
+        assert_eq!(c.enemies[0].hp, hp0 - 10);
+        // 第 10 张牌才会再触发一次,这里只有 5 张
+        assert_eq!(c.enemies[0].hp, hp0 - 10);
+    }
+
+    #[test]
+    fn sadistic_nature_punishes_debuffs_on_enemies() {
+        let mut c = staged(&["sadistic_nature", "blind"], &["sadistic_nature", "blind"]);
+        let idx = hand_idx(&c, "sadistic_nature");
+        c.play_card(idx, None).unwrap();
+        let hp0 = c.enemies[0].hp;
+        let idx = hand_idx(&c, "blind");
+        c.play_card(idx, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, hp0 - 5, "上减益就挨 5 点");
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 2, "减益照样生效");
+    }
+
+    #[test]
+    fn panacea_artifact_refuses_one_debuff() {
+        let mut c = staged(&["panacea"], &["panacea"]);
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.statuses.get(Status::Artifact), 1);
+        assert!(c.exhaust.iter().any(|x| x.def.id == "panacea"), "用完就耗掉");
+        // 敌人下一次给减益时被顶掉
+        c.add_player_status_from_enemy(Status::Frail, 2);
+        assert!(!c.player.statuses.has(Status::Frail));
+        assert_eq!(c.player.statuses.get(Status::Artifact), 0, "神器用掉一层");
+        // 没有神器了就正常生效
+        c.add_player_status_from_enemy(Status::Frail, 2);
+        assert_eq!(c.player.statuses.get(Status::Frail), 2);
+    }
+
+    #[test]
+    fn panic_button_stops_card_block_for_two_turns() {
+        let deck = [
+            "panic_button",
+            "good_instincts",
+            "good_instincts",
+            "good_instincts",
+            "good_instincts",
+        ];
+        let mut c = staged(&deck, &deck);
+        let idx = hand_idx(&c, "panic_button");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.player.block, 30);
+        assert_eq!(c.player.statuses.get(Status::NoBlock), 2);
+        let idx = hand_idx(&c, "good_instincts");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.player.block, 30, "两回合内卡牌给不了格挡");
+
+        // 第一个回合结束:NoBlock 2 -> 1
+        c.end_turn();
+        c.player.block = 0;
+        let idx = hand_idx(&c, "good_instincts");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.player.block, 0, "第二回合还是拿不到");
+
+        // 第二个回合结束:NoBlock 归零
+        c.end_turn();
+        c.player.block = 0;
+        let idx = hand_idx(&c, "good_instincts");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.player.block, 6, "两回合过后恢复正常");
+    }
+
+    #[test]
+    fn dark_shackles_strength_comes_back_next_turn() {
+        let mut c = staged(&["dark_shackles", "strike"], &["dark_shackles", "strike"]);
+        c.enemies[0].statuses.add(Status::Strength, 5);
+        let idx = hand_idx(&c, "dark_shackles");
+        c.play_card(idx, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 0, "这回合力量被扣光");
+        // 它这一击因此从 16 掉到 11
+        c.end_turn();
+        assert_eq!(c.player.hp, 80 - 11, "力量被扣掉后攻击也变弱了");
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 5, "回合结束后补回来");
+    }
+
+    #[test]
+    fn the_bomb_explodes_after_three_turns() {
+        let mut c = staged(&["the_bomb", "defend"], &["the_bomb", "defend"]);
+        c.enemies[0].hp = 200;
+        c.enemies[0].max_hp = 200;
+        let idx = hand_idx(&c, "the_bomb");
+        c.play_card(idx, None).unwrap();
+        c.end_turn();
+        c.end_turn();
+        // 第三个回合结束时爆炸;先把敌人攒的格挡抹掉,免得吃掉爆炸伤害
+        c.enemies[0].block = 0;
+        let before = c.damage_dealt;
+        c.end_turn();
+        assert_eq!(c.damage_dealt - before, 40, "三回合后炸 40 点");
+    }
+
+    #[test]
+    fn discovery_offers_three_class_cards_and_gives_one() {
+        let mut c = staged(&["discovery"], &["discovery"]);
+        c.play_card(0, None).unwrap();
+        let ch = c.choice.as_ref().expect("发现要开选择");
+        assert_eq!(ch.source, ChoiceSource::Offered);
+        let cands = c.choice_candidates();
+        assert_eq!(cands.len(), 3, "亮三张");
+        for (_, card) in &cands {
+            assert_eq!(cards::pool_of(card.def), "class", "发现只给本职业牌");
+        }
+        let picked = cands[0].1.def.id;
+        c.choose(0).unwrap();
+        assert!(c.choice.is_none(), "选完就收工");
+        assert_eq!(c.hand.len(), 1);
+        assert_eq!(c.hand[0].def.id, picked);
+        assert!(c.hand[0].free_this_turn, "挑中的这张本回合 0 费");
+        // 没挑中的两张直接消失,不会被塞进别的牌堆
+        let total = c.hand.len() + c.draw.len() + c.discard.len() + c.exhaust.len();
+        assert_eq!(total, 2, "只剩手里的那张和消耗堆里的发现");
+    }
+
+    #[test]
+    fn secret_technique_pulls_only_skills_from_the_draw_pile() {
+        let mut c = staged(
+            &["secret_technique", "strike", "defend", "bash"],
+            &["secret_technique"],
+        );
+        let idx = hand_idx(&c, "secret_technique");
+        c.play_card(idx, None).unwrap();
+        let ch = c.choice.as_ref().expect("秘技要开选择");
+        assert_eq!(ch.source, ChoiceSource::Draw);
+        let cands = c.choice_candidates();
+        assert_eq!(cands.len(), 1, "抽牌堆里只有一张技能");
+        let (idx, card) = cands[0];
+        assert_eq!(card.def.id, "defend");
+        c.choose(idx).unwrap();
+        assert!(c.hand.iter().any(|x| x.def.id == "defend"), "技能进了手牌");
+        assert!(!c.draw.iter().any(|x| x.def.id == "defend"), "从抽牌堆里拿走了");
+        assert!(c.draw.iter().any(|x| x.def.id == "strike"), "攻击牌不动");
+    }
+
+    #[test]
+    fn transmutation_pours_x_colorless_cards_into_hand() {
+        let mut c = staged(&["transmutation"], &["transmutation"]);
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.energy, 0, "X 费吃掉全部能量");
+        assert_eq!(c.hand.len(), 3, "X=3 给三张");
+        for card in &c.hand {
+            assert_eq!(cards::pool_of(card.def), "colorless");
+            assert!(card.free_this_turn, "嬗变给的牌本回合 0 费");
+            assert_eq!(card.fixed_cost(), Some(0));
+        }
+    }
+
+    #[test]
+    fn mind_blast_is_innate_and_hits_for_the_draw_pile() {
+        let deck = ["mind_blast", "defend", "defend", "defend", "defend", "defend"];
+        let mut c = combat_with("jaw_worm_solo", &deck);
+        assert!(
+            c.hand.iter().any(|x| x.def.id == "mind_blast"),
+            "天生牌开局就在手上"
+        );
+        c.hand.clear();
+        c.draw.clear();
+        c.hand.push(cards::card("mind_blast"));
+        for _ in 0..5 {
+            c.draw.push(cards::card("defend"));
+        }
+        c.energy = 9;
+        let hp0 = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, hp0 - 5, "伤害等于抽牌堆张数");
+    }
+
+    #[test]
+    fn forethought_parking_a_card_keeps_it_free() {
+        let mut c = staged(&["forethought", "strike"], &["forethought", "strike"]);
+        let idx = hand_idx(&c, "forethought");
+        c.play_card(idx, None).unwrap();
+        let ch = c.choice.as_ref().expect("预谋要开选择");
+        assert_eq!(ch.source, ChoiceSource::Hand);
+        assert_eq!(ch.need, 1);
+        let idx = c.choice_candidates()[0].0;
+        assert_eq!(c.hand[idx].def.id, "strike");
+        c.choose(idx).unwrap();
+        assert!(c.choice.is_none());
+        let card = c.draw.first().expect("放到抽牌堆底");
+        assert_eq!(card.def.id, "strike");
+        assert_eq!(card.fixed_cost(), Some(0), "直到打出前都是 0 费");
+        // 过了一个回合依然 0 费
+        c.end_turn();
+        let card = [&c.hand, &c.draw, &c.discard, &c.exhaust]
+            .into_iter()
+            .flatten()
+            .find(|x| x.def.id == "strike")
+            .unwrap();
+        assert_eq!(card.fixed_cost(), Some(0));
+    }
+
+    #[test]
+    fn purity_exhausts_a_chosen_subset() {
+        let mut c = staged(
+            &["purity", "strike", "defend", "bash"],
+            &["purity", "strike", "defend", "bash"],
+        );
+        let idx = hand_idx(&c, "purity");
+        c.play_card(idx, None).unwrap();
+        let ch = c.choice.as_ref().expect("净化要开选择");
+        assert_eq!(ch.need, 3, "最多三张");
+        // 只挑两张:打击与重击
+        let picks: Vec<usize> = c
+            .hand
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| matches!(x.def.id, "strike" | "bash"))
+            .map(|(i, _)| i)
+            .collect();
+        for idx in picks.into_iter().rev() {
+            c.choose(idx).unwrap();
+        }
+        assert!(c.choice.is_some(), "没选满还要等玩家收工");
+        c.finish_choice();
+        assert!(c.choice.is_none());
+        assert_eq!(c.hand.len(), 1);
+        assert_eq!(c.hand[0].def.id, "defend");
+        assert_eq!(c.exhaust.len(), 3, "被耗掉的两张 + 净化自己");
+    }
+
+    #[test]
+    fn chrysalis_shuffles_free_class_skills_into_the_draw_pile() {
+        let mut c = staged(&["chrysalis"], &["chrysalis"]);
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.draw.len(), 3, "洗三张进去");
+        for card in &c.draw {
+            assert_eq!(card.kind(), crate::core::card::CardType::Skill);
+            assert_eq!(cards::pool_of(card.def), "class", "只洗本职业的牌");
+            assert!(card.free_combat);
+        }
+        // 跨回合依然是 0 费
+        c.end_turn();
+        assert_eq!(c.hand.len(), 3, "下回合抽到手上");
+        assert!(c.hand.iter().all(|x| x.fixed_cost() == Some(0)));
+    }
+
+    #[test]
+    fn magnetism_and_mayhem_fire_at_the_start_of_the_turn() {
+        // 磁力:回合开始白给一张无色牌
+        let mut c = staged(&["magnetism", "strike"], &["magnetism"]);
+        let idx = hand_idx(&c, "magnetism");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.player.statuses.get(Status::Magnetism), 1);
+        // 磁力自己也是无色牌,先把它从弃牌堆拿走,免得混进计数
+        c.discard.clear();
+        c.end_turn();
+        let gifted = c
+            .hand
+            .iter()
+            .filter(|x| cards::pool_of(x.def) == "colorless")
+            .count();
+        assert_eq!(gifted, 1, "回合开始给一张无色牌");
+
+        // 混乱:回合开始替我们打出手牌堆顶那张
+        let deck = [
+            "mayhem", "defend", "defend", "defend", "defend", "defend", "defend", "defend",
+        ];
+        let mut c = staged(&deck, &["mayhem"]);
+        let idx = hand_idx(&c, "mayhem");
+        c.play_card(idx, None).unwrap();
+        c.end_turn();
+        assert_eq!(c.player.block, 5, "打出的那张防御给了 5 格挡");
+    }
+
+    #[test]
+    fn impatience_and_violence_scan_hand_and_draw_pile() {
+        // 手里没有攻击牌就抽两张
+        let mut c = staged(&["impatience", "defend"], &["impatience", "defend"]);
+        for _ in 0..4 {
+            c.draw.push(cards::card("defend"));
+        }
+        let idx = hand_idx(&c, "impatience");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.hand.len(), 3, "剩一张防御,再抽 2 张");
+
+        // 手里有攻击牌就不抽
+        let mut c = staged(&["impatience", "strike"], &["impatience", "strike"]);
+        for _ in 0..4 {
+            c.draw.push(cards::card("defend"));
+        }
+        let idx = hand_idx(&c, "impatience");
+        c.play_card(idx, None).unwrap();
+        assert_eq!(c.hand.len(), 1, "有攻击牌不抽");
+
+        // 暴动:抽牌堆里随机三张攻击进手
+        let mut c = staged(&["violence"], &["violence"]);
+        for _ in 0..2 {
+            c.draw.push(cards::card("defend"));
+        }
+        for _ in 0..4 {
+            c.draw.push(cards::card("strike"));
+        }
+        c.play_card(0, None).unwrap();
+        let drawn = c.hand.iter().filter(|x| x.def.id == "strike").count();
+        assert_eq!(drawn, 3, "三张攻击进手");
+        assert_eq!(c.draw.len(), 3, "抽牌堆只剩两张防御和一张打击");
+    }
+
+    #[test]
+    fn the_small_colorless_tricks_do_what_they_say() {
+        // 包扎:回血
+        let mut c = staged(&["bandage_up"], &["bandage_up"]);
+        c.player.hp = 50;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.hp, 54);
+        assert!(c.exhaust.iter().any(|x| x.def.id == "bandage_up"));
+
+        // 深呼吸:弃牌堆洗回抽牌堆,再抽一张
+        let mut c = staged(&["deep_breath", "strike"], &["deep_breath"]);
+        c.discard.push(cards::card("defend"));
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.discard.len(), 1, "洗完之后弃牌堆只剩深呼吸自己");
+        assert_eq!(c.discard[0].def.id, "deep_breath");
+        assert_eq!(c.hand.len(), 1, "顺手抽一张");
+        assert!(matches!(c.hand[0].def.id, "strike" | "defend"));
+
+        // 疾行:2 格挡 + 抽 1
+        let mut c = staged(&["finesse", "defend"], &["finesse"]);
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.block, 2);
+        assert_eq!(c.hand.len(), 1, "顺带抽一张");
+
+        // 好直觉:6 格挡
+        let mut c = staged(&["good_instincts"], &["good_instincts"]);
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.block, 6);
+
+        // 快斩:7 伤
+        let mut c = staged(&["swift_strike"], &["swift_strike"]);
+        let hp0 = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, hp0 - 7);
+
+        // 闪钢:3 伤 + 抽 1
+        let mut c = staged(&["flash_of_steel", "defend"], &["flash_of_steel"]);
+        let hp0 = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, hp0 - 3);
+        assert_eq!(c.hand.len(), 1, "打完抽一张");
+
+        // 致盲 / 绊倒:上减益
+        let mut c = staged(&["blind"], &["blind"]);
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 2);
+
+        let mut c = staged(&["trip"], &["trip"]);
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 2);
+
+        // 大师策略:抽三张后自己消耗
+        let mut c = staged(&["master_of_strategy"], &["master_of_strategy"]);
+        for _ in 0..4 {
+            c.draw.push(cards::card("defend"));
+        }
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 3);
+        assert!(c.exhaust.iter().any(|x| x.def.id == "master_of_strategy"));
+
+        // 临时想一下:抽二之后放一张回堆顶
+        let mut c = staged(&["thinking_ahead", "strike"], &["thinking_ahead"]);
+        c.draw.push(cards::card("defend"));
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 2, "先抽两张");
+        let idx = c.choice_candidates()[0].0;
+        c.choose(idx).unwrap();
+        assert_eq!(c.draw.len(), 1);
+        assert!(c.draw[0].topped > 0, "被放到抽牌堆顶");
+        assert!(c.exhaust.iter().any(|x| x.def.id == "thinking_ahead"), "用完消耗");
+
+        // 万事通:随机一张无色牌进手
+        let mut c = staged(&["jack_of_all_trades"], &["jack_of_all_trades"]);
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 1);
+        assert_eq!(cards::pool_of(c.hand[0].def), "colorless");
     }
 }
