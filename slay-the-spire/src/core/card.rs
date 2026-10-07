@@ -196,6 +196,8 @@ pub struct CardInstance {
     pub free_this_turn: bool,
     /// 升级次数:可以多次升级的牌(灼热攻击)才 >1
     pub plus: u8,
+    /// 被明确"放到抽牌堆顶"的次序(0 = 没放过),数字越大越靠顶
+    pub topped: u32,
 }
 
 impl CardInstance {
@@ -207,6 +209,7 @@ impl CardInstance {
             cost_delta: 0,
             free_this_turn: false,
             plus: 0,
+            topped: 0,
         }
     }
 

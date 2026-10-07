@@ -159,6 +159,8 @@ pub struct Combat {
     /// 浩劫链:依次被打出的牌(层级, 牌名),表现层拿去做"链式播报"
     pub havoc_chain: Vec<(u8, String)>,
     havoc_depth: u8,
+    /// 放到抽牌堆顶的序号,每次放都 +1
+    top_seq: u32,
     /// 待选择(选牌窗口/手牌选择模式)
     pub choice: Option<Choice>,
     /// 这一帧攒下来的抖动事件,表现层消费
@@ -238,6 +240,7 @@ impl Combat {
             hp_losses: 0,
             havoc_chain: Vec::new(),
             havoc_depth: 0,
+            top_seq: 0,
             choice: None,
             shakes: Vec::new(),
             enemies,
@@ -750,7 +753,9 @@ impl Combat {
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
                 // 抽牌堆的"顶"是 Vec 末尾(draw_cards 从末尾 pop),所以 push 才是放顶上
-                let card = self.hand.remove(idx);
+                let mut card = self.hand.remove(idx);
+                self.top_seq += 1;
+                card.topped = self.top_seq;
                 self.draw.push(card);
             }
             (ChoiceSource::Exhaust, ChoiceAction::ToHand) => {
@@ -758,7 +763,9 @@ impl Combat {
                 self.hand.push(card);
             }
             (ChoiceSource::Discard, ChoiceAction::ToDrawTop) => {
-                let card = self.discard.remove(idx);
+                let mut card = self.discard.remove(idx);
+                self.top_seq += 1;
+                card.topped = self.top_seq;
                 self.draw.push(card);
             }
             (ChoiceSource::Hand, ChoiceAction::Remove) => {

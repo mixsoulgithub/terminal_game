@@ -607,6 +607,8 @@ pub fn put_card_line(
 
 /// 卡牌窗口里的一行
 pub enum CardRow {
+    /// 分区小标题:只画一行字,不参与光标
+    Header(String),
     Card {
         card: crate::core::card::CardInstance,
         /// 不可选的行会压暗,光标跳过
@@ -653,6 +655,15 @@ pub fn card_window(
         let idx = start + i;
         let y = list.y + i as u16;
         match row {
+            CardRow::Header(text) => {
+                put(
+                    buf,
+                    list.x,
+                    y,
+                    &truncate(text, lw as usize),
+                    theme::fg(theme::INFO),
+                );
+            }
             CardRow::Card { card, selectable } => {
                 put_card_line(buf, list.x, y, lw, card, idx == sel, !selectable);
             }
@@ -706,22 +717,26 @@ pub fn render(f: &mut Frame, app: &App) {
         put(buf, x, y, &msg, theme::fg(theme::WARN));
         return;
     }
-    // 开始界面/角色选择/图鉴占满整屏,没有顶栏、遗物行和状态栏
+    // 开始界面/角色选择/图鉴:没有顶栏和遗物行,但底部那行状态栏一直留着,
+    // 命令行和帮助在任何界面都随手可用
     match app.run.screen {
-        crate::core::run::Screen::Title => {
-            start::title(buf, area, app);
-            return;
-        }
-        crate::core::run::Screen::CharSelect => {
-            start::char_select(buf, area, app);
-            return;
-        }
-        crate::core::run::Screen::Compendium => {
-            start::compendium(buf, area, app);
-            return;
-        }
-        crate::core::run::Screen::Library => {
-            library::render(buf, area, app);
+        crate::core::run::Screen::Title
+        | crate::core::run::Screen::CharSelect
+        | crate::core::run::Screen::Compendium
+        | crate::core::run::Screen::Library => {
+            let status_area = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+            let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
+            match app.run.screen {
+                crate::core::run::Screen::Title => start::title(buf, body, app),
+                crate::core::run::Screen::CharSelect => start::char_select(buf, body, app),
+                crate::core::run::Screen::Compendium => start::compendium(buf, body, app),
+                _ => library::render(buf, body, app),
+            }
+            status(buf, status_area, app);
+            command_hints(buf, status_area, app);
+            if let Some(ov) = app.overlay {
+                overlay::render(buf, area, app, ov);
+            }
             return;
         }
         _ => {}

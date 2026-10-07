@@ -48,10 +48,10 @@ impl Overlay {
     pub fn close_key(self) -> &'static str {
         match self {
             Overlay::Map => "m",
-            Overlay::Deck => "D",
-            Overlay::Draw => "u",
-            Overlay::Discard => "d",
-            Overlay::Exhaust => "e",
+            Overlay::Deck => "tab",
+            Overlay::Draw => "U",
+            Overlay::Discard => "D",
+            Overlay::Exhaust => "E",
             Overlay::Relics => "r",
             Overlay::Potions => "p",
             Overlay::History => "H",
@@ -79,6 +79,28 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
         (Overlay::Exhaust, Some(c)) => &c.exhaust,
         _ => &run.player.deck,
     };
+    // 未抽堆:把"特意放到顶上"的牌单列一段,最近放的在最前(也就是接下来抽到的顺序)
+    if let (Overlay::Draw, Some(c)) = (ov, run.combat()) {
+        let mut topped: Vec<&CardInstance> = c.draw.iter().filter(|x| x.topped > 0).collect();
+        if !topped.is_empty() {
+            topped.sort_by(|a, b| b.topped.cmp(&a.topped));
+            rows.push(CardRow::Header(format!(
+                "on top: {} card(s), next drawn first",
+                topped.len()
+            )));
+            let list: Vec<CardInstance> = topped.iter().map(|c| (*c).clone()).collect();
+            push(&mut rows, &list);
+            rows.push(CardRow::Header("the rest of the draw pile".to_string()));
+            let rest: Vec<CardInstance> = c
+                .draw
+                .iter()
+                .filter(|x| x.topped == 0)
+                .cloned()
+                .collect();
+            push(&mut rows, &rest);
+            return rows;
+        }
+    }
     push(&mut rows, pile);
     rows
 }

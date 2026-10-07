@@ -614,9 +614,15 @@ fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
         if !app.msg.is_empty() {
             (app.msg.clone(), theme::fg(theme::WARN))
         } else if source == crate::core::combat::ChoiceSource::Hand {
-            ("space to choose, enter to confirm.".to_string(), theme::dim())
+            (
+                "space to choose, it applies right away, esc to cancel.".to_string(),
+                theme::dim(),
+            )
         } else {
-            ("enter to pick, esc to cancel.".to_string(), theme::dim())
+            (
+                "space/enter to pick, it applies right away, esc to cancel.".to_string(),
+                theme::dim(),
+            )
         }
     } else {
         let (text, style) = match reason {

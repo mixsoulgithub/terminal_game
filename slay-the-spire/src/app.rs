@@ -126,7 +126,7 @@ impl App {
             potion_sel: None,
             potion_pending: None,
             toss_pending: false,
-            msg: "h/l look along the road, j/k pick a fork, enter to go".to_string(),
+            msg: String::new(),
             warn: false,
             quit: false,
             title_sel: 0,
@@ -152,7 +152,8 @@ impl App {
     pub fn start(seed: u64) -> App {
         let mut app = App::new(seed);
         app.run.screen = Screen::Title;
-        app.msg = "j/k pick, enter confirm".to_string();
+        // 底栏一直显示按键提示,这里不再塞一遍
+        app.msg = String::new();
         app
     }
 
@@ -196,13 +197,13 @@ impl App {
                     "new game" => {
                         self.run.screen = Screen::CharSelect;
                         self.char_sel = 0;
-                        self.msg = "j/k pick a character, enter confirm".to_string();
+                        self.msg = String::new();
                         self.warn = false;
                     }
                     "compendium" => {
                         self.run.screen = Screen::Compendium;
                         self.comp_sel = 0;
-                        self.info("j/k pick a section, enter open, esc back");
+                        self.msg = String::new();
                     }
                     _ => self.quit = true,
                 }
@@ -221,7 +222,7 @@ impl App {
             KeyCode::Char('G') => self.char_sel = n - 1,
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.run.screen = Screen::Title;
-                self.info("j/k pick, enter confirm");
+                self.msg = String::new();
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let ch: &'static CharacterInfo = roster::by_index(self.char_sel);
@@ -262,14 +263,14 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.comp_sel = (self.comp_sel + n - 1) % n,
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.run.screen = Screen::Title;
-                self.info("j/k pick, enter confirm");
+                self.msg = String::new();
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
                 self.library = Library::ALL[self.comp_sel % n];
                 self.lib_tab = 0;
                 self.lib_sel = 0;
                 self.run.screen = Screen::Library;
-                self.info("j/k pick a card, h/l change tab, esc back");
+                self.msg = String::new();
             }
             _ => {}
         }
@@ -313,7 +314,7 @@ impl App {
             }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.run.screen = Screen::Compendium;
-                self.info("j/k pick a section, enter open, esc back");
+                self.msg = String::new();
             }
             _ => {}
         }
@@ -663,17 +664,14 @@ impl App {
             }
             Mode::Normal => {}
         }
-        // 开始界面/角色选择/图鉴:只有菜单键,别的都别碰
-        if matches!(
-            self.run.screen,
-            Screen::Title | Screen::CharSelect | Screen::Compendium | Screen::Library
-        ) {
-            self.start_key(key);
+        // 命令行与帮助是全局键:开始界面、叠加层开着的时候一样能用
+        if key.code == KeyCode::Char(':') {
+            self.mode = Mode::Command;
+            self.cmd.clear();
             return;
         }
-        // 正在顶栏挑药水:键都交给它
-        if self.potion_sel.is_some() {
-            self.potion_sel_key(key);
+        if key.code == KeyCode::Char('?') {
+            self.open_overlay(Overlay::Help);
             return;
         }
         // 叠加层:再按同一个键就关掉,按另一个叠加层键就直接切过去
@@ -691,17 +689,21 @@ impl App {
             self.overlay_key(key);
             return;
         }
+        // 开始界面/角色选择/图鉴:剩下的键才是菜单键
+        if matches!(
+            self.run.screen,
+            Screen::Title | Screen::CharSelect | Screen::Compendium | Screen::Library
+        ) {
+            self.start_key(key);
+            return;
+        }
+        // 正在顶栏挑药水:键都交给它
+        if self.potion_sel.is_some() {
+            self.potion_sel_key(key);
+            return;
+        }
         if self.potion_pending.is_some() {
             self.potion_target_key(key);
-            return;
-        }
-        if key.code == KeyCode::Char(':') {
-            self.mode = Mode::Command;
-            self.cmd.clear();
-            return;
-        }
-        if key.code == KeyCode::Char('?') {
-            self.open_overlay(Overlay::Help);
             return;
         }
         // p:不开窗口,直接在顶栏药水区挑第一瓶
@@ -738,12 +740,9 @@ impl App {
         self.overlay_scroll = if ov == Overlay::History { u16::MAX / 2 } else { 0 };
         if matches!(
             ov,
-            Overlay::Draw | Overlay::Discard | Overlay::Exhaust
+            Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust
         ) {
-            self.overlay_sel = 0;
-        }
-        if ov == Overlay::Deck {
-            // 牌组窗口的光标要停在第一张牌上,别停在分组标题
+            // 光标要停在第一张牌上,别停在小标题上
             self.deck_cursor_end(false);
         }
     }
@@ -802,11 +801,10 @@ impl App {
                 ) {
                     self.move_deck_cursor(1);
                 } else {
-                    // 夹在底部:到底之后继续按 j 不会攒着,免得按 k 要先"还回去"
-                    self.overlay_scroll = self
-                        .overlay_scroll
-                        .saturating_add(1)
-                        .min(self.overlay_max.get());
+                    // 先夹回有效范围(历史记录打开时是从 u16::MAX/2 起步的),
+                    // 再 +1;到底之后继续按 j 不会攒着,免得按 k 要先"还回去"
+                    let cur = self.overlay_scroll.min(self.overlay_max.get());
+                    self.overlay_scroll = cur.saturating_add(1).min(self.overlay_max.get());
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -819,7 +817,8 @@ impl App {
                 ) {
                     self.move_deck_cursor(-1);
                 } else {
-                    self.overlay_scroll = self.overlay_scroll.saturating_sub(1);
+                    let cur = self.overlay_scroll.min(self.overlay_max.get());
+                    self.overlay_scroll = cur.saturating_sub(1);
                 }
             }
             KeyCode::Char('g')
@@ -1156,38 +1155,7 @@ impl App {
                 self.clamp();
             }
             // 手牌:空格切换选中,回车确认
-            KeyCode::Char(' ') if source == ChoiceSource::Hand => {
-                let cur = self.hand_sel;
-                let choosable = self
-                    .run
-                    .combat()
-                    .map(|c| c.choice_candidates().iter().any(|(i, _)| *i == cur))
-                    .unwrap_or(false);
-                if !choosable {
-                    // 这张不在可选范围内:提示一下并抖一抖
-                    self.warn("this card cannot be chosen");
-                    self.shake = Self::SHAKE_FRAMES;
-                    self.shake_row = None;
-                    self.clamp();
-                    return true;
-                }
-                if let Some(pos) = self.choice_sel.iter().position(|i| *i == cur) {
-                    self.choice_sel.remove(pos);
-                } else {
-                    // 选够张数就不让再选,得先取消一张
-                    let need = self
-                        .run
-                        .combat()
-                        .and_then(|c| c.choice.as_ref())
-                        .map(|c| c.need)
-                        .unwrap_or(1);
-                    if self.choice_sel.len() >= need {
-                        self.warn(format!("already picked {need}, unselect one first"));
-                    } else {
-                        self.choice_sel.push(cur);
-                    }
-                }
-            }
+            KeyCode::Char(' ') if source == ChoiceSource::Hand => self.toggle_choice(),
             KeyCode::Enter if source == ChoiceSource::Hand => {
                 self.confirm_choice();
             }
@@ -1202,6 +1170,44 @@ impl App {
             _ => return false,
         }
         true
+    }
+
+    /// 选牌模式:切换光标那张牌的选中状态(空格、数字键都走这里)
+    fn toggle_choice(&mut self) {
+        let cur = self.hand_sel;
+        let choosable = self
+            .run
+            .combat()
+            .map(|c| c.choice_candidates().iter().any(|(i, _)| *i == cur))
+            .unwrap_or(false);
+        if !choosable {
+            // 这张不在可选范围内:提示一下并抖一抖
+            self.warn("this card cannot be chosen");
+            self.shake = Self::SHAKE_FRAMES;
+            self.shake_row = None;
+            self.clamp();
+            return;
+        }
+        if let Some(pos) = self.choice_sel.iter().position(|i| *i == cur) {
+            self.choice_sel.remove(pos);
+        } else {
+            // 选够张数就不让再选,得先取消一张
+            let need = self
+                .run
+                .combat()
+                .and_then(|c| c.choice.as_ref())
+                .map(|c| c.need)
+                .unwrap_or(1);
+            if self.choice_sel.len() >= need {
+                self.warn(format!("already picked {need}, unselect one first"));
+            } else {
+                self.choice_sel.push(cur);
+                // 选满就立刻生效,不用再按回车
+                if self.choice_sel.len() >= need {
+                    self.confirm_choice();
+                }
+            }
+        }
     }
 
     /// 有待选择时,能量行中间那句提示
@@ -1255,10 +1261,10 @@ impl App {
             }
             KeyCode::Char('j') | KeyCode::Down => self.move_target(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_target(-1),
-            // 空格 = 打出选中的牌(原来的 enter)
-            KeyCode::Char(' ') => self.play(),
-            // 回车 = 结束回合(原来的 e)
-            KeyCode::Enter => {
+            // 空格/回车 = 打出选中的牌
+            KeyCode::Char(' ') | KeyCode::Enter => self.play(),
+            // e = 结束回合
+            KeyCode::Char('e') => {
                 if let Some(c) = self.run.combat_mut() {
                     c.end_turn();
                 }
@@ -1266,14 +1272,21 @@ impl App {
                 self.info("enemies act...");
                 self.clamp();
             }
+            // 1-9 0 = 选中第 1..10 张;同一张再按一次(或空格)= 打出
             KeyCode::Char(c) => {
-                if let Some(slot) = hand_slot(c) {
-                    if slot < hand_len {
-                        self.hand_sel = slot;
-                        self.play();
-                    } else {
-                        self.warn(format!("no card in slot {}", slot + 1));
-                    }
+                let Some(slot) = hand_slot(c) else { return };
+                if slot >= hand_len {
+                    self.warn(format!("no card in slot {}", slot + 1));
+                } else if self.run.combat().is_some_and(|x| x.choice.is_some()) {
+                    // 正在选牌:数字键把光标挪过去并切换选中
+                    self.hand_sel = slot;
+                    self.toggle_choice();
+                    self.clamp();
+                } else if slot == self.hand_sel {
+                    self.play();
+                } else {
+                    self.hand_sel = slot;
+                    self.clamp();
                 }
             }
             _ => {}
@@ -1299,18 +1312,16 @@ impl App {
 
     fn play(&mut self) {
         let target = Some(self.target_sel);
+        // 报"打出了哪张"要用打出去的那张本身:牌可能被消耗、或在结算里换了位置
+        let played = self
+            .run
+            .combat()
+            .and_then(|c| c.hand.get(self.hand_sel))
+            .map(|x| x.label());
         let r = match self.run.combat_mut() {
             Some(c) => c
                 .play_card(self.hand_sel, target)
-                .map(|_| {
-                    let label = c
-                        .discard
-                        .last()
-                        .map(|x| x.label())
-                        .or_else(|| c.exhaust.last().map(|x| x.label()))
-                        .unwrap_or_else(|| "card".to_string());
-                    format!("played {label}")
-                })
+                .map(|_| format!("played {}", played.unwrap_or_else(|| "card".to_string())))
                 .map_err(|e| e.to_string()),
             None => return,
         };
@@ -1947,18 +1958,19 @@ impl App {
                 ("h/l", "look"),
                 ("j/k", "fork"),
                 ("enter", "go"),
-                ("m D r", "lists"),
+                ("m tab r", "lists"),
                 ("p", "potion"),
                 ("H", "history"),
                 ("?", "help"),
                 (":", "cmd"),
             ],
             Screen::Combat => vec![
-                ("space", "play/select"),
-                ("enter", "end turn/confirm"),
-                ("enter", "end turn"),
-                ("D", "deck"),
-            ("u d e", "undrawn/discarded/exhausted"),
+                ("1-9 0", "select card, again to play"),
+                ("space/enter", "play"),
+                ("h l j k", "card / target"),
+                ("e", "end turn"),
+                ("tab", "deck"),
+                ("U D E", "undrawn/discarded/exhausted"),
                 ("?", "help"),
                 (":", "cmd"),
             ],
@@ -1977,7 +1989,7 @@ impl App {
             Screen::Victory | Screen::Death => vec![
                 ("R", "same seed"),
                 ("n", "new seed"),
-                ("d/m/p", "cards/map/potions"),
+                ("tab/m/p", "cards/map/potions"),
                 ("q", "quit"),
             ],
         }
@@ -1987,16 +1999,15 @@ impl App {
         vec![
             ("h l", "map: look along the road    combat: pick card    reward: pick card"),
             ("j k", "map: pick a fork    combat: pick target    reward: pick gold/cards/relic/potion"),
-            ("enter", "confirm / play the selected card"),
+            ("h l j k", "same as the left/right and up/down arrow keys"),
+            ("space enter", "confirm / play the selected card"),
             ("esc", "cancel / close"),
-            ("1-9 0", "combat: select and play the nth card"),
-            ("space", "combat: play the selected card / select when picking"),
+            ("1-9 0", "combat: select the 1..10th card; press it again (or space) to play"),
+            ("space", "combat: select when picking a card"),
             ("esc", "combat: cancel the pending card choice"),
-            ("enter", "combat: end your turn"),
-            ("D", "combat: the whole deck"),
-            ("u d e", "combat: undrawn / discarded / exhausted piles"),
-            ("D", "the whole deck"),
-            ("u d e", "combat: undrawn / discarded / exhausted piles"),
+            ("e", "combat: end your turn"),
+            ("tab", "the whole deck"),
+            ("U D E", "combat: undrawn / discarded / exhausted piles"),
             ("m", "map, look along the road with h/l"),
             ("r", "relics"),
             ("p", "potions: h/l choose, enter drink, 1-3 drink, t then 1-3 toss"),
@@ -2086,13 +2097,13 @@ fn matching(pool: &[&str], prefix: &str) -> Vec<String> {
 /// 叠加层开关。战斗里 d/e 让给"弃牌堆/消耗堆",所以牌组改用 D,
 /// 另外 u 看待抽、d 看弃牌、e 看消耗;平时还是 d 看牌组那一套。
 fn overlay_key_of(app: &App, code: KeyCode) -> Option<Overlay> {
-    // 整副牌组永远只用 D 看;u/d/e 是战斗里那三个堆
+    // 整副牌组用 tab 看;U/D/E 是战斗里未抽/弃牌/消耗三个堆
     let in_combat = app.run.combat().is_some() && app.run.screen == Screen::Combat;
     match code {
-        KeyCode::Char('D') => Some(Overlay::Deck),
-        KeyCode::Char('u') if in_combat => Some(Overlay::Draw),
-        KeyCode::Char('d') if in_combat => Some(Overlay::Discard),
-        KeyCode::Char('e') if in_combat => Some(Overlay::Exhaust),
+        KeyCode::Tab => Some(Overlay::Deck),
+        KeyCode::Char('U') if in_combat => Some(Overlay::Draw),
+        KeyCode::Char('D') if in_combat => Some(Overlay::Discard),
+        KeyCode::Char('E') if in_combat => Some(Overlay::Exhaust),
         KeyCode::Char('m') => Some(Overlay::Map),
         KeyCode::Char('r') => Some(Overlay::Relics),
         KeyCode::Char('p') => Some(Overlay::Potions),
@@ -2194,6 +2205,61 @@ mod tests {
         assert_eq!(app.run.combat().unwrap().hand.len(), 5);
     }
 
+    fn arrow(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// 数字键先选中、再按一次才打出;方向键和 h/l、j/k 完全等价;tab/U/D/E 看牌堆
+    #[test]
+    fn digits_pick_then_play_and_arrows_match_hjkl() {
+        let mut app = App::new(5);
+        app.handle_key(enter());
+        let before = app.run.combat().unwrap().hand.len();
+        let sel0 = app.hand_sel;
+        app.handle_key(key('2'));
+        assert_eq!(app.hand_sel, 1, "数字键是选中第 2 张");
+        assert_eq!(app.run.combat().unwrap().hand.len(), before, "按一次只是选中");
+        app.handle_key(key('2'));
+        assert_eq!(
+            app.run.combat().unwrap().hand.len(),
+            before - 1,
+            "同一张再按一次才打出"
+        );
+        let _ = sel0;
+
+        // 方向键 = h/l(left/right) 和 j/k(up/down)
+        let n = app.run.combat().unwrap().hand.len();
+        let sel = app.hand_sel;
+        app.handle_key(arrow(KeyCode::Right));
+        assert_eq!(app.hand_sel, (sel + 1) % n, "Right 和 l 等价");
+        app.handle_key(arrow(KeyCode::Left));
+        assert_eq!(app.hand_sel, sel, "Left 和 h 等价");
+        app.handle_key(key('j'));
+        let by_j = app.target_sel;
+        app.handle_key(arrow(KeyCode::Down));
+        assert_eq!(app.target_sel, by_j, "Down 和 j 落到同一个目标");
+        app.handle_key(arrow(KeyCode::Up));
+        assert_eq!(app.target_sel, by_j, "Up 和 k 落到同一个目标");
+
+        // tab 看牌组,U/D/E 看未抽/弃牌/消耗
+        app.handle_key(arrow(KeyCode::Tab));
+        assert_eq!(app.overlay, Some(Overlay::Deck));
+        app.handle_key(esc());
+        for (c, ov) in [
+            ('E', Overlay::Exhaust),
+            ('U', Overlay::Draw),
+            ('D', Overlay::Discard),
+        ] {
+            app.handle_key(key(c));
+            assert_eq!(app.overlay, Some(ov), "{c} 应打开对应牌堆");
+            app.handle_key(esc());
+        }
+        // e = 结束回合
+        let turn = app.run.combat().unwrap().turn;
+        app.handle_key(key('e'));
+        assert!(app.run.combat().map(|c| c.turn > turn).unwrap_or(true), "e 结束回合");
+    }
+
     #[test]
     fn hand_and_target_move_independently() {
         let mut app = App::new(3);
@@ -2236,7 +2302,7 @@ mod tests {
         let mut app = App::new(5);
         app.handle_key(enter());
         let turn = app.run.combat().unwrap().turn;
-        app.handle_key(enter()); // 回车 = 结束回合
+        app.handle_key(key('e')); // e = 结束回合
         let c = app.run.combat().unwrap();
         assert_eq!(c.turn, turn + 1);
         assert_eq!(c.phase, crate::core::combat::Phase::PlayerTurn);
@@ -2247,15 +2313,15 @@ mod tests {
         // 地图阶段
         let mut app = App::new(6);
         for (k, ov) in [
-            ('D', Overlay::Deck),
-            ('m', Overlay::Map),
-            ('r', Overlay::Relics),
+            (KeyCode::Tab, Overlay::Deck),
+            (KeyCode::Char('m'), Overlay::Map),
+            (KeyCode::Char('r'), Overlay::Relics),
         ] {
-            app.handle_key(key(k));
-            assert_eq!(app.overlay, Some(ov), "{k} 应该打开 {ov:?}");
+            app.handle_key(arrow(k));
+            assert_eq!(app.overlay, Some(ov), "{k:?} 应该打开 {ov:?}");
             // 再按一次同一个键就关掉
-            app.handle_key(key(k));
-            assert!(app.overlay.is_none(), "{k} 再按一次应该关掉");
+            app.handle_key(arrow(k));
+            assert!(app.overlay.is_none(), "{k:?} 再按一次应该关掉");
         }
         // p 不开窗口,而是在顶栏药水区挑第一瓶
         app.handle_key(key('p'));
@@ -2263,7 +2329,7 @@ mod tests {
         assert!(app.overlay.is_none());
         app.handle_key(esc());
         assert!(app.potion_sel.is_none());
-        app.handle_key(key('D'));
+        app.handle_key(arrow(KeyCode::Tab));
         app.handle_key(key('j'));
         // 牌组窗口的 j/k 是挪光标(跳到下一张牌),不是滚动
         assert_eq!(app.overlay_sel, 1);
@@ -2290,8 +2356,12 @@ mod tests {
         ] {
             app.run.screen = screen;
             app.overlay = None;
-            app.handle_key(key('D'));
-            assert_eq!(app.overlay, Some(Overlay::Deck), "{screen:?} 里 D 应该能看牌组");
+            app.handle_key(arrow(KeyCode::Tab));
+            assert_eq!(
+                app.overlay,
+                Some(Overlay::Deck),
+                "{screen:?} 里 tab 应该能看牌组"
+            );
             app.handle_key(key('m'));
             assert_eq!(app.overlay, Some(Overlay::Map), "{screen:?} 里 m 应该能看地图");
             app.overlay = None;
@@ -2398,7 +2468,7 @@ mod tests {
         );
         // 轮到敌人出手:敌人先往左冲,玩家晚一帧才往左退
         app.battle_shakes.clear();
-        app.handle_key(enter()); // 回车 = 结束回合
+        app.handle_key(key('e')); // e = 结束回合
         assert!(
             app.battle_shakes
                 .iter()
