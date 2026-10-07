@@ -156,6 +156,9 @@ pub struct Choice {
 pub struct Combat {
     /// 本场玩家掉血的次数(嗜血按这个降费)
     pub hp_losses: i32,
+    /// 浩劫链:依次被打出的牌(层级, 牌名),表现层拿去做"链式播报"
+    pub havoc_chain: Vec<(u8, String)>,
+    havoc_depth: u8,
     /// 待选择(选牌窗口/手牌选择模式)
     pub choice: Option<Choice>,
     /// 这一帧攒下来的抖动事件,表现层消费
@@ -233,6 +236,8 @@ impl Combat {
 
         let mut c = Combat {
             hp_losses: 0,
+            havoc_chain: Vec::new(),
+            havoc_depth: 0,
             choice: None,
             shakes: Vec::new(),
             enemies,
@@ -1411,9 +1416,13 @@ impl Combat {
                     if let Some(mut card) = self.draw.pop() {
                         let label = card.label();
                         self.push_log(LogKind::Player, format!("Havoc plays {label}"));
+                        // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
+                        self.havoc_depth = self.havoc_depth.saturating_add(1);
+                        self.havoc_chain.push((self.havoc_depth, label));
                         let target = self.pick_random_alive();
                         let mut top_ctx = PlayCtx::default();
                         self.resolve(&mut card, target, &mut top_ctx);
+                        self.havoc_depth = self.havoc_depth.saturating_sub(1);
                         card.free_this_turn = false;
                         self.exhaust_card(card);
                     }
@@ -1722,6 +1731,66 @@ mod tests {
         assert!(c.choice.is_none());
         assert_eq!(c.energy, energy_before, "取消要把能量退回来");
         assert_eq!(c.hand.len(), hand_before, "取消要把牌放回手牌");
+    }
+
+    /// 浩劫连锁:浩劫打浩劫再打出一张普通牌,链上每张都记下来
+    #[test]
+    fn havoc_chain_records_every_card_it_plays() {
+        let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
+        c.hand = vec![crate::core::cards::card("havoc")];
+        // 抽牌堆的顶是末尾,所以这样排:先被抽到的是最后一个 havoc
+        c.draw = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("havoc"),
+            crate::core::cards::card("havoc"),
+        ];
+        c.energy = 3;
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, None).unwrap();
+        let chain: Vec<&str> = c.havoc_chain.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(chain, vec!["Havoc", "Havoc", "Strike"], "三层链都要记下来");
+        let depth: Vec<u8> = c.havoc_chain.iter().map(|(d, _)| *d).collect();
+        assert_eq!(depth, vec![1, 2, 3], "层级逐层加深");
+        assert_eq!(c.enemies[0].hp, e_hp - 6, "最里面那张 Strike 真的打出来了");
+        assert_eq!(c.exhaust.len(), 3, "三张都进了消耗堆");
+        assert_eq!(c.havoc_depth, 0, "链走完之后层级归零");
+        assert!(c.hand.is_empty(), "手里那张 havoc 也消耗掉了");
+    }
+
+    /// 浩劫打出"需要选牌"的牌(战吼/掘出):选择照样挂出来,选完正常结算
+    #[test]
+    fn havoc_playing_a_choice_card_still_asks() {
+        let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
+        c.hand = vec![crate::core::cards::card("havoc")];
+        c.draw = vec![crate::core::cards::card("warcry")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(
+            c.havoc_chain.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>(),
+            vec!["Warcry"],
+            "播报里要能看到浩劫打出了战吼"
+        );
+        let ch = c.choice.as_ref().expect("战吼的选择应该挂出来");
+        assert_eq!(ch.source, ChoiceSource::Hand);
+        // 选一张手牌放回抽牌堆顶
+        if !c.hand.is_empty() {
+            let picked = c.hand[0].def.id;
+            c.choose(0).unwrap();
+            assert!(c.choice.is_none(), "选完就结束");
+            assert_eq!(c.draw.last().unwrap().def.id, picked, "放到抽牌堆顶");
+        }
+
+        // 掘出(从消耗堆拿)也一样:选择来自消耗堆
+        let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
+        c.exhaust.push(crate::core::cards::card("bash"));
+        c.hand = vec![crate::core::cards::card("havoc")];
+        c.draw = vec![crate::core::cards::card("exhume")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        let ch = c.choice.as_ref().expect("掘出的选择应该挂出来");
+        assert_eq!(ch.source, ChoiceSource::Exhaust);
+        c.choose(0).unwrap();
+        assert!(c.hand.iter().any(|x| x.def.id == "bash"), "掘出的牌回手牌");
     }
 
     /// 最后四张红卡:嗜血降费、炼狱之刃给 0 费攻击、浩劫打出顶上那张、灼热可反复升

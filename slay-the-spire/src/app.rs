@@ -39,7 +39,7 @@ const COMMANDS: &[&str] = &[
 /// :room / :relic / :card 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
 const RELIC_ARGS: &[&str] = &["add", "remove"];
-const CARD_ARGS: &[&str] = &["add", "remove", "upgrade"];
+const CARD_ARGS: &[&str] = &["add", "pile", "remove", "upgrade"];
 const RUN_ARGS: &[&str] = &["save", "seed"];
 const RESTART_ARGS: &[&str] = &["fight", "run", "turn"];
 
@@ -87,6 +87,8 @@ pub struct App {
     pub choice_sel: Vec<usize>,
     /// 战斗里的抖动(掉血/出手),自带帧数与重复次数
     pub battle_shakes: Vec<BattleShake>,
+    /// 浩劫链的播报:(层级, 牌名, 还剩几帧)
+    pub play_banners: Vec<(u8, String, u8)>,
     /// 战斗开始时的快照(:restart fight)
     pub fight_snap: Option<crate::core::combat::Combat>,
     /// 本回合开始时的快照(:restart turn)
@@ -133,6 +135,7 @@ impl App {
             msg_ttl: 0,
             choice_sel: Vec::new(),
             battle_shakes: Vec::new(),
+            play_banners: Vec::new(),
             fight_snap: None,
             turn_snap: None,
             snap_fight_seq: 0,
@@ -434,9 +437,15 @@ impl App {
     /// 对面还剩几帧就松手:比对面抖完稍微早一点开始收
     pub const RELEASE_EARLY: u8 = 2;
 
+    /// 浩劫链播报保留多少帧(60ms 一帧,40 帧约 2.4 秒)
+    pub const BANNER_FRAMES: u8 = 40;
+
     /// 还在抖(或有消息要倒计时):事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
-        self.shake > 0 || self.msg_ttl > 0 || !self.battle_shakes.is_empty()
+        self.shake > 0
+            || self.msg_ttl > 0
+            || !self.battle_shakes.is_empty()
+            || !self.play_banners.is_empty()
     }
 
     /// 走一帧;返回是否还要继续。
@@ -450,6 +459,10 @@ impl App {
                 self.msg.clear();
             }
         }
+        for b in self.play_banners.iter_mut() {
+            b.2 = b.2.saturating_sub(1);
+        }
+        self.play_banners.retain(|b| b.2 > 0);
         // 两侧挨打的抖动还剩几帧(出手方要盯着对面这个数)
         let hurt_left = |hero: bool| -> u8 {
             self.battle_shakes
@@ -518,6 +531,23 @@ impl App {
             (b.amp as f32 * (1.0 - frac)).round() as i32
         };
         b.dir * amp
+    }
+
+    /// 把浩劫链收进来做播报:一层一张,同时消失在计时结束
+    fn collect_havoc_chain(&mut self) {
+        let Some(c) = self.run.combat_mut() else {
+            self.play_banners.clear();
+            return;
+        };
+        let chain = std::mem::take(&mut c.havoc_chain);
+        if chain.is_empty() {
+            return;
+        }
+        self.play_banners.clear();
+        for (depth, label) in chain {
+            self.play_banners
+                .push((depth, label, Self::BANNER_FRAMES));
+        }
     }
 
     /// 把战斗引擎攒下的抖动事件收进来。
@@ -1674,6 +1704,16 @@ impl App {
                             .map(|_| "pick a card from your hand".to_string()),
                         other => self.run.debug_remove_card(other),
                     },
+                    // :card pile hand|draw|discard|exhaust <名字, 名字>
+                    "pile" => {
+                        let (pile, names) = split_sub(args);
+                        if names.is_empty() {
+                            Err("usage: card pile <hand|draw|discard|exhaust> <name, ...>"
+                                .to_string())
+                        } else {
+                            self.run.debug_pile_cards(pile, names)
+                        }
+                    }
                     "upgrade" => match args.rsplit_once(' ') {
                         Some((name, n)) if n.chars().all(|c| c.is_ascii_digit()) && !n.is_empty() => {
                             self.run
@@ -1683,7 +1723,7 @@ impl App {
                         _ => Err("usage: card upgrade <name> [times]".to_string()),
                     },
                     _ => Err(
-                        "usage: card add <name> / card remove [name|all|hand|hand all] / card upgrade <name> [times]"
+                        "usage: card add <name,...> / card pile <pile> <name,...> / card remove [name|all|hand|hand all] / card upgrade <name> [times]"
                             .to_string(),
                     ),
                 };
@@ -1833,6 +1873,7 @@ impl App {
     pub fn clamp(&mut self) {
         self.sync_snapshots();
         self.collect_battle_shakes();
+        self.collect_havoc_chain();
         if let Some(c) = self.run.combat() {
             if c.hand.is_empty() {
                 self.hand_sel = 0;

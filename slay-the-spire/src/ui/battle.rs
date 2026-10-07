@@ -73,6 +73,37 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     );
     render_enemies(buf, top, app, c);
 
+    // 浩劫链播报:叠在战斗区上方,一层一行(缩进表示嵌套)
+    for (i, (depth, label, _)) in app.play_banners.iter().enumerate() {
+        let y = main.y + i as u16;
+        if y >= main.y + top_h {
+            break;
+        }
+        let text = format!("Havoc plays {label}");
+        let w = display_width(&text) + 4 + (depth.saturating_sub(1) as usize) * 2;
+        if w as u16 + 4 >= main.width {
+            break;
+        }
+        let x = main.x + (main.width - w as u16) / 2;
+        put_padded(
+            buf,
+            x,
+            y,
+            "",
+            w,
+            Style::default().bg(theme::SEL_BG),
+        );
+        put(
+            buf,
+            x + 2,
+            y,
+            &text,
+            Style::default()
+                .fg(theme::YELLOW)
+                .bg(theme::SEL_BG)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
     let mut y = main.y + top_h;
     // 第一行:能量在左,牌堆数量在右,中间用 ─ 补满
     let right = format!(

@@ -231,6 +231,43 @@ pub struct Run {
     last_encounter: &'static str,
 }
 
+/// 存档里的卡牌记号:id、升级加 "+"、可多次升级的带等级(id+3)
+fn card_token(c: &CardInstance) -> String {
+    if c.plus > 1 {
+        format!("{}+{}", c.def.id, c.plus)
+    } else if c.upgraded {
+        format!("{}+", c.def.id)
+    } else {
+        c.def.id.to_string()
+    }
+}
+
+/// 反向解析牌堆
+fn parse_cards(text: &str) -> Result<Vec<CardInstance>, String> {
+    let mut out = Vec::new();
+    for item in text.split(',').filter(|s| !s.is_empty()) {
+        let item = item.trim();
+        let (id, plus) = match item.split_once('+') {
+            Some((id, rest)) => (
+                id,
+                if rest.is_empty() {
+                    1
+                } else {
+                    rest.parse::<u8>().unwrap_or(1)
+                },
+            ),
+            None => (item, 0),
+        };
+        let def = cards::card_def(id).ok_or_else(|| format!("存档里的卡 {id} 不认识"))?;
+        let mut inst = cards::card(def.id);
+        for _ in 0..plus {
+            inst.upgrade();
+        }
+        out.push(inst);
+    }
+    Ok(out)
+}
+
 impl Run {
     /// 默认角色(铁甲战士)开一局,测试和 :new 用
     pub fn new(seed: u64) -> Run {
@@ -333,6 +370,38 @@ impl Run {
             .map(|p| p.map(|d| d.id).unwrap_or("-"))
             .collect();
         out.push_str(&format!("potions={}\n", potions.join(",")));
+        // 战斗现场(测试存档用):老存档没这几行,读到没有就照旧重建地图
+        if let Some(c) = self.combat.as_ref() {
+            out.push_str(&format!("combat_encounter={}\n", c.encounter_id));
+            out.push_str(&format!("combat_turn={}\n", c.turn));
+            out.push_str(&format!("combat_energy={}\n", c.energy));
+            out.push_str(&format!("combat_max_energy={}\n", c.max_energy));
+            out.push_str(&format!("combat_hp={}\n", c.player.hp));
+            out.push_str(&format!("combat_block={}\n", c.player.block));
+            for (k, pile) in [
+                ("hand", &c.hand),
+                ("draw", &c.draw),
+                ("discard", &c.discard),
+                ("exhaust", &c.exhaust),
+            ] {
+                let list: Vec<String> = pile.iter().map(card_token).collect();
+                out.push_str(&format!("combat_{k}={}\n", list.join(",")));
+            }
+            let foes: Vec<String> = c
+                .enemies
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        e.hp,
+                        e.block,
+                        e.next_move,
+                        if e.alive() { 1 } else { 0 }
+                    )
+                })
+                .collect();
+            out.push_str(&format!("combat_enemies={}\n", foes.join(",")));
+        }
         out
     }
 
@@ -426,14 +495,73 @@ impl Run {
                 .filter_map(|x| x.trim().parse().ok())
                 .collect();
         }
+        // 测试存档:带战斗现场就照原样恢复(不用从种子重放)
+        if let Some(enc_id) = get("combat_encounter") {
+            if let Some(enc) = enemies::encounter_def(enc_id) {
+                let seed = run.rng.next_u64();
+                let setup = CombatSetup {
+                    hp: run.player.hp,
+                    max_hp: run.player.max_hp,
+                    deck: run.player.deck.clone(),
+                    relics: run.player.relics.clone(),
+                };
+                let mut c = Combat::new(enc, setup, seed);
+                c.turn = int("combat_turn", 1).max(1) as u32;
+                c.energy = int("combat_energy", c.energy);
+                c.max_energy = int("combat_max_energy", c.max_energy);
+                c.player.hp = int("combat_hp", run.player.hp);
+                c.player.block = int("combat_block", 0);
+                for (key, pile) in [("hand", 0), ("draw", 1), ("discard", 2), ("exhaust", 3)] {
+                    let Some(v) = get(&format!("combat_{key}")) else {
+                        continue;
+                    };
+                    let list = parse_cards(v)?;
+                    match pile {
+                        0 => c.hand = list,
+                        1 => c.draw = list,
+                        2 => c.discard = list,
+                        _ => c.exhaust = list,
+                    }
+                }
+                if let Some(v) = get("combat_enemies") {
+                    for (i, part) in v.split(',').enumerate() {
+                        let nums: Vec<i32> = part
+                            .split(':')
+                            .filter_map(|x| x.trim().parse().ok())
+                            .collect();
+                        if let Some(e) = c.enemies.get_mut(i) {
+                            if let Some(hp) = nums.first() {
+                                e.hp = *hp;
+                            }
+                            if let Some(b) = nums.get(1) {
+                                e.block = *b;
+                            }
+                            if let Some(m) = nums.get(2) {
+                                e.next_move = (*m).max(0) as usize;
+                            }
+                            if nums.get(3) == Some(&0) {
+                                e.hp = 0;
+                            }
+                        }
+                    }
+                }
+                run.combat = Some(c);
+                run.screen = Screen::Combat;
+            }
+        }
         // 还没出现过的遗物:重建一遍(已经拿到的都排掉)
         run.relic_pool = relics::RELICS
             .iter()
             .filter(|r| !run.player.relics.iter().any(|o| o.id == r.id))
             .collect();
-        run.screen = Screen::Map;
+        // 有战斗现场的就留在战斗里,别把 screen/combat 清掉
+        if run.combat.is_none() {
+            run.screen = Screen::Map;
+        }
         run.event = None;
-        run.combat = None;
+        if run.combat.is_none() {
+            run.combat = None;
+        }
         run.reward = None;
         run.shop = None;
         run.picker = None;
@@ -1424,6 +1552,41 @@ impl Run {
             self.player.deck.push(cards::card(def.id));
         }
         Ok(format!("added card {label}"))
+    }
+
+    /// 调试用:往战斗里的某个牌堆直接塞牌(:card pile draw Havoc, Havoc)
+    pub fn debug_pile_cards(&mut self, pile: &str, args: &str) -> Result<String, String> {
+        let Some(c) = self.combat.as_mut() else {
+            return Err("not in a battle".to_string());
+        };
+        let mut n = 0;
+        for part in args.split(',') {
+            let name = part.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let want = Self::norm(name);
+            let def = cards::CARDS
+                .iter()
+                .find(|c| Self::norm(c.id) == want || Self::norm(c.name) == want)
+                .ok_or_else(|| format!("no card named {name}"))?;
+            let mut inst = cards::card(def.id);
+            c.fix_new_card(&mut inst);
+            match pile {
+                "hand" => {
+                    if c.hand.len() >= crate::core::combat::HAND_LIMIT {
+                        continue;
+                    }
+                    c.hand.push(inst);
+                }
+                "draw" => c.draw.push(inst),
+                "discard" => c.discard.push(inst),
+                "exhaust" => c.exhaust.push(inst),
+                other => return Err(format!("unknown pile {other}")),
+            }
+            n += 1;
+        }
+        Ok(format!("put {n} card(s) into {pile}"))
     }
 
     /// 删牌:名字 / all(整副) / hand(手牌选择窗口) / hand all(手牌全删)
