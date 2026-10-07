@@ -244,7 +244,7 @@ fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
         .bg(theme::BG)
         .add_modifier(Modifier::BOLD);
     let mut y = rect.y;
-    put_centered(buf, rect.x, y, w, &name, name_style);
+    crate::ui::put_centered_label(buf, rect.x, y, w, &name, name_style);
     y += 1;
     if y >= bottom {
         return;

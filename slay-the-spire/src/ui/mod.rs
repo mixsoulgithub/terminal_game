@@ -137,7 +137,7 @@ pub fn put_card_cell(
     } else {
         Style::default().fg(theme::card_color(card.rarity())).bg(bg)
     };
-    put(
+    put_card_label(
         buf,
         x + cost_w as u16 + 1,
         y,
@@ -261,6 +261,38 @@ pub fn vline(buf: &mut Buffer, x: u16, y: u16, height: u16, ch: char, style: Sty
     for i in 0..height {
         put(buf, x, y + i, &ch.to_string(), style);
     }
+}
+
+/// 把 "Strike+2" 拆成 ("Strike", "+2");没有升级后缀就是 (整串, "")
+pub fn split_plus(label: &str) -> (&str, &str) {
+    match label.rfind('+') {
+        Some(i) if label[i + 1..].chars().all(|c| c.is_ascii_digit()) => (&label[..i], &label[i..]),
+        _ => (label, ""),
+    }
+}
+
+/// 画卡牌名字:升级多出来的 "+"/"+N" 一律画成绿色(战斗手牌、列表、说明、图鉴通用)
+pub fn put_card_label(buf: &mut Buffer, x: u16, y: u16, label: &str, style: Style) {
+    let (name, plus) = split_plus(label);
+    let mut cx = x;
+    if !name.is_empty() {
+        put(buf, cx, y, name, style);
+        cx += display_width(name) as u16;
+    }
+    if !plus.is_empty() {
+        put(buf, cx, y, plus, style.fg(theme::GOOD));
+    }
+}
+
+/// 居中写一行卡牌名字(升级后缀同样上绿色)
+pub fn put_centered_label(buf: &mut Buffer, x: u16, y: u16, w: usize, label: &str, style: Style) {
+    let tw = display_width(label);
+    let (text, at) = if tw > w {
+        (truncate(label, w), x)
+    } else {
+        (label.to_string(), x + ((w - tw) / 2) as u16)
+    };
+    put_card_label(buf, at, y, &text, style);
 }
 
 /// 居中写一行(按显示宽度居中)
@@ -413,7 +445,7 @@ pub fn card_body(
     let name_style = Style::default()
         .fg(theme::card_color(card.rarity()))
         .add_modifier(ratatui::style::Modifier::BOLD);
-    put_centered(buf, rect.x, y, w, &card.label(), name_style);
+    put_centered_label(buf, rect.x, y, w, &card.label(), name_style);
     y += 1;
     if y >= bottom {
         return;
@@ -602,7 +634,7 @@ pub fn put_card_line(
     cx += 1;
     left -= 1;
     let name = truncate(&card.label(), left);
-    put(buf, cx, y, &name, name_style);
+    put_card_label(buf, cx, y, &name, name_style);
 }
 
 /// 卡牌窗口里的一行
