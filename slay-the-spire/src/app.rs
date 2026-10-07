@@ -78,6 +78,8 @@ pub struct App {
     pub comp_sel: usize,
     /// 当前看的图鉴种类
     pub library: Library,
+    /// 消息还能显示几帧(0 = 不管了,交给下一次操作)
+    pub msg_ttl: u8,
     /// 手牌选择模式里已经选中的手牌下标
     pub choice_sel: Vec<usize>,
     /// 战斗里的抖动(掉血/出手),自带帧数与重复次数
@@ -117,6 +119,7 @@ impl App {
             title_sel: 0,
             char_sel: 0,
             comp_sel: 0,
+            msg_ttl: 0,
             choice_sel: Vec::new(),
             battle_shakes: Vec::new(),
             shake: 0,
@@ -410,12 +413,14 @@ impl App {
     fn hurt_total(amp: i32) -> u8 {
         Self::SHAKE_FRAMES + (amp.max(2) - 2) as u8 * 2
     }
+    /// 消息保留多少帧(60ms 一帧,50 帧约 3 秒)
+    pub const MSG_FRAMES: u8 = 50;
     /// 对面还剩几帧就松手:比对面抖完稍微早一点开始收
     pub const RELEASE_EARLY: u8 = 2;
 
-    /// 还在抖:事件循环要用超时轮询,好一帧帧重画
+    /// 还在抖(或有消息要倒计时):事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
-        self.shake > 0 || !self.battle_shakes.is_empty()
+        self.shake > 0 || self.msg_ttl > 0 || !self.battle_shakes.is_empty()
     }
 
     /// 走一帧;返回是否还要继续。
@@ -423,6 +428,12 @@ impl App {
     pub fn tick(&mut self) -> bool {
         use crate::core::combat::ShakeWho;
         self.shake = self.shake.saturating_sub(1);
+        if self.msg_ttl > 0 {
+            self.msg_ttl -= 1;
+            if self.msg_ttl == 0 {
+                self.msg.clear();
+            }
+        }
         // 两侧挨打的抖动还剩几帧(出手方要盯着对面这个数)
         let hurt_left = |hero: bool| -> u8 {
             self.battle_shakes
@@ -530,6 +541,15 @@ impl App {
         }
     }
 
+    /// 抖动相位:不针对某一行,消息提示也用这个
+    pub fn shake_nudge(&self) -> i32 {
+        if self.shake == 0 || (Self::SHAKE_FRAMES - self.shake) % 2 != 0 {
+            0
+        } else {
+            1
+        }
+    }
+
     /// 这一行现在往右挪几格:慢慢点两下(每次 1 格),然后回位。
     /// 只往右挪,右边超出去的部分由渲染那层截掉。
     pub fn shake_offset(&self, row: usize) -> i32 {
@@ -545,11 +565,13 @@ impl App {
 
     fn info(&mut self, text: impl Into<String>) {
         self.msg = text.into();
+        self.msg_ttl = Self::MSG_FRAMES;
         self.warn = false;
     }
 
     fn warn(&mut self, text: impl Into<String>) {
         self.msg = text.into();
+        self.msg_ttl = Self::MSG_FRAMES;
         self.warn = true;
     }
 
@@ -1036,6 +1058,19 @@ impl App {
             // 手牌:空格切换选中,回车确认
             KeyCode::Char(' ') if source == ChoiceSource::Hand => {
                 let cur = self.hand_sel;
+                let choosable = self
+                    .run
+                    .combat()
+                    .map(|c| c.choice_candidates().iter().any(|(i, _)| *i == cur))
+                    .unwrap_or(false);
+                if !choosable {
+                    // 这张不在可选范围内:提示一下并抖一抖
+                    self.warn("this card cannot be chosen");
+                    self.shake = Self::SHAKE_FRAMES;
+                    self.shake_row = None;
+                    self.clamp();
+                    return true;
+                }
                 if let Some(pos) = self.choice_sel.iter().position(|i| *i == cur) {
                     self.choice_sel.remove(pos);
                 } else {

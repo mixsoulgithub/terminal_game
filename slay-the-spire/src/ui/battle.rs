@@ -515,7 +515,9 @@ fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
             _ => ("[enter] play".to_string(), theme::dim()),
         },
     };
-    put(buf, area.x + 2, area.y, &truncate(&text, (area.width as usize).saturating_sub(2)), style);
+    // 提示要抖的时候整句话往右挪一格(和商店那套一致)
+    let x = area.x + 2 + app.shake_nudge() as u16;
+    put(buf, x, area.y, &truncate(&text, (area.width as usize).saturating_sub(2)), style);
 }
 
 /// 命令栏:平时只写 "? help";按 : 进入命令行时整条让给输入
