@@ -257,6 +257,12 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     // {} 只画在光标那张;已经选中的(背景色)不画括号
     let marked = |k: usize| k == sel;
     let highlighted = |k: usize| k == sel || app.choice_sel.contains(&k);
+    // 选择模式下,"能不能选"决定压暗而不是"能不能打"
+    let choosable: Option<Vec<usize>> = app
+        .run
+        .combat()
+        .filter(|c| c.choice.is_some())
+        .map(|c| c.choice_candidates().into_iter().map(|(i, _)| i).collect());
     let widths: Vec<usize> = lengths.clone();
     // 分隔符:选中的牌把它左右两根竖线换成 [ 和 ](宽度不变)
     let bar_at = |before: usize| -> &'static str {
@@ -284,8 +290,11 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
             break;
         }
         let w = want.min(remain.saturating_sub(1)).max(1);
-        let playable = c.blocked_reason(k).is_none();
-        crate::ui::put_card_cell(buf, cx, y, w as u16, card, highlighted(k), !playable);
+        let dim = match &choosable {
+            Some(list) => !list.contains(&k),
+            None => c.blocked_reason(k).is_some(),
+        };
+        crate::ui::put_card_cell(buf, cx, y, w as u16, card, highlighted(k), dim);
         cx += w as u16;
         bar(buf, cx, bar_at(k + 1));
         cx += 1;
