@@ -773,11 +773,12 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left if on_map => self.scroll_map(-1),
             KeyCode::Char('g') if on_map => self.jump_map(false),
             KeyCode::Char('G') if on_map => self.jump_map(true),
-            KeyCode::Enter
+            // 选牌窗口里空格和回车都算"选中光标下那张"(跟手牌模式的空格一致)
+            KeyCode::Enter | KeyCode::Char(' ')
                 if matches!(
                     self.overlay,
                     Some(Overlay::Draw) | Some(Overlay::Discard) | Some(Overlay::Exhaust)
-                ) =>
+                ) && self.run.combat().is_some_and(|c| c.choice.is_some()) =>
             {
                 let idx = self.overlay_sel;
                 let r = self
@@ -1189,6 +1190,14 @@ impl App {
             }
             KeyCode::Enter if source == ChoiceSource::Hand => {
                 self.confirm_choice();
+            }
+            // 弃牌堆/消耗堆的选牌:窗口没开就先开出来(空格也能把它叫出来),
+            // 开着的窗口由 overlay_key 用空格/回车选中
+            KeyCode::Char(' ') | KeyCode::Enter
+                if source != ChoiceSource::Hand && self.overlay.is_none() =>
+            {
+                self.open_choice_window();
+                self.clamp();
             }
             _ => return false,
         }

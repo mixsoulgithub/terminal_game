@@ -181,11 +181,19 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
         Overlay::Deck | Overlay::Draw | Overlay::Discard | Overlay::Exhaust
     ) {
         let rows = deck_rows(app, ov);
-        let title = format!(
-            "{}  (j/k pick, {} or esc close)",
-            ov.title(),
-            ov.close_key()
-        );
+        // 正在选牌:空格/回车选中,esc 是取消这次出牌
+        let picking_card = app.run.combat().is_some_and(|c| c.choice.is_some())
+            && Some(ov)
+                == app.overlay;
+        let title = if picking_card {
+            format!("{}  (j/k pick, space or enter take, esc cancel)", ov.title())
+        } else {
+            format!(
+                "{}  (j/k pick, {} or esc close)",
+                ov.title(),
+                ov.close_key()
+            )
+        };
         crate::ui::card_window(
             buf,
             rect,

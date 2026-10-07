@@ -341,9 +341,17 @@ impl Combat {
 
     fn start_turn(&mut self, extra_draw: usize) {
         self.turn += 1;
-        // 上回合"本回合 0 费"的牌恢复原价
-        for card in self.hand.iter_mut() {
-            card.free_this_turn = false;
+        // 上回合"本回合 0 费"的牌恢复原价;
+        // 四个牌堆都要清:牌可能已经不在手里(弃掉/洗完/被消耗)
+        for pile in [
+            &mut self.hand,
+            &mut self.draw,
+            &mut self.discard,
+            &mut self.exhaust,
+        ] {
+            for card in pile.iter_mut() {
+                card.free_this_turn = false;
+            }
         }
         self.energy = self.max_energy;
         // 格挡在回合开始清空,除非有壁垒
@@ -1042,6 +1050,8 @@ impl Combat {
     pub fn play_card(&mut self, hand_idx: usize, target: Option<usize>) -> Result<(), &'static str> {
         self.playable(hand_idx)?;
         let mut card = self.hand.remove(hand_idx);
+        // 0 费只对这一回合的那一次打出有效,出手后立刻失效
+        card.free_this_turn = false;
         let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
             && self.player.statuses.has(Status::Corruption);
         let cost = if corrupted_skill { 0 } else { card.cost_value(self.energy) };
@@ -1815,6 +1825,19 @@ mod tests {
             .expect("应该多一张 0 费牌");
         assert_eq!(added.kind(), crate::core::card::CardType::Attack);
         assert_eq!(added.cost_value(c.energy), 0, "本回合 0 费");
+
+        // 下一回合恢复原价:牌这时候多半已经进了弃牌堆,那边也得清
+        c.end_turn();
+        for pile in [&c.hand, &c.draw, &c.discard, &c.exhaust] {
+            assert!(
+                pile.iter().all(|x| !x.free_this_turn),
+                "本回合 0 费不该留到下一回合"
+            );
+        }
+        // 恢复的是"本来的费用",不是固定值:同一张牌下回合该回到它的原价
+        let plain = crate::core::cards::card("strike");
+        assert_eq!(plain.cost_value(3), 1, "普通牌照旧");
+        assert_eq!(crate::core::cards::card("clash").cost_value(3), 0, "本来就 0 费的照旧");
 
         // 浩劫:把抽牌堆顶那张打出来并消耗
         let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
