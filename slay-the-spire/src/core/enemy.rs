@@ -94,9 +94,19 @@ pub enum EnemyFx {
     StealGold { n: i32 },
     /// 偷玩家一张牌(圆球哨卫的停滞)
     StealCard,
-    /// 召唤同伴.本作用 Vec 记站位,召唤物一律排在队尾:
-    /// 插到中间会打乱本回合已经排好的行动顺序,还会让正在行动的这只下标漂移
-    Summon { ids: &'static [&'static str] },
+    /// 召唤固定的几只.参考实现里每只怪占一个固定槽位,召唤物进的是指定的空槽
+    /// (不是队尾),所以 `ids` 与 `slots` 一一对应:第 i 只放进 slots[i].
+    Summon {
+        ids: &'static [&'static str],
+        slots: &'static [u8],
+    },
+    /// 从池子里随机抽 count 只召唤(小鬼头目的召集):
+    /// 每只单独掷点挑一个,允许抽到同一只;同样按 slots 的顺序填空槽.
+    SummonRandom {
+        pool: &'static [&'static str],
+        count: u8,
+        slots: &'static [u8],
+    },
     /// 下回合少抽牌
     DrawReduction { n: i32 },
     /// 小鬼巫师充能:计数加一,本身没有别的效果

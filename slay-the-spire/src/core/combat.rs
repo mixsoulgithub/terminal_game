@@ -58,6 +58,10 @@ pub struct Enemy {
     pub temp_strength: i32,
     /// 已经脱离战斗(逃跑 / 被首领带走),不会再行动也不再算敌人
     pub escaped: bool,
+    /// 参考实现里的槽位:站位与召唤都按它排,下标会变它不会
+    pub slot: usize,
+    /// 出生序号.召唤会把队里其它怪的下标顶走,回合内靠它认住"正在行动的那只"
+    pub uid: u64,
     /// 跨回合的怪物状态(回合数、招式历史、各种计数)
     pub state: EnemyState,
 }
@@ -255,6 +259,8 @@ pub struct Combat {
     pub force_end_turn: bool,
     /// 玩家最近一次指向的敌人(被夹击时判断从哪边挨打)
     pub facing: usize,
+    /// 下一只怪的出生序号
+    next_uid: u64,
 }
 
 /// 单次打牌过程中的临时统计
@@ -308,10 +314,14 @@ impl Combat {
                 death_done: false,
                 temp_strength: 0,
                 escaped: false,
+                // 站位按遭遇表给的槽位,不一定是 0,1,2...(自动机的铜球要排在它前面)
+                slot: crate::core::enemies::initial_slot(enc, i),
+                uid: i as u64,
                 state,
             });
         }
 
+        let enemies_len = enemies.len();
         // 战斗开始时洗牌,天生牌直接入手
         let mut deck = setup.deck;
         rng.shuffle(&mut deck);
@@ -357,6 +367,7 @@ impl Combat {
             deck_cards: Vec::new(),
             force_end_turn: false,
             facing: 1,
+            next_uid: enemies_len as u64,
         };
 
         // 遗物:战斗开始结算
@@ -887,13 +898,16 @@ impl Combat {
     }
 
     fn enemy_turn(&mut self) {
-        let actors: Vec<usize> = (0..self.enemies.len())
-            .filter(|i| self.enemies[*i].up())
-            .collect();
-        for idx in actors {
+        // 这一回合轮到谁,开局就定死(用出生序号认怪).召唤会把别人顶走,
+        // 所以不能存下标;新召唤出来的也不在这一轮里,下一轮才动
+        let actors: Vec<u64> = self.enemies.iter().filter(|e| e.up()).map(|e| e.uid).collect();
+        for uid in actors {
             if self.phase != Phase::EnemyTurn {
                 return;
             }
+            let Some(idx) = self.enemies.iter().position(|e| e.uid == uid) else {
+                continue;
+            };
             if !self.enemies[idx].up() {
                 continue;
             }
@@ -912,6 +926,7 @@ impl Combat {
 
     fn enemy_act(&mut self, idx: usize) {
         let def = self.enemies[idx].def;
+        let uid = self.enemies[idx].uid;
         let move_idx = self.enemies[idx].next_move;
         let mname = def.moves[move_idx].name;
         let name = self.enemies[idx].name.clone();
@@ -926,11 +941,18 @@ impl Combat {
             self.push_log(LogKind::Enemy, format!("{name} is asleep"));
         }
         for fx in def.moves[move_idx].effects {
-            self.apply_enemy_fx(idx, *fx, turn, &name, mname);
+            // 招式里可能召唤/分裂,会把队里的下标挪走,所以每次按出生序号重新认
+            let Some(cur) = self.enemies.iter().position(|e| e.uid == uid) else {
+                return;
+            };
+            self.apply_enemy_fx(cur, *fx, turn, &name, mname);
             if self.phase == Phase::Lost {
                 return;
             }
         }
+        let Some(idx) = self.enemies.iter().position(|e| e.uid == uid) else {
+            return;
+        };
         // 觉醒者复活:半死那一回合就是来补血的,血补上就进二阶段
         if def.special == Special::Rebirth
             && self.enemies[idx].state.half_dead
@@ -1118,13 +1140,23 @@ impl Combat {
             EnemyFx::StealCard => {
                 self.enemy_steal_card(idx, name);
             }
-            EnemyFx::Summon { ids } => {
-                for id in ids {
-                    let at = self.spawn_enemy(id, None);
-                    // 召唤出来的都是召唤物:首领倒下时一起退场
-                    self.enemies[at].statuses.add(Status::Minion, 1);
-                    let who = self.enemies[at].name.clone();
-                    self.push_log(LogKind::Enemy, format!("{name} calls {who} for help"));
+            EnemyFx::Summon { ids, slots } => {
+                let me = self.enemies[idx].slot;
+                for (slot, id) in self.open_slots(me, slots, ids.len()).into_iter().zip(ids) {
+                    self.summon_one(id, slot, name);
+                }
+            }
+            EnemyFx::SummonRandom {
+                pool,
+                count,
+                slots,
+            } => {
+                let me = self.enemies[idx].slot;
+                for slot in self.open_slots(me, slots, count as usize) {
+                    // 每只单独掷点挑,允许抽到同一只(参考实现就是各抽各的)
+                    let i = self.rng.range_inclusive(0, pool.len() as i32 - 1) as usize;
+                    let id = pool[i];
+                    self.summon_one(id, slot, name);
                 }
             }
             EnemyFx::DrawReduction { n } => {
@@ -1323,24 +1355,26 @@ impl Combat {
         }
     }
 
-    /// 大史莱姆分裂:自己离场,原地补上两只小史莱姆(生命等于分裂时的血量)
+    /// 大史莱姆分裂:自己离场,原地补上两只小史莱姆(生命等于分裂时的血量).
+    /// 两只子体占自己那一格和下一格,和参考实现一样顶掉原来的位置
     fn enemy_split(&mut self, idx: usize, name: &str) {
         let Special::Split { a, b } = self.enemies[idx].def.special else {
             return;
         };
         let hp = self.enemies[idx].hp;
+        let slot = self.enemies[idx].slot;
         self.enemies[idx].escaped = true;
         self.enemies[idx].death_done = true;
         self.push_log(
             LogKind::Enemy,
             format!("{name} splits into two slimes ({hp} HP each)"),
         );
-        self.spawn_enemy(a, Some(hp));
-        self.spawn_enemy(b, Some(hp));
+        self.spawn_enemy_at(a, Some(hp), slot);
+        self.spawn_enemy_at(b, Some(hp), slot + 1);
     }
 
-    /// 生成一只新敌人(召唤/分裂).hp 为 None 时按区间掷,一律排在队尾
-    fn spawn_enemy(&mut self, id: &str, hp: Option<i32>) -> usize {
+    /// 造一只新敌人.代价是掷生命、掷开场(可能记状态),不进队里
+    fn make_enemy(&mut self, id: &str, hp: Option<i32>, slot: usize) -> Enemy {
         let def = crate::core::enemies::enemy_def_or_panic(id);
         let same = self.enemies.iter().filter(|e| e.def.id == def.id).count();
         let name = if same > 0 {
@@ -1367,7 +1401,8 @@ impl Combat {
             };
             (def.spawn)(&mut ctx);
         }
-        let e = Enemy {
+        self.next_uid += 1;
+        Enemy {
             def,
             name,
             hp,
@@ -1378,12 +1413,80 @@ impl Combat {
             death_done: false,
             temp_strength: 0,
             escaped: false,
+            slot,
+            uid: self.next_uid,
             state,
+        }
+    }
+
+    /// 生成一只新敌人并放进指定的槽位(召唤/分裂).
+    /// 参考实现是往槽位数组里直接赋值:那一格还躺着尸体(或已离场的那只)就顶掉它,
+    /// 否则按槽位顺序插进队里.这样队里一直按槽位从小到大排,
+    /// 行动顺序也就和参考一致,召唤物不会挤到队尾
+    fn spawn_enemy_at(&mut self, id: &str, hp: Option<i32>, slot: usize) -> usize {
+        let e = self.make_enemy(id, hp, slot);
+        let at = match self.enemies.iter().position(|x| x.slot == slot && !x.up()) {
+            Some(i) => {
+                self.enemies[i] = e;
+                i
+            }
+            None => {
+                let at = self
+                    .enemies
+                    .iter()
+                    .position(|x| x.slot > slot)
+                    .unwrap_or(self.enemies.len());
+                self.enemies.insert(at, e);
+                at
+            }
         };
-        self.enemies.push(e);
-        let at = self.enemies.len() - 1;
+        // 同名的按队伍顺序重排编号:新来的可能插在原来那只前面(收集者的火炬头)
+        let id = self.enemies[at].def.id;
+        if self.enemies.iter().filter(|e| e.def.id == id).count() > 1 {
+            let mut k = 0;
+            for e in self.enemies.iter_mut() {
+                if e.def.id == id {
+                    k += 1;
+                    e.name = format!("{} #{}", e.def.name, k);
+                }
+            }
+        }
         self.roll_first_move(at);
         at
+    }
+
+    /// 槽位空着吗(没人,或者只躺着尸体 / 已离场的那只)
+    fn slot_open(&self, slot: usize) -> bool {
+        match self.enemies.iter().find(|e| e.slot == slot) {
+            Some(e) => !e.up(),
+            None => true,
+        }
+    }
+
+    /// 召唤一只到指定槽位,顺便记上召唤物标记
+    fn summon_one(&mut self, id: &str, slot: usize, caller: &str) -> usize {
+        let at = self.spawn_enemy_at(id, None, slot);
+        if !self.enemies[at].statuses.holds(Status::Minion) {
+            self.enemies[at].statuses.add(Status::Minion, 1);
+        }
+        let who = self.enemies[at].name.clone();
+        self.push_log(LogKind::Enemy, format!("{caller} calls {who} for help"));
+        at
+    }
+
+    /// 按参考实现的槽位顺序挑空槽:从 slots 里取前 n 个没被占的(自己那一格不算)
+    fn open_slots(&self, me_slot: usize, slots: &[u8], n: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        for &slot in slots {
+            if out.len() >= n {
+                break;
+            }
+            let slot = slot as usize;
+            if slot != me_slot && self.slot_open(slot) {
+                out.push(slot);
+            }
+        }
+        out
     }
 
     /// 敌人自己的回合结束:回合末生效的能力与倒计时
@@ -5111,7 +5214,13 @@ mod power_tests {
             .count();
         assert_eq!(orbs, 2, "铜制机械人开场召两个铜球");
         assert!(c.enemies.iter().any(|e| e.is_minion()));
-        c.damage_enemy(0, 999);
+        // 铜球排在它前面,所以按 id 找首领,不能直接打 0 号
+        let boss = c
+            .enemies
+            .iter()
+            .position(|e| e.def.id == "bronze_automaton")
+            .unwrap();
+        c.damage_enemy(boss, 999);
         c.check_win();
         assert!(c.enemies.iter().all(|e| !e.is_minion() || !e.up()));
         assert_eq!(c.phase, Phase::Won, "首领倒下,召唤物一起退场");
@@ -5129,9 +5238,287 @@ mod power_tests {
             2,
             "开场召两只火炬头"
         );
-        // 打到第 4 回合那一次掷招必定是超大减益
+        // 打到第 4 回合那一次掷招必定是超大减益(她在火炬头后面,按 id 找)
         c.end_turn();
         c.end_turn();
-        assert_eq!(c.enemies[0].def.moves[c.enemies[0].next_move].name, "Mega Debuff");
+        let her = c
+            .enemies
+            .iter()
+            .position(|e| e.def.id == "the_collector")
+            .unwrap();
+        assert_eq!(c.enemies[her].def.moves[c.enemies[her].next_move].name, "Mega Debuff");
+    }
+}
+
+
+/// 召唤物的站位:参考实现里每只怪占一个固定槽位,召唤物进的是指定的空槽,
+/// 不是队尾;行动顺序也就按槽位从左到右排
+#[cfg(test)]
+mod summon_tests {
+    use super::*;
+    use crate::core::cards::card;
+
+    /// 召集用的 8 只小鬼池(和 act2 里那张表一致)
+    const POOL: &[&str] = &[
+        "mad_gremlin",
+        "mad_gremlin",
+        "sneaky_gremlin",
+        "sneaky_gremlin",
+        "fat_gremlin",
+        "fat_gremlin",
+        "shield_gremlin",
+        "gremlin_wizard",
+    ];
+
+    fn fight(id: &'static str, seed: u64) -> Combat {
+        let enc = crate::core::enemies::encounter_def(id)
+            .unwrap_or_else(|| panic!("no encounter {id}"));
+        let deck: Vec<CardInstance> = [
+            "strike", "strike", "strike", "defend", "defend", "strike", "strike", "defend",
+            "strike", "strike",
+        ]
+        .iter()
+        .map(|c| card(c))
+        .collect();
+        Combat::new(
+            enc,
+            CombatSetup {
+                hp: 80,
+                max_hp: 80,
+                deck,
+                relics: Vec::new(),
+                gold: 0,
+            },
+            seed,
+        )
+    }
+
+    fn slots(c: &Combat) -> Vec<usize> {
+        c.enemies.iter().map(|e| e.slot).collect()
+    }
+
+    fn ids(c: &Combat) -> Vec<&str> {
+        c.enemies.iter().map(|e| e.def.id).collect()
+    }
+
+    fn idx_of(c: &Combat, id: &str) -> usize {
+        c.enemies
+            .iter()
+            .position(|e| e.def.id == id)
+            .unwrap_or_else(|| panic!("no {id} on the field"))
+    }
+
+    /// 一段日志里"谁先动的":按提到的敌人名字(取最长匹配的名字)去重保序
+    fn acted(c: &Combat, from: usize) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for line in &c.log[from..] {
+            let mut hit: Option<&Enemy> = None;
+            for e in &c.enemies {
+                if line.text.starts_with(&e.name)
+                    && hit.map_or(true, |h| e.name.len() > h.name.len())
+                {
+                    hit = Some(e);
+                }
+            }
+            if let Some(e) = hit {
+                if !out.contains(&e.name) {
+                    out.push(e.name.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// 首领的某一招(按下标),直接让它出手一次
+    fn use_move(c: &mut Combat, id: &str, move_idx: usize) {
+        let i = idx_of(c, id);
+        c.enemies[i].next_move = move_idx;
+        c.enemy_act(i);
+    }
+
+    #[test]
+    fn automaton_orbs_take_slots_0_and_2_around_it() {
+        let mut c = fight("bronze_automaton", 7);
+        assert_eq!(slots(&c), vec![1], "自动机站在槽 1");
+        c.end_turn();
+        assert_eq!(ids(&c), vec!["bronze_orb", "bronze_automaton", "bronze_orb"]);
+        assert_eq!(slots(&c), vec![0, 1, 2], "两颗铜球占 0 和 2");
+        assert!(
+            idx_of(&c, "bronze_orb") < idx_of(&c, "bronze_automaton"),
+            "槽 0 的铜球排在首领前面"
+        );
+        // 召集的那一轮里只有首领动过,铜球下一轮才动
+        assert_eq!(acted(&c, 0), vec!["Bronze Automaton"], "当回合铜球不动");
+        // 下一轮按槽位从左到右:槽 0 铜球 → 首领 → 槽 2 铜球
+        let from = c.log.len();
+        c.end_turn();
+        assert_eq!(
+            acted(&c, from),
+            vec!["Bronze Orb #1", "Bronze Automaton", "Bronze Orb #2"],
+            "行动顺序按槽位排"
+        );
+    }
+
+    #[test]
+    fn collector_torch_heads_stand_in_front_of_her() {
+        let mut c = fight("the_collector", 7);
+        assert_eq!(slots(&c), vec![2], "收集者在槽 2");
+        c.end_turn();
+        assert_eq!(ids(&c), vec!["torch_head", "torch_head", "the_collector"]);
+        assert_eq!(slots(&c), vec![0, 1, 2], "火炬头占 0 和 1");
+        assert_eq!(c.enemies[0].name, "Torch Head #1", "队里的编号按位置排");
+        assert!(
+            idx_of(&c, "torch_head") < idx_of(&c, "the_collector"),
+            "火炬头都排在她前面"
+        );
+        // 同一轮里火炬头先出手(只有一只活着的火炬头在她前面也一样)
+        let from = c.log.len();
+        c.end_turn();
+        let order = acted(&c, from);
+        let head = order.iter().position(|n| n.starts_with("Torch Head")).unwrap();
+        let her = order.iter().position(|n| n == "The Collector").unwrap();
+        assert!(head < her, "火炬头先于收集者出手:{order:?}");
+    }
+
+    #[test]
+    fn collector_spawn_fills_only_the_open_slots() {
+        let mut c = fight("the_collector", 7);
+        c.end_turn();
+        // 打死槽 0 的火炬头,再让她召一次:空的只有槽 0,所以只补一只
+        c.enemies[0].hp = 0;
+        use_move(&mut c, "the_collector", 0);
+        assert_eq!(slots(&c), vec![0, 1, 2]);
+        let heads = c.enemies.iter().filter(|e| e.def.id == "torch_head").count();
+        assert_eq!(heads, 2, "补到两只就停(场上一共 3 只)");
+        assert!(c.enemies[0].up(), "槽 0 重新有人");
+    }
+
+    #[test]
+    fn gremlin_leader_rally_fills_the_minion_slots_from_the_pool() {
+        let mut c = fight("gremlin_leader_gang", 7);
+        assert_eq!(slots(&c), vec![1, 2, 3], "小鬼在 1、2,首领在 3");
+        // 干掉两只小鬼,空出 1、2 两格
+        for e in c.enemies.iter_mut() {
+            if e.def.id != "gremlin_leader" {
+                e.hp = 0;
+            }
+        }
+        c.check_win();
+        let from = c.log.len();
+        use_move(&mut c, "gremlin_leader", 0); // Rally
+        assert_eq!(slots(&c), vec![1, 2, 3], "顶掉空槽,不是排到队尾");
+        let summoned: Vec<&Enemy> = c
+            .enemies
+            .iter()
+            .filter(|e| e.def.id != "gremlin_leader")
+            .collect();
+        assert_eq!(summoned.len(), 2, "一次召集两只");
+        for g in &summoned {
+            assert!(POOL.contains(&g.def.id), "{} 不在 8 只小鬼池里", g.def.id);
+            assert!(g.is_minion(), "{} 应当是召唤物", g.def.id);
+            assert!(g.hp > 0, "{} 是活的", g.def.id);
+        }
+        let called = c.log[from..]
+            .iter()
+            .filter(|l| l.text.contains("calls"))
+            .count();
+        assert_eq!(called, 2, "两条召唤日志");
+    }
+
+    #[test]
+    fn rally_into_a_corpse_slot_keeps_the_team_in_slot_order() {
+        let mut c = fight("gremlin_leader_gang", 7);
+        // 槽 1 的小鬼先死、槽 2 的还活着:召集补的是槽 1 和槽 0.
+        // 尸体那一格被顶掉,新来的按槽位排进队里
+        let mad = idx_of(&c, "mad_gremlin");
+        c.enemies[mad].hp = 0;
+        use_move(&mut c, "gremlin_leader", 0);
+        assert_eq!(slots(&c), vec![0, 1, 2, 3], "补完后按槽位排");
+        assert_eq!(c.enemies[0].slot, 0, "槽 0 的新鬼排在队首");
+        assert_eq!(c.enemies[3].def.id, "gremlin_leader");
+    }
+
+    #[test]
+    fn gremlin_leader_rally_stops_when_three_minions_are_alive() {
+        let mut c = fight("gremlin_leader_gang", 7);
+        use_move(&mut c, "gremlin_leader", 0); // 补满槽 0
+        assert_eq!(slots(&c), vec![0, 1, 2, 3], "槽 0 最后补上");
+        let names: Vec<String> = c.enemies.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names.len(), 4);
+        // 三只小鬼都在,再召集一次什么也不会有
+        use_move(&mut c, "gremlin_leader", 0);
+        assert_eq!(slots(&c), vec![0, 1, 2, 3], "满了就不再召");
+        let after: Vec<String> = c.enemies.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, after, "阵容没变");
+    }
+
+    /// 一次召集抽到的两只(按抽取顺序)
+    fn rally_pair(seed: u64) -> (String, String) {
+        let mut c = fight("gremlin_leader_gang", seed);
+        for e in c.enemies.iter_mut() {
+            if e.def.id != "gremlin_leader" {
+                e.hp = 0;
+            }
+        }
+        c.check_win();
+        use_move(&mut c, "gremlin_leader", 0);
+        let mut got: Vec<(usize, String)> = c
+            .enemies
+            .iter()
+            .filter(|e| e.def.id != "gremlin_leader")
+            .map(|e| (e.slot, e.def.id.to_string()))
+            .collect();
+        got.sort();
+        (got[0].1.clone(), got[1].1.clone())
+    }
+
+    #[test]
+    fn rally_draws_each_gremlin_on_its_own_and_repeats_with_the_same_seed() {
+        assert_eq!(rally_pair(7), rally_pair(7), "同 seed 抽出同一对");
+        let mut pairs = std::collections::BTreeSet::new();
+        for seed in 0..24 {
+            pairs.insert(rally_pair(seed));
+        }
+        // 参考实现是两只各掷各的,所以抽到一样的两只也正常
+        assert!(
+            pairs.iter().any(|(a, b)| a == b),
+            "应当能抽到两只一样的:{pairs:?}"
+        );
+        assert!(
+            pairs.iter().any(|(a, b)| a != b),
+            "也应当抽到两只不一样的:{pairs:?}"
+        );
+        for (a, b) in &pairs {
+            assert!(POOL.contains(&a.as_str()) && POOL.contains(&b.as_str()), "{a}/{b} 不在池里");
+        }
+    }
+
+    #[test]
+    fn reptomancer_daggers_fill_the_reference_slots() {
+        let mut c = fight("reptomancer_solo", 7);
+        assert_eq!(slots(&c), vec![1, 2, 4], "小刀在 1 和 4,爬行者在 2");
+        // 搜索顺序 4、1、3、0:4 和 1 都占着,第一把进 3
+        use_move(&mut c, "reptomancer", 0);
+        assert_eq!(slots(&c), vec![1, 2, 3, 4], "第一把补进槽 3");
+        use_move(&mut c, "reptomancer", 0);
+        assert_eq!(slots(&c), vec![0, 1, 2, 3, 4], "最后一把进槽 0");
+        assert_eq!(
+            c.enemies.iter().filter(|e| e.def.id == "dagger").count(),
+            4,
+            "四把小刀"
+        );
+        assert_eq!(c.enemies[0].name, "Dagger #1", "编号按队里位置排");
+        assert_eq!(c.enemies[4].name, "Dagger #4");
+    }
+
+    #[test]
+    fn split_slimes_take_the_parent_slot_and_the_next_one() {
+        let mut c = fight("large_slime", 7);
+        assert_eq!(slots(&c), vec![0]);
+        c.enemies[0].hp = 30;
+        c.damage_enemy(0, 1);
+        c.end_turn();
+        assert_eq!(ids(&c), vec!["acid_slime_medium", "acid_slime_medium"]);
+        assert_eq!(slots(&c), vec![0, 1], "两只子体占原来那一格和下一格");
     }
 }

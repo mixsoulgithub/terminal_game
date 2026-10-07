@@ -463,6 +463,25 @@ pub static MINIONS: &[Encounter] = &[
     },
 ];
 
+/// 开局的槽位.参考实现里每只怪站在一个固定槽位上,有几场遭遇是刻意留空槽的:
+/// 小鬼头目的首领在 3、两只小鬼在 1 和 2、槽 0 空着;自动机在 1(铜球占 0 和 2);
+/// 收集者在 2(火炬头占 0 和 1);爬行者在 2(小刀占 1 和 4).
+/// 每项是"该遭遇里第 i 只怪的槽位",没列到的遭遇就按 0,1,2... 密集排.
+pub static ENCOUNTER_SLOTS: &[(&str, &[usize])] = &[
+    ("gremlin_leader_gang", &[1, 2, 3]),
+    ("bronze_automaton", &[1]),
+    ("the_collector", &[2]),
+    ("reptomancer_solo", &[1, 2, 4]),
+];
+
+/// 遭遇里第 i 只怪开局的槽位
+pub fn initial_slot(enc: &Encounter, i: usize) -> usize {
+    match ENCOUNTER_SLOTS.iter().find(|(id, _)| *id == enc.id) {
+        Some((_, slots)) => slots.get(i).copied().unwrap_or(i),
+        None => i,
+    }
+}
+
 /// 所有遭遇表(图鉴与查找用)
 pub static ENCOUNTER_TABLES: &[&[Encounter]] = &[
     ENCOUNTERS_WEAK,
@@ -580,6 +599,38 @@ mod tests {
         assert!(ENCOUNTERS.len() >= 6, "need at least 6 normal encounters");
         assert!(ELITES.len() >= 3, "need at least 3 elite encounters");
         assert_eq!(BOSSES.len(), 3, "act 1 has 3 bosses");
+    }
+
+    #[test]
+    fn encounter_slot_table_matches_its_encounters() {
+        for (id, slots) in ENCOUNTER_SLOTS {
+            let enc = all_encounters()
+                .find(|e| e.id == *id)
+                .unwrap_or_else(|| panic!("站位表里的遭遇 {id} 不存在"));
+            assert_eq!(slots.len(), enc.enemies.len(), "{id} 的槽位数对不上");
+            assert!(
+                slots.windows(2).all(|w| w[0] < w[1]),
+                "{id} 的槽位要从小到大"
+            );
+        }
+        // 有留空槽的遭遇:首领先走,小鬼在 1、2,槽 0 空着
+        let leader = encounter_def("gremlin_leader_gang").unwrap();
+        assert_eq!(
+            (0..leader.enemies.len())
+                .map(|i| initial_slot(leader, i))
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        // 没列到的遭遇就按 0,1,2... 密集排
+        let solo = encounter_def("jaw_worm_solo").unwrap();
+        assert_eq!(initial_slot(solo, 0), 0);
+        let three = encounter_def("three_sentries").unwrap();
+        assert_eq!(
+            (0..three.enemies.len())
+                .map(|i| initial_slot(three, i))
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
     }
 
     #[test]

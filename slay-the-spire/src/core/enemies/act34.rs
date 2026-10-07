@@ -847,7 +847,11 @@ pub const REPTOMANCER: EnemyDef = EnemyDef {
         MoveDef {
             name: "Summon",
             intent: Intent::Unknown,
-            effects: &[EnemyFx::Summon { ids: &["dagger"] }],
+            // 自己的槽位是 2;小刀按 4、1、3、0 的顺序填空槽(参考实现)
+            effects: &[EnemyFx::Summon {
+                ids: &["dagger"],
+                slots: &[4, 1, 3, 0],
+            }],
         },
         MoveDef {
             name: "Snake Strike",

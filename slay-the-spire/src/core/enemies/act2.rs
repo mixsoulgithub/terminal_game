@@ -839,6 +839,19 @@ fn pick_book_of_stabbing(ctx: &mut PickCtx) -> usize {
     MULTI_STAB
 }
 
+/// 召集时抽的 8 只小鬼池(参考实现里 MonsterGroup 的 getGremlin 表):
+/// 疯的两只、偷偷的两只、胖的两只、盾牌一只、巫师一只
+static GREMLIN_POOL: &[&str] = &[
+    "mad_gremlin",
+    "mad_gremlin",
+    "sneaky_gremlin",
+    "sneaky_gremlin",
+    "fat_gremlin",
+    "fat_gremlin",
+    "shield_gremlin",
+    "gremlin_wizard",
+];
+
 pub const GREMLIN_LEADER: EnemyDef = EnemyDef {
     id: "gremlin_leader",
     name: "Gremlin Leader",
@@ -848,9 +861,11 @@ pub const GREMLIN_LEADER: EnemyDef = EnemyDef {
         MoveDef {
             name: "Rally",
             intent: Intent::Unknown,
-            // 参考实现从 8 只小鬼里随机掷两只,这里固定成两只
-            effects: &[EnemyFx::Summon {
-                ids: &["mad_gremlin", "sneaky_gremlin"],
+            // 参考实现各掷各的,所以允许召出两只一样的
+            effects: &[EnemyFx::SummonRandom {
+                pool: GREMLIN_POOL,
+                count: 2,
+                slots: &[1, 2, 0],
             }],
         },
         MoveDef {
@@ -1001,8 +1016,10 @@ pub const BRONZE_AUTOMATON: EnemyDef = EnemyDef {
         MoveDef {
             name: "Spawn Orbs",
             intent: Intent::Unknown,
+            // 自己在槽 1,两颗铜球占 0 和 2:一颗排在自己前面
             effects: &[EnemyFx::Summon {
                 ids: &["bronze_orb", "bronze_orb"],
+                slots: &[0, 2],
             }],
         },
         MoveDef {
@@ -1156,8 +1173,10 @@ pub const THE_COLLECTOR: EnemyDef = EnemyDef {
         MoveDef {
             name: "Spawn",
             intent: Intent::Unknown,
+            // 她在槽 2,火炬头占 0 和 1:都在她前面,出手比自己早
             effects: &[EnemyFx::Summon {
                 ids: &["torch_head", "torch_head"],
+                slots: &[1, 0],
             }],
         },
         MoveDef {
