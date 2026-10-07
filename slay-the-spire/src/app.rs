@@ -51,6 +51,10 @@ pub struct App {
     pub overlay_scroll: u16,
     /// 上一次渲染算出的最大滚动量:到底之后再按 j 不会继续累加
     pub overlay_max: std::cell::Cell<u16>,
+    /// 上一次 Tab 补出来的候选表与位置;连续按 Tab 就在里面循环
+    comp_list: Vec<String>,
+    comp_idx: usize,
+    comp_pending: bool,
     /// 看牌组窗口里的光标(行下标,跳过分组标题)
     pub overlay_sel: usize,
     /// 手牌光标
@@ -113,6 +117,9 @@ impl App {
             run: Run::new(seed),
             mode: Mode::Normal,
             cmd: String::new(),
+            comp_list: Vec::new(),
+            comp_idx: 0,
+            comp_pending: false,
             overlay: None,
             overlay_scroll: 0,
             overlay_max: std::cell::Cell::new(0),
@@ -402,6 +409,19 @@ impl App {
             Some((head, rest)) => {
                 let cur = rest.rsplit(' ').next().unwrap_or("");
                 // 命令名只敲了一半(ro)也算,唯一匹配才认
+                // :run save <名字> 的候选是存档目录里的名字
+                if resolve_command(head).as_deref() == Some("run")
+                    && rest.split_whitespace().next() == Some("save")
+                    && rest.contains(' ')
+                {
+                    let low = cur.to_lowercase();
+                    let mut names: Vec<String> = crate::core::save::list()
+                        .into_iter()
+                        .filter(|n| n.to_lowercase().starts_with(&low))
+                        .collect();
+                    names.sort();
+                    return names;
+                }
                 let args: &[&str] = match resolve_command(head).as_deref() {
                     Some("room") => ROOM_ARGS,
                     Some("relic") => RELIC_ARGS,
@@ -668,6 +688,8 @@ impl App {
         if key.code == KeyCode::Char(':') {
             self.mode = Mode::Command;
             self.cmd.clear();
+            self.comp_pending = false;
+            self.comp_list.clear();
             return;
         }
         if key.code == KeyCode::Char('?') {
@@ -1646,10 +1668,12 @@ impl App {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.cmd.clear();
+                self.comp_pending = false;
             }
             KeyCode::Tab => self.complete_command(),
             KeyCode::Backspace => {
                 self.cmd.pop();
+                self.comp_pending = false;
             }
             KeyCode::Enter => {
                 let cmd = std::mem::take(&mut self.cmd);
@@ -1660,44 +1684,74 @@ impl App {
                 // 命令行上限放宽一点,调试命令经常很长
                 if self.cmd.len() < 200 {
                     self.cmd.push(c);
+                    self.comp_pending = false;
                 }
             }
             _ => {}
         }
     }
 
-    /// Tab 补全:唯一候选就补上;多个就补到它们的公共前缀;
+    /// Tab 补全:唯一候选直接补上;多个候选先补到公共前缀,再按 Tab 就在候选里循环。
     /// 补完是一个完整命令名的话再跟一个空格,接着敲参数。
     fn complete_command(&mut self) {
+        // 连续按:光标那段还是上一轮补出来的,就换下一个候选(循环)
+        if self.comp_pending && !self.comp_list.is_empty() {
+            self.comp_idx = (self.comp_idx + 1) % self.comp_list.len();
+            self.set_token(self.comp_list[self.comp_idx].clone());
+            return;
+        }
         let hints = self.completions();
         if hints.is_empty() {
+            self.comp_pending = false;
             return;
         }
-        let target = if hints.len() == 1 {
-            hints[0].clone()
-        } else {
-            let mut p = hints[0].clone();
-            for h in &hints[1..] {
-                while !h.starts_with(&p) {
-                    p.pop();
-                    if p.is_empty() {
-                        return;
-                    }
+        if hints.len() == 1 {
+            self.comp_pending = false;
+            self.comp_list.clear();
+            self.set_token(hints[0].clone());
+            // 整个命令已经敲完:跟一个空格好接着打参数
+            if self.completions().is_empty() {
+                self.cmd.push(' ');
+            }
+            return;
+        }
+        // 多个候选:先看公共前缀能不能多给几个字
+        let cur = self.current_token().to_string();
+        let mut common = hints[0].clone();
+        for h in &hints[1..] {
+            while !h.starts_with(&common) {
+                common.pop();
+                if common.is_empty() {
+                    break;
                 }
             }
-            p
-        };
-        if target.is_empty() {
-            return;
         }
-        // 只替换正在敲的那一段(命令名或参数)
-        let text = std::mem::take(&mut self.cmd);
-        match text.rfind(' ') {
-            Some(i) => self.cmd = format!("{} {}", &text[..i], target),
-            None => self.cmd = target.clone(),
+        self.comp_list = hints;
+        if !common.is_empty() && common.len() > cur.len() {
+            // 停在公共前缀上;下一次 Tab 接着往后循环
+            self.comp_idx = self
+                .comp_list
+                .iter()
+                .position(|c| *c == common)
+                .unwrap_or(self.comp_list.len() - 1);
+            self.set_token(common);
+        } else {
+            self.comp_idx = 0;
+            self.set_token(self.comp_list[0].clone());
         }
-        if self.completions().is_empty() {
-            self.cmd.push(' ');
+        self.comp_pending = true;
+    }
+
+    /// 命令行里正在敲的那一段(最后一个空格之后的部分)
+    fn current_token(&self) -> &str {
+        self.cmd.rsplit(' ').next().unwrap_or("")
+    }
+
+    /// 把正在敲的那一段换成 `text`
+    fn set_token(&mut self, text: String) {
+        match self.cmd.rfind(' ') {
+            Some(i) => self.cmd = format!("{} {}", &self.cmd[..i], text),
+            None => self.cmd = text,
         }
     }
 
@@ -2207,6 +2261,28 @@ mod tests {
 
     fn arrow(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// 多个同前缀候选时,Tab 补到公共前缀之后在候选里循环
+    #[test]
+    fn tab_cycles_through_candidates() {
+        let mut app = App::new(1);
+        app.mode = Mode::Command;
+        app.cmd = "room ".to_string();
+        app.handle_key(arrow(KeyCode::Tab));
+        assert_eq!(app.cmd, "room battle", "第一下 Tab 落到第一个候选");
+        app.handle_key(arrow(KeyCode::Tab));
+        assert_eq!(app.cmd, "room boss", "再按 Tab 换下一个");
+        app.handle_key(arrow(KeyCode::Tab));
+        assert_eq!(app.cmd, "room elite");
+        // 打字会打断循环
+        app.handle_key(key('x'));
+        app.handle_key(arrow(KeyCode::Tab));
+        assert!(
+            app.cmd == "room battlex" || app.cmd == "room elitex",
+            "打错字之后循环重来: {}",
+            app.cmd
+        );
     }
 
     /// 数字键先选中、再按一次才打出;方向键和 h/l、j/k 完全等价;tab/U/D/E 看牌堆
