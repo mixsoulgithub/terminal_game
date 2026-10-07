@@ -437,8 +437,17 @@ impl App {
     /// 对面还剩几帧就松手:比对面抖完稍微早一点开始收
     pub const RELEASE_EARLY: u8 = 2;
 
-    /// 浩劫链播报保留多少帧(60ms 一帧,40 帧约 2.4 秒)
+    /// 浩劫链播报的基础时长(60ms 一帧,40 帧约 2.4 秒)
     pub const BANNER_FRAMES: u8 = 40;
+
+    /// 链越深停得越久:第 1 层是基础时长,每深一层多四分之一个基础时长
+    pub fn banner_frames(depth: u8) -> u8 {
+        Self::BANNER_FRAMES.saturating_add(
+            depth
+                .saturating_sub(1)
+                .saturating_mul(Self::BANNER_FRAMES / 4),
+        )
+    }
 
     /// 还在抖(或有消息要倒计时):事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
@@ -546,7 +555,7 @@ impl App {
         self.play_banners.clear();
         for (depth, label) in chain {
             self.play_banners
-                .push((depth, label, Self::BANNER_FRAMES));
+                .push((depth, label, Self::banner_frames(depth)));
         }
     }
 
@@ -2079,6 +2088,17 @@ fn overlay_key_of(app: &App, code: KeyCode) -> Option<Overlay> {
 
 #[cfg(test)]
 mod tests {
+    /// 链越深播报停得越久(第 1 层基础,每层 +50%)
+    #[test]
+    fn deeper_banners_stay_longer() {
+        let f = App::banner_frames;
+        assert_eq!(f(1), App::BANNER_FRAMES);
+        assert_eq!(f(2), App::BANNER_FRAMES + App::BANNER_FRAMES / 4);
+        assert_eq!(f(3), App::BANNER_FRAMES + App::BANNER_FRAMES / 2);
+        // 极深也不会溢出(u8 饱和)
+        assert!(f(255) >= f(10) && f(10) > f(3));
+    }
+
     use super::*;
     use crossterm::event::KeyEvent;
 
