@@ -238,24 +238,42 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
     if n == 0 || area.width < 3 {
         return;
     }
-    let bar = |buf: &mut Buffer, x: u16| {
-        put(buf, x, y, &crate::ui::BOX_V.to_string(), theme::fg(theme::BORDER));
+    let bar = |buf: &mut Buffer, x: u16, ch: &str| {
+        put(
+            buf,
+            x,
+            y,
+            ch,
+            theme::fg(if ch == "│" { theme::BORDER } else { theme::SEL_FG }),
+        );
     };
-    // 每张牌占的格数(按内容),整行连竖线一起居中
-    let widths: Vec<usize> = c
+    // 每张牌占的格数(按内容),整行连竖线一起居中;选中的那张要多留两个方格放 []
+    let sel = app.hand_sel.min(n - 1);
+    let lengths: Vec<usize> = c
         .hand
         .iter()
         .map(|card| display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label()))
         .collect();
+    let marked = |k: usize| k == sel || app.choice_sel.contains(&k);
+    let widths: Vec<usize> = lengths.clone();
+    // 分隔符:选中的牌把它左右两根竖线换成 [ 和 ](宽度不变)
+    let bar_at = |before: usize| -> &'static str {
+        if before < n && marked(before) {
+            "{"
+        } else if before > 0 && marked(before - 1) {
+            "}"
+        } else {
+            "│"
+        }
+    };
     let total: usize = widths.iter().sum::<usize>() + n + 1;
     let mut cx = if total <= area.width as usize {
         area.x + ((area.width as usize - total) / 2) as u16
     } else {
         area.x
     };
-    let sel = app.hand_sel.min(n - 1);
     let last_x = area.x + area.width - 1;
-    bar(buf, cx);
+    bar(buf, cx, bar_at(0));
     cx += 1;
     for (k, card) in c.hand.iter().enumerate() {
         let want = widths[k];
@@ -265,11 +283,9 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
         }
         let w = want.min(remain.saturating_sub(1)).max(1);
         let playable = c.blocked_reason(k).is_none();
-        // 选择模式里被选中的牌保持高亮
-        let picked = app.choice_sel.contains(&k);
-        crate::ui::put_card_cell(buf, cx, y, w as u16, card, k == sel || picked, !playable);
+        crate::ui::put_card_cell(buf, cx, y, w as u16, card, marked(k), !playable);
         cx += w as u16;
-        bar(buf, cx);
+        bar(buf, cx, bar_at(k + 1));
         cx += 1;
     }
 }
