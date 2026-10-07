@@ -2,6 +2,7 @@
 // 只做展示;能不能真的打出来/用出去看 cards.rs relics.rs potions.rs.
 use crate::core::cards;
 use crate::core::corpus;
+use crate::core::events;
 use crate::core::potions;
 use crate::core::relics;
 
@@ -10,16 +11,19 @@ pub enum Library {
     Cards,
     Relics,
     Potions,
+    Events,
 }
 
 impl Library {
-    pub const ALL: [Library; 3] = [Library::Cards, Library::Relics, Library::Potions];
+    pub const ALL: [Library; 4] =
+        [Library::Cards, Library::Relics, Library::Potions, Library::Events];
 
     pub fn title(self) -> &'static str {
         match self {
             Library::Cards => "card library",
             Library::Relics => "relic collection",
             Library::Potions => "potion lab",
+            Library::Events => "event ledger",
         }
     }
 }
@@ -105,7 +109,30 @@ pub fn groups(lib: Library) -> Vec<Group> {
             group("Uncommon", "blue"),
             group("Rare", "yellow"),
         ],
+        // 事件按语料里的 pool 分页;名字/颜色见 EVENT_POOLS
+        Library::Events => EVENT_POOLS
+            .iter()
+            .map(|&(_, title, color)| group(title, color))
+            .collect(),
     }
+}
+
+/// 事件册的标签页:语料 pool 值 -> (页名, 底色)
+const EVENT_POOLS: [(&str, &str, &str); 5] = [
+    ("act1", "Act 1", "red"),
+    ("act2", "Act 2", "green"),
+    ("act3", "Act 3", "blue"),
+    ("shrine", "Shrines", "yellow"),
+    ("oneTime", "One Time", "purple"),
+];
+
+/// 语料 pool 值 -> 页名
+fn event_pool_title(pool: &str) -> &'static str {
+    EVENT_POOLS
+        .iter()
+        .find(|(p, _, _)| *p == pool)
+        .map(|(_, t, _)| *t)
+        .unwrap_or("Other")
 }
 
 /// 某一页里的条目(按稀有度、名字排)
@@ -118,6 +145,25 @@ pub fn items(lib: Library, tab: usize) -> Vec<Item> {
         Library::Cards => card_items(g.name),
         Library::Relics => relic_items(g.name),
         Library::Potions => potion_items(g.name),
+        Library::Events => event_items(g.name),
+    }
+}
+
+/// 事件册列表上方那一行统计;别的册没有
+pub fn header_note(lib: Library) -> Option<String> {
+    match lib {
+        Library::Events => {
+            let (done, total) = progress(Library::Events);
+            let there = corpus::EVENTS
+                .iter()
+                .filter(|e| slate_cli_event_implemented(e.id))
+                .count();
+            Some(format!(
+                "implemented here {done}/{total}   slay-the-cli {there}/{}",
+                corpus::EVENTS.len()
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -147,7 +193,7 @@ pub fn tab_progress(lib: Library, tab: usize) -> (usize, usize) {
 
 fn card_implemented(c: &corpus::CardInfo) -> bool {
     let known_color = matches!(c.color, "red" | "colorless" | "curse");
-    known_color && cards::card_def(c.id).is_some()
+    known_color && (cards::card_def(c.id).is_some() || events::event_card(c.id).is_some())
 }
 
 fn card_items(tab: &str) -> Vec<Item> {
@@ -200,7 +246,7 @@ fn relic_items(tab: &str) -> Vec<Item> {
             tag: tier_tag(r.tier).to_string(),
             text: r.text.to_string(),
             text_up: String::new(),
-            done: relics::relic_def(r.id).is_some(),
+            done: relics::relic_def(r.id).is_some() || events::event_relic(r.id).is_some(),
             rarity_key: r.tier,
             tag_up: String::new(),
             kind: "",
@@ -240,6 +286,68 @@ fn potion_items(tab: &str) -> Vec<Item> {
             show_cost: false,
         })
         .collect()
+}
+
+/// 事件册的一条:名字、acts/pool、语料选项,详情里再附两行对齐信息
+fn event_items(tab: &str) -> Vec<Item> {
+    let mut src: Vec<&corpus::EventInfo> = corpus::EVENTS.iter().collect();
+    src.sort_by_key(|e| e.name);
+    src.iter()
+        .filter(|e| event_pool_title(e.pool) == tab)
+        .map(|e| {
+            let here = event_here_implemented(e.id);
+            let there = slate_cli_event_implemented(e.id);
+            let mut text = String::from("options:");
+            for o in e.options {
+                text.push_str("\n- ");
+                text.push_str(o);
+            }
+            text.push_str("\n\nhere: ");
+            text.push_str(if here { "implemented" } else { "not implemented" });
+            text.push_str("\nslay-the-cli: ");
+            text.push_str(if there { "implemented" } else { "not implemented" });
+            Item {
+                name: e.name,
+                sub: format!("acts {} / {} pool", e.acts, e.pool),
+                tag: String::new(),
+                text,
+                text_up: String::new(),
+                done: here,
+                rarity_key: "event",
+                tag_up: String::new(),
+                kind: "",
+                target_tag: String::new(),
+                color_key: "gray",
+                show_cost: false,
+            }
+        })
+        .collect()
+}
+
+/// 本作是否实现了这个事件(只看 events.rs 里的事件表,neow 不在语料里)
+fn event_here_implemented(id: &str) -> bool {
+    events::EVENTS.iter().any(|e| e.id == id)
+}
+
+/// slay-the-cli 参考实现的事件 id(小写,已排序),来自
+/// refs/slay-the-cli/src/content/events/{act1,act2,act3,shrines,oneTime}.ts 的 `id: "..."`,
+/// 共 51 条,与语料一一对应.
+pub const SLATE_CLI_EVENTS: &[&str] = &[
+    "ancient_writing", "augmenter", "big_fish", "bonfire_spirits", "colosseum", "cursed_tome",
+    "dead_adventurer", "designer_in_spire", "duplicator", "face_trader", "falling",
+    "forgotten_altar", "ghosts", "golden_idol", "golden_shrine",
+    "hypnotizing_colored_mushrooms", "knowing_skull", "lab", "living_wall", "masked_bandits",
+    "match_and_keep", "mindbloom", "mysterious_sphere", "nloth", "note_for_yourself",
+    "old_beggar", "ominous_forge", "pleading_vagrant", "purifier", "scrap_ooze",
+    "secret_portal", "sensory_stone", "shining_light", "the_cleric", "the_divine_fountain",
+    "the_joust", "the_library", "the_mausoleum", "the_moai_head", "the_nest",
+    "the_ssssserpent", "the_woman_in_blue", "tomb_of_lord_red_mask", "transmorgrifier",
+    "upgrade_shrine", "vampires", "we_meet_again", "wheel_of_change", "winding_halls",
+    "wing_statue", "world_of_goop",
+];
+
+pub fn slate_cli_event_implemented(id: &str) -> bool {
+    SLATE_CLI_EVENTS.binary_search(&id).is_ok()
 }
 
 /// 语料里的 target -> 列表右边的小标签
@@ -310,5 +418,99 @@ fn tier_tag(t: &str) -> &'static str {
         "event" => "?",
         "special" => "*",
         _ => "-",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_items_match_corpus() {
+        let total: usize = groups(Library::Events)
+            .iter()
+            .enumerate()
+            .map(|(i, _)| items(Library::Events, i).len())
+            .sum();
+        assert_eq!(total, corpus::EVENTS.len());
+        assert_eq!(total, 51);
+    }
+
+    #[test]
+    fn every_event_pool_has_a_tab() {
+        for (pool, title, _color) in EVENT_POOLS {
+            let want = corpus::EVENTS.iter().filter(|e| e.pool == pool).count();
+            let got = groups(Library::Events)
+                .iter()
+                .position(|g| g.name == title)
+                .map(|i| items(Library::Events, i).len());
+            assert_eq!(got, Some(want), "pool {pool} 的标签页对不上");
+        }
+        // 5 个 pool 之外没有别的事件
+        let covered: usize = EVENT_POOLS
+            .iter()
+            .map(|(p, _, _)| corpus::EVENTS.iter().filter(|e| e.pool == *p).count())
+            .sum();
+        assert_eq!(covered, corpus::EVENTS.len());
+    }
+
+    #[test]
+    fn event_done_flag_matches_events_rs() {
+        let (done, total) = progress(Library::Events);
+        assert_eq!(total, corpus::EVENTS.len());
+        let want = corpus::EVENTS
+            .iter()
+            .filter(|e| event_here_implemented(e.id))
+            .count();
+        assert_eq!(done, want, "已实现计数与 events.rs 对不上");
+        // 本作实现的事件都在语料 51 条里(neow 不在语料)
+        for e in events::EVENTS {
+            if e.id == "neow" {
+                continue;
+            }
+            assert!(
+                corpus::EVENTS.iter().any(|c| c.id == e.id),
+                "实现的事件 {} 不在语料事件册里",
+                e.id
+            );
+        }
+        for (i, _) in groups(Library::Events).iter().enumerate() {
+            for it in items(Library::Events, i) {
+                let c = corpus::EVENTS
+                    .iter()
+                    .find(|c| c.name == it.name)
+                    .expect("事件名不在语料里");
+                assert_eq!(it.done, event_here_implemented(c.id), "{}", c.id);
+            }
+        }
+    }
+
+    #[test]
+    fn slate_cli_event_table_matches_corpus() {
+        assert_eq!(SLATE_CLI_EVENTS.len(), 51);
+        assert!(
+            SLATE_CLI_EVENTS.windows(2).all(|w| w[0] < w[1]),
+            "常量表要排序好给 binary_search 用"
+        );
+        for e in corpus::EVENTS {
+            assert!(slate_cli_event_implemented(e.id), "参考实现少了 {}", e.id);
+        }
+        for id in SLATE_CLI_EVENTS {
+            assert!(
+                corpus::EVENTS.iter().any(|e| e.id == *id),
+                "参考实现多了 {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn event_header_note_counts() {
+        let (done, total) = progress(Library::Events);
+        let n = header_note(Library::Events).expect("事件册要有统计行");
+        assert!(n.contains(&format!("implemented here {done}/{total}")), "{n}");
+        assert!(n.contains("slay-the-cli 51/51"), "{n}");
+        assert!(header_note(Library::Cards).is_none());
+        assert!(header_note(Library::Relics).is_none());
+        assert!(header_note(Library::Potions).is_none());
     }
 }

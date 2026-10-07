@@ -434,25 +434,38 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
     );
     let inner_w = (area.width as usize).saturating_sub(4);
     let mut y = area.y + 2;
-    // 提示语多行,每行居中
+    // 提示语多行,每行居中;太长按词折行
     for line in st.def.body {
-        if y >= area.y + area.height - 1 {
-            break;
+        for part in wrap_text(line, inner_w, 2) {
+            if y >= area.y + area.height - 1 {
+                break;
+            }
+            crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, &part, theme::fg(theme::FG));
+            y += 1;
         }
-        crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, line, theme::fg(theme::FG));
-        y += 1;
     }
     y += 1;
     match st.result {
         Some(text) => {
-            if y < area.y + area.height - 1 {
-                crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, text, theme::fg(theme::GOOD));
-            }
-            if y + 1 < area.y + area.height - 1 {
+            for part in wrap_text(text, inner_w, 3) {
+                if y >= area.y + area.height - 1 {
+                    break;
+                }
                 crate::ui::put_centered_line(
                     buf,
                     area.x + 2,
-                    y + 1,
+                    y,
+                    inner_w,
+                    &part,
+                    theme::fg(theme::GOOD),
+                );
+                y += 1;
+            }
+            if y < area.y + area.height - 1 {
+                crate::ui::put_centered_line(
+                    buf,
+                    area.x + 2,
+                    y,
                     inner_w,
                     "press enter or esc to continue",
                     theme::dim(),
@@ -460,20 +473,23 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
             }
         }
         None => {
-            for (i, choice) in st.def.choices.iter().enumerate() {
+            for i in 0..app.run.event_choice_count() {
                 if y >= area.y + area.height - 1 {
                     break;
                 }
+                let Some((label, cost_gold, cost_hp)) = app.run.event_choice_row(i) else {
+                    continue;
+                };
                 let selected = i == st.index;
                 let available = app.run.event_choice_available(i);
                 let mut cost = String::new();
-                if choice.cost_gold > 0 {
-                    cost.push_str(&format!(" [${}]", choice.cost_gold));
+                if cost_gold > 0 {
+                    cost.push_str(&format!(" [${}]", cost_gold));
                 }
-                if choice.cost_hp > 0 {
-                    cost.push_str(&format!(" [{}HP]", choice.cost_hp));
+                if cost_hp > 0 {
+                    cost.push_str(&format!(" [{}HP]", cost_hp));
                 }
-                let text = format!("{}{cost}", choice.label);
+                let text = format!("{label}{cost}");
                 let style = if !available {
                     theme::dim()
                 } else if selected {
@@ -481,12 +497,28 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
                 } else {
                     theme::fg(theme::FG)
                 };
-                // 不带序号和 > ,整行居中;选中靠底色
-                if selected {
-                    put_padded(buf, area.x + 2, y, "", inner_w, style);
+                // 不带序号和 > ,整行居中;选中靠底色;长选项折行,选中时整块反白
+                let lines = wrap_text(&text, inner_w, 3);
+                for part in &lines {
+                    if y >= area.y + area.height - 1 {
+                        break;
+                    }
+                    if selected {
+                        put_padded(buf, area.x + 2, y, "", inner_w, style);
+                    }
+                    crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, part, style);
+                    y += 1;
                 }
-                crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, &text, style);
-                y += 1;
+            }
+            // 翻牌棋盘的说明行:上一次翻出来的是什么
+            if let Some(note) = app.run.event_note() {
+                for part in wrap_text(note, inner_w, 2) {
+                    if y >= area.y + area.height - 1 {
+                        break;
+                    }
+                    crate::ui::put_centered_line(buf, area.x + 2, y, inner_w, &part, theme::dim());
+                    y += 1;
+                }
             }
         }
     }

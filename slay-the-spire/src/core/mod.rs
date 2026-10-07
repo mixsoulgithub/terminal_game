@@ -19,7 +19,7 @@ pub mod status;
 mod content_tests {
     //! 跨文件的内容契约:单个数据文件自己测不出"引用的 id 是否存在",
     //! 这里把各文件之间的引用关系钉死.
-    use crate::core::{cards, corpus, enemies, events, potions, relics, roster};
+    use crate::core::{cards, corpus, enemies, enemy, events, potions, relics, roster};
     use crate::core::card::Rarity;
 
     /// 已经实现的卡/遗物/药水/事件,id 必须能在语料里找到(导入对得上)
@@ -49,6 +49,15 @@ mod content_tests {
         for e in events::EVENTS {
             assert!(event_ids.contains(&e.id), "事件 {} 在语料里没有对应条目", e.id);
         }
+        // 事件专用牌与遗物:语料里也要有对应条目
+        let card_ids: Vec<&str> = corpus::CARDS.iter().map(|c| c.id).collect();
+        for c in events::EVENT_CARDS {
+            assert!(card_ids.contains(&c.id), "事件专用牌 {} 没有语料条目", c.id);
+        }
+        let relic_ids: Vec<&str> = corpus::RELICS.iter().map(|r| r.id).collect();
+        for r in events::EVENT_RELICS {
+            assert!(relic_ids.contains(&r.id), "事件专用遗物 {} 没有语料条目", r.id);
+        }
     }
 
     /// 四个角色的起始牌组都要在卡池里查得到(没实现的会被 roster 挡住)
@@ -74,30 +83,67 @@ mod content_tests {
 
     #[test]
     fn event_outcomes_reference_existing_ids() {
-        for e in events::EVENTS {
+        // 事件表 + 多屏事件的后半段都要查:牌、诅咒、遗物、遭遇都得认得出来
+        let defs: Vec<&'static events::EventDef> = events::EVENTS
+            .iter()
+            .chain(events::STAGES.iter().copied())
+            .collect();
+        for e in defs {
             for choice in e.choices {
-                let o = &choice.outcome;
-                if let Some(id) = o.add_card {
-                    assert!(cards::card_def(id).is_some(), "事件 {} 引用了未知卡牌 {id}", e.id);
-                }
-                if let Some(id) = o.add_curse {
-                    assert!(cards::card_def(id).is_some(), "事件 {} 引用了未知诅咒 {id}", e.id);
-                }
-                if let Some(id) = o.relic_id {
-                    assert!(
-                        relics::relic_def(id).is_some(),
-                        "事件 {} 引用了未知遗物 {id}",
-                        e.id
-                    );
-                }
-                if let Some(id) = o.fight {
-                    assert!(
-                        enemies::encounter_def(id).is_some(),
-                        "事件 {} 引用了未知遭遇 {id}",
-                        e.id
-                    );
-                }
+                check_outcome(e.id, &choice.outcome);
             }
+        }
+    }
+
+    /// 递归检查一个结算结果里引用到的 id(roll 里的结果也要查)
+    fn check_outcome(event_id: &str, o: &events::Outcome) {
+        for id in [
+            o.add_card,
+            o.add_curse,
+            o.add_cards.map(|(id, _)| id),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            assert!(
+                cards::card_def(id).is_some() || events::event_card(id).is_some(),
+                "事件 {event_id} 引用了未知卡牌 {id}"
+            );
+        }
+        if let Some(id) = o.relic_id {
+            assert!(
+                relics::relic_def(id).is_some() || events::event_relic(id).is_some(),
+                "事件 {event_id} 引用了未知遗物 {id}"
+            );
+        }
+        if let Some(id) = o.remove_relic {
+            assert!(
+                relics::relic_def(id).is_some() || events::event_relic(id).is_some(),
+                "事件 {event_id} 引用了未知遗物 {id}"
+            );
+        }
+        if let Some(id) = o.fight {
+            assert!(
+                enemies::encounter_def(id).is_some() || enemy::event_encounter(id).is_some(),
+                "事件 {event_id} 引用了未知遭遇 {id}"
+            );
+        }
+        if let Some(r) = o.fight_reward {
+            if let Some(id) = r.relic_id {
+                assert!(
+                    relics::relic_def(id).is_some() || events::event_relic(id).is_some(),
+                    "事件 {event_id} 的战斗奖励引用了未知遗物 {id}"
+                );
+            }
+        }
+        for id in o.fight_pool.unwrap_or(&[]) {
+            assert!(
+                enemies::encounter_def(id).is_some() || enemy::event_encounter(id).is_some(),
+                "事件 {event_id} 引用了未知遭遇 {id}"
+            );
+        }
+        for (_, sub) in o.roll.unwrap_or(&[]) {
+            check_outcome(event_id, sub);
         }
     }
 

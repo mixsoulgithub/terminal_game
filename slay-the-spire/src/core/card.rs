@@ -187,6 +187,18 @@ pub enum Effect {
     RandomFromDrawToHand { kind: CardType, n: u8 },
     /// n 回合后对所有敌人造成 damage(定时炸弹)
     Bomb { turns: u8, damage: i32 },
+    /// 失去等于手牌张数的生命(悔恨)
+    LoseHpPerHandCard,
+    /// 在抽牌堆顶放一张自己的副本(傲慢)
+    CopySelfToDrawTop,
+    /// 被消耗时回到手牌(死灵诅咒)
+    SelfToHandOnExhaust,
+    /// 手里有这张牌时,别的牌被打出就掉 amount 点生命(痛苦)
+    LoseHpOnOtherCardPlayed { amount: i32 },
+    /// 手里有这张牌时,本回合最多打出 max 张牌(反常)
+    PlayLimitWhileInHand { max: u8 },
+    /// 被抽出牌组时失去 n 点最大生命(寄生;变形机制本作没有)
+    LoseMaxHpOnRemoved { n: i32 },
 }
 
 /// 升级后的覆盖项:None 表示沿用基础值
@@ -217,6 +229,14 @@ pub struct CardDef {
     pub retain: bool,
     /// 可以无限升级(灼热攻击)
     pub multi_upgrade: bool,
+    /// 不可从牌组移除(升天者的诅咒 / 钟之诅咒 / 死灵诅咒)
+    pub unremovable: bool,
+    /// 抽到时结算(虚空)
+    pub on_draw: &'static [Effect],
+    /// 在手牌里、自己回合结束时结算(腐烂 / 怀疑 / 悔恨 / 羞耻 / 傲慢)
+    pub on_end_turn: &'static [Effect],
+    /// 在手牌里持续生效(痛苦 / 反常)
+    pub in_hand: &'static [Effect],
     pub effects: &'static [Effect],
     pub upgrade: Option<CardUpgrade>,
 }
@@ -340,6 +360,21 @@ impl CardInstance {
             (Some(up), true) => up.effects.unwrap_or(self.def.effects),
             _ => self.def.effects,
         }
+    }
+
+    /// 抽到这张牌时结算的效果(虚空)
+    pub fn on_draw(&self) -> &'static [Effect] {
+        self.def.on_draw
+    }
+
+    /// 这张牌留在手里、自己回合结束时结算的效果
+    pub fn on_end_turn(&self) -> &'static [Effect] {
+        self.def.on_end_turn
+    }
+
+    /// 这张牌在手里时持续生效的效果
+    pub fn in_hand(&self) -> &'static [Effect] {
+        self.def.in_hand
     }
 
     pub fn text(&self) -> &'static str {

@@ -180,7 +180,7 @@ impl App {
         vec![
             ("continue", save::exists(), "resume the saved run"),
             ("new game", true, "pick a character"),
-            ("compendium", true, "cards, relics and potions"),
+            ("compendium", true, "cards, relics, potions and events"),
             ("quit", true, "leave the spire"),
         ]
     }
@@ -283,7 +283,7 @@ impl App {
         }
     }
 
-    /// 图鉴:h/l/Tab 换标签页(循环),j/k 在页内选(循环),1/2/3 换册子
+    /// 图鉴:h/l/Tab 换标签页(循环),j/k 在页内选(循环),1/2/3/4 换册子
     fn lib_key(&mut self, key: KeyEvent) {
         let tabs = compendium::groups(self.library).len().max(1);
         let n = compendium::items(self.library, self.lib_tab).len();
@@ -308,11 +308,12 @@ impl App {
                 self.lib_sel = 0;
                 self.info(self.tab_title());
             }
-            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') => {
+            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
                 let i = match key.code {
                     KeyCode::Char('1') => 0,
                     KeyCode::Char('2') => 1,
-                    _ => 2,
+                    KeyCode::Char('3') => 2,
+                    _ => 3,
                 };
                 self.library = Library::ALL[i];
                 self.lib_tab = 0;
@@ -1573,7 +1574,7 @@ impl App {
 
     fn event_key(&mut self, key: KeyEvent) {
         let (n, done) = match self.run.event.as_ref() {
-            Some(st) => (st.def.choices.len(), st.result.is_some()),
+            Some(st) => (self.run.event_choice_count(), st.result.is_some()),
             None => return,
         };
         if done {
@@ -2035,7 +2036,7 @@ impl App {
             Screen::Library => vec![
                 ("j/k", "pick"),
                 ("h/l tab", "change tab"),
-                ("1-3", "cards/relics/potions"),
+                ("1-4", "cards/relics/potions/events"),
                 ("g/G", "top/bottom"),
                 ("esc", "back"),
             ],

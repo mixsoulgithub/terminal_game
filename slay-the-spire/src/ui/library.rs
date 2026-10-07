@@ -79,6 +79,27 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     );
     let border = theme::fg(theme::BORDER);
     hsep(buf, inner, inner.y + 1, border);
+    // 事件册:列表上方压一行总数统计
+    let content = if let Some(note) = compendium::header_note(lib) {
+        if content.height == 0 {
+            return;
+        }
+        put(
+            buf,
+            content.x,
+            content.y,
+            &truncate(&note, content.width as usize),
+            Style::default().fg(theme::INFO),
+        );
+        Rect::new(
+            content.x,
+            content.y + 1,
+            content.width,
+            content.height.saturating_sub(1),
+        )
+    } else {
+        content
+    };
     if content.width < 20 || content.height == 0 {
         return;
     }

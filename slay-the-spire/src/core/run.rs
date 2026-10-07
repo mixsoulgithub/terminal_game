@@ -1,12 +1,12 @@
 // 一局(run)的流程:地图推进、战斗结算、奖励、商店、事件、营火、牌组管理.
 // 所有状态都在这里,UI 只读这些字段并调用这里的方法改状态.
-use crate::core::card::{CardDef, CardInstance, Rarity};
+use crate::core::card::{CardDef, CardInstance, Effect as CardEffect, Rarity};
 use crate::core::cards;
 use crate::core::combat::{Combat, CombatSetup, Phase};
 use crate::core::corpus;
 use crate::core::enemies;
 use crate::core::enemy::{EnemyKind, Encounter};
-use crate::core::events::{EventDef, Outcome};
+use crate::core::events::{CombatReward, EventDef, FlipResult, MatchKeep, Outcome, RemoveRule};
 use crate::core::map::{ActMap, NodeKind};
 use crate::core::potions::{self, PotionDef, PotionFx};
 use crate::core::relics::{self, RelicDef, RelicFx};
@@ -95,6 +95,10 @@ impl Screen {
 pub enum PickPurpose {
     Upgrade,
     Remove,
+    /// 变形:移除这张牌,换成一张随机本职业牌
+    Transform,
+    /// 复制:往牌组里再塞一张一样的
+    Duplicate,
 }
 
 impl PickPurpose {
@@ -102,6 +106,8 @@ impl PickPurpose {
         match self {
             PickPurpose::Upgrade => "choose a card to upgrade",
             PickPurpose::Remove => "choose a card to remove",
+            PickPurpose::Transform => "choose a card to transform",
+            PickPurpose::Duplicate => "choose a card to duplicate",
         }
     }
 }
@@ -185,6 +191,8 @@ pub struct EventState {
     pub index: usize,
     /// 已选结果,展示完才能离开
     pub result: Option<&'static str>,
+    /// 翻牌小游戏(match_and_keep)的棋盘;其它事件是 None
+    pub match_keep: Option<MatchKeep>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -231,6 +239,10 @@ pub struct Run {
     /// 本局还没出现过的遗物
     relic_pool: Vec<&'static RelicDef>,
     last_encounter: &'static str,
+    /// 打赢这一场事件战斗后要回到的事件那一屏
+    pending_event: Option<&'static EventDef>,
+    /// 这一场事件战斗的奖励方案(打完即清空)
+    combat_reward: Option<&'static CombatReward>,
 }
 
 /// 存档里的卡牌记号:id、升级加 "+"、可多次升级的带等级(id+3)
@@ -242,6 +254,23 @@ fn card_token(c: &CardInstance) -> String {
     } else {
         c.def.id.to_string()
     }
+}
+
+/// 按 id 找卡牌:先认事件专用牌,再认卡池
+fn card_def_any(id: &str) -> &'static CardDef {
+    crate::core::events::event_card(id)
+        .or_else(|| cards::card_def(id))
+        .unwrap_or_else(|| panic!("unknown card id: {id}"))
+}
+
+/// 按 id 找遗物:先认事件专用遗物,再认遗物池
+fn relic_def_any(id: &str) -> &'static RelicDef {
+    relic_def_any_opt(id).unwrap_or_else(|| panic!("unknown relic id: {id}"))
+}
+
+/// 同上,但认不出返回 None(读存档用)
+fn relic_def_any_opt(id: &str) -> Option<&'static RelicDef> {
+    crate::core::events::event_relic(id).or_else(|| relics::relic_def(id))
 }
 
 /// 反向解析牌堆
@@ -260,8 +289,10 @@ fn parse_cards(text: &str) -> Result<Vec<CardInstance>, String> {
             ),
             None => (item, 0),
         };
-        let def = cards::card_def(id).ok_or_else(|| format!("存档里的卡 {id} 不认识"))?;
-        let mut inst = cards::card(def.id);
+        let def = crate::core::events::event_card(id)
+            .or_else(|| cards::card_def(id))
+            .ok_or_else(|| format!("存档里的卡 {id} 不认识"))?;
+        let mut inst = CardInstance::new(def);
         for _ in 0..plus {
             inst.upgrade();
         }
@@ -332,6 +363,8 @@ impl Run {
             combat_log_seen: 0,
             relic_pool,
             last_encounter: "",
+            pending_event: None,
+            combat_reward: None,
         };
         // 起始遗物的拾取效果
         let starter_fx = starter.fx;
@@ -445,7 +478,8 @@ impl Run {
             let mut deck: Vec<CardInstance> = Vec::new();
             for item in v.split(',').filter(|s| !s.is_empty()) {
                 let (id, up) = item.split_once(':').unwrap_or((item, "0"));
-                let Some(def) = cards::card_def(id) else {
+                let Some(def) = crate::core::events::event_card(id).or_else(|| cards::card_def(id))
+                else {
                     return Err(format!("存档里的卡 {id} 不认识"));
                 };
                 let mut inst = cards::card(def.id);
@@ -461,7 +495,7 @@ impl Run {
         if let Some(v) = get("relics") {
             let mut relics_out: Vec<&'static RelicDef> = Vec::new();
             for id in v.split(',').filter(|s| !s.is_empty()) {
-                let Some(def) = relics::relic_def(id) else {
+                let Some(def) = relic_def_any_opt(id) else {
                     return Err(format!("存档里的遗物 {id} 不认识"));
                 };
                 relics_out.push(def);
@@ -584,6 +618,7 @@ impl Run {
             def: crate::core::events::neow(),
             index: 0,
             result: None,
+            match_keep: None,
         });
         self.screen = Screen::Event;
     }
@@ -841,31 +876,61 @@ impl Run {
         if healed > 0 {
             self.say(format!("relics heal you for {healed}"));
         }
-        let (gold_lo, gold_hi) = match kind {
-            EnemyKind::Normal => (10, 20),
-            EnemyKind::Elite => (25, 35),
-            EnemyKind::Boss => (95, 105),
-        };
+        // 事件打的那一场:奖励由事件指定,打完可能还要回到事件里接着选
+        let plan = self.combat_reward.take();
+        let back = self.pending_event.take();
+        if let Some(def) = back {
+            self.say(format!("victory over the {}", c.encounter_id));
+            self.event = Some(EventState {
+                def,
+                index: 0,
+                result: None,
+                match_keep: None,
+            });
+            self.screen = Screen::Event;
+            return;
+        }
+        if plan.map(|p| p.nothing).unwrap_or(false) {
+            self.say(format!("victory over the {} (no rewards)", c.encounter_id));
+            self.screen = Screen::Map;
+            return;
+        }
+        let (gold_lo, gold_hi) = plan
+            .and_then(|p| p.gold)
+            .unwrap_or(match kind {
+                EnemyKind::Normal => (10, 20),
+                EnemyKind::Elite => (25, 35),
+                EnemyKind::Boss => (95, 105),
+            });
         let gold = self.rng.range_inclusive(gold_lo, gold_hi);
         // 三选一不重样:同一张牌一次奖励里只出现一遍
         let mut cards: Vec<CardInstance> = Vec::new();
-        let mut guard = 0;
-        while cards.len() < 3 && guard < 40 {
-            guard += 1;
-            let Some(def) = self.roll_card() else {
-                break;
-            };
-            if cards.iter().any(|c| c.def.id == def.id) {
-                continue;
+        if !plan.map(|p| p.no_cards).unwrap_or(false) {
+            let mut guard = 0;
+            while cards.len() < 3 && guard < 40 {
+                guard += 1;
+                let Some(def) = self.roll_card() else {
+                    break;
+                };
+                if cards.iter().any(|c| c.def.id == def.id) {
+                    continue;
+                }
+                cards.push(CardInstance::new(def));
             }
-            cards.push(CardInstance::new(def));
         }
-        let relic = match kind {
-            EnemyKind::Elite => self.roll_relic_by_odds(50, 33, 17),
-            EnemyKind::Boss => self.roll_relic_by_odds(0, 0, 100),
-            EnemyKind::Normal => None,
+        let relic = match plan {
+            Some(p) if p.no_relic => None,
+            Some(p) if p.relic_id.is_some() => Some(relic_def_any(p.relic_id.unwrap())),
+            Some(p) if p.relic_rarity.is_some() => self.take_relic_of(p.relic_rarity.unwrap()),
+            Some(_) => None,
+            None => match kind {
+                EnemyKind::Elite => self.roll_relic_by_odds(50, 33, 17),
+                EnemyKind::Boss => self.roll_relic_by_odds(0, 0, 100),
+                EnemyKind::Normal => None,
+            },
         };
-        let potion = if self.rng.chance(40) {
+        let potion_pct = plan.map(|p| p.potion_pct).unwrap_or(40);
+        let potion = if self.rng.chance(potion_pct as u32) {
             Some(potions::random_potion(&mut self.rng))
         } else {
             None
@@ -1153,23 +1218,102 @@ impl Run {
     fn open_event(&mut self) {
         assert!(!crate::core::events::EVENTS.is_empty(), "事件池为空");
         let def: &'static EventDef = self.rng.pick(crate::core::events::EVENTS);
+        self.open_event_def(def);
+    }
+
+    /// 打开指定事件;翻牌事件顺手把 12 格棋盘铺好
+    fn open_event_def(&mut self, def: &'static EventDef) {
+        let match_keep = if def.id == "match_and_keep" {
+            Some(MatchKeep::new(&mut self.rng, self.character))
+        } else {
+            None
+        };
         self.event = Some(EventState {
             def,
             index: 0,
             result: None,
+            match_keep,
         });
         self.screen = Screen::Event;
     }
 
-    /// 选项当前是否可选(钱够、血够)
+    /// 选项当前是否可选(钱够、血够、该有的遗物/药水/牌都有);
+    /// 翻牌事件按棋盘的格子算
     pub fn event_choice_available(&self, i: usize) -> bool {
         let Some(st) = &self.event else {
             return false;
         };
+        if let Some(mk) = &st.match_keep {
+            return st.result.is_none() && mk.available(i);
+        }
         let Some(c) = st.def.choices.get(i) else {
             return false;
         };
-        self.player.gold >= c.cost_gold && self.player.hp > c.cost_hp
+        if self.player.gold < c.cost_gold || self.player.hp <= c.cost_hp {
+            return false;
+        }
+        if self.player.gold < c.req_gold {
+            return false;
+        }
+        if let Some(id) = c.req_relic {
+            if !self.player.relics.iter().any(|r| r.id == id) {
+                return false;
+            }
+        }
+        if c.req_potion && self.player.potions.iter().all(|p| p.is_none()) {
+            return false;
+        }
+        if c.req_big_attack && !self.has_big_attack() {
+            return false;
+        }
+        if c.req_non_basic && !self.has_non_basic_card() {
+            return false;
+        }
+        true
+    }
+
+    /// 事件当前有几个选项:翻牌事件按棋盘的 12 格算
+    pub fn event_choice_count(&self) -> usize {
+        match &self.event {
+            Some(st) => match &st.match_keep {
+                Some(mk) => mk.board.len(),
+                None => st.def.choices.len(),
+            },
+            None => 0,
+        }
+    }
+
+    /// 选项这一行的文本与要价:翻牌事件给的是棋盘上那一格(朝上就显示牌名)
+    pub fn event_choice_row(&self, i: usize) -> Option<(String, i32, i32)> {
+        let st = self.event.as_ref()?;
+        if let Some(mk) = &st.match_keep {
+            return Some((mk.label(i), 0, 0));
+        }
+        let c = st.def.choices.get(i)?;
+        Some((c.label.to_string(), c.cost_gold, c.cost_hp))
+    }
+
+    /// 牌组里有没有单次伤害 10 以上的攻击牌(Wing Statue 砸雕像的条件)
+    fn has_big_attack(&self) -> bool {
+        self.player.deck.iter().any(|c| {
+            c.kind() == crate::core::card::CardType::Attack
+                && c.effects().iter().any(|e| {
+                    let (amount, times) = match *e {
+                        CardEffect::Damage { amount, times }
+                        | CardEffect::DamageWithBonus { amount, times } => (amount, times),
+                        _ => return false,
+                    };
+                    times.max(1) as i32 * amount + c.bonus >= 10
+                })
+        })
+    }
+
+    /// 牌组里有没有非基础、非诅咒的牌
+    fn has_non_basic_card(&self) -> bool {
+        self.player
+            .deck
+            .iter()
+            .any(|c| c.rarity() != Rarity::Basic && c.kind() != crate::core::card::CardType::Curse)
     }
 
     pub fn choose_event(&mut self, i: usize) -> Result<(), String> {
@@ -1179,14 +1323,14 @@ impl Run {
         if st.result.is_some() {
             return Err("already resolved".to_string());
         }
+        if st.match_keep.is_some() {
+            return self.flip_event_card(i);
+        }
         let Some(choice) = st.def.choices.get(i).copied() else {
             return Err("no such choice".to_string());
         };
-        if self.player.gold < choice.cost_gold {
-            return Err("not enough gold".to_string());
-        }
-        if self.player.hp <= choice.cost_hp {
-            return Err("not enough HP".to_string());
+        if !self.event_choice_available(i) {
+            return Err("that choice is not available".to_string());
         }
         if choice.cost_gold > 0 {
             self.spend_gold(choice.cost_gold);
@@ -1196,24 +1340,98 @@ impl Run {
         }
         let outcome = choice.outcome;
         let text = self.apply_outcome(&outcome);
+        // 多屏事件:这一屏结算完直接换选项,不给"看完结果再按回车"的停顿
+        if let Some(next) = outcome.next {
+            if let Some(st) = self.event.as_mut() {
+                st.def = next;
+                st.index = 0;
+                st.result = None;
+            }
+            return Ok(());
+        }
         if let Some(st) = self.event.as_mut() {
             st.result = Some(text);
         }
         Ok(())
     }
 
-    /// 事件结果结算;返回给玩家看的文本
+    /// 翻牌小游戏(match_and_keep):翻第 i 格.
+    /// 第一张只是翻开;翻第二张才算一次尝试,同源的两张进牌组并一直朝上,
+    /// 不同源的两张翻回背面.次数用完(或 12 格全配对)事件结束,只剩离开.
+    fn flip_event_card(&mut self, i: usize) -> Result<(), String> {
+        let Some(mut board) = self.event.as_mut().and_then(|st| st.match_keep.take()) else {
+            return Err("no board here".to_string());
+        };
+        if !board.available(i) {
+            if let Some(st) = self.event.as_mut() {
+                st.match_keep = Some(board);
+            }
+            return Err("that card can not be flipped".to_string());
+        }
+        let first = board.first;
+        let result = board.flip(i);
+        let name = |id: Option<&'static str>| match id {
+            Some(id) => card_def_any(id).name,
+            None => "(empty)",
+        };
+        let mut text = String::new();
+        match result {
+            FlipResult::First => text.push_str(&format!("you flip {}", name(board.card_at(i)))),
+            FlipResult::Miss => {
+                let a = name(first.and_then(|f| board.card_at(f)));
+                text.push_str(&format!("{a} and {} do not match", name(board.card_at(i))));
+            }
+            FlipResult::Matched => match board.card_at(i) {
+                Some(id) => {
+                    self.add_card_id(id, 1);
+                    text.push_str(&format!("{} matches: it joins your deck", name(Some(id))));
+                }
+                None => text.push_str("the pair matches, but there was nothing to take"),
+            },
+        }
+        let done = board.finished();
+        board.note = Some(text);
+        if let Some(st) = self.event.as_mut() {
+            st.match_keep = Some(board);
+            if done {
+                st.result = Some("The memory game is over; the pairs you matched are yours.");
+            }
+        }
+        Ok(())
+    }
+
+    /// 翻牌棋盘下面那行说明(上一次翻牌的结果);其它事件没有
+    pub fn event_note(&self) -> Option<&str> {
+        self.event.as_ref()?.match_keep.as_ref()?.note.as_deref()
+    }
+
+    /// 事件结果结算;返回给玩家看的文本.
+    /// 百分比一律按"结算前的生命上限"算(先加上限再扣血的那几个事件也照原作来).
     fn apply_outcome(&mut self, o: &Outcome) -> &'static str {
+        let max_hp0 = self.player.max_hp;
         if o.max_hp != 0 {
             self.player.max_hp = (self.player.max_hp + o.max_hp).max(1);
             if o.max_hp > 0 {
                 self.player.hp += o.max_hp;
             }
         }
-        if o.hp < 0 {
-            self.damage(-o.hp);
-        } else if o.hp > 0 {
-            self.heal(o.hp);
+        if o.max_hp_pct > 0 {
+            let loss = crate::core::events::pct_of(max_hp0, o.max_hp_pct).max(1);
+            self.player.max_hp = (self.player.max_hp - loss).max(1);
+            self.player.hp = self.player.hp.min(self.player.max_hp);
+        }
+        let mut delta = o.hp;
+        if o.hp_pct > 0 {
+            let pct = crate::core::events::pct_of(max_hp0, o.hp_pct).max(o.hp_pct_min.max(1));
+            delta -= pct;
+        }
+        if delta < 0 {
+            self.damage(-delta);
+        } else if delta > 0 {
+            self.heal(delta);
+        }
+        if o.heal_pct > 0 {
+            self.heal(crate::core::events::pct_of(max_hp0, o.heal_pct));
         }
         if o.full_heal {
             self.player.hp = self.player.max_hp;
@@ -1226,27 +1444,51 @@ impl Run {
                 self.spend_gold(g);
             }
         }
-        if let Some(id) = o.relic_id {
-            let def = relics::relic_def_or_panic(id);
-            self.gain_relic(def);
+        if let Some((lo, hi)) = o.gold_range {
+            let g = self.rng.range_inclusive(lo, hi);
+            self.gain_gold(g);
         }
-        if let Some(rarity) = o.add_random_card {
-            let pool: Vec<&'static CardDef> = cards::reward_pool(rarity);
-            if !pool.is_empty() {
-                let def = self.rng.pick(&pool);
-                self.player.deck.push(cards::card(def.id));
+        if o.gold_lose_all {
+            let g = self.player.gold;
+            self.spend_gold(g);
+        }
+        if let Some((lo, hi)) = o.gold_lose_range {
+            let g = self.rng.range_inclusive(lo, hi).min(self.player.gold);
+            self.spend_gold(g);
+        }
+        if let Some(id) = o.remove_relic {
+            self.remove_relic_by_id(id);
+        }
+        if o.remove_random_relic {
+            // 至少要两件才吃一件(原作的生成条件就是身上有两件遗物)
+            if self.player.relics.len() >= 2 {
+                let idx = self.rng.below(self.player.relics.len() as u32) as usize;
+                let gone = self.player.relics.remove(idx);
+                self.say(format!("{} is devoured", gone.name));
             }
+        }
+        if let Some(id) = o.relic_id {
+            let def = relic_def_any(id);
+            self.gain_relic(def);
         }
         if let Some(rarity) = o.random_relic_rarity {
             if let Some(def) = self.take_relic_of(rarity) {
                 self.gain_relic(def);
             }
         }
+        if o.random_relic_any {
+            if let Some(def) = self.take_relic_of_any() {
+                self.gain_relic(def);
+            }
+        }
         if let Some(id) = o.add_card {
-            self.player.deck.push(cards::card(id));
+            self.add_card_id(id, 1);
+        }
+        if let Some((id, n)) = o.add_cards {
+            self.add_card_id(id, n);
         }
         if let Some(id) = o.add_curse {
-            self.player.deck.push(cards::card(id));
+            self.add_card_id(id, 1);
         }
         if o.add_random_curse {
             let pool = cards::curses();
@@ -1255,7 +1497,43 @@ impl Run {
                 self.player.deck.push(CardInstance::new(def));
             }
         }
-        if o.upgrade_random_card {
+        if let Some((rarity, n)) = o.add_random_class {
+            for _ in 0..n {
+                if let Some(def) = self.random_class_card(Some(rarity)) {
+                    self.player.deck.push(CardInstance::new(def));
+                }
+            }
+        }
+        for _ in 0..o.add_random_class_any {
+            if let Some(def) = self.random_class_card(None) {
+                self.player.deck.push(CardInstance::new(def));
+            }
+        }
+        if let Some((rarity, n)) = o.add_random_colorless {
+            for _ in 0..n {
+                if let Some(def) = self.random_colorless_card(rarity) {
+                    self.player.deck.push(CardInstance::new(def));
+                }
+            }
+        }
+        if o.upgrade_all || o.upgrade_starters {
+            let starters = o.upgrade_starters;
+            let mut n = 0;
+            for c in self.player.deck.iter_mut() {
+                if !c.can_upgrade() {
+                    continue;
+                }
+                if starters && !matches!(c.def.id, "strike" | "defend") {
+                    continue;
+                }
+                c.upgrade();
+                n += 1;
+            }
+            if n > 0 {
+                self.say(format!("{n} cards are upgraded"));
+            }
+        }
+        for _ in 0..o.upgrade_random_n {
             let cands: Vec<usize> = self
                 .player
                 .deck
@@ -1264,20 +1542,125 @@ impl Run {
                 .filter(|(_, c)| c.can_upgrade())
                 .map(|(i, _)| i)
                 .collect();
-            if !cands.is_empty() {
-                let pick = cands[self.rng.below(cands.len() as u32) as usize];
-                self.player.deck[pick].upgrade();
-                let name = self.player.deck[pick].label();
-                self.say(format!("{name} is upgraded"));
+            if cands.is_empty() {
+                break;
+            }
+            let pick = cands[self.rng.below(cands.len() as u32) as usize];
+            self.player.deck[pick].upgrade();
+            let name = self.player.deck[pick].label();
+            self.say(format!("{name} is upgraded"));
+        }
+        if o.remove_base_strikes {
+            let mut i = 0;
+            while i < self.player.deck.len() {
+                let hit = self.player.deck[i].def.id == "strike" && !self.player.deck[i].upgraded;
+                if hit {
+                    let card = self.player.deck.remove(i);
+                    self.pay_deck_leave_cost(&card);
+                } else {
+                    i += 1;
+                }
             }
         }
-        if o.random_potion {
+        if o.remove_curses {
+            let mut i = 0;
+            while i < self.player.deck.len() {
+                let c = &self.player.deck[i];
+                let hit = c.kind() == crate::core::card::CardType::Curse && !c.def.unremovable;
+                if hit {
+                    let card = self.player.deck.remove(i);
+                    self.pay_deck_leave_cost(&card);
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        if let Some(rule) = o.remove_random {
+            let cands: Vec<usize> = self
+                .player
+                .deck
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| {
+                    if c.def.unremovable {
+                        return false;
+                    }
+                    match rule {
+                        RemoveRule::OfType(kind) => c.kind() == kind,
+                        RemoveRule::NonBasicNonCurse => {
+                            c.rarity() != Rarity::Basic
+                                && c.kind() != crate::core::card::CardType::Curse
+                        }
+                    }
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if !cands.is_empty() {
+                let idx = cands[self.rng.below(cands.len() as u32) as usize];
+                let card = self.player.deck.remove(idx);
+                let name = card.label();
+                self.pay_deck_leave_cost(&card);
+                self.say(format!("{name} is lost"));
+            }
+        }
+        for _ in 0..o.transform_random_n {
+            let cands: Vec<usize> = self
+                .player
+                .deck
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| !c.def.unremovable)
+                .map(|(i, _)| i)
+                .collect();
+            if cands.is_empty() {
+                break;
+            }
+            let idx = cands[self.rng.below(cands.len() as u32) as usize];
+            self.transform_deck_card(idx);
+        }
+        if o.lose_random_potion {
+            let slots: Vec<usize> = self
+                .player
+                .potions
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.is_some())
+                .map(|(i, _)| i)
+                .collect();
+            if !slots.is_empty() {
+                let slot = slots[self.rng.below(slots.len() as u32) as usize];
+                let gone = self.player.potions[slot].take();
+                if let Some(def) = gone {
+                    self.say(format!("{} is given away", def.name));
+                }
+            }
+        }
+        for _ in 0..o.random_potion_n {
             let def = potions::random_potion(&mut self.rng);
             self.add_potion(def);
         }
-        if let Some(enc_id) = o.fight {
+        if let Some(table) = o.roll {
+            let weights: Vec<u32> = table.iter().map(|(w, _)| *w).collect();
+            if let Some(i) = self.rng.weighted_idx(&weights) {
+                let sub = table[i].1;
+                self.apply_outcome(&sub);
+            }
+        }
+        if o.jump_to_boss {
+            self.jump_to_boss();
+            return o.text;
+        }
+        let fight_id = match (o.fight, o.fight_pool) {
+            (Some(id), _) => Some(id),
+            (None, Some(pool)) if !pool.is_empty() => Some(*self.rng.pick(pool)),
+            _ => None,
+        };
+        if let Some(enc_id) = fight_id {
             let enc = enemies::encounter_def(enc_id)
+                .or_else(|| crate::core::enemy::event_encounter(enc_id))
                 .unwrap_or_else(|| panic!("unknown encounter: {enc_id}"));
+            self.combat_reward = o.fight_reward;
+            self.pending_event = o.fight_next;
             self.start_combat(enc);
             return o.text;
         }
@@ -1285,6 +1668,10 @@ impl Run {
             self.open_picker(PickPurpose::Remove, Screen::Event, 0, None);
         } else if o.upgrade_card {
             self.open_picker(PickPurpose::Upgrade, Screen::Event, 0, None);
+        } else if o.transform_card {
+            self.open_picker(PickPurpose::Transform, Screen::Event, 0, None);
+        } else if o.duplicate_card {
+            self.open_picker(PickPurpose::Duplicate, Screen::Event, 0, None);
         }
         if o.dead {
             self.player.hp = 0;
@@ -1293,9 +1680,80 @@ impl Run {
         o.text
     }
 
+    /// 按 id 加 n 张牌(先认事件专用牌,再认卡池)
+    fn add_card_id(&mut self, id: &str, n: u8) {
+        for _ in 0..n.max(1) {
+            self.player
+                .deck
+                .push(CardInstance::new(card_def_any(id)));
+        }
+    }
+
+    /// 随机一张本职业牌(不限稀有度时从三档里挑)
+    fn random_class_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
+        let mut pool: Vec<&'static CardDef> = match rarity {
+            Some(r) => cards::reward_pool(r),
+            None => {
+                let mut v = cards::reward_pool(Rarity::Common);
+                v.extend(cards::reward_pool(Rarity::Uncommon));
+                v.extend(cards::reward_pool(Rarity::Rare));
+                v
+            }
+        };
+        if pool.is_empty() {
+            return None;
+        }
+        let idx = self.rng.below(pool.len() as u32) as usize;
+        Some(pool.swap_remove(idx))
+    }
+
+    /// 随机一张无色牌
+    fn random_colorless_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
+        let pool: Vec<&'static CardDef> = cards::colorless_pool()
+            .into_iter()
+            .filter(|c| rarity.map(|r| c.rarity == r).unwrap_or(true))
+            .collect();
+        if pool.is_empty() {
+            return None;
+        }
+        Some(*self.rng.pick(&pool))
+    }
+
+    /// 移除身上的一件指定遗物
+    fn remove_relic_by_id(&mut self, id: &str) {
+        if let Some(idx) = self.player.relics.iter().position(|r| r.id == id) {
+            let gone = self.player.relics.remove(idx);
+            self.say(format!("{} is gone", gone.name));
+        }
+    }
+
+    /// 变形:去掉这张牌,换成一张随机本职业牌
+    fn transform_deck_card(&mut self, idx: usize) {
+        if idx >= self.player.deck.len() {
+            return;
+        }
+        let card = self.player.deck.remove(idx);
+        self.pay_deck_leave_cost(&card);
+        if let Some(def) = self.random_class_card(None) {
+            self.player.deck.push(CardInstance::new(def));
+        }
+    }
+
+    /// 直接跳到本层 Boss 房并开打(秘密传送门)
+    fn jump_to_boss(&mut self) {
+        let boss = self.map.boss;
+        self.pos = Some(boss);
+        self.path.push(boss);
+        self.floor_reached = self.map.node(boss).floor;
+        self.stats.bosses += 1;
+        self.say(format!("floor {}: boss", self.floor_reached + 1));
+        let enc = self.boss_enc;
+        self.start_combat(enc);
+    }
+
     pub fn event_index_set(&mut self, i: usize) {
+        let n = self.event_choice_count();
         if let Some(st) = self.event.as_mut() {
-            let n = st.def.choices.len();
             if n > 0 {
                 st.index = i.min(n - 1);
             }
@@ -1360,14 +1818,21 @@ impl Run {
                 .filter(|(_, c)| c.can_upgrade())
                 .map(|(i, _)| i)
                 .collect(),
-            PickPurpose::Remove => {
-                // 不能把牌组删空
+            PickPurpose::Remove | PickPurpose::Transform => {
+                // 不能把牌组删空;带"不可移除"标记的牌(升天者的诅咒等)不进候选
                 if self.player.deck.len() <= 1 {
                     Vec::new()
                 } else {
-                    (0..self.player.deck.len()).collect()
+                    self.player
+                        .deck
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| !c.def.unremovable)
+                        .map(|(i, _)| i)
+                        .collect()
                 }
             }
+            PickPurpose::Duplicate => (0..self.player.deck.len()).collect(),
         }
     }
 
@@ -1405,7 +1870,21 @@ impl Run {
             }
             PickPurpose::Remove => {
                 let card = self.player.deck.remove(deck_idx);
+                // 寄生这类"被抽出牌组要付代价"的牌
+                self.pay_deck_leave_cost(&card);
                 format!("{} removed from your deck", card.label())
+            }
+            PickPurpose::Transform => {
+                let before = self.player.deck[deck_idx].label();
+                self.transform_deck_card(deck_idx);
+                let after = self.player.deck.last().map(|c| c.label()).unwrap_or_default();
+                format!("{before} transformed into {after}")
+            }
+            PickPurpose::Duplicate => {
+                let copy = self.player.deck[deck_idx].clone();
+                let label = copy.label();
+                self.player.deck.push(copy);
+                format!("{label} duplicated")
             }
         };
         if cost > 0 {
@@ -1430,6 +1909,23 @@ impl Run {
     pub fn picker_cancel(&mut self) {
         if let Some(p) = self.picker.take() {
             self.screen = p.back;
+        }
+    }
+
+    /// 一张牌离开牌组时要付的代价(寄生:3 点最大生命).
+    /// 删牌、变形这类"把原牌从牌组拿走"的入口都要调一次;复制不用调.
+    pub fn pay_deck_leave_cost(&mut self, card: &CardInstance) {
+        let toll: i32 = card
+            .effects()
+            .iter()
+            .map(|e| match *e {
+                CardEffect::LoseMaxHpOnRemoved { n } => n,
+                _ => 0,
+            })
+            .sum();
+        if toll > 0 {
+            self.player.max_hp = (self.player.max_hp - toll).max(1);
+            self.player.hp = self.player.hp.min(self.player.max_hp);
         }
     }
 
@@ -1756,17 +2252,24 @@ impl Run {
     }
 
     /// 调试用:直接进某个房间。不改地图、不动位置,退出后照旧回到原来的地图。
-    /// what: shop / event / battle(随机 boss|elite|enemy) / boss / elite / enemy
+    /// what: shop / event [事件id] / battle(随机 boss|elite|enemy) / boss / elite / enemy
     pub fn debug_room(&mut self, what: &str) -> Result<String, String> {
-        match what {
+        let (kind, arg) = match what.split_once(' ') {
+            Some((k, a)) => (k, Some(a.trim())),
+            None => (what, None),
+        };
+        match kind {
             "shop" => {
                 self.open_shop();
                 Ok(format!("debug room: {}", self.last_encounter_or("shop")))
             }
-            "event" => {
-                self.open_event();
-                Ok(format!("debug room: {}", self.last_encounter_or("event")))
-            }
+            "event" => match arg {
+                Some(id) if !id.is_empty() => self.debug_open_event(id),
+                _ => {
+                    self.open_event();
+                    Ok(format!("debug room: {}", self.last_encounter_or("event")))
+                }
+            },
             "battle" => {
                 let kind = match self.rng.below(3) {
                     0 => EnemyKind::Boss,
@@ -1779,7 +2282,7 @@ impl Run {
                 Ok(format!("debug room: battle {id}"))
             }
             "boss" | "elite" | "enemy" => {
-                let kind = match what {
+                let kind = match kind {
                     "boss" => EnemyKind::Boss,
                     "elite" => EnemyKind::Elite,
                     _ => EnemyKind::Normal,
@@ -1793,6 +2296,16 @@ impl Run {
                 "unknown room '{other}', try: shop, event, battle, boss, elite, enemy"
             )),
         }
+    }
+
+    /// 调试用:直接打开某个事件(翻牌事件会把棋盘铺好)
+    pub fn debug_open_event(&mut self, id: &str) -> Result<String, String> {
+        let def = crate::core::events::EVENTS
+            .iter()
+            .find(|e| e.id == id)
+            .ok_or_else(|| format!("unknown event '{id}'"))?;
+        self.open_event_def(def);
+        Ok(format!("debug event: {}", def.id))
     }
 
     /// 调试用的名字:拿不到就退回默认
@@ -1818,6 +2331,11 @@ impl Run {
                 }
             })?;
         Some(self.relic_pool.remove(idx))
+    }
+
+    /// 随机一件遗物(50/33/17 滚稀有度)
+    fn take_relic_of_any(&mut self) -> Option<&'static RelicDef> {
+        self.roll_relic_by_odds(50, 33, 17)
     }
 
     fn roll_relic_by_odds(&mut self, common: u32, uncommon: u32, rare: u32) -> Option<&'static RelicDef> {
@@ -1907,6 +2425,72 @@ mod tests {
         let mut r = run(2);
         let far = r.map.row(FLOORS - 1)[0];
         assert!(r.enter_node(far).is_err(), "没出发就不能跳到最后一层");
+    }
+
+    /// "不可移除"的诅咒不进删牌候选,普通牌照旧能删
+    #[test]
+    fn unremovable_curses_stay_out_of_the_removal_picker() {
+        let mut r = run(11);
+        let deck_len = r.player.deck.len();
+        for id in ["ascenders_bane", "curse_of_the_bell", "necronomicurse"] {
+            r.player.deck.push(cards::card(id));
+        }
+        r.open_picker(PickPurpose::Remove, Screen::Map, 0, None);
+        let cands = r.picker_candidates();
+        assert_eq!(cands.len(), deck_len, "三张不可移除的牌都不该出现在候选里");
+        assert!(cands.iter().all(|i| !r.player.deck[*i].def.unremovable));
+
+        // 选中第一张仍然能正常删掉,删完牌组少一张
+        r.picker_confirm().unwrap();
+        assert_eq!(r.player.deck.len(), deck_len + 2);
+        assert_eq!(
+            r.player
+                .deck
+                .iter()
+                .filter(|c| c.def.unremovable)
+                .count(),
+            3
+        );
+    }
+
+    /// 寄生:从牌组里删掉要付 3 点最大生命(它本身不是"不可移除",只是有代价)
+    #[test]
+    fn removing_parasite_costs_three_max_hp() {
+        // 满血时删:当前生命要跟着新上限一起降
+        let mut r = run(12);
+        r.player.deck.push(cards::card("parasite"));
+        let max0 = r.player.max_hp;
+        assert_eq!(r.player.hp, max0, "满血开局");
+        r.open_picker(PickPurpose::Remove, Screen::Map, 0, None);
+        let slot = r
+            .picker_candidates()
+            .iter()
+            .position(|i| r.player.deck[*i].def.id == "parasite")
+            .expect("寄生应该出现在删牌候选里");
+        r.picker.as_mut().unwrap().index = slot;
+        r.picker_confirm().unwrap();
+        assert_eq!(r.player.max_hp, max0 - 3, "最大生命 -3");
+        assert_eq!(r.player.hp, max0 - 3, "当前生命夹到新的上限");
+        assert!(
+            !r.player.deck.iter().any(|c| c.def.id == "parasite"),
+            "牌组里没有它了"
+        );
+
+        // 残血时删:当前生命不受影响,只掉上限
+        let mut r = run(13);
+        r.player.deck.push(cards::card("parasite"));
+        let max0 = r.player.max_hp;
+        r.player.hp = 20;
+        r.open_picker(PickPurpose::Remove, Screen::Map, 0, None);
+        let slot = r
+            .picker_candidates()
+            .iter()
+            .position(|i| r.player.deck[*i].def.id == "parasite")
+            .unwrap();
+        r.picker.as_mut().unwrap().index = slot;
+        r.picker_confirm().unwrap();
+        assert_eq!(r.player.max_hp, max0 - 3);
+        assert_eq!(r.player.hp, 20, "当前生命没到上限就不动");
     }
 
     #[test]

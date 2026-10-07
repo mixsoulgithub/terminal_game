@@ -206,10 +206,11 @@ pub fn compendium(buf: &mut Buffer, area: Rect, app: &App) {
             style,
         );
     }
-    let other = format!("cards {} / relics {} / potions {}", 
+    let other = format!("cards {} / relics {} / potions {} / events {}", 
         compendium::progress(Library::Cards).1,
         compendium::progress(Library::Relics).1,
-        compendium::progress(Library::Potions).1);
+        compendium::progress(Library::Potions).1,
+        compendium::progress(Library::Events).1);
     put_centered(
         buf,
         rect.x + 1,

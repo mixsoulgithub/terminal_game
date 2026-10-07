@@ -131,9 +131,77 @@ pub struct Encounter {
     pub enemies: &'static [&'static str],
 }
 
+/// 事件直接开战用的遭遇.不进地图的遭遇池,等级按普通算(奖励由事件自己给).
+/// 几个本作没有的敌人用已有的近似顶上:面具土匪用掠夺者,神秘球体的哨卫用哨兵,
+/// 斗兽场第二场的监工用红奴隶主.
+pub static EVENT_ENCOUNTERS: &[Encounter] = &[
+    Encounter {
+        id: "event_three_fungi",
+        kind: EnemyKind::Normal,
+        enemies: &["fungi_beast", "fungi_beast", "fungi_beast"],
+    },
+    Encounter {
+        id: "event_colosseum_slavers",
+        kind: EnemyKind::Normal,
+        enemies: &["blue_slaver", "red_slaver"],
+    },
+    Encounter {
+        id: "event_colosseum_nobs",
+        kind: EnemyKind::Normal,
+        enemies: &["gremlin_nob", "red_slaver"],
+    },
+    Encounter {
+        id: "event_bandits",
+        kind: EnemyKind::Normal,
+        enemies: &["looter", "looter", "looter"],
+    },
+    Encounter {
+        id: "event_two_orbs",
+        kind: EnemyKind::Normal,
+        enemies: &["sentry", "sentry"],
+    },
+    Encounter {
+        id: "event_phantom_guardian",
+        kind: EnemyKind::Normal,
+        enemies: &["the_guardian"],
+    },
+    Encounter {
+        id: "event_phantom_hexaghost",
+        kind: EnemyKind::Normal,
+        enemies: &["hexaghost"],
+    },
+    Encounter {
+        id: "event_phantom_slime_boss",
+        kind: EnemyKind::Normal,
+        enemies: &["slime_boss"],
+    },
+];
+
+/// 按 id 找事件遭遇
+pub fn event_encounter(id: &str) -> Option<&'static Encounter> {
+    EVENT_ENCOUNTERS.iter().find(|e| e.id == id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_encounters_use_real_enemies() {
+        for enc in EVENT_ENCOUNTERS {
+            assert!(!enc.enemies.is_empty(), "{} 没有敌人", enc.id);
+            for id in enc.enemies {
+                assert!(
+                    crate::core::enemies::enemy_def(id).is_some(),
+                    "{} 引用了不存在的敌人 {}",
+                    enc.id,
+                    id
+                );
+            }
+        }
+        assert!(event_encounter("event_bandits").is_some());
+        assert!(event_encounter("no_such_encounter").is_none());
+    }
 
     #[test]
     fn intent_recognizes_pure_attack() {

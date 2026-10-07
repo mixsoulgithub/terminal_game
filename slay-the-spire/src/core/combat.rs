@@ -235,6 +235,8 @@ struct PlayCtx {
     x: i32,
     exhausted: i32,
     unblocked: i32,
+    /// 结算时的手牌张数快照(悔恨按手牌数掉血,回合结束时手牌已经清完,所以要提前记)
+    hand_size: i32,
 }
 
 impl Combat {
@@ -498,9 +500,23 @@ impl Combat {
         self.check_win();
     }
 
-    /// 记一张打出的牌;浮夸每打满 5 张就对所有敌人来一下
+    /// 记一张打出的牌;浮夸每打满 5 张就对所有敌人来一下;痛苦手里有就掉血
     fn note_card_played(&mut self) {
         self.cards_played += 1;
+        // 痛苦:在自己手里时,别人被打出就掉 1 血(本张牌已经从手牌/抽牌堆拿走)
+        let pain: i32 = self
+            .hand
+            .iter()
+            .flat_map(|c| c.in_hand())
+            .map(|e| match *e {
+                Effect::LoseHpOnOtherCardPlayed { amount } => amount,
+                _ => 0,
+            })
+            .sum();
+        if pain > 0 {
+            self.push_log(LogKind::Player, format!("Pain: lose {pain} HP"));
+            self.lose_hp_player(pain, true);
+        }
         let pan = self.player.statuses.get(Status::Panache);
         if pan <= 0 || self.cards_played % 5 != 0 {
             return;
@@ -536,18 +552,23 @@ impl Combat {
             }
             let card = self.draw.pop().unwrap();
             self.hand.push(card);
-            self.on_status_drawn();
+            self.on_card_drawn();
         }
     }
 
-    /// 抽到状态牌时触发的能力(进化、吐火)
-    fn on_status_drawn(&mut self) {
-        let is_status = self
-            .hand
-            .last()
-            .map(|c| c.kind() == crate::core::card::CardType::Status)
-            .unwrap_or(false);
-        if !is_status {
+    /// 抽到一张牌时触发:牌自己的"抽到时"效果(虚空掉能量),状态牌再触发能力(进化、吐火)
+    fn on_card_drawn(&mut self) {
+        let Some(mut card) = self.hand.last().cloned() else {
+            return;
+        };
+        if !card.on_draw().is_empty() {
+            let label = card.label();
+            let effects = card.on_draw();
+            let mut ctx = PlayCtx::default();
+            self.resolve_effects(&mut card, effects, None, &mut ctx);
+            self.push_log(LogKind::Player, format!("{label} triggers when drawn"));
+        }
+        if card.kind() != crate::core::card::CardType::Status {
             return;
         }
         let fire = self.player.statuses.get(Status::FireBreathing);
@@ -582,7 +603,28 @@ impl Combat {
             self.energy += back;
             self.push_log(LogKind::Player, format!("exhausted: +{back} energy"));
         }
+        // 死灵诅咒:消耗也逃不掉,补一张新的回手牌(手牌满就退到弃牌堆)
+        let escapes = card
+            .effects()
+            .iter()
+            .any(|e| matches!(*e, Effect::SelfToHandOnExhaust));
+        let def = card.def;
         self.exhaust.push(card);
+        if escapes {
+            let mut copy = CardInstance::new(def);
+            self.fix_new_card(&mut copy);
+            let label = copy.label();
+            if self.hand.len() < HAND_LIMIT {
+                self.hand.push(copy);
+                self.push_log(LogKind::Player, format!("{label} escapes to your hand"));
+            } else {
+                self.discard.push(copy);
+                self.push_log(
+                    LogKind::Player,
+                    format!("{label} escapes to your discard pile (hand is full)"),
+                );
+            }
+        }
         let fnp = self.player.statuses.get(Status::FeelNoPain);
         if fnp > 0 {
             self.gain_block(fnp, false, false);
@@ -636,6 +678,15 @@ impl Combat {
         if regen > 0 {
             self.heal_player(regen);
         }
+        // 手牌里"回合结束触发"的诅咒先按现状记下来:手牌张数以这一刻为准(悔恨),
+        // 效果留到减益递减之后再结算,刚拿到的 Weak/Frail 才不会被当场扣掉一层
+        let eot: Vec<CardInstance> = self
+            .hand
+            .iter()
+            .filter(|c| !c.on_end_turn().is_empty())
+            .cloned()
+            .collect();
+        let hand_size = self.hand.len() as i32;
         // 手牌:保留牌留下,虚灵牌消耗,其余进弃牌堆
         let hand = std::mem::take(&mut self.hand);
         for card in hand {
@@ -649,6 +700,20 @@ impl Combat {
         }
         // 玩家的减益在自己回合结束时递减
         self.player.statuses.decay_debuffs();
+        for mut card in eot {
+            let label = card.label();
+            let effects = card.on_end_turn();
+            let mut ctx = PlayCtx {
+                hand_size,
+                ..Default::default()
+            };
+            self.resolve_effects(&mut card, effects, None, &mut ctx);
+            self.push_log(LogKind::Player, format!("{label} triggers at end of turn"));
+        }
+        // 悔恨/腐烂可能把玩家打死,这时不能再把回合交给敌人
+        if self.phase != Phase::PlayerTurn {
+            return;
+        }
         self.phase = Phase::EnemyTurn;
         self.enemy_turn();
     }
@@ -1265,6 +1330,16 @@ impl Combat {
         if card.needs_target() && self.first_alive().is_none() {
             return Err("no target");
         }
+        // 反常:只要它在手里,本回合最多打出 3 张
+        for c in self.hand.iter() {
+            for e in c.in_hand() {
+                if let Effect::PlayLimitWhileInHand { max } = *e {
+                    if self.cards_played >= max as i32 {
+                        return Err("normality: too many cards played this turn");
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1286,6 +1361,7 @@ impl Combat {
         let is_x = card.cost() == Cost::X;
         let mut ctx = PlayCtx {
             x: if is_x { cost } else { 0 },
+            hand_size: self.hand.len() as i32,
             ..Default::default()
         };
         let chosen = match card.target() {
@@ -1371,6 +1447,17 @@ impl Combat {
 
     fn resolve(&mut self, card: &mut CardInstance, target: Option<usize>, ctx: &mut PlayCtx) {
         let effects = card.effects();
+        self.resolve_effects(card, effects, target, ctx);
+    }
+
+    /// 逐条结算一份效果列表:打出时传 effects(),抽到/回合结束时传 on_draw / on_end_turn
+    fn resolve_effects(
+        &mut self,
+        card: &mut CardInstance,
+        effects: &'static [Effect],
+        target: Option<usize>,
+        ctx: &mut PlayCtx,
+    ) {
         let is_strike = card.is_strike();
         let card_bonus = card.bonus;
         for e in effects {
@@ -1526,6 +1613,24 @@ impl Combat {
                     self.gain_block(b, true, true);
                 }                Effect::LoseHp { amount } => {
                     self.lose_hp_player(amount, true);
+                }
+                Effect::LoseHpPerHandCard => {
+                    let n = ctx.hand_size.max(0);
+                    self.lose_hp_player(n, true);
+                }
+                Effect::CopySelfToDrawTop => {
+                    // 抽牌堆的"顶"是 Vec 末尾(draw_cards 从末尾 pop)
+                    let mut copy = CardInstance::new(card.def);
+                    copy.upgraded = card.upgraded;
+                    copy.plus = card.plus;
+                    self.top_seq += 1;
+                    copy.topped = self.top_seq;
+                    let label = copy.label();
+                    self.draw.push(copy);
+                    self.push_log(
+                        LogKind::Player,
+                        format!("a copy of {label} goes on top of your draw pile"),
+                    );
                 }
                 Effect::GainEnergy { n } => {
                     self.energy = (self.energy + n).max(0);
@@ -1951,6 +2056,13 @@ impl Combat {
                         format!("a bomb is set: {damage} damage in {turns} turns"),
                     );
                 }
+                // 这三类不由"打出"触发,各有自己的钩子:
+                // 消耗时(exhaust_card)/ 别人被打出时(note_card_played)/ 可打性检查(playable)
+                Effect::SelfToHandOnExhaust
+                | Effect::LoseHpOnOtherCardPlayed { .. }
+                | Effect::PlayLimitWhileInHand { .. } => {}
+                // 抽出牌组时由 run 层的删牌流程结算(picker_confirm)
+                Effect::LoseMaxHpOnRemoved { .. } => {}
             }
         }
     }
@@ -3160,5 +3272,167 @@ mod tests {
         c.play_card(0, None).unwrap();
         assert_eq!(c.hand.len(), 1);
         assert_eq!(cards::pool_of(c.hand[0].def), "colorless");
+    }
+
+    /// 垫满格挡的场景:敌人打不动玩家,测的只是回合结束/打牌触发的那些效果
+    fn guarded(deck: &[&str]) -> Combat {
+        let mut c = combat_with("jaw_worm_solo", deck);
+        c.player.hp = 80;
+        c.player.block = 999;
+        c.hand.clear();
+        c.draw.clear();
+        c
+    }
+
+    /// 腐烂:回合结束时掉 2 血(直接掉血,不吃格挡)
+    #[test]
+    fn decay_deals_two_damage_at_end_of_turn() {
+        let mut c = guarded(&["decay"]);
+        c.hand = vec![card("decay"), card("strike")];
+        c.end_turn();
+        assert_eq!(c.player.hp, 78, "回合结束掉 2 血");
+    }
+
+    /// 怀疑:回合结束时拿 1 层 Weak,而且不会被当场递减掉
+    #[test]
+    fn doubt_gives_weak_at_end_of_turn() {
+        let mut c = guarded(&["doubt"]);
+        c.hand = vec![card("doubt")];
+        c.end_turn();
+        assert_eq!(c.player.statuses.get(Status::Weak), 1, "回合结束拿 1 层 Weak");
+    }
+
+    /// 羞耻:回合结束时拿 1 层 Frail,Frail 参与格挡结算
+    #[test]
+    fn shame_gives_frail_and_frail_cuts_block() {
+        let mut c = guarded(&["shame"]);
+        c.hand = vec![card("shame")];
+        c.end_turn();
+        assert_eq!(c.player.statuses.get(Status::Frail), 1);
+        // 新回合:一张 Defend 只给 floor(5 * 0.75) = 3 格挡
+        c.player.block = 0;
+        c.hand = vec![card("defend")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.block, 3, "Frail 让格挡打七五折");
+    }
+
+    /// 悔恨:回合结束时按手牌张数掉血
+    #[test]
+    fn regret_loses_hp_equal_to_hand_size() {
+        let mut c = guarded(&["regret"]);
+        c.hand = vec![card("regret"), card("strike"), card("strike"), card("defend")];
+        c.end_turn();
+        assert_eq!(c.player.hp, 76, "手里 4 张就掉 4 血");
+    }
+
+    /// 虚空:抽到时掉 1 点能量,能量见底也不为负
+    #[test]
+    fn void_costs_energy_when_drawn() {
+        let mut c = guarded(&["strike"]);
+        c.draw = vec![card("strike"), card("void")];
+        c.energy = 3;
+        c.draw_cards(2);
+        assert!(c.hand.iter().any(|x| x.def.id == "void"), "虚空进手牌");
+        assert_eq!(c.energy, 2, "抽到虚空掉 1 能量");
+
+        c.energy = 0;
+        c.draw = vec![card("void")];
+        c.draw_cards(1);
+        assert_eq!(c.energy, 0, "能量不会变成负数");
+    }
+
+    /// 痛苦:它在手里时,打出别的牌就掉 1 血
+    #[test]
+    fn pain_costs_hp_when_another_card_is_played() {
+        let mut c = guarded(&["strike"]);
+        c.hand = vec![card("pain"), card("strike"), card("strike")];
+        c.energy = 3;
+        assert_eq!(c.play_card(0, None), Err("unplayable"), "痛苦自己打不出去");
+        c.play_card(1, Some(0)).unwrap();
+        assert_eq!(c.player.hp, 79, "打出别的牌掉 1 血");
+
+        // 痛苦离开手牌之后就不再掉血
+        c.hand = vec![card("strike")];
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.player.hp, 79);
+    }
+
+    /// 反常:它在手里时,本回合最多打出 3 张牌
+    #[test]
+    fn normality_caps_plays_at_three() {
+        // 先看不带反常时的对照:第 4 张照样能打
+        let mut c = guarded(&["defend"]);
+        c.hand = vec![card("defend"); 5];
+        c.energy = 10;
+        for _ in 0..4 {
+            c.play_card(0, None).unwrap();
+        }
+        assert_eq!(c.cards_played, 4);
+
+        // 手里有反常:第 4 张被拦下
+        let mut c = guarded(&["defend"]);
+        c.hand = vec![
+            card("normality"),
+            card("defend"),
+            card("defend"),
+            card("defend"),
+            card("defend"),
+        ];
+        c.energy = 10;
+        for _ in 0..3 {
+            c.play_card(1, None).unwrap();
+        }
+        assert_eq!(c.cards_played, 3);
+        assert_eq!(
+            c.play_card(1, None),
+            Err("normality: too many cards played this turn")
+        );
+    }
+
+    /// 傲慢:回合结束时在抽牌堆顶留一张副本
+    #[test]
+    fn pride_copies_itself_onto_the_draw_pile() {
+        let mut c = guarded(&["pride"]);
+        c.hand = vec![card("pride")];
+        // 抽牌堆塞够 6 张,新回合不会洗到弃牌堆里的原牌
+        c.draw = vec![card("strike"); 6];
+        c.end_turn();
+        assert_eq!(c.hand[0].def.id, "pride", "副本躺在抽牌堆顶,新回合第一张抽到");
+        assert!(c.discard.iter().any(|x| x.def.id == "pride"), "原牌进弃牌堆");
+        let prides = c
+            .hand
+            .iter()
+            .chain(c.draw.iter())
+            .chain(c.discard.iter())
+            .chain(c.exhaust.iter())
+            .filter(|x| x.def.id == "pride")
+            .count();
+        assert_eq!(prides, 2, "原牌 + 一张副本");
+    }
+
+    /// 纠缠:Innate,开局就在手里
+    #[test]
+    fn writhe_is_innate_and_starts_in_hand() {
+        let c = combat_with(
+            "jaw_worm_solo",
+            &["strike", "strike", "strike", "strike", "strike", "writhe"],
+        );
+        assert!(c.hand.iter().any(|x| x.def.id == "writhe"), "开局在手");
+        assert_eq!(c.hand.len(), 6, "5 张起手 + 1 张 Innate");
+        assert!(!c.draw.iter().any(|x| x.def.id == "writhe"));
+    }
+
+    /// 死灵诅咒:被消耗也逃不掉,补一张新的回手牌
+    #[test]
+    fn necronomicurse_escapes_the_exhaust_pile() {
+        let mut c = guarded(&["strike"]);
+        c.hand = vec![card("strike")];
+        c.exhaust_card(card("necronomicurse"));
+        assert!(c.exhaust.iter().any(|x| x.def.id == "necronomicurse"));
+        assert!(
+            c.hand.iter().any(|x| x.def.id == "necronomicurse"),
+            "消耗之后手里又回来一张"
+        );
     }
 }
