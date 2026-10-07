@@ -33,9 +33,13 @@ pub struct BattleShake {
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
-const COMMANDS: &[&str] = &["help", "q", "quit", "restart", "room", "seed", "win"];
-/// :room 的参数
+const COMMANDS: &[&str] = &[
+    "card", "help", "q", "quit", "relic", "restart", "room", "seed", "win",
+];
+/// :room / :relic / :card 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
+const RELIC_ARGS: &[&str] = &["add", "remove"];
+const CARD_ARGS: &[&str] = &["add", "remove", "upgrade"];
 
 pub struct App {
     pub run: Run,
@@ -371,6 +375,8 @@ impl App {
                 // 命令名只敲了一半(ro)也算,唯一匹配才认
                 let args: &[&str] = match resolve_command(head).as_deref() {
                     Some("room") => ROOM_ARGS,
+                    Some("relic") => RELIC_ARGS,
+                    Some("card") => CARD_ARGS,
                     _ => &[],
                 };
                 matching(args, cur)
@@ -1468,7 +1474,8 @@ impl App {
                 self.exec_command(&cmd);
             }
             KeyCode::Char(c) => {
-                if self.cmd.len() < 40 {
+                // 命令行上限放宽一点,调试命令经常很长
+                if self.cmd.len() < 200 {
                     self.cmd.push(c);
                 }
             }
@@ -1487,6 +1494,49 @@ impl App {
             "q" | "quit" => self.quit = true,
             "help" => self.open_overlay(Overlay::Help),
             "seed" => self.info(format!("seed {}", self.run.seed)),
+            // :relic add <名字|all> / :relic remove <名字>
+            "relic" => {
+                let (sub, args) = split_sub(rest);
+                let r = match sub {
+                    "add" if !args.is_empty() => self.run.debug_add_relics(args),
+                    "remove" if !args.is_empty() => self.run.debug_remove_relic(args),
+                    _ => Err("usage: relic add <name|all> / relic remove <name>".to_string()),
+                };
+                self.ok(r);
+                self.clamp();
+            }
+            // :card add <名字> / :card remove [名字|all|hand|hand all] / :card upgrade <名字> [次数]
+            "card" => {
+                let (sub, args) = split_sub(rest);
+                let r = match sub {
+                    "add" if !args.is_empty() => self.run.debug_add_cards(args),
+                    "remove" => match args.trim().to_lowercase().as_str() {
+                        "" => {
+                            self.run.debug_open_remove_picker();
+                            Ok("pick a card to remove".to_string())
+                        }
+                        "hand" => self
+                            .run
+                            .debug_begin_hand_remove()
+                            .map(|_| "pick a card from your hand".to_string()),
+                        other => self.run.debug_remove_card(other),
+                    },
+                    "upgrade" => match args.rsplit_once(' ') {
+                        Some((name, n)) if n.chars().all(|c| c.is_ascii_digit()) && !n.is_empty() => {
+                            self.run
+                                .debug_upgrade_card(name, n.parse::<usize>().unwrap_or(1))
+                        }
+                        _ if !args.is_empty() => self.run.debug_upgrade_card(args, 1),
+                        _ => Err("usage: card upgrade <name> [times]".to_string()),
+                    },
+                    _ => Err(
+                        "usage: card add <name> / card remove [name|all|hand|hand all] / card upgrade <name> [times]"
+                            .to_string(),
+                    ),
+                };
+                self.ok(r);
+                self.clamp();
+            }
             // :room shop / battle / event(调试用:直接进房间,不动地图)
             "room" => {
                 let what = if rest.is_empty() { "battle" } else { rest };
@@ -1634,6 +1684,11 @@ impl App {
             (":help", "this help"),
             (":seed", "show the run seed"),
             (":room shop|battle|event", "jump straight into that room (debug)"),
+            (":relic add|all|remove <name>", "add or drop relics by name (debug)"),
+            (
+                ":card add|remove|upgrade <name> [n]",
+                "change your deck / hand by name (debug)",
+            ),
             (":win", "win the current battle (skip to the reward)"),
             (":restart [seed]", "restart from the beginning (random seed if omitted)"),
             ("R n", "after the run ends: restart with the same / a new seed"),
@@ -1676,6 +1731,14 @@ fn resolve_command(head: &str) -> Option<String> {
         Some(hits[0].to_string())
     } else {
         None
+    }
+}
+
+/// 把 "add Blood for Blood" 拆成 ("add", "Blood for Blood")
+fn split_sub(rest: &str) -> (&str, &str) {
+    match rest.split_once(' ') {
+        Some((a, b)) => (a, b.trim()),
+        None => (rest, ""),
     }
 }
 

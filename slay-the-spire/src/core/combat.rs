@@ -132,6 +132,8 @@ pub enum ChoiceAction {
     ToHand,
     /// 放到抽牌堆顶
     ToDrawTop,
+    /// 直接移出这局(调试用)
+    Remove,
 }
 
 /// 一次待选择:比如"从手牌选一张消耗"
@@ -647,6 +649,16 @@ impl Combat {
         }
     }
 
+    /// 调试用:开一个"从手牌里删牌"的选择
+    pub fn debug_begin_hand_remove(&mut self) {
+        self.begin_choice(
+            ChoiceSource::Hand,
+            ChoiceAction::Remove,
+            false,
+            "remove a card from your hand",
+        );
+    }
+
     /// 开一次选牌:记下来,等界面那边选完再 choose()
     fn begin_choice(
         &mut self,
@@ -714,6 +726,9 @@ impl Combat {
             (ChoiceSource::Discard, ChoiceAction::ToDrawTop) => {
                 let card = self.discard.remove(idx);
                 self.draw.insert(0, card);
+            }
+            (ChoiceSource::Hand, ChoiceAction::Remove) => {
+                self.hand.remove(idx);
             }
             _ => {}
         }

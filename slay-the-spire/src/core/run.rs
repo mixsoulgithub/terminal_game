@@ -1358,6 +1358,185 @@ impl Run {
         self.say(format!("relic: {}", def.name));
     }
 
+    // ---- 调试命令:按名字加/删遗物与卡牌 ----
+
+    /// 名字归一化:大小写、空格、下划线都不计较("Blood for Blood" = blood_for_blood)
+    fn norm(name: &str) -> String {
+        name.trim().to_lowercase().replace([' ', '-'], "_")
+    }
+
+    pub fn debug_add_relic(&mut self, name: &str) -> Result<String, String> {
+        let want = Self::norm(name);
+        if want == "all" {
+            let ids: Vec<&'static str> = relics::RELICS.iter().map(|r| r.id).collect();
+            let mut n = 0;
+            for id in ids {
+                if !self.player.relics.iter().any(|r| r.id == id) {
+                    let def = relics::relic_def_or_panic(id);
+                    self.gain_relic(def);
+                    n += 1;
+                }
+            }
+            return Ok(format!("added {n} relics"));
+        }
+        let def = relics::RELICS
+            .iter()
+            .find(|r| Self::norm(r.id) == want || Self::norm(r.name) == want)
+            .ok_or_else(|| format!("no relic named {name}"))?;
+        let name = def.name;
+        self.gain_relic(def);
+        Ok(format!("added relic {name}"))
+    }
+
+    pub fn debug_remove_relic(&mut self, name: &str) -> Result<String, String> {
+        let want = Self::norm(name);
+        let idx = self
+            .player
+            .relics
+            .iter()
+            .position(|r| Self::norm(r.id) == want || Self::norm(r.name) == want)
+            .ok_or_else(|| format!("no relic named {name}"))?;
+        let def = self.player.relics.remove(idx);
+        self.relic_pool.push(def);
+        Ok(format!("removed relic {}", def.name))
+    }
+
+    /// 加牌:战斗中加到手牌(满了就不加),平时加进牌组
+    pub fn debug_add_card(&mut self, name: &str) -> Result<String, String> {
+        let want = Self::norm(name);
+        let def = cards::CARDS
+            .iter()
+            .find(|c| Self::norm(c.id) == want || Self::norm(c.name) == want)
+            .ok_or_else(|| format!("no card named {name}"))?;
+        let label = def.name;
+        if let Some(c) = self.combat.as_mut() {
+            if c.hand.len() >= crate::core::combat::HAND_LIMIT {
+                return Ok(format!("hand is full, {label} not added"));
+            }
+            c.hand.push(cards::card(def.id));
+        } else {
+            self.player.deck.push(cards::card(def.id));
+        }
+        Ok(format!("added card {label}"))
+    }
+
+    /// 删牌:名字 / all(整副) / hand(手牌选择窗口) / hand all(手牌全删)
+    pub fn debug_remove_card(&mut self, what: &str) -> Result<String, String> {
+        let arg = what.trim().to_lowercase();
+        if arg.is_empty() {
+            // 没给名字:开牌组里的选牌窗口
+            return Err("pick from the deck (see the picker)".to_string());
+        }
+        if arg == "all" {
+            let n = self.player.deck.len();
+            self.player.deck.clear();
+            return Ok(format!("removed {n} cards from the deck"));
+        }
+        if let Some(rest) = arg.strip_prefix("hand") {
+            let all = rest.trim() == "all";
+            if all {
+                if let Some(c) = self.combat.as_mut() {
+                    let n = c.hand.len();
+                    c.hand.clear();
+                    return Ok(format!("removed {n} cards from your hand"));
+                }
+                return Err("not in a battle".to_string());
+            }
+            if self.combat.is_none() {
+                return Err("not in a battle".to_string());
+            }
+            return Err("pick from your hand".to_string());
+        }
+        let want = Self::norm(&arg);
+        let before = self.player.deck.len();
+        self.player.deck.retain(|c| {
+            !(Self::norm(c.def.id) == want || Self::norm(c.def.name) == want)
+        });
+        if let Some(c) = self.combat.as_mut() {
+            c.hand.retain(|x| !(Self::norm(x.def.id) == want || Self::norm(x.def.name) == want));
+        }
+        let removed = before - self.player.deck.len();
+        Ok(format!("removed {removed} card(s)"))
+    }
+
+    /// 升级牌组里的某张牌(默认 1 次),可无限升级的会一直在牌组里升
+    pub fn debug_upgrade_card(&mut self, name: &str, times: usize) -> Result<String, String> {
+        let want = Self::norm(name);
+        let mut done = 0;
+        for card in self.player.deck.iter_mut() {
+            if Self::norm(card.def.id) == want || Self::norm(card.def.name) == want {
+                for _ in 0..times.max(1) {
+                    if card.upgrade() {
+                        done += 1;
+                    }
+                }
+            }
+        }
+        if let Some(c) = self.combat.as_mut() {
+            for card in c.hand.iter_mut() {
+                if Self::norm(card.def.id) == want || Self::norm(card.def.name) == want {
+                    for _ in 0..times.max(1) {
+                        if card.upgrade() {
+                            done += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if done == 0 {
+            return Err(format!("no upgradable card named {name} in your deck"));
+        }
+        Ok(format!("upgraded {done} time(s)"))
+    }
+
+    /// 加遗物:名字用逗号分隔,可以一次加多个("Pear, Vajra")
+    pub fn debug_add_relics(&mut self, args: &str) -> Result<String, String> {
+        let mut out = Vec::new();
+        for part in args.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            out.push(self.debug_add_relic(part)?);
+        }
+        if out.is_empty() {
+            return Err("no relic name given".to_string());
+        }
+        Ok(out.join("; "))
+    }
+
+    /// 加牌:同样用逗号分隔
+    pub fn debug_add_cards(&mut self, args: &str) -> Result<String, String> {
+        let mut out = Vec::new();
+        for part in args.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            out.push(self.debug_add_card(part)?);
+        }
+        if out.is_empty() {
+            return Err("no card name given".to_string());
+        }
+        Ok(out.join("; "))
+    }
+
+    /// 调试用:开牌组里的"删一张"窗口
+    pub fn debug_open_remove_picker(&mut self) {
+        self.open_picker(PickPurpose::Remove, Screen::Map, 0, None);
+    }
+
+    /// 调试用:开"从手牌删一张"的选择(战斗里)
+    pub fn debug_begin_hand_remove(&mut self) -> Result<(), String> {
+        match self.combat.as_mut() {
+            Some(c) => {
+                c.debug_begin_hand_remove();
+                Ok(())
+            }
+            None => Err("not in a battle".to_string()),
+        }
+    }
+
     /// 调试用:直接进某个房间。不改地图、不动位置,退出后照旧回到原来的地图。
     /// what: shop / event / battle(随机 boss|elite|enemy) / boss / elite / enemy
     pub fn debug_room(&mut self, what: &str) -> Result<String, String> {
