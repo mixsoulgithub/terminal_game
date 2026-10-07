@@ -7,7 +7,7 @@ use crate::core::card::{CardDef, CardType, CardUpgrade, Cost, Effect, Rarity, Ta
 use crate::core::cards;
 use crate::core::relics::{RelicDef, RelicFx};
 use crate::core::status::Status;
-use crate::rng::Rng;
+use crate::rng::{java_shuffle, FloorStream, JavaRandom, Rng, RngRegistry, RunStream};
 
 /// 按生命上限的千分比取整(四舍五入):125 表示 12.5%.
 pub fn pct_of(max_hp: i32, per_mille: i32) -> i32 {
@@ -304,6 +304,19 @@ fn pick_id(rng: &mut Rng, pool: Vec<&'static CardDef>) -> Option<&'static str> {
     Some(rng.pick(&pool).id)
 }
 
+/// 无色牌那一格:整池 java 洗一遍(种子来自 shuffleRng),取第一张要的稀有度
+fn colorless_via_shuffle(streams: &mut RngRegistry, rarity: Rarity) -> Option<&'static str> {
+    let mut pool = cards::colorless_pool();
+    if pool.is_empty() {
+        return None;
+    }
+    java_shuffle(
+        &mut pool,
+        &mut JavaRandom::new(streams.floor(FloorStream::ShuffleRng).random_long()),
+    );
+    pool.into_iter().find(|c| c.rarity == rarity).map(|c| c.id)
+}
+
 /// 卡名:认不出就退回 id
 fn card_name_of(id: &'static str) -> &'static str {
     cards::card_def(id).map(|c| c.name).unwrap_or(id)
@@ -312,20 +325,24 @@ fn card_name_of(id: &'static str) -> &'static str {
 impl MatchKeep {
     /// 铺棋盘:稀有/非普通/普通本职业牌、非普通无色牌、随机诅咒、本职业起始牌,
     /// 再用 [0..5] 各两张洗一遍,按参考实现的 (i%3)*4 + (i%4) 铺进 12 格.
-    pub fn new(rng: &mut Rng, character: &str) -> MatchKeep {
+    /// 三张本职业牌与诅咒走 cardRng,无色牌走 shuffleRng,棋盘洗牌走 miscRng.
+    pub fn new(streams: &mut RngRegistry, character: &str) -> MatchKeep {
         let mut slots: [Option<&'static str>; 6] = [None; 6];
-        slots[0] = pick_id(rng, cards::reward_pool(Rarity::Rare));
-        slots[1] = pick_id(rng, cards::reward_pool(Rarity::Uncommon));
-        slots[2] = pick_id(rng, cards::reward_pool(Rarity::Common));
-        slots[3] = pick_id(
-            rng,
-            cards::colorless_pool()
-                .into_iter()
-                .filter(|c| c.rarity == Rarity::Uncommon)
-                .collect(),
+        slots[0] = pick_id(
+            streams.run(RunStream::CardRng),
+            cards::reward_pool(Rarity::Rare),
         );
+        slots[1] = pick_id(
+            streams.run(RunStream::CardRng),
+            cards::reward_pool(Rarity::Uncommon),
+        );
+        slots[2] = pick_id(
+            streams.run(RunStream::CardRng),
+            cards::reward_pool(Rarity::Common),
+        );
+        slots[3] = colorless_via_shuffle(streams, Rarity::Uncommon);
         slots[4] = pick_id(
-            rng,
+            streams.run(RunStream::CardRng),
             cards::curses()
                 .into_iter()
                 .filter(|c| cards::pool_of(c) == "curse")
@@ -335,11 +352,14 @@ impl MatchKeep {
             .iter()
             .find(|(id, _)| *id == character)
             .map(|(_, card)| *card);
-        let mut layout = [0u8, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5];
-        rng.shuffle(&mut layout);
+        let mut idxs: Vec<usize> = (0..12).map(|i| i % 6).collect();
+        java_shuffle(
+            &mut idxs,
+            &mut JavaRandom::new(streams.floor(FloorStream::MiscRng).random_long()),
+        );
         let mut board = [0u8; 12];
-        for (i, slot) in layout.iter().enumerate() {
-            board[(i % 3) * 4 + (i % 4)] = *slot;
+        for (i, slot) in idxs.iter().enumerate() {
+            board[(i % 3) * 4 + (i % 4)] = *slot as u8;
         }
         MatchKeep {
             slots,
@@ -2330,7 +2350,7 @@ mod tests {
                 .map(|s| s.choices.len())
                 .sum();
             let board = if e.id == "match_and_keep" {
-                MatchKeep::new(&mut Rng::new(1), "ironclad").board.len()
+                MatchKeep::new(&mut RngRegistry::new(1), "ironclad").board.len()
             } else {
                 0
             };
@@ -2946,13 +2966,26 @@ mod tests {
 
     #[test]
     fn wheel_of_change_settles_exactly_one_outcome() {
-        for seed in [1u64, 2, 3, 5, 8] {
-            let r = apply("wheel_of_change", seed, 0);
-            let gained_gold = r.player.gold - 99;
-            let lost_hp = 80 - r.player.hp;
-            assert!(gained_gold == 0 || gained_gold == 100, "seed {seed}");
-            assert!(r.player.hp == 80 || lost_hp == 8, "seed {seed}");
-        }
+        // 落点随随机流变过,下面每个种子都是按现在的 miscRng 量出来的具体结果
+        let gold = apply("wheel_of_change", 6, 0);
+        assert_eq!(gold.player.gold, 199, "金币那一格");
+        let berry = apply("wheel_of_change", 1, 0);
+        assert_eq!(berry.player.max_hp, 87, "草莓:生命上限 +7");
+        assert!(berry.player.relics.iter().any(|r| r.id == "strawberry"));
+        let bowl = apply("wheel_of_change", 2, 0);
+        assert!(bowl.player.relics.iter().any(|r| r.id == "singing_bowl"));
+        assert_eq!(bowl.player.gold, 99, "随机遗物那一格不该动金币");
+        let heal = apply("wheel_of_change", 4, 0);
+        assert_eq!((heal.player.hp, heal.player.max_hp), (80, 80));
+        assert_eq!(heal.player.relics.len(), 1, "满血那一格不该给别的东西");
+        let curse = apply("wheel_of_change", 12, 0);
+        assert_eq!(curse.player.deck.len(), 11, "诅咒那一格多一张牌");
+        assert!(curse.player.deck.iter().any(|c| c.def.id == "decay"));
+        let toke = apply("wheel_of_change", 10, 0);
+        assert!(toke.picker.is_some(), "移除那一格该开选牌");
+        let hurt = apply("wheel_of_change", 3, 0);
+        assert_eq!((hurt.player.hp, hurt.player.max_hp), (72, 80), "掉血那一格");
+        assert_eq!(hurt.player.deck.len(), 10);
     }
 
     #[test]

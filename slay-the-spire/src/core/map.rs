@@ -1,5 +1,11 @@
-// 第一章地图:7 列 15 层,6 条从下往上爬的路径.
-// 生成方式沿用爬塔那套:先铺 6 条随机路径,再按层规则贴房间类型.
+// 第一章地图:7 列 15 层,6 条从下往上爬的路径 + 顶上单独一个 Boss 节点.
+//
+// 生成方式照抄参考实现(refs/slay-the-cli/src/engine/run/mapGen.ts,也就是原作
+// Map.cpp 的移植):先铺 6 条随机路径,再按每行的房间预算贴房间类型.
+// 两处"原作的怪毛病"也照抄,因为它们就是原作的行为:
+//   - 第 13 行只算"未分配"却不算进房间预算的 total(于是休息点比例少算一行),
+//   - getCommonAncestor 里那个 `x1 < y` 的比较(反编译原样).
+// 掷点全部来自 registry 的 mapRng(第一章的种子是 run seed + 1).
 use crate::rng::Rng;
 
 /// 普通层数(0..15);第 15 层是 Boss 前的休息点
@@ -8,6 +14,16 @@ pub const FLOORS: usize = 15;
 pub const COLS: usize = 7;
 /// 路径条数
 pub const PATHS: usize = 6;
+/// 最右边那一列的下标
+const ROW_END_NODE: i32 = COLS as i32 - 1;
+/// Boss 挂在第几列(参考实现里写死的 3)
+const BOSS_COL: usize = 3;
+
+const SHOP_ROOM_CHANCE: f64 = 0.05;
+const REST_ROOM_CHANCE: f64 = 0.12;
+const TREASURE_ROOM_CHANCE: f64 = 0.0;
+const EVENT_ROOM_CHANCE: f64 = 0.22;
+const ELITE_ROOM_CHANCE: f64 = 0.08;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NodeKind {
@@ -46,6 +62,16 @@ impl NodeKind {
         }
     }
 
+    fn from_room(room: Room) -> NodeKind {
+        match room {
+            Room::Monster => NodeKind::Monster,
+            Room::Elite => NodeKind::Elite,
+            Room::Event => NodeKind::Event,
+            Room::Rest => NodeKind::Rest,
+            Room::Shop => NodeKind::Shop,
+            Room::Treasure => NodeKind::Treasure,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -114,203 +140,566 @@ impl ActMap {
         seen
     }
 
-    /// 生成地图
-    ///
-    /// 6 条路径按"列号非递减"的顺序同时往上走:第 i 条永远不跑到第 i+1 条的右边,
-    /// 于是路径只会合并或分叉,不会交叉。两条路径落在同一列时共用同一个节点。
-    ///
-    /// 房间类型按原作第一章的规矩贴:
-    /// - 第 1 层全是怪,第 9 层全是宝箱,第 15 层全是休息点,Boss 单独一层
-    /// - 精英不出现在前 5 层
-    /// - 休息点与商店不出现在 Boss 前两层
-    /// - 同一条路径上不连续出现同一类型(怪物除外)
-    /// - 保底至少一个精英、一个商店、一个事件;一个节点最多三个岔路
-    ///
-    /// 原作另有一条"多个父节点同型就跟着同型"的成片规则,但它和这套路径形状
-    /// 叠加会长出整条商店/事件带(实测会出现一层里连着六个商店),所以不采用.
+    /// 生成地图.掷点从 rng(registry 的 mapRng)来
     pub fn generate(rng: &mut Rng) -> ActMap {
-        let mut nodes: Vec<Node> = Vec::new();
-        // grid[floor][col] = 该位置已建立的节点下标
-        let mut grid: Vec<Vec<Option<usize>>> = vec![vec![None; COLS]; FLOORS];
+        let mut g = Grid::new();
+        create_paths(&mut g, rng);
+        filter_redundant_edges_from_first_row(&mut g);
+        assign_rooms(&mut g, rng);
 
-        let ensure = |nodes: &mut Vec<Node>, grid: &mut Vec<Vec<Option<usize>>>, f: usize, c: usize| -> usize {
-            if let Some(i) = grid[f][c] {
-                return i;
-            }
-            let i = nodes.len();
-            nodes.push(Node {
-                floor: f,
-                col: c,
-                kind: NodeKind::Monster,
-                prev: Vec::new(),
-                next: Vec::new(),
-            });
-            grid[f][c] = Some(i);
-            i
-        };
-
-        // 起点列:随机取 6 个再排序,允许重复(重复即共用起点)
-        let mut cols: Vec<usize> = (0..PATHS).map(|_| rng.below(COLS as u32) as usize).collect();
-        cols.sort_unstable();
-        let mut prev_nodes: Vec<Option<usize>> = vec![None; PATHS];
-        for f in 0..FLOORS {
-            for i in 0..PATHS {
-                let idx = ensure(&mut nodes, &mut grid, f, cols[i]);
-                if let Some(p) = prev_nodes[i] {
-                    if !nodes[p].next.contains(&idx) {
-                        nodes[p].next.push(idx);
-                    }
-                    if !nodes[idx].prev.contains(&p) {
-                        nodes[idx].prev.push(p);
-                    }
-                }
-                prev_nodes[i] = Some(idx);
-            }
-            if f + 1 == FLOORS {
-                break;
-            }
-            // 下一层的列:直行优先,左右各一半;并且不许越过左边那条已经选好的列
-            let mut lower = 0usize;
-            let mut next_cols = vec![0usize; PATHS];
-            for i in 0..PATHS {
-                let c = cols[i];
-                let mut cands: Vec<(usize, u32)> = vec![(c, 2)];
-                if c > 0 {
-                    cands.push((c - 1, 1));
-                }
-                if c + 1 < COLS {
-                    cands.push((c + 1, 1));
-                }
-                cands.retain(|(x, _)| *x >= lower);
-                let chosen = if cands.is_empty() {
-                    lower.min(COLS - 1)
-                } else {
-                    let ws: Vec<u32> = cands.iter().map(|(_, w)| *w).collect();
-                    cands[rng.weighted_idx(&ws).unwrap_or(0)].0
-                };
-                next_cols[i] = chosen.min(COLS - 1);
-                lower = next_cols[i];
-            }
-            cols = next_cols;
+        // 参考实现还会再掷两下挑"燃烧精英"和它的增益.本作没有燃烧精英这套机制,
+        // 掷点照烧,保证 mapRng 的位置和参考实现一致
+        let elites = g.elites();
+        if !elites.is_empty() {
+            let _ = rng.random(elites.len() as u32 - 1);
+            let _ = rng.random_range(0, 3);
         }
 
-        // Boss 节点:所有第 14 层节点都连上去
+        g.into_act_map()
+    }
+
+    /// 按参考实现的 mapToString 排版,给金标准测试逐格对比用
+    #[cfg(test)]
+    pub fn to_rows_string(&self) -> String {
+        let present: Vec<Vec<bool>> = (0..FLOORS)
+            .map(|y| {
+                (0..COLS)
+                    .map(|x| self.rows[y].iter().any(|i| self.nodes[*i].col == x))
+                    .collect()
+            })
+            .collect();
+        let mut lines: Vec<String> = Vec::new();
+        for y in 0..FLOORS {
+            let mut line = String::new();
+            for x in 0..COLS {
+                if present[y][x] {
+                    let node = self
+                        .rows[y]
+                        .iter()
+                        .map(|i| &self.nodes[*i])
+                        .find(|n| n.col == x)
+                        .expect("present 的格子有节点");
+                    // 参考实现的排版把普通怪写成 M(本作界面上用 e,这里只为对比)
+                    line.push(if node.kind == NodeKind::Monster {
+                        'M'
+                    } else {
+                        node.kind.sigil()
+                    });
+                    let mut edges: Vec<usize> = node
+                        .next
+                        .iter()
+                        .map(|i| self.nodes[*i].col)
+                        .collect();
+                    edges.sort_unstable();
+                    let e = edges
+                        .iter()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    line.push_str(&format!("{e:<6}"));
+                } else {
+                    line.push(' ');
+                    line.push_str(&format!("{:<6}", ""));
+                }
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines.join("\n")
+    }
+}
+
+// ---- 参考实现里的那张网格 ----
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Room {
+    Monster,
+    Elite,
+    Event,
+    Rest,
+    Shop,
+    Treasure,
+}
+
+#[derive(Clone)]
+struct GNode {
+    room: Option<Room>,
+    /// 通向下一行哪些列(升序去重)
+    edges: Vec<usize>,
+    /// 上一行哪些列通向它(可能重复)
+    parents: Vec<usize>,
+}
+
+struct Grid {
+    /// [行][列]
+    n: Vec<Vec<GNode>>,
+}
+
+impl Grid {
+    fn new() -> Grid {
+        Grid {
+            n: (0..FLOORS)
+                .map(|_| {
+                    (0..COLS)
+                        .map(|_| GNode {
+                            room: None,
+                            edges: Vec::new(),
+                            parents: Vec::new(),
+                        })
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+
+    fn add_edge(&mut self, y: usize, x: usize, edge: usize) {
+        let e = &mut self.n[y][x].edges;
+        if let Err(i) = e.binary_search(&edge) {
+            e.insert(i, edge);
+        }
+    }
+
+    fn elites(&self) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for (y, row) in self.n.iter().enumerate() {
+            for (x, node) in row.iter().enumerate() {
+                if node.room == Some(Room::Elite) {
+                    out.push((x, y));
+                }
+            }
+        }
+        out
+    }
+
+    /// 把网格变成引擎用的 ActMap:存在的节点拼成下标,边接成 prev/next,
+    /// 顶上再挂一个 Boss 节点(第 14 行的路径终点都通向它)
+    fn into_act_map(self) -> ActMap {
+        let present = |y: usize, x: usize| -> bool {
+            if y == FLOORS - 1 {
+                self.n[FLOORS - 2].iter().any(|n| n.edges.contains(&x))
+            } else {
+                !self.n[y][x].edges.is_empty()
+            }
+        };
+        // 行优先编号,同一行里下标顺序就是列顺序
+        let mut index: Vec<Vec<Option<usize>>> = vec![vec![None; COLS]; FLOORS];
+        let mut nodes: Vec<Node> = Vec::new();
+        for y in 0..FLOORS {
+            for x in 0..COLS {
+                if !present(y, x) {
+                    continue;
+                }
+                let kind = self.n[y][x]
+                    .room
+                    .map(NodeKind::from_room)
+                    .unwrap_or(NodeKind::Monster);
+                index[y][x] = Some(nodes.len());
+                nodes.push(Node {
+                    floor: y,
+                    col: x,
+                    kind,
+                    prev: Vec::new(),
+                    next: Vec::new(),
+                });
+            }
+        }
         let boss = nodes.len();
         nodes.push(Node {
             floor: FLOORS,
-            col: COLS / 2,
+            col: BOSS_COL,
             kind: NodeKind::Boss,
             prev: Vec::new(),
             next: Vec::new(),
         });
-        for i in 0..nodes.len() - 1 {
-            if nodes[i].floor == FLOORS - 1 {
-                nodes[i].next.push(boss);
-                nodes[boss].prev.push(i);
+        for y in 0..FLOORS {
+            for x in 0..COLS {
+                let Some(from) = index[y][x] else { continue };
+                for edge in self.n[y][x].edges.clone() {
+                    let to = if y == FLOORS - 1 {
+                        Some(boss)
+                    } else {
+                        index[y + 1][edge]
+                    };
+                    let Some(to) = to else { continue };
+                    if !nodes[from].next.contains(&to) {
+                        nodes[from].next.push(to);
+                    }
+                    if !nodes[to].prev.contains(&from) {
+                        nodes[to].prev.push(from);
+                    }
+                }
             }
         }
-
         let mut rows: Vec<Vec<usize>> = vec![Vec::new(); FLOORS + 1];
         for (i, n) in nodes.iter().enumerate() {
             rows[n.floor].push(i);
         }
         for r in rows.iter_mut() {
-            // 同层按列排序,渲染时从左到右稳定
             r.sort_by_key(|i| nodes[*i].col);
         }
-
-        let mut map = ActMap { nodes, rows, boss };
-        map.assign_kinds(rng);
-        map
+        ActMap { nodes, rows, boss }
     }
+}
 
-    /// 贴房间类型.顺序很关键:必须按层从下往上,父节点的类型才是已知的
-    fn assign_kinds(&mut self, rng: &mut Rng) {
-        // 固定层
-        for i in 0..self.nodes.len() {
-            let f = self.nodes[i].floor;
-            self.nodes[i].kind = match f {
-                0 => NodeKind::Monster,
-                8 => NodeKind::Treasure,
-                _ if f == FLOORS - 1 => NodeKind::Rest,
-                _ if f == FLOORS => NodeKind::Boss,
-                _ => NodeKind::Monster,
+/// 参考实现的 randRange:random(max - min) + min
+fn rand_range(rng: &mut Rng, min: i32, max: i32) -> i32 {
+    rng.random((max - min) as u32) as i32 + min
+}
+
+fn max_edge(n: &GNode) -> usize {
+    *n.edges.last().expect("有边才有最大值")
+}
+
+fn min_edge(n: &GNode) -> usize {
+    n.edges[0]
+}
+
+/// 反编译原样保留了 `x1 < y` 这个比较(不是 x1 < x2),`y` 就是当前行号
+fn get_common_ancestor(g: &Grid, x1: usize, x2: usize, y: usize) -> Option<usize> {
+    let (l, r) = if (x1 as i32) < y as i32 { (x1, x2) } else { (x2, x1) };
+    if g.n[y][l].parents.is_empty() || g.n[y][r].parents.is_empty() {
+        return None;
+    }
+    let left_x = *g.n[y][l].parents.iter().max().unwrap();
+    let right_min = *g.n[y][r].parents.iter().min().unwrap();
+    if left_x == right_min {
+        Some(left_x)
+    } else {
+        None
+    }
+}
+
+fn choose_path_parent_loop_randomizer(
+    g: &Grid,
+    rng: &mut Rng,
+    cur_x: i32,
+    cur_y: usize,
+    new_x: i32,
+) -> i32 {
+    let mut new_x = new_x;
+    let parents = g.n[cur_y + 1][new_x as usize].parents.clone();
+    for parent_x in parents {
+        if cur_x == parent_x as i32 {
+            continue;
+        }
+        if get_common_ancestor(g, parent_x, cur_x as usize, cur_y).is_none() {
+            continue;
+        }
+        if new_x > cur_x {
+            new_x = cur_x + rand_range(rng, -1, 0);
+            if new_x < 0 {
+                new_x = cur_x;
+            }
+        } else if new_x == cur_x {
+            new_x = cur_x + rand_range(rng, -1, 1);
+            if new_x > ROW_END_NODE {
+                new_x = cur_x - 1;
+            } else if new_x < 0 {
+                new_x = cur_x + 1;
+            }
+        } else {
+            new_x = cur_x + rand_range(rng, 0, 1);
+            if new_x > ROW_END_NODE {
+                new_x = cur_x;
+            }
+        }
+    }
+    new_x
+}
+
+fn choose_path_adjust_new_x(g: &Grid, cur_x: usize, cur_y: usize, new_edge_x: i32) -> i32 {
+    let mut new_edge_x = new_edge_x;
+    if cur_x != 0 && !g.n[cur_y][cur_x - 1].edges.is_empty() {
+        let e = max_edge(&g.n[cur_y][cur_x - 1]) as i32;
+        if e > new_edge_x {
+            new_edge_x = e;
+        }
+    }
+    if cur_x < COLS - 1 && !g.n[cur_y][cur_x + 1].edges.is_empty() {
+        let e = min_edge(&g.n[cur_y][cur_x + 1]) as i32;
+        if e < new_edge_x {
+            new_edge_x = e;
+        }
+    }
+    new_edge_x
+}
+
+fn choose_new_path(g: &Grid, rng: &mut Rng, cur_x: usize, cur_y: usize) -> usize {
+    let (min, max) = if cur_x == 0 {
+        (0, 1)
+    } else if cur_x == COLS - 1 {
+        (-1, 0)
+    } else {
+        (-1, 1)
+    };
+    let new_edge_x = cur_x as i32 + rand_range(rng, min, max);
+    let new_edge_x = choose_path_parent_loop_randomizer(g, rng, cur_x as i32, cur_y, new_edge_x);
+    choose_path_adjust_new_x(g, cur_x, cur_y, new_edge_x).max(0) as usize
+}
+
+fn create_paths_iteration(g: &mut Grid, rng: &mut Rng, start_x: usize) {
+    let mut cur_x = start_x;
+    for cur_y in 0..FLOORS - 1 {
+        let new_x = choose_new_path(g, rng, cur_x, cur_y);
+        g.add_edge(cur_y, cur_x, new_x);
+        g.n[cur_y + 1][new_x].parents.push(cur_x);
+        cur_x = new_x;
+    }
+    // 每条路径的终点都连到最上层的 Boss 列
+    g.add_edge(FLOORS - 1, cur_x, BOSS_COL);
+}
+
+fn create_paths(g: &mut Grid, rng: &mut Rng) {
+    let first_start_x = rand_range(rng, 0, COLS as i32 - 1) as usize;
+    create_paths_iteration(g, rng, first_start_x);
+    for i in 1..PATHS {
+        let mut start_x = rand_range(rng, 0, COLS as i32 - 1) as usize;
+        while start_x == first_start_x && i == 1 {
+            start_x = rand_range(rng, 0, COLS as i32 - 1) as usize;
+        }
+        create_paths_iteration(g, rng, start_x);
+    }
+}
+
+fn filter_redundant_edges_from_first_row(g: &mut Grid) {
+    let mut visited = [false; COLS];
+    for src_x in 0..COLS {
+        let mut i = g.n[0][src_x].edges.len();
+        while i > 0 {
+            i -= 1;
+            let dest_x = g.n[0][src_x].edges[i];
+            if visited[dest_x] {
+                g.n[1][dest_x].parents.retain(|p| *p != src_x);
+                g.n[0][src_x].edges.remove(i);
+            } else {
+                visited[dest_x] = true;
+            }
+        }
+    }
+}
+
+// ---- 贴房间类型 ----
+
+struct RoomCounts {
+    total: i64,
+    unassigned: i64,
+}
+
+fn get_room_counts_and_assign_fixed(g: &mut Grid) -> RoomCounts {
+    let mut counts = RoomCounts {
+        total: 0,
+        unassigned: 0,
+    };
+    for row in 0..FLOORS {
+        for x in 0..COLS {
+            if g.n[row][x].edges.is_empty() {
+                continue;
+            }
+            let fixed = if row == 0 {
+                Some(Room::Monster)
+            } else if row == 8 {
+                Some(Room::Treasure)
+            } else if row == FLOORS - 1 {
+                Some(Room::Rest)
+            } else {
+                None
             };
-        }
-        let mut pending: Vec<usize> = (0..self.nodes.len())
-            .filter(|i| {
-                let f = self.nodes[*i].floor;
-                f != 0 && f != 8 && f != FLOORS - 1 && f != FLOORS
-            })
-            .collect();
-        pending.sort_by_key(|i| self.nodes[*i].floor);
-        for i in pending {
-            let floor = self.nodes[i].floor;
-            let parents: Vec<NodeKind> = self
-                .nodes[i]
-                .prev
-                .iter()
-                .map(|p| self.nodes[*p].kind)
-                .collect();
-            // 先按层的规矩定下允许的类型
-            let mut cands: Vec<(NodeKind, u32)> = vec![
-                (NodeKind::Monster, 45),
-                (NodeKind::Event, 22),
-                (NodeKind::Rest, 12),
-                (NodeKind::Shop, 5),
-            ];
-            if floor >= 5 {
-                cands.push((NodeKind::Elite, 16));
-            }
-            cands.retain(|(k, _)| {
-                // 休息点与商店不出现在 Boss 前两层
-                !(matches!(k, NodeKind::Rest | NodeKind::Shop) && floor >= FLOORS - 2)
-            });
-            // 同一条路径上不连续出现同一类型(怪物例外).
-            // 原作还有一条"多个父节点同型就跟着同型"的成片规则,但那和这套
-            // 路径形状叠加会长出整条商店/事件带,这里不采用
-            cands.retain(|(k, _)| *k == NodeKind::Monster || !parents.contains(k));
-            if cands.is_empty() {
-                continue;
-            }
-            let ws: Vec<u32> = cands.iter().map(|(_, w)| *w).collect();
-            if let Some(idx) = rng.weighted_idx(&ws) {
-                self.nodes[i].kind = cands[idx].0;
+            match fixed {
+                Some(r) => {
+                    g.n[row][x].room = Some(r);
+                    counts.total += 1;
+                }
+                None => {
+                    counts.unassigned += 1;
+                    // 第 13 行的怪毛病:算未分配,但不进 total
+                    if row != FLOORS - 2 {
+                        counts.total += 1;
+                    }
+                }
             }
         }
-        // 保底:至少一个精英、一个商店、一个事件
-        self.ensure_kind_present(rng, NodeKind::Elite, 5);
-        self.ensure_kind_present(rng, NodeKind::Shop, 1);
-        self.ensure_kind_present(rng, NodeKind::Event, 1);
+    }
+    counts
+}
+
+fn fill_room_array(counts: &RoomCounts) -> Vec<Room> {
+    let mut arr = vec![Room::Monster; counts.unassigned as usize];
+    let shop_count = (counts.total as f64 * SHOP_ROOM_CHANCE).round() as usize;
+    let rest_count = (counts.total as f64 * REST_ROOM_CHANCE).round() as usize;
+    let treasure_count = (counts.total as f64 * TREASURE_ROOM_CHANCE).round() as usize;
+    let elite_count = (counts.total as f64 * ELITE_ROOM_CHANCE).round() as usize;
+    let event_count = (counts.total as f64 * EVENT_ROOM_CHANCE).round() as usize;
+
+    let mut i = 0usize;
+    let put = |arr: &mut Vec<Room>, room: Room, n: usize, i: &mut usize| {
+        for _ in 0..n {
+            if *i >= arr.len() {
+                break;
+            }
+            arr[*i] = room;
+            *i += 1;
+        }
+    };
+    put(&mut arr, Room::Shop, shop_count, &mut i);
+    put(&mut arr, Room::Rest, rest_count, &mut i);
+    put(&mut arr, Room::Treasure, treasure_count, &mut i);
+    put(&mut arr, Room::Elite, elite_count, &mut i);
+    put(&mut arr, Room::Event, event_count, &mut i);
+    arr
+}
+
+/// 同行/上下行之间那几张"谁挨着谁"的表:列号集合用升序去重的 Vec 表示
+struct RoomAssignData {
+    offset: usize,
+    row_rooms: [Option<Room>; COLS],
+    prev_row_rooms: [Option<Room>; COLS],
+    sibling_cols: [Vec<usize>; COLS],
+    next_sibling_cols: [Vec<usize>; COLS],
+    parent_cols: [Vec<usize>; COLS],
+    next_parent_cols: [Vec<usize>; COLS],
+    rooms: Vec<Room>,
+}
+
+fn empty_cols() -> [Vec<usize>; COLS] {
+    std::array::from_fn(|_| Vec::new())
+}
+
+fn add_to(set: &mut Vec<usize>, v: usize) {
+    if let Err(i) = set.binary_search(&v) {
+        set.insert(i, v);
+    }
+}
+
+impl RoomAssignData {
+    fn new(rooms: Vec<Room>) -> Self {
+        RoomAssignData {
+            offset: 0,
+            row_rooms: [None; COLS],
+            prev_row_rooms: [None; COLS],
+            sibling_cols: empty_cols(),
+            next_sibling_cols: empty_cols(),
+            parent_cols: empty_cols(),
+            next_parent_cols: empty_cols(),
+            rooms,
+        }
     }
 
-    fn ensure_kind_present(&mut self, rng: &mut Rng, kind: NodeKind, min_floor: usize) {
-        if self.nodes.iter().any(|n| n.kind == kind) {
+    fn set_data(&mut self, x: usize, node: &GNode) {
+        if node.edges.len() == 1 {
+            add_to(&mut self.next_parent_cols[node.edges[0]], x);
             return;
         }
-        // 只能挑"换成这种类型也不会和上下层撞型"的怪物房
-        let n_nodes = self.nodes.len();
-        let mut cands: Vec<usize> = Vec::new();
-        for i in 0..n_nodes {
-            let n = &self.nodes[i];
-            if n.kind != NodeKind::Monster
-                || n.floor < min_floor
-                || n.floor >= FLOORS - 1
-                || n.floor == 8
-            {
+        let mut sibling_mask: Vec<usize> = Vec::new();
+        for edge in &node.edges {
+            add_to(&mut sibling_mask, *edge);
+            for s in sibling_mask.clone() {
+                add_to(&mut self.next_sibling_cols[*edge], s);
+            }
+            add_to(&mut self.next_parent_cols[*edge], x);
+        }
+    }
+
+    fn set_cur_data_only(&mut self, x: usize, node: &GNode) {
+        self.row_rooms[x] = node.room;
+    }
+
+    fn remove_element(&mut self, idx: usize) {
+        let mut i = idx;
+        while i > self.offset {
+            self.rooms[i] = self.rooms[i - 1];
+            i -= 1;
+        }
+        self.offset += 1;
+    }
+
+    fn next_row(&mut self) {
+        self.prev_row_rooms = self.row_rooms;
+        self.row_rooms = [None; COLS];
+        self.sibling_cols = std::mem::replace(&mut self.next_sibling_cols, empty_cols());
+        self.parent_cols = std::mem::replace(&mut self.next_parent_cols, empty_cols());
+    }
+
+    fn sibling_match(&self, x: usize, room: Room) -> bool {
+        self.sibling_cols[x]
+            .iter()
+            .any(|s| self.row_rooms[*s] == Some(room))
+    }
+
+    fn parent_match(&self, x: usize, room: Room) -> bool {
+        self.parent_cols[x]
+            .iter()
+            .any(|p| self.prev_row_rooms[*p] == Some(room))
+    }
+}
+
+fn assign_room_to_node(g: &mut Grid, y: usize, x: usize, data: &mut RoomAssignData) {
+    let mut tried: Vec<Room> = Vec::new();
+    let mut i = data.offset;
+    while i < data.rooms.len() {
+        let room = data.rooms[i];
+        if tried.contains(&room) {
+            i += 1;
+            continue;
+        }
+        tried.push(room);
+
+        let skip = (room == Room::Elite && y <= 4) || (room == Room::Rest && (y <= 4 || y >= 13));
+        if skip {
+            i += 1;
+            continue;
+        }
+
+        if room == Room::Event || room == Room::Monster {
+            if data.sibling_match(x, room) {
+                i += 1;
                 continue;
             }
-            let clean = n.prev.iter().all(|p| self.nodes[*p].kind != kind)
-                && n.next.iter().all(|c| self.nodes[*c].kind != kind);
-            if clean {
-                cands.push(i);
-            }
-        }
-        if cands.is_empty() {
+            g.n[y][x].room = Some(room);
+            data.row_rooms[x] = Some(room);
+            data.remove_element(i);
             return;
         }
-        let pick = cands[rng.below(cands.len() as u32) as usize];
-        self.nodes[pick].kind = kind;
+
+        if !data.parent_match(x, room) && !data.sibling_match(x, room) {
+            g.n[y][x].room = Some(room);
+            data.row_rooms[x] = Some(room);
+            data.remove_element(i);
+            return;
+        }
+        i += 1;
+    }
+    g.n[y][x].room = Some(Room::Monster); // 兜底:不消耗队列
+}
+
+fn assign_rooms(g: &mut Grid, rng: &mut Rng) {
+    let counts = get_room_counts_and_assign_fixed(g);
+    let mut rooms = fill_room_array(&counts);
+
+    // 用不计数器的原始掷点原地洗牌,和参考实现一样
+    let mut i = counts.unassigned as usize;
+    while i > 1 {
+        let j = rng.next_int_raw(i as u32) as usize;
+        rooms.swap(i - 1, j);
+        i -= 1;
+    }
+
+    let mut data = RoomAssignData::new(rooms);
+    for row in 0..FLOORS - 1 {
+        for x in 0..COLS {
+            if g.n[row][x].edges.is_empty() {
+                continue;
+            }
+            let node = g.n[row][x].clone();
+            if row == 0 || row == 8 {
+                data.set_data(x, &node);
+            } else if row == 7 || row == FLOORS - 2 {
+                assign_room_to_node(g, row, x, &mut data);
+                data.set_cur_data_only(x, &g.n[row][x]);
+            } else {
+                assign_room_to_node(g, row, x, &mut data);
+                data.set_data(x, &g.n[row][x]);
+            }
+        }
+        data.next_row();
     }
 }
 
@@ -377,7 +766,6 @@ mod tests {
     fn every_node_reaches_the_boss() {
         for seed in 0..10 {
             let m = map(seed);
-            // 从第一层任意节点都能走到 Boss
             for &start in m.row(0) {
                 let mut stack = vec![start];
                 let mut seen = vec![false; m.nodes.len()];
@@ -409,6 +797,8 @@ mod tests {
         }
     }
 
+    /// 参考实现的落座规矩:精英不在前 5 行,休息点/商店不在前 5 行也不在第 13 行,
+    /// 商店/精英/休息点还要求父节点不同型
     #[test]
     fn room_placement_rules_hold() {
         for seed in 0..40 {
@@ -420,24 +810,48 @@ mod tests {
                         "seed {seed}: 精英不该出现在第 {} 层",
                         n.floor + 1
                     ),
-                    // 休息点/商店不随机落在 Boss 前两层;最后一层是规定好的休息点
-                    NodeKind::Rest | NodeKind::Shop => assert!(
-                        n.floor != FLOORS - 2,
-                        "seed {seed}: 休息点/商店不该出现在第 {} 层",
-                        n.floor + 1
-                    ),
+                    NodeKind::Rest => {
+                        // 最后一层是定死的休息点,其余休息点只在第 6..13 层
+                        assert!(
+                            n.floor == FLOORS - 1 || (5..=12).contains(&n.floor),
+                            "seed {seed}: 休息点落在第 {} 层",
+                            n.floor + 1
+                        );
+                        for p in &n.prev {
+                            assert_ne!(
+                                m.node(*p).kind,
+                                n.kind,
+                                "seed {seed}: 第 {} 层休息点和上层同型",
+                                n.floor + 1
+                            );
+                        }
+                    }
+                    // 商店只看"上层不同型、同行不挨着",没有层数限制
+                    NodeKind::Shop => {
+                        for p in &n.prev {
+                            assert_ne!(
+                                m.node(*p).kind,
+                                n.kind,
+                                "seed {seed}: 第 {} 层商店和上层同型",
+                                n.floor + 1
+                            );
+                        }
+                    }
                     NodeKind::Boss => assert_eq!(n.floor, FLOORS),
                     _ => {}
                 }
-                // 同一条路径上不连续同类型(怪物除外)
-                for p in &n.prev {
-                    let parent = m.node(*p);
-                    if parent.kind != NodeKind::Monster {
-                        assert_ne!(
-                            parent.kind, n.kind,
-                            "seed {seed}: 第 {} 层出现连续同类型房间",
-                            n.floor + 1
-                        );
+                // 同一个父节点的两个子节点不许同型(第 7、13 行往下是固定层,不在此列)
+                if n.floor != 7 && n.floor != FLOORS - 2 {
+                    for (i, a) in n.next.iter().enumerate() {
+                        for b in n.next.iter().skip(i + 1) {
+                            let (ka, kb) = (m.node(*a).kind, m.node(*b).kind);
+                            // 怪物不占房间配额,两个同类怪是可以的(兜底那一步)
+                            assert!(
+                                ka == NodeKind::Monster || ka != kb,
+                                "seed {seed}: 第 {} 层同一个岔口分出两个同类房间",
+                                n.floor + 2
+                            );
+                        }
                     }
                 }
             }
@@ -448,12 +862,10 @@ mod tests {
     fn forward_reachable_covers_the_rest_of_the_road() {
         for seed in 0..10 {
             let m = map(seed);
-            // 从任何一个第一层节点出发,最后都能到 Boss
             for &start in m.row(0) {
                 let fwd = m.forward_reachable(start);
                 assert!(fwd[start], "起点自己要算进去");
                 assert!(fwd[m.boss], "往前一定包含 Boss");
-                // 不在里面的节点,一定不是它的后代
                 for (i, ok) in fwd.iter().enumerate() {
                     if *ok || i == m.boss {
                         continue;
@@ -463,7 +875,6 @@ mod tests {
                     }
                 }
             }
-            // 第一层不同起点的未来不完全一样,高亮才会随 h/j/k 变
             let row0 = m.row(0);
             if row0.len() > 1 {
                 let a = m.forward_reachable(row0[0]);
@@ -486,7 +897,6 @@ mod tests {
 
     #[test]
     fn progression_is_always_possible() {
-        // 站在任意节点,下一层至少有一个可选目标(除了 Boss)
         for seed in 0..10 {
             let m = map(seed);
             for (i, n) in m.nodes.iter().enumerate() {
@@ -517,7 +927,7 @@ mod tests {
 
     #[test]
     fn paths_do_not_cross() {
-        // 路径不交叉:同一层两节点的列序,在下一层保持同样的相对关系
+        // 同层节点按列排序,且两节点往下一层的出口列不会交叉
         for seed in 0..20 {
             let m = map(seed);
             for f in 0..FLOORS {
@@ -525,8 +935,8 @@ mod tests {
                 for w in row.windows(2) {
                     let (a, b) = (m.node(w[0]), m.node(w[1]));
                     assert!(a.col < b.col, "同层节点应按列排序");
-                    for (_, an) in a.next.iter().enumerate() {
-                        for bn in b.next.iter() {
+                    for an in &a.next {
+                        for bn in &b.next {
                             if m.node(*an).floor != f + 1 || m.node(*bn).floor != f + 1 {
                                 continue;
                             }

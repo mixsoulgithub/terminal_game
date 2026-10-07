@@ -143,10 +143,31 @@ pub static POTIONS: &[PotionDef] = &[
     },
 ];
 
-/// 随机一瓶药水
-pub fn random_potion(rng: &mut Rng) -> &'static PotionDef {
+/// 药水稀有度的两档分界(参考实现 POTION_DROP.commonBelow / uncommonBelow)
+const COMMON_BELOW: i32 = 65;
+const UNCOMMON_BELOW: i32 = 90;
+
+/// 随机一瓶药水(参考实现的 returnRandomPotion):先掷稀有度,
+/// 再从池子里逐瓶抽到稀有度对上为止
+pub fn random_potion(rng: &mut Rng) -> Option<&'static PotionDef> {
     assert!(!POTIONS.is_empty(), "potion pool is empty");
-    rng.pick(POTIONS)
+    let roll = rng.random_range(0, 99);
+    let rarity = if roll < COMMON_BELOW {
+        Rarity::Common
+    } else if roll < UNCOMMON_BELOW {
+        Rarity::Uncommon
+    } else {
+        Rarity::Rare
+    };
+    if !POTIONS.iter().any(|p| p.rarity == rarity) {
+        return None;
+    }
+    loop {
+        let i = rng.random(POTIONS.len() as u32 - 1) as usize;
+        if POTIONS[i].rarity == rarity {
+            return Some(&POTIONS[i]);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -175,7 +196,7 @@ mod tests {
     fn random_potion_stays_in_pool() {
         let mut rng = Rng::new(4);
         for _ in 0..50 {
-            let p = random_potion(&mut rng);
+            let p = random_potion(&mut rng).expect("池子里三档稀有度都有");
             assert!(POTIONS.iter().any(|q| q.id == p.id));
         }
     }

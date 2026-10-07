@@ -1,0 +1,180 @@
+{
+  "seedNumeric": 12345,
+  "seedString": "A2Q",
+  "mapHeight": 15,
+  "map": "                     M3     M5\n                     M2,4          M4,5,6\n              M3            ?3,5   M5     $6\n                     M2,4          ?4,5   M5\n              ?1            M5     ?5,6\n       R0                          E4,5,6 ?6\n?0,1                        ?4     M5     R5\nE1     ?2                   E3     M4,5,6\n       T1     T2     T4     T4     T4     T5\n       M2     ?2            M3,4   M4\n              R1,3   ?3     M3,4,5\n       M2            E2,3   R5     M5\n              R2,3   M3,4          ?6\n              M2     $4     M4            M5,6\n              R3            R3     R3     R3",
+  "monsterList": [
+    "CULTIST",
+    "JAW_WORM",
+    "SMALL_SLIMES",
+    "LOOTER",
+    "BLUE_SLAVER",
+    "RED_SLAVER",
+    "THREE_LOUSE",
+    "EXORDIUM_WILDLIFE",
+    "LOOTER",
+    "RED_SLAVER",
+    "EXORDIUM_THUGS",
+    "LARGE_SLIME",
+    "EXORDIUM_WILDLIFE",
+    "EXORDIUM_THUGS",
+    "THREE_LOUSE",
+    "EXORDIUM_WILDLIFE"
+  ],
+  "monsterListMobs": [
+    [
+      "CULTIST"
+    ],
+    [
+      "JAW_WORM"
+    ],
+    [
+      "SPIKE_SLIME_S",
+      "ACID_SLIME_M"
+    ],
+    [
+      "LOOTER"
+    ],
+    [
+      "BLUE_SLAVER"
+    ],
+    [
+      "RED_SLAVER"
+    ],
+    [
+      "RED_LOUSE",
+      "GREEN_LOUSE",
+      "RED_LOUSE"
+    ],
+    [
+      "FUNGI_BEAST",
+      "JAW_WORM"
+    ],
+    [
+      "LOOTER"
+    ],
+    [
+      "RED_SLAVER"
+    ],
+    [
+      "RED_LOUSE",
+      "BLUE_SLAVER"
+    ],
+    [
+      "ACID_SLIME_L"
+    ],
+    [
+      "FUNGI_BEAST",
+      "JAW_WORM"
+    ],
+    [
+      "RED_LOUSE",
+      "BLUE_SLAVER"
+    ],
+    [
+      "RED_LOUSE",
+      "GREEN_LOUSE",
+      "RED_LOUSE"
+    ],
+    [
+      "FUNGI_BEAST",
+      "JAW_WORM"
+    ]
+  ],
+  "eliteList": [
+    "GREMLIN_NOB",
+    "THREE_SENTRIES",
+    "GREMLIN_NOB",
+    "LAGAVULIN",
+    "GREMLIN_NOB",
+    "LAGAVULIN",
+    "THREE_SENTRIES",
+    "LAGAVULIN",
+    "THREE_SENTRIES",
+    "GREMLIN_NOB"
+  ],
+  "eliteListMobs": [
+    [
+      "GREMLIN_NOB"
+    ],
+    [
+      "SENTRY",
+      "SENTRY",
+      "SENTRY"
+    ],
+    [
+      "GREMLIN_NOB"
+    ],
+    [
+      "LAGAVULIN"
+    ],
+    [
+      "GREMLIN_NOB"
+    ],
+    [
+      "LAGAVULIN"
+    ],
+    [
+      "SENTRY",
+      "SENTRY",
+      "SENTRY"
+    ],
+    [
+      "LAGAVULIN"
+    ],
+    [
+      "SENTRY",
+      "SENTRY",
+      "SENTRY"
+    ],
+    [
+      "GREMLIN_NOB"
+    ]
+  ],
+  "bossOrder": [
+    "HEXAGHOST",
+    "THE_GUARDIAN",
+    "SLIME_BOSS"
+  ],
+  "bossOrderMobs": [
+    [
+      "HEXAGHOST"
+    ],
+    [
+      "THE_GUARDIAN"
+    ],
+    [
+      "SLIME_BOSS"
+    ]
+  ],
+  "firstRoom": {
+    "x": 3,
+    "roomKind": "combat",
+    "encounterId": "CULTIST",
+    "monsters": [
+      [
+        "CULTIST",
+        51
+      ]
+    ],
+    "floor": 1
+  },
+  "rewards": {
+    "gold": 13,
+    "potion": null,
+    "cards": [
+      [
+        "ARMAMENTS",
+        false
+      ],
+      [
+        "TWIN_STRIKE",
+        false
+      ],
+      [
+        "ANGER",
+        false
+      ]
+    ]
+  }
+}

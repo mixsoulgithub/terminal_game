@@ -1817,7 +1817,12 @@ impl App {
         match head {
             "q" | "quit" => self.quit = true,
             "help" => self.open_overlay(Overlay::Help),
-            "seed" => self.info(format!("seed {}", self.run.seed)),
+            // 种子按参考实现的形式(base-35)显示,和 --seed 收的字符串同一种写法
+            "seed" => self.info(format!(
+                "seed {} ({})",
+                crate::rng::seed_to_string(self.run.seed),
+                self.run.seed
+            )),
             // :relic add <名字|all> / :relic remove <名字>
             "relic" => {
                 let (sub, args) = split_sub(rest);
@@ -1927,16 +1932,19 @@ impl App {
                         let seed = if args.is_empty() {
                             crate::rng::random_seed()
                         } else {
-                            match args.parse::<u64>() {
-                                Ok(n) => n,
-                                Err(_) => {
+                            match crate::rng::seed_from_arg(args) {
+                                Some(n) => n,
+                                None => {
                                     self.warn(format!("bad seed: {args}"));
                                     return;
                                 }
                             }
                         };
                         self.restart(seed);
-                        Ok(format!("new run, seed {seed}"))
+                        Ok(format!(
+                            "new run, seed {}",
+                            crate::rng::seed_to_string(seed)
+                        ))
                     }
                     "save" => {
                         if args.is_empty() {
@@ -2540,7 +2548,8 @@ mod tests {
     #[test]
     fn battle_shakes_follow_attack_and_damage() {
         use crate::core::combat::ShakeWho;
-        let mut app = App::new(7);
+        // 种子 10 的第一场是两只跳蚤,开局就咬人(教堂僧侣第一回合是加 buff)
+        let mut app = App::new(10);
         app.handle_key(enter()); // 进第一场战斗
         assert_eq!(app.run.screen, Screen::Combat);
         let idx = app
@@ -2835,6 +2844,8 @@ mod tests {
             r.card_taken = false;
             r.relic = crate::core::relics::relic_def("vajra");
             r.relic_taken = false;
+            r.potion = None;
+            r.potion_taken = false;
             r.index = 0;
         }
         // 槽位:0 金币,1..3 卡牌,4 遗物

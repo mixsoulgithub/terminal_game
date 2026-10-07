@@ -8,7 +8,7 @@ use crate::core::enemy::{
 use crate::core::potions::{PotionDef, PotionFx};
 use crate::core::relics::RelicDef;
 use crate::core::status::{Status, Statuses};
-use crate::rng::Rng;
+use crate::rng::{java_shuffle, FloorStream, JavaRandom, RngRegistry};
 
 /// 手牌上限
 pub const HAND_LIMIT: usize = 10;
@@ -231,7 +231,7 @@ pub struct Combat {
     pub turn: u32,
     pub phase: Phase,
     pub log: Vec<LogLine>,
-    pub rng: Rng,
+    pub streams: RngRegistry,
     pub encounter_id: &'static str,
     pub kind: EnemyKind,
     /// 本场对敌人造成的总伤害,结算界面用
@@ -274,11 +274,10 @@ struct PlayCtx {
 }
 
 impl Combat {
-    pub fn new(enc: &'static Encounter, setup: CombatSetup, seed: u64) -> Self {
-        let mut rng = Rng::new(seed);
+    pub fn new(enc: &'static Encounter, setup: CombatSetup, mut streams: RngRegistry) -> Self {
         // 阵容:带抽签规则的遭遇(三种"形状")开局按参考规则重抽,其余用固定名单
         let lineup: Vec<&'static str> = match enc.lineup {
-            Some(roll) => roll(&mut rng),
+            Some(roll) => roll(streams.floor(FloorStream::MiscRng)),
             None => enc.enemies.to_vec(),
         };
         let mut enemies = Vec::new();
@@ -291,7 +290,10 @@ impl Combat {
             } else {
                 def.name.to_string()
             };
-            let hp = rng.range_inclusive(def.hp.0, def.hp.1);
+            // 血量按槽位顺序从 monsterHpRng 掷
+            let hp = streams
+                .floor(FloorStream::MonsterHpRng)
+                .range_inclusive(def.hp.0, def.hp.1);
             let mut statuses = Statuses::new();
             for (s, n) in def.innate {
                 if *n == 0 {
@@ -302,12 +304,6 @@ impl Combat {
             }
             let mut state = EnemyState::default();
             let mut block = def.start_block;
-            let mut spawn = crate::core::enemy::SpawnCtx {
-                rng: &mut rng,
-                statuses: &mut statuses,
-                state: &mut state,
-            };
-            (def.spawn)(&mut spawn);
             // 遭遇级预置状态:开局的状态/格挡,以及"已经行动过"的招式历史
             for p in enc.presets.iter().filter(|p| p.slots.contains(&i)) {
                 for (s, n) in p.statuses {
@@ -340,9 +336,13 @@ impl Combat {
         }
 
         let enemies_len = enemies.len();
-        // 战斗开始时洗牌,天生牌直接入手
+        // 战斗开始时洗牌:参考实现是 shuffleRng 掷一个 long 给 java.Random 定种,
+        // 再用 Collections.shuffle 洗牌堆
         let mut deck = setup.deck;
-        rng.shuffle(&mut deck);
+        java_shuffle(
+            &mut deck,
+            &mut JavaRandom::new(streams.floor(FloorStream::ShuffleRng).random_long()),
+        );
         let (innate, rest): (Vec<CardInstance>, Vec<CardInstance>) =
             deck.into_iter().partition(|c| c.is_innate());
 
@@ -369,7 +369,7 @@ impl Combat {
             turn: 0,
             phase: Phase::PlayerTurn,
             log: Vec::new(),
-            rng,
+            streams,
             encounter_id: enc.id,
             kind: enc.kind,
             damage_dealt: 0,
@@ -387,6 +387,22 @@ impl Combat {
             facing: 1,
             next_uid: enemies_len as u64,
         };
+
+        // 开局的 spawn 掷点(参考实现里这一批排在洗牌之后、掷首招之前).
+        // 用的还是 monsterHpRng:卷曲层数、开局定死的咬伤都在这一掷
+        {
+            let Combat {
+                streams, enemies, ..
+            } = &mut c;
+            for e in enemies.iter_mut() {
+                let mut spawn = crate::core::enemy::SpawnCtx {
+                    rng: streams.floor(FloorStream::MonsterHpRng),
+                    statuses: &mut e.statuses,
+                    state: &mut e.state,
+                };
+                (e.def.spawn)(&mut spawn);
+            }
+        }
 
         // 遭遇级预置:开战就给玩家的状态(第四幕精英的被包围)
         for (s, n) in enc.player_statuses {
@@ -548,7 +564,7 @@ impl Combat {
         if pool.is_empty() {
             return;
         }
-        let def = self.rng.pick(&pool);
+        let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
         let mut inst = CardInstance::new(def);
         if upgraded {
             inst.upgrade();
@@ -681,7 +697,7 @@ impl Combat {
                 for _ in 0..hex {
                     let mut inst = CardInstance::new(cards::card_def_or_panic("dazed"));
                     self.fix_new_card(&mut inst);
-                    let pos = self.rng.below(self.draw.len() as u32 + 1) as usize;
+                    let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
                     self.draw.insert(pos, inst);
                 }
                 self.push_log(
@@ -720,7 +736,7 @@ impl Combat {
                 }
                 self.draw = std::mem::take(&mut self.discard);
                 let count = self.draw.len();
-                self.rng.shuffle(&mut self.draw);
+                java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
                 self.push_log(
                     LogKind::Info,
                     format!("shuffled {count} cards into the draw pile"),
@@ -736,7 +752,7 @@ impl Combat {
                     _ => -1,
                 };
                 if base >= 0 {
-                    let target = self.rng.below(4) as i32;
+                    let target = self.streams.floor(FloorStream::CardRandomRng).random(3) as i32;
                     self.hand[i].cost_delta = target - base;
                 }
             }
@@ -1137,7 +1153,7 @@ impl Combat {
                     match spot {
                         CardSpot::Discard => self.discard.push(inst),
                         CardSpot::DrawShuffle => {
-                            let pos = self.rng.below(self.draw.len() as u32 + 1) as usize;
+                            let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
                             self.draw.insert(pos, inst);
                         }
                         CardSpot::Deck => self.deck_cards.push(inst),
@@ -1176,7 +1192,7 @@ impl Combat {
                 let me = self.enemies[idx].slot;
                 for slot in self.open_slots(me, slots, count as usize) {
                     // 每只单独掷点挑,允许抽到同一只(参考实现就是各抽各的)
-                    let i = self.rng.range_inclusive(0, pool.len() as i32 - 1) as usize;
+                    let i = self.streams.floor(FloorStream::AiRng).range_inclusive(0, pool.len() as i32 - 1) as usize;
                     let id = pool[i];
                     self.summon_one(id, slot, name);
                 }
@@ -1305,7 +1321,7 @@ impl Combat {
                 if alive.is_empty() {
                     Vec::new()
                 } else {
-                    vec![alive[self.rng.below(alive.len() as u32) as usize]]
+                    vec![alive[self.streams.floor(FloorStream::CardRandomRng).below(alive.len() as u32) as usize]]
                 }
             }
         }
@@ -1350,7 +1366,7 @@ impl Combat {
             );
             return;
         };
-        let pick = self.rng.below(pile.len() as u32) as usize;
+        let pick = self.streams.floor(FloorStream::CardRandomRng).below(pile.len() as u32) as usize;
         let card = pile.remove(pick);
         let label = card.label();
         self.stasis.push((idx, card));
@@ -1404,7 +1420,7 @@ impl Combat {
         } else {
             def.name.to_string()
         };
-        let hp = hp.unwrap_or_else(|| self.rng.range_inclusive(def.hp.0, def.hp.1));
+        let hp = hp.unwrap_or_else(|| self.streams.floor(FloorStream::MonsterHpRng).range_inclusive(def.hp.0, def.hp.1));
         let mut statuses = Statuses::new();
         for (s, n) in def.innate {
             if *n == 0 {
@@ -1417,7 +1433,7 @@ impl Combat {
         let block = def.start_block;
         {
             let mut ctx = crate::core::enemy::SpawnCtx {
-                rng: &mut self.rng,
+                rng: self.streams.floor(FloorStream::MonsterHpRng),
                 statuses: &mut statuses,
                 state: &mut state,
             };
@@ -1620,11 +1636,11 @@ impl Combat {
             let Combat {
                 enemies,
                 player,
-                rng,
+                streams,
                 ..
             } = self;
             let mut ctx = PickCtx {
-                rng,
+                rng: streams,
                 idx,
                 all: enemies,
                 player,
@@ -2524,7 +2540,7 @@ impl Combat {
         if alive.is_empty() {
             return None;
         }
-        Some(alive[self.rng.below(alive.len() as u32) as usize])
+        Some(alive[self.streams.floor(FloorStream::CardRandomRng).below(alive.len() as u32) as usize])
     }
 
     fn resolve(&mut self, card: &mut CardInstance, target: Option<usize>, ctx: &mut PlayCtx) {
@@ -2751,7 +2767,7 @@ impl Combat {
                         if self.hand.is_empty() {
                             break;
                         }
-                        let i = self.rng.below(self.hand.len() as u32) as usize;
+                        let i = self.streams.floor(FloorStream::CardRandomRng).below(self.hand.len() as u32) as usize;
                         let c = self.hand.remove(i);
                         ctx.exhausted += 1;
                         self.exhaust_card(c);
@@ -2837,7 +2853,7 @@ impl Combat {
                         .filter(|c| c.kind == crate::core::card::CardType::Attack)
                         .collect();
                     if !pool.is_empty() && self.hand.len() < HAND_LIMIT {
-                        let def = self.rng.pick(&pool);
+                        let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
                         inst.free_this_turn = true;
@@ -2891,7 +2907,7 @@ impl Combat {
                         if cands.is_empty() {
                             break;
                         }
-                        let pick = cands[self.rng.below(cands.len() as u32) as usize];
+                        let pick = cands[self.streams.floor(FloorStream::CardRandomRng).below(cands.len() as u32) as usize];
                         self.hand[pick].upgrade();
                         let name = self.hand[pick].label();
                         self.push_log(LogKind::Info, format!("{name} is upgraded for this combat"));
@@ -2955,7 +2971,7 @@ impl Combat {
                         continue;
                     }
                     for _ in 0..n {
-                        let def = self.rng.pick(&pool);
+                        let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
                         inst.free_combat = true;
@@ -2966,13 +2982,13 @@ impl Combat {
                             format!("{label} is shuffled in (costs 0 this combat)"),
                         );
                     }
-                    self.rng.shuffle(&mut self.draw);
+                    java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
                 }
                 Effect::ShuffleDiscardIntoDraw => {
                     if !self.discard.is_empty() {
                         let n = self.discard.len();
                         self.draw.append(&mut self.discard);
-                        self.rng.shuffle(&mut self.draw);
+                        java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
                         self.push_log(
                             LogKind::Info,
                             format!("shuffled {n} cards into the draw pile"),
@@ -2981,7 +2997,7 @@ impl Combat {
                 }
                 Effect::FreeRandomInHand => {
                     if !self.hand.is_empty() {
-                        let pick = self.rng.below(self.hand.len() as u32) as usize;
+                        let pick = self.streams.floor(FloorStream::CardRandomRng).below(self.hand.len() as u32) as usize;
                         self.hand[pick].free_combat = true;
                         let name = self.hand[pick].label();
                         self.push_log(
@@ -3047,7 +3063,7 @@ impl Combat {
                     }
                     let mut offered: Vec<CardInstance> = Vec::new();
                     for _ in 0..n {
-                        let def = self.rng.pick(&pool);
+                        let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
                         offered.push(inst);
@@ -3124,7 +3140,7 @@ impl Combat {
                         if cands.is_empty() {
                             break;
                         }
-                        let pick = cands[self.rng.below(cands.len() as u32) as usize];
+                        let pick = cands[self.streams.floor(FloorStream::CardRandomRng).below(cands.len() as u32) as usize];
                         let card = self.draw.remove(pick);
                         let label = card.label();
                         self.hand.push(card);
@@ -3282,7 +3298,7 @@ mod tests {
     }
 
     fn combat_with(encounter: &'static str, ids: &[&str]) -> Combat {
-        Combat::new(enc(encounter), setup(80, ids, &[]), 1)
+        Combat::new(enc(encounter), setup(80, ids, &[]), RngRegistry::new(1))
     }
 
     /// 新补的红卡:几个关键钩子各验一条
@@ -3758,7 +3774,11 @@ mod tests {
     #[test]
     fn thorns_relic_hits_attacker() {
         let relics = [relic_def_or_panic("bronze_scales")];
-        let mut c = Combat::new(enc("jaw_worm_solo"), setup(80, &["wound"; 5], &relics), 7);
+        let mut c = Combat::new(
+            enc("jaw_worm_solo"),
+            setup(80, &["wound"; 5], &relics),
+            RngRegistry::new(7),
+        );
         c.enemies[0].hp = 50;
         c.enemies[0].block = 0;
         c.enemies[0].next_move = 0;
@@ -3808,7 +3828,11 @@ mod tests {
     #[test]
     fn relic_lantern_grants_energy_on_combat_start() {
         let relics = [relic_def_or_panic("lantern")];
-        let c = Combat::new(enc("jaw_worm_solo"), setup(80, &["strike"; 5], &relics), 3);
+        let c = Combat::new(
+            enc("jaw_worm_solo"),
+            setup(80, &["strike"; 5], &relics),
+            RngRegistry::new(3),
+        );
         assert_eq!(c.energy, BASE_ENERGY + 1);
     }
 
@@ -4561,7 +4585,7 @@ mod monster_tests {
             relics: Vec::new(),
             gold: 0,
         };
-        Combat::new(enc, setup, seed)
+        Combat::new(enc, setup, RngRegistry::new(seed))
     }
 
     /// 敌人这一招的意图(不看睡眠/半死这些覆盖)
@@ -4983,7 +5007,7 @@ mod power_tests {
             relics: Vec::new(),
             gold: 0,
         };
-        Combat::new(enc, setup, 11)
+        Combat::new(enc, setup, RngRegistry::new(11))
     }
 
     fn idx_of(c: &Combat, id: &str) -> usize {
@@ -5189,10 +5213,9 @@ mod power_tests {
     #[test]
     fn exploder_slams_twice_then_blows_up() {
         let mut c = lock("three_shapes");
-        let i = idx_of(&c, "exploder");
+        // 只留一只自爆怪:阵容是抽签来的,可能抽到两只
         c.enemies.retain(|e| e.def.id == "exploder");
-        let i = i.min(0);
-        let _ = i;
+        c.enemies.truncate(1);
         assert_eq!(c.enemies[0].hp, 30);
         let hp = c.player.hp;
         c.end_turn();
@@ -5415,7 +5438,7 @@ mod summon_tests {
                 relics: Vec::new(),
                 gold: 0,
             },
-            seed,
+            RngRegistry::new(seed),
         )
     }
 

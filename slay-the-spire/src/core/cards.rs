@@ -884,7 +884,7 @@ pub static CARDS: &[CardDef] = &[
         name: "Battle Trance",
         cost: Cost::Fixed(0),
         kind: CardType::Skill,
-        rarity: Rarity::Common,
+        rarity: Rarity::Uncommon,
         target: Target::None,
         text: "Draw 3 cards.",
         exhaust: false,
@@ -961,7 +961,7 @@ pub static CARDS: &[CardDef] = &[
         name: "Heavy Blade",
         cost: Cost::Fixed(2),
         kind: CardType::Attack,
-        rarity: Rarity::Uncommon,
+        rarity: Rarity::Common,
         target: Target::Enemy,
         text: "Deal 14 damage. Strength affects this card 3 times.",
         exhaust: false,
@@ -991,7 +991,7 @@ pub static CARDS: &[CardDef] = &[
         name: "Perfected Strike",
         cost: Cost::Fixed(2),
         kind: CardType::Attack,
-        rarity: Rarity::Uncommon,
+        rarity: Rarity::Common,
         target: Target::Enemy,
         text: "Deal 6 damage plus 2 damage for each Strike in your deck.",
         exhaust: false,
@@ -1622,7 +1622,7 @@ pub static CARDS: &[CardDef] = &[
         name: "Whirlwind",
         cost: Cost::X,
         kind: CardType::Attack,
-        rarity: Rarity::Rare,
+        rarity: Rarity::Uncommon,
         target: Target::All,
         text: "Deal 5 damage to ALL enemies X times.",
         exhaust: false,
@@ -3508,24 +3508,50 @@ pub fn colorless_pool() -> Vec<&'static CardDef> {
         .collect()
 }
 
+/// 本职业牌在参考实现里的注册顺序:basics 切片排在最前,其余按 corpus id 顺序.
+/// 抽牌是按池子下标抽的,顺序不一样抽出来的牌就不一样,所以这几张要提到最前.
+const BUNDLE_HEAD: &[&str] = &["body_slam", "anger", "whirlwind"];
+
+/// 这张牌在语料里的位次(语料是按 corpus id 排的,和参考实现各卡文件里的顺序一致)
+fn corpus_index(id: &str) -> usize {
+    crate::core::corpus::CARDS
+        .iter()
+        .position(|c| c.id == id)
+        .unwrap_or(usize::MAX)
+}
+
+/// 把池子排成参考实现那一套顺序:basics 切片里的那几张排最前,其余按语料位次
+fn bundle_order(pool: &mut [&'static CardDef]) {
+    pool.sort_by_key(|c| {
+        match BUNDLE_HEAD.iter().position(|id| *id == c.id) {
+            Some(i) => (0usize, i),
+            None => (1, corpus_index(c.id)),
+        }
+    });
+}
+
 /// 本职业里某一类型的牌(化茧/变形洗进抽牌堆的那些)
 pub fn class_pool_of_kind(kind: CardType) -> Vec<&'static CardDef> {
-    CARDS
+    let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| c.kind == kind && pool_of(c) == "class")
-        .collect()
+        .collect();
+    bundle_order(&mut out);
+    out
 }
 
 /// 发现用的本职业牌池:攻击/技能/能力,不含基础牌
 pub fn class_card_pool() -> Vec<&'static CardDef> {
-    CARDS
+    let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| {
             pool_of(c) == "class"
                 && c.rarity != Rarity::Basic
                 && matches!(c.kind, CardType::Attack | CardType::Skill | CardType::Power)
         })
-        .collect()
+        .collect();
+    bundle_order(&mut out);
+    out
 }
 
 pub fn card_def(id: &str) -> Option<&'static CardDef> {
@@ -3545,14 +3571,16 @@ pub fn card(id: &str) -> crate::core::card::CardInstance {
 /// 按稀有度列出可奖励的卡(排除基础牌与状态牌)
 /// 无色牌不进普通奖励池:它们在原作里另有来路(商店/棱彩/事件)
 pub fn reward_pool(rarity: Rarity) -> Vec<&'static CardDef> {
-    CARDS
+    let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| {
             c.rarity == rarity
                 && !matches!(c.kind, CardType::Status | CardType::Curse)
                 && pool_of(c) == "class"
         })
-        .collect()
+        .collect();
+    bundle_order(&mut out);
+    out
 }
 
 /// 诅咒牌(事件与遗物会把它们塞进牌组)

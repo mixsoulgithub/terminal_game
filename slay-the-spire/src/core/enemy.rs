@@ -2,7 +2,7 @@
 // 具体敌人与遭遇的数据在 enemies.rs(按 act 分成几个子模块).
 use crate::core::combat::{Enemy, PlayerBattle};
 use crate::core::status::{Status, Statuses};
-use crate::rng::Rng;
+use crate::rng::{FloorStream, Rng, RngRegistry};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EnemyKind {
@@ -285,7 +285,7 @@ impl Intent {
 /// `state` 是这只怪状态的副本,选招函数可以就地记账(参考实现里在 getMove 里改 miscInfo 的那些),
 /// 跑完由战斗引擎写回.
 pub struct PickCtx<'a> {
-    pub rng: &'a mut Rng,
+    pub rng: &'a mut RngRegistry,
     pub idx: usize,
     pub all: &'a [Enemy],
     pub player: &'a PlayerBattle,
@@ -299,17 +299,19 @@ impl PickCtx<'_> {
 
     /// 参考实现里的 aiRng.random(99)
     pub fn roll(&mut self) -> i32 {
-        self.rng.range_inclusive(0, 99)
+        self.rng.floor(FloorStream::AiRng).random(99) as i32
     }
 
     /// 参考实现里的 aiRng.randomRange(lo, hi)
     pub fn range(&mut self, lo: i32, hi: i32) -> i32 {
-        self.rng.range_inclusive(lo, hi)
+        self.rng.floor(FloorStream::AiRng).random_range(lo, hi)
     }
 
-    /// 参考实现里的 aiRng.randomBoolean(p):p 用分数给,保证精确
+    /// 参考实现里的 aiRng.randomBoolean(p):一次 nextFloat 对概率,和原版一一对应
     pub fn flip(&mut self, num: u32, den: u32) -> bool {
-        self.rng.below(den.max(1)) < num
+        self.rng
+            .floor(FloorStream::AiRng)
+            .random_bool_chance(num as f32 / den.max(1) as f32)
     }
 
     /// 这是开局第一掷(还没行动过)
@@ -448,6 +450,9 @@ pub struct Encounter {
     pub presets: &'static [EnemyPreset],
     /// 开局给玩家的状态(第四幕精英的被包围)
     pub player_statuses: &'static [(Status, i32)],
+    /// 进随机遭遇池的权重,取自参考实现 acts.ts 的 strongEncounters.
+    /// 0 表示只作为固定阵容存在,不参与抽取.
+    pub weight: u32,
 }
 
 impl Encounter {
@@ -459,6 +464,7 @@ impl Encounter {
         lineup: None,
         presets: &[],
         player_statuses: &[],
+        weight: 1,
     };
 }
 

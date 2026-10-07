@@ -19,7 +19,9 @@ spire - a slay-the-spire-like deckbuilding roguelike for the terminal
 usage: spire [options]
 
 options:
-  --seed <n>      fixed seed, so a run can be reproduced
+  --seed <n|STR>  fixed seed, so a run can be reproduced
+                  a decimal number is used as-is; anything else is read as a
+                  base-35 seed string (same form `:seed` prints)
   --dump <what>   print data and exit (cards|enemies|relics|potions|events)
   -h, --help      show this help
   -V, --version   show version
@@ -55,8 +57,11 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--seed" => {
-                let v = it.next().ok_or("--seed needs a number")?;
-                args.seed = Some(v.parse::<u64>().map_err(|_| format!("bad seed: {v}"))?);
+                let v = it.next().ok_or("--seed needs a value")?;
+                args.seed = Some(
+                    crate::rng::seed_from_arg(&v)
+                        .ok_or_else(|| format!("bad seed: {v}"))?,
+                );
             }
             "--dump" => {
                 let v = it.next().ok_or("--dump needs a value")?;

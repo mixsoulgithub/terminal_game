@@ -7,6 +7,8 @@ pub mod corpus;
 pub mod enemy;
 pub mod enemies;
 pub mod events;
+#[cfg(test)]
+pub mod golden;
 pub mod map;
 pub mod potions;
 pub mod relics;

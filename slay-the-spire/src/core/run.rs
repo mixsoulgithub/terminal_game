@@ -11,7 +11,7 @@ use crate::core::map::{ActMap, NodeKind};
 use crate::core::potions::{self, PotionDef, PotionFx};
 use crate::core::relics::{self, RelicDef, RelicFx};
 use crate::core::roster;
-use crate::rng::Rng;
+use crate::rng::{java_shuffle, FloorStream, JavaRandom, RngRegistry, RunStream};
 
 /// 药水格子数
 pub const POTION_SLOTS: usize = 3;
@@ -27,6 +27,44 @@ pub const REST_HEAL_PCT: i32 = 30;
 const HISTORY_LIMIT: usize = 4000;
 /// 超限时一次丢掉多少条
 const HISTORY_TRIM: usize = 1000;
+
+// ---- 奖励与掉落的常数(照抄参考实现 rewards.ts / shop.ts) ----
+
+/// 卡牌奖励的稀有度保底初值
+const CARD_RARITY_PITY_START: i32 = 5;
+/// 抽到普通牌时保底值 -1,最低到这里
+const CARD_RARITY_PITY_FLOOR: i32 = -40;
+/// 普通战斗的稀有概率(百分数),精英另有一套
+const CARD_RARE_CHANCE_ELITE: i32 = 10;
+const CARD_RARE_CHANCE_NON_ELITE: i32 = 3;
+const CARD_UNCOMMON_CHANCE_ELITE: i32 = 40;
+const CARD_UNCOMMON_CHANCE_NON_ELITE: i32 = 37;
+/// 卡牌奖励固定三选一
+const CARD_REWARD_COUNT: usize = 3;
+/// 药水掉落的基础概率与保底步长
+const POTION_DROP_BASE_CHANCE: i32 = 40;
+const POTION_PITY_STEP: i32 = 10;
+/// 精英掉遗物的稀有度分界(参考实现 returnRandomRelicTierElite)
+const ELITE_RELIC_COMMON_BELOW: u32 = 50;
+const ELITE_RELIC_RARE_ABOVE: u32 = 82;
+/// 商店价格:底价与浮动区间(参考实现 shop.ts)
+const SHOP_CARD_JITTER: (f32, f32) = (0.9, 1.1);
+const SHOP_OTHER_JITTER: (f32, f32) = (0.95, 1.05);
+const SHOP_CARD_BASE: [(Rarity, i32); 3] = [
+    (Rarity::Common, 50),
+    (Rarity::Uncommon, 75),
+    (Rarity::Rare, 150),
+];
+const SHOP_RELIC_BASE: [(Rarity, i32); 3] = [
+    (Rarity::Common, 150),
+    (Rarity::Uncommon, 250),
+    (Rarity::Rare, 300),
+];
+const SHOP_POTION_BASE: [(Rarity, i32); 3] = [
+    (Rarity::Common, 50),
+    (Rarity::Uncommon, 75),
+    (Rarity::Rare, 100),
+];
 
 /// 历史记录里一条的类别,决定它在历史窗口里怎么上色
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -186,6 +224,22 @@ pub struct ShopState {
     pub removes: u32,
 }
 
+/// 宝箱的大小
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChestSize {
+    Small,
+    Medium,
+    Large,
+}
+
+/// 进宝箱房时掷出来的箱子状态
+#[derive(Clone, Copy, Debug)]
+pub struct Chest {
+    pub size: ChestSize,
+    pub gold_present: bool,
+    pub tier: Rarity,
+}
+
 pub struct EventState {
     pub def: &'static EventDef,
     pub index: usize,
@@ -213,11 +267,19 @@ pub struct Run {
     pub fight_seq: u64,
     /// 赢了之后还要在战场上多停几帧(>0 表示正在停,满了才进奖励)
     pub win_hold: u8,
-    pub rng: Rng,
+    pub streams: RngRegistry,
     pub player: Player,
     pub map: ActMap,
     /// 本局这条路的 Boss:开局定下来,地图上直接写名字
     pub boss_enc: &'static Encounter,
+    /// 这一章还没打的怪房间名单(monsterRng 一次生成,按顺序消耗)
+    monster_list: Vec<&'static str>,
+    /// 这一章还没打的精英名单
+    elite_list: Vec<&'static str>,
+    /// 药水掉落的保底值(参考实现里的 potionChance:每次没掉 +10,掉了 -10)
+    potion_chance: i32,
+    /// 卡牌稀有度的保底值(参考实现里的 cardRarityFactor:抽到稀有重置 5,普通 -1,下限 -40)
+    card_rarity_factor: i32,
     /// 玩家当前所在节点;None 表示还没上路
     pub pos: Option<usize>,
     /// 这一局走过的节点(按顺序),地图上走过的房间统一给底色
@@ -230,6 +292,8 @@ pub struct Run {
     pub event: Option<EventState>,
     pub picker: Option<Picker>,
     pub treasure: Option<&'static RelicDef>,
+    /// 当前宝箱房的箱子状态(不在宝箱房就是 None)
+    pub chest: Option<Chest>,
     pub rest_index: usize,
     pub stats: Stats,
     /// 一整局发生过的所有事,用 H 翻看
@@ -317,7 +381,7 @@ impl Run {
         if !roster::has_starter_relic(ch) {
             return Err(format!("{} 的起始遗物 {} 还没实现", ch.name, ch.relic));
         }
-        let mut rng = Rng::new(seed);
+        let mut streams = RngRegistry::new(seed);
         let mut deck: Vec<CardInstance> = Vec::new();
         for (id, n) in ch.deck {
             for _ in 0..*n {
@@ -325,18 +389,44 @@ impl Run {
             }
         }
         let starter = relics::relic_def_or_panic(ch.relic);
-        let relic_pool: Vec<&'static RelicDef> = relics::RELICS
+        // 遗物池开局洗一次:参考实现按 普通/罕见/稀有/商店/Boss 五个池子各洗一遍,
+        // 每个池子消耗 relicRng 的一个 long.本作只有前三个池子,后两个空烧,
+        // 这样 relicRng 的位置和参考实现一致
+        let mut relic_pool: Vec<&'static RelicDef> = relics::RELICS
             .iter()
             .filter(|r| r.id != starter.id)
             .collect();
-        let map = ActMap::generate(&mut rng);
-        let boss_enc: &'static Encounter = rng.pick(enemies::BOSSES);
+        for rarity in [Rarity::Common, Rarity::Uncommon, Rarity::Rare] {
+            let mut tier: Vec<&'static RelicDef> = relic_pool
+                .iter()
+                .copied()
+                .filter(|r| r.rarity == rarity)
+                .collect();
+            let java_seed = streams.run(RunStream::RelicRng).random_long();
+            java_shuffle(&mut tier, &mut JavaRandom::new(java_seed));
+            let mut rest: Vec<&'static RelicDef> = relic_pool
+                .into_iter()
+                .filter(|r| r.rarity != rarity)
+                .collect();
+            tier.append(&mut rest);
+            relic_pool = tier;
+        }
+        // 商店/Boss 两个池子本作还没有,空烧两个 long 对齐参考实现
+        let _ = streams.run(RunStream::RelicRng).random_long();
+        let _ = streams.run(RunStream::RelicRng).random_long();
+
+        // 遭遇名单(monsterRng)与地图(mapRng)都按参考实现的顺序掷
+        let lists = enemies::generate_encounters(1, streams.run(RunStream::MonsterRng));
+        streams.reseed_map(1);
+        let map = ActMap::generate(streams.map_rng());
+        // 本局的 Boss 是 monsterRng 洗出来的那一条
+        let boss_enc: &'static Encounter = enemies::resolve(lists.boss[0]);
         let mut run = Run {
             seed,
             character: ch.id,
             fight_seq: 0,
             win_hold: 0,
-            rng,
+            streams,
             player: Player {
                 hp: ch.max_hp,
                 max_hp: ch.max_hp,
@@ -347,6 +437,10 @@ impl Run {
             },
             map,
             boss_enc,
+            monster_list: lists.monster,
+            elite_list: lists.elite,
+            potion_chance: 0,
+            card_rarity_factor: CARD_RARITY_PITY_START,
             pos: None,
             path: Vec::new(),
             floor_reached: 0,
@@ -357,6 +451,7 @@ impl Run {
             event: None,
             picker: None,
             treasure: None,
+            chest: None,
             rest_index: 0,
             stats: Stats::default(),
             history: Vec::new(),
@@ -381,8 +476,28 @@ impl Run {
         out.push_str(&format!("hp={}\n", self.player.hp));
         out.push_str(&format!("max_hp={}\n", self.player.max_hp));
         out.push_str(&format!("gold={}\n", self.player.gold));
-        let r = self.rng.state();
-        out.push_str(&format!("rng={},{},{},{}\n", r[0], r[1], r[2], r[3]));
+        // 具名流的完整状态(15 条).老存档只有一条 xoshiro 的 rng=,读的时候会明确报错
+        out.push_str(&self.streams.save_text());
+        out.push_str(&format!("potion_pity={}\n", self.potion_chance));
+        out.push_str(&format!("card_factor={}\n", self.card_rarity_factor));
+        out.push_str(&format!("monsters={}\n", self.monster_list.join(",")));
+        out.push_str(&format!("elites={}\n", self.elite_list.join(",")));
+        if let Some(chest) = self.chest {
+            let size = match chest.size {
+                ChestSize::Small => "small",
+                ChestSize::Medium => "medium",
+                ChestSize::Large => "large",
+            };
+            out.push_str(&format!(
+                "chest={}:{}:{}\n",
+                size,
+                chest.gold_present,
+                chest.tier.name()
+            ));
+        }
+        if let Some(t) = self.treasure {
+            out.push_str(&format!("treasure={}\n", t.id));
+        }
         out.push_str(&format!(
             "pos={}\n",
             self.pos.map(|p| p.to_string()).unwrap_or_else(|| "none".to_string())
@@ -465,14 +580,50 @@ impl Run {
         run.player.max_hp = int("max_hp", run.player.max_hp);
         run.player.gold = int("gold", run.player.gold);
         run.floor_reached = int("floor", 0).max(0) as usize;
-        if let Some(v) = get("rng") {
-            let parts: Vec<u64> = v
-                .split(',')
-                .filter_map(|x| x.trim().parse().ok())
-                .collect();
-            if parts.len() == 4 {
-                run.rng.set_state([parts[0], parts[1], parts[2], parts[3]]);
+        // 旧存档的随机状态是单条 xoshiro 流,和现在的具名流对不上:
+        // 直接报错,别静默接着跑出一局错的游戏
+        if get("rng").is_some() && !RngRegistry::has_any_stream_line(text) {
+            return Err(
+                "这份存档记的是旧版随机状态(单条 xoshiro 流),与现在的具名流对不上:请重新开一局".to_string(),
+            );
+        }
+        for (k, v) in &num {
+            if crate::rng::is_stream_key(k) {
+                run.streams.load_line(k, v)?;
             }
+        }
+        run.potion_chance = int("potion_pity", 0);
+        run.card_rarity_factor = int("card_factor", CARD_RARITY_PITY_START);
+        if let Some(v) = get("monsters") {
+            run.monster_list = v
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| enemies::resolve(s).id)
+                .collect();
+        }
+        if let Some(v) = get("elites") {
+            run.elite_list = v
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| enemies::resolve(s).id)
+                .collect();
+        }
+        if let Some(v) = get("chest") {
+            let parts: Vec<&str> = v.split(':').collect();
+            if parts.len() == 3 {
+                run.chest = Some(Chest {
+                    size: match parts[0] {
+                        "small" => ChestSize::Small,
+                        "medium" => ChestSize::Medium,
+                        _ => ChestSize::Large,
+                    },
+                    gold_present: parts[1] == "true",
+                    tier: rarity_from_name(parts[2]),
+                });
+            }
+        }
+        if let Some(v) = get("treasure") {
+            run.treasure = relic_def_any_opt(v);
         }
         if let Some(v) = get("deck") {
             let mut deck: Vec<CardInstance> = Vec::new();
@@ -535,7 +686,6 @@ impl Run {
         // 测试存档:带战斗现场就照原样恢复(不用从种子重放)
         if let Some(enc_id) = get("combat_encounter") {
             if let Some(enc) = enemies::encounter_def(enc_id) {
-                let seed = run.rng.next_u64();
                 let setup = CombatSetup {
                     hp: run.player.hp,
                     max_hp: run.player.max_hp,
@@ -543,7 +693,7 @@ impl Run {
                     relics: run.player.relics.clone(),
                     gold: run.player.gold,
                 };
-                let mut c = Combat::new(enc, setup, seed);
+                let mut c = Combat::new(enc, setup, run.streams.clone());
                 c.turn = int("combat_turn", 1).max(1) as u32;
                 c.energy = int("combat_energy", c.energy);
                 c.max_energy = int("combat_max_energy", c.max_energy);
@@ -586,17 +736,18 @@ impl Run {
                 if c.enemies.iter().all(|e| !e.alive()) {
                     c.phase = Phase::Won;
                 }
+                // 战斗的随机状态以存档为准(上面重建时又掷了几次血量与洗牌)
+                c.streams = run.streams.clone();
                 run.combat = Some(c);
                 run.screen = Screen::Combat;
                 run.win_hold = 0;
                 run.sync_combat();
             }
         }
-        // 还没出现过的遗物:重建一遍(已经拿到的都排掉)
-        run.relic_pool = relics::RELICS
-            .iter()
-            .filter(|r| !run.player.relics.iter().any(|o| o.id == r.id))
-            .collect();
+        // 还没出现过的遗物:在上面这条"开局洗好的池子"上排掉已经拿到的,
+        // 不能重新按表重建,否则洗牌顺序就不是本局的了
+        run.relic_pool
+            .retain(|r| !run.player.relics.iter().any(|o| o.id == r.id));
         // 有战斗现场的就留在战斗里,别把 screen/combat 清掉
         if run.combat.is_none() {
             run.screen = Screen::Map;
@@ -670,6 +821,9 @@ impl Run {
         self.pos = Some(idx);
         self.path.push(idx);
         self.floor_reached = floor;
+        // 每进一个房间,每层的流(miscRng / aiRng / monsterHpRng / shuffleRng /
+        // cardRandomRng)都用 seed + 层号重开(参考实现的 transitionToMapNode)
+        self.streams.reseed_floor_streams(floor as u32 + 1);
         self.say(format!("floor {}: {}", floor + 1, kind.name()));
         let per_floor: i32 = self.player.relic_fx_sum(|r| r.fx.gold_per_floor);
         if per_floor > 0 {
@@ -701,25 +855,23 @@ impl Run {
         Ok(())
     }
 
+    /// 从这一章的名单里取下一个遭遇:名单按顺序消耗,抽干了再补一批强怪
     fn pick_encounter(&mut self, kind: EnemyKind) -> &'static Encounter {
-        let pool: &'static [Encounter] = match kind {
+        let id = match kind {
             EnemyKind::Normal => {
-                if self.floor_reached < 3 {
-                    enemies::ENCOUNTERS_WEAK
-                } else {
-                    enemies::ENCOUNTERS
+                if self.monster_list.is_empty() {
+                    self.monster_list =
+                        enemies::generate_extra_strong(1, self.streams.run(RunStream::MonsterRng), 12);
                 }
+                self.monster_list.remove(0)
             }
-            EnemyKind::Elite => enemies::ELITES,
-            EnemyKind::Boss => enemies::BOSSES,
+            EnemyKind::Elite => {
+                assert!(!self.elite_list.is_empty(), "精英名单已经抽干");
+                self.elite_list.remove(0)
+            }
+            EnemyKind::Boss => self.boss_enc.id,
         };
-        assert!(!pool.is_empty(), "遭遇池为空: {kind:?}");
-        let fresh: Vec<&Encounter> = pool.iter().filter(|e| e.id != self.last_encounter).collect();
-        let pick = if fresh.is_empty() {
-            self.rng.pick(pool)
-        } else {
-            *self.rng.pick(&fresh)
-        };
+        let pick = enemies::resolve(id);
         self.last_encounter = pick.id;
         pick
     }
@@ -727,7 +879,6 @@ impl Run {
     // ---- 战斗 ----
 
     fn start_combat(&mut self, enc: &'static Encounter) {
-        let seed = self.rng.next_u64();
         self.say(format!("a fight breaks out: {}", enc.id));
         let setup = CombatSetup {
             hp: self.player.hp,
@@ -736,7 +887,7 @@ impl Run {
             relics: self.player.relics.clone(),
             gold: self.player.gold,
         };
-        self.combat = Some(Combat::new(enc, setup, seed));
+        self.combat = Some(Combat::new(enc, setup, self.streams.clone()));
         self.win_hold = 0;
         self.fight_seq += 1;
         self.combat_log_seen = 0;
@@ -800,6 +951,10 @@ impl Run {
     /// 每次战斗内操作之后调用:同步生命、处理胜负
     pub fn sync_combat(&mut self) {
         self.absorb_combat_log();
+        // 战斗里的掷点是在自己的流副本上走的,这里把它收回来
+        if let Some(c) = self.combat.as_ref() {
+            self.streams = c.streams.clone();
+        }
         let Some(c) = self.combat.as_mut() else {
             return;
         };
@@ -910,45 +1065,51 @@ impl Run {
             self.screen = Screen::Map;
             return;
         }
-        let (gold_lo, gold_hi) = plan
-            .and_then(|p| p.gold)
-            .unwrap_or(match kind {
-                EnemyKind::Normal => (10, 20),
-                EnemyKind::Elite => (25, 35),
-                EnemyKind::Boss => (95, 105),
-            });
-        let gold = self.rng.range_inclusive(gold_lo, gold_hi);
-        // 三选一不重样:同一张牌一次奖励里只出现一遍
-        let mut cards: Vec<CardInstance> = Vec::new();
-        if !plan.map(|p| p.no_cards).unwrap_or(false) {
-            let mut guard = 0;
-            while cards.len() < 3 && guard < 40 {
-                guard += 1;
-                let Some(def) = self.roll_card() else {
-                    break;
-                };
-                if cards.iter().any(|c| c.def.id == def.id) {
-                    continue;
-                }
-                cards.push(CardInstance::new(def));
-            }
-        }
+        // 顺序照参考实现的 buildCombatRewards:金币 → 遗物(精英)→ 药水 → 卡牌
+        let gold = match plan.and_then(|p| p.gold) {
+            Some((lo, hi)) => self.streams.run(RunStream::TreasureRng).random_range(lo, hi),
+            None => match kind {
+                EnemyKind::Normal => self
+                    .streams
+                    .run(RunStream::TreasureRng)
+                    .random_range(10, 20),
+                EnemyKind::Elite => self
+                    .streams
+                    .run(RunStream::TreasureRng)
+                    .random_range(25, 35),
+                // Boss 的金币走 miscRng:100 上下浮动 5
+                EnemyKind::Boss => 100 + self.streams.floor(FloorStream::MiscRng).random_range(-5, 5),
+            },
+        };
         let relic = match plan {
             Some(p) if p.no_relic => None,
             Some(p) if p.relic_id.is_some() => Some(relic_def_any(p.relic_id.unwrap())),
             Some(p) if p.relic_rarity.is_some() => self.take_relic_of(p.relic_rarity.unwrap()),
             Some(_) => None,
             None => match kind {
-                EnemyKind::Elite => self.roll_relic_by_odds(50, 33, 17),
-                EnemyKind::Boss => self.roll_relic_by_odds(0, 0, 100),
+                EnemyKind::Elite => {
+                    let tier = self.roll_elite_relic_tier();
+                    self.take_relic_of(tier)
+                }
+                EnemyKind::Boss => self.take_relic_of(Rarity::Rare),
                 EnemyKind::Normal => None,
             },
         };
-        let potion_pct = plan.map(|p| p.potion_pct).unwrap_or(40);
-        let potion = if self.rng.chance(potion_pct as u32) {
-            Some(potions::random_potion(&mut self.rng))
+        // 药水:先掷一次 d100 看掉不掉(带保底),掉了再掷稀有度
+        let potion = if let Some(p) = plan {
+            if self.streams.run(RunStream::PotionRng).chance(p.potion_pct as u32) {
+                potions::random_potion(self.streams.run(RunStream::PotionRng))
+            } else {
+                None
+            }
         } else {
-            None
+            let categories = if matches!(kind, EnemyKind::Elite) { 2 } else { 1 };
+            self.roll_potion_reward(categories)
+        };
+        let cards: Vec<CardInstance> = if plan.map(|p| p.no_cards).unwrap_or(false) {
+            Vec::new()
+        } else {
+            self.create_card_reward(kind)
         };
         let next = if kind == EnemyKind::Boss {
             Screen::Victory
@@ -1108,7 +1269,7 @@ impl Run {
 
     fn open_shop(&mut self) {
         let mut items: Vec<ShopItem> = Vec::new();
-        // 店里卖的牌也不重样
+        // 店里卖的牌也不重样:牌的身份走 cardRng,价格走 merchantRng
         let mut sold: Vec<&'static str> = Vec::new();
         let mut sold_potions: Vec<&'static str> = Vec::new();
         for (rarity, count) in [
@@ -1118,36 +1279,52 @@ impl Run {
         ] {
             for _ in 0..count {
                 if let Some(def) = self.roll_card_of_distinct(rarity, &sold) {
-                    let base = match rarity {
-                        Rarity::Common => self.rng.range_inclusive(45, 55),
-                        Rarity::Uncommon => self.rng.range_inclusive(68, 82),
-                        _ => self.rng.range_inclusive(135, 165),
-                    };
+                    let base = shop_base(SHOP_CARD_BASE, rarity);
+                    let price = (base as f32
+                        * self
+                            .streams
+                            .run(RunStream::MerchantRng)
+                            .random_float_range(SHOP_CARD_JITTER.0, SHOP_CARD_JITTER.1))
+                        as i32;
                     sold.push(def.id);
-                    items.push(ShopItem::Card(CardInstance::new(def), self.discount(base)));
+                    items.push(ShopItem::Card(CardInstance::new(def), self.discount(price)));
                 }
             }
         }
         for rarity in [Rarity::Common, Rarity::Uncommon, Rarity::Rare] {
             if let Some(def) = self.take_relic_of(rarity) {
-                let base = self.rng.range_inclusive(143, 172);
-                items.push(ShopItem::Relic(def, self.discount(base)));
+                let base = shop_base(SHOP_RELIC_BASE, rarity);
+                let price = (base as f32
+                    * self
+                        .streams
+                        .run(RunStream::MerchantRng)
+                        .random_float_range(SHOP_OTHER_JITTER.0, SHOP_OTHER_JITTER.1))
+                .round() as i32;
+                items.push(ShopItem::Relic(def, self.discount(price)));
             }
         }
         for _ in 0..2 {
-            // 两瓶药水不重复
-            let mut def = potions::random_potion(&mut self.rng);
+            // 两瓶药水不重复:药水身份走 potionRng,价格走 merchantRng
+            let mut def = potions::random_potion(self.streams.run(RunStream::PotionRng))
+                .expect("药水池非空");
             let mut guard = 0;
             while sold_potions.contains(&def.id) && guard < 40 {
                 guard += 1;
-                def = potions::random_potion(&mut self.rng);
+                def = potions::random_potion(self.streams.run(RunStream::PotionRng))
+                    .expect("药水池非空");
             }
             if sold_potions.contains(&def.id) {
                 continue;
             }
             sold_potions.push(def.id);
-            let base = self.rng.range_inclusive(48, 72);
-            items.push(ShopItem::Potion(def, self.discount(base)));
+            let base = shop_base(SHOP_POTION_BASE, def.rarity);
+            let price = (base as f32
+                * self
+                    .streams
+                    .run(RunStream::MerchantRng)
+                    .random_float_range(SHOP_OTHER_JITTER.0, SHOP_OTHER_JITTER.1))
+            .round() as i32;
+            items.push(ShopItem::Potion(def, self.discount(price)));
         }
         let removal = self.discount(75);
         items.push(ShopItem::Remove(removal));
@@ -1232,14 +1409,19 @@ impl Run {
 
     fn open_event(&mut self) {
         assert!(!crate::core::events::EVENTS.is_empty(), "事件池为空");
-        let def: &'static EventDef = self.rng.pick(crate::core::events::EVENTS);
+        // 事件身份走 eventRng(参考实现的 generateEvent,掷在一个副本上)
+        let idx = self
+            .streams
+            .run(RunStream::EventRng)
+            .random(crate::core::events::EVENTS.len() as u32 - 1) as usize;
+        let def: &'static EventDef = &crate::core::events::EVENTS[idx];
         self.open_event_def(def);
     }
 
     /// 打开指定事件;翻牌事件顺手把 12 格棋盘铺好
     fn open_event_def(&mut self, def: &'static EventDef) {
         let match_keep = if def.id == "match_and_keep" {
-            Some(MatchKeep::new(&mut self.rng, self.character))
+            Some(MatchKeep::new(&mut self.streams, self.character))
         } else {
             None
         };
@@ -1460,7 +1642,7 @@ impl Run {
             }
         }
         if let Some((lo, hi)) = o.gold_range {
-            let g = self.rng.range_inclusive(lo, hi);
+            let g = self.streams.floor(FloorStream::MiscRng).range_inclusive(lo, hi);
             self.gain_gold(g);
         }
         if o.gold_lose_all {
@@ -1468,7 +1650,7 @@ impl Run {
             self.spend_gold(g);
         }
         if let Some((lo, hi)) = o.gold_lose_range {
-            let g = self.rng.range_inclusive(lo, hi).min(self.player.gold);
+            let g = self.streams.floor(FloorStream::MiscRng).range_inclusive(lo, hi).min(self.player.gold);
             self.spend_gold(g);
         }
         if let Some(id) = o.remove_relic {
@@ -1477,7 +1659,7 @@ impl Run {
         if o.remove_random_relic {
             // 至少要两件才吃一件(原作的生成条件就是身上有两件遗物)
             if self.player.relics.len() >= 2 {
-                let idx = self.rng.below(self.player.relics.len() as u32) as usize;
+                let idx = self.streams.floor(FloorStream::MiscRng).below(self.player.relics.len() as u32) as usize;
                 let gone = self.player.relics.remove(idx);
                 self.say(format!("{} is devoured", gone.name));
             }
@@ -1508,7 +1690,7 @@ impl Run {
         if o.add_random_curse {
             let pool = cards::curses();
             if !pool.is_empty() {
-                let def = *self.rng.pick(&pool);
+                let def = *self.streams.floor(FloorStream::MiscRng).pick(&pool);
                 self.player.deck.push(CardInstance::new(def));
             }
         }
@@ -1560,7 +1742,7 @@ impl Run {
             if cands.is_empty() {
                 break;
             }
-            let pick = cands[self.rng.below(cands.len() as u32) as usize];
+            let pick = cands[self.streams.floor(FloorStream::MiscRng).below(cands.len() as u32) as usize];
             self.player.deck[pick].upgrade();
             let name = self.player.deck[pick].label();
             self.say(format!("{name} is upgraded"));
@@ -1611,7 +1793,7 @@ impl Run {
                 .map(|(i, _)| i)
                 .collect();
             if !cands.is_empty() {
-                let idx = cands[self.rng.below(cands.len() as u32) as usize];
+                let idx = cands[self.streams.floor(FloorStream::MiscRng).below(cands.len() as u32) as usize];
                 let card = self.player.deck.remove(idx);
                 let name = card.label();
                 self.pay_deck_leave_cost(&card);
@@ -1630,7 +1812,7 @@ impl Run {
             if cands.is_empty() {
                 break;
             }
-            let idx = cands[self.rng.below(cands.len() as u32) as usize];
+            let idx = cands[self.streams.floor(FloorStream::MiscRng).below(cands.len() as u32) as usize];
             self.transform_deck_card(idx);
         }
         if o.lose_random_potion {
@@ -1643,7 +1825,7 @@ impl Run {
                 .map(|(i, _)| i)
                 .collect();
             if !slots.is_empty() {
-                let slot = slots[self.rng.below(slots.len() as u32) as usize];
+                let slot = slots[self.streams.floor(FloorStream::MiscRng).below(slots.len() as u32) as usize];
                 let gone = self.player.potions[slot].take();
                 if let Some(def) = gone {
                     self.say(format!("{} is given away", def.name));
@@ -1651,12 +1833,15 @@ impl Run {
             }
         }
         for _ in 0..o.random_potion_n {
-            let def = potions::random_potion(&mut self.rng);
-            self.add_potion(def);
+            if let Some(def) = potions::random_potion(self.streams.run(RunStream::PotionRng)) {
+                self.add_potion(def);
+            }
         }
         if let Some(table) = o.roll {
-            let weights: Vec<u32> = table.iter().map(|(w, _)| *w).collect();
-            if let Some(i) = self.rng.weighted_idx(&weights) {
+            let total: u32 = table.iter().map(|(w, _)| *w).sum();
+            let weights: Vec<f32> =
+                table.iter().map(|(w, _)| *w as f32 / total as f32).collect();
+            if let Some(i) = self.streams.floor(FloorStream::MiscRng).weighted_idx_f32(&weights) {
                 let sub = table[i].1;
                 self.apply_outcome(&sub);
             }
@@ -1667,7 +1852,7 @@ impl Run {
         }
         let fight_id = match (o.fight, o.fight_pool) {
             (Some(id), _) => Some(id),
-            (None, Some(pool)) if !pool.is_empty() => Some(*self.rng.pick(pool)),
+            (None, Some(pool)) if !pool.is_empty() => Some(*self.streams.floor(FloorStream::MiscRng).pick(pool)),
             _ => None,
         };
         if let Some(enc_id) = fight_id {
@@ -1718,7 +1903,7 @@ impl Run {
         if pool.is_empty() {
             return None;
         }
-        let idx = self.rng.below(pool.len() as u32) as usize;
+        let idx = self.streams.floor(FloorStream::MiscRng).random(pool.len() as u32 - 1) as usize;
         Some(pool.swap_remove(idx))
     }
 
@@ -1731,7 +1916,7 @@ impl Run {
         if pool.is_empty() {
             return None;
         }
-        Some(*self.rng.pick(&pool))
+        Some(*self.streams.floor(FloorStream::MiscRng).pick(&pool))
     }
 
     /// 移除身上的一件指定遗物
@@ -1760,6 +1945,8 @@ impl Run {
         self.pos = Some(boss);
         self.path.push(boss);
         self.floor_reached = self.map.node(boss).floor;
+        self.streams
+            .reseed_floor_streams(self.floor_reached as u32 + 1);
         self.stats.bosses += 1;
         self.say(format!("floor {}: boss", self.floor_reached + 1));
         let enc = self.boss_enc;
@@ -1782,20 +1969,69 @@ impl Run {
 
     // ---- 宝箱 ----
 
+    /// 宝箱房:先掷箱子的尺寸,再掷一次同时决定"有没有金币"和"遗物档次"
+    /// (参考实现的单掷怪癖:金币与档次共用一个掷点)
     fn open_treasure(&mut self) {
-        let relic = self.roll_relic_by_odds(50, 33, 17);
-        self.treasure = relic;
-        if relic.is_none() {
+        let size_roll = self.streams.run(RunStream::TreasureRng).random(99);
+        let size = if size_roll < 50 {
+            ChestSize::Small
+        } else if size_roll < 83 {
+            ChestSize::Medium
+        } else {
+            ChestSize::Large
+        };
+        let roll = self.streams.run(RunStream::TreasureRng).random(99);
+        let (gold_chance, common_below, uncommon_below) = match size {
+            ChestSize::Small => (50, 75, 100),
+            ChestSize::Medium => (35, 35, 85),
+            ChestSize::Large => (50, 0, 75),
+        };
+        let tier = if roll < common_below {
+            Rarity::Common
+        } else if roll < uncommon_below {
+            Rarity::Uncommon
+        } else {
+            Rarity::Rare
+        };
+        self.chest = Some(Chest {
+            size,
+            gold_present: roll < gold_chance,
+            tier,
+        });
+        // 遗物身份进房间时就看得见(参考实现的 peekRelicFromPool)
+        self.treasure = self.peek_relic_of(tier);
+        if self.treasure.is_none() {
             self.say("the chest is empty");
         }
         self.screen = Screen::Treasure;
     }
 
+    /// 开箱:有金币就先掷金币数,再把遗物从池子里取走
     pub fn take_treasure(&mut self) {
-        if let Some(def) = self.treasure.take() {
+        let Some(chest) = self.chest.take() else {
+            self.screen = Screen::Map;
+            return;
+        };
+        if chest.gold_present {
+            let base = match chest.size {
+                ChestSize::Small => 25.0,
+                ChestSize::Medium => 50.0,
+                ChestSize::Large => 75.0,
+            };
+            let gold = self
+                .streams
+                .run(RunStream::TreasureRng)
+                .random_float_range(base * 0.9, base * 1.1)
+                .round() as i32;
+            self.gain_gold(gold);
+            self.say(format!("the chest holds ${gold}"));
+        }
+        let taken = self.take_relic_of(chest.tier);
+        if let Some(def) = taken {
             self.gain_relic(def);
             self.say(format!("you found {}", def.name));
         }
+        self.treasure = None;
         self.screen = Screen::Map;
     }
 
@@ -2286,7 +2522,7 @@ impl Run {
                 }
             },
             "battle" => {
-                let kind = match self.rng.below(3) {
+                let kind = match self.streams.floor(FloorStream::MiscRng).below(3) {
                     0 => EnemyKind::Boss,
                     1 => EnemyKind::Elite,
                     _ => EnemyKind::Normal,
@@ -2357,49 +2593,118 @@ impl Run {
 
     /// 从池子里取一个指定稀有度的遗物
     fn take_relic_of(&mut self, rarity: Rarity) -> Option<&'static RelicDef> {
-        let idx = self
-            .relic_pool
-            .iter()
-            .position(|r| r.rarity == rarity)
-            .or_else(|| {
-                if self.relic_pool.is_empty() {
-                    None
-                } else {
-                    Some(0)
-                }
-            })?;
+        let idx = self.relic_index_of(rarity)?;
         Some(self.relic_pool.remove(idx))
     }
 
-    /// 随机一件遗物(50/33/17 滚稀有度)
+    /// 只看不取(宝箱房在开箱前就要把遗物名字显示出来)
+    fn peek_relic_of(&self, rarity: Rarity) -> Option<&'static RelicDef> {
+        self.relic_index_of(rarity).map(|i| self.relic_pool[i])
+    }
+
+    fn relic_index_of(&self, rarity: Rarity) -> Option<usize> {
+        self.relic_pool
+            .iter()
+            .position(|r| r.rarity == rarity)
+            .or_else(|| if self.relic_pool.is_empty() { None } else { Some(0) })
+    }
+
+    /// 随机一件遗物:先滚稀有度(参考实现 returnRandomRelicTier)
     fn take_relic_of_any(&mut self) -> Option<&'static RelicDef> {
-        self.roll_relic_by_odds(50, 33, 17)
+        let tier = self.roll_combat_relic_tier();
+        self.take_relic_of(tier)
     }
 
-    fn roll_relic_by_odds(&mut self, common: u32, uncommon: u32, rare: u32) -> Option<&'static RelicDef> {
-        let total = common + uncommon + rare;
-        let roll = self.rng.below(total);
-        let rarity = if roll < common {
+    /// 战斗奖励的遗物稀有度:<50 普通,<83 罕见,其余稀有(都走 relicRng)
+    fn roll_combat_relic_tier(&mut self) -> Rarity {
+        let roll = self.streams.run(RunStream::RelicRng).random_range(0, 99);
+        if roll < 50 {
             Rarity::Common
-        } else if roll < common + uncommon {
+        } else if roll < 83 {
             Rarity::Uncommon
         } else {
             Rarity::Rare
-        };
-        self.take_relic_of(rarity)
+        }
     }
 
-    /// 随机一张可奖励的牌
-    fn roll_card(&mut self) -> Option<&'static CardDef> {
-        let roll = self.rng.below(100);
-        let rarity = if roll < 60 {
+    /// 精英奖励的遗物稀有度:<50 普通,>82 稀有,其余罕见(参考实现 returnRandomRelicTierElite)
+    fn roll_elite_relic_tier(&mut self) -> Rarity {
+        let roll = self.streams.run(RunStream::RelicRng).random(99);
+        if roll < ELITE_RELIC_COMMON_BELOW {
             Rarity::Common
-        } else if roll < 97 {
+        } else if roll > ELITE_RELIC_RARE_ABOVE {
+            Rarity::Rare
+        } else {
+            Rarity::Uncommon
+        }
+    }
+
+    /// 药水掉落:先掷 d100(带保底 ±10),掉出来再掷是哪瓶
+    fn roll_potion_reward(&mut self, rewards_so_far: usize) -> Option<&'static PotionDef> {
+        let mut chance = POTION_DROP_BASE_CHANCE + self.potion_chance;
+        if rewards_so_far >= 4 {
+            chance = 0;
+        }
+        if self.streams.run(RunStream::PotionRng).random(99) as i32 >= chance {
+            self.potion_chance += POTION_PITY_STEP;
+            return None;
+        }
+        self.potion_chance -= POTION_PITY_STEP;
+        potions::random_potion(self.streams.run(RunStream::PotionRng))
+    }
+
+    /// 卡牌奖励:三张,每张先掷稀有度(带动保底)再从对应池子里抽一张,同一次不重样
+    fn create_card_reward(&mut self, kind: EnemyKind) -> Vec<CardInstance> {
+        let mut out: Vec<CardInstance> = Vec::new();
+        for _ in 0..CARD_REWARD_COUNT {
+            let rarity = self.roll_card_rarity(kind);
+            match rarity {
+                Rarity::Rare => self.card_rarity_factor = CARD_RARITY_PITY_START,
+                Rarity::Common => {
+                    self.card_rarity_factor =
+                        (self.card_rarity_factor - 1).max(CARD_RARITY_PITY_FLOOR)
+                }
+                _ => {}
+            }
+            let pool = cards::reward_pool(rarity);
+            if pool.is_empty() {
+                break;
+            }
+            let mut id = self.streams.run(RunStream::CardRng).pick(&pool).id;
+            let mut guard = 0;
+            loop {
+                if !out.iter().any(|c| c.def.id == id) {
+                    break;
+                }
+                id = self.streams.run(RunStream::CardRng).pick(&pool).id;
+                guard += 1;
+                if guard >= 1000 {
+                    break;
+                }
+            }
+            out.push(CardInstance::new(cards::card_def_or_panic(id)));
+        }
+        out
+    }
+
+    /// 抽稀有度:Boss 直接稀有,其余 d100 + 保底值比 3/37(精英 10/40)
+    fn roll_card_rarity(&mut self, kind: EnemyKind) -> Rarity {
+        if kind == EnemyKind::Boss {
+            return Rarity::Rare;
+        }
+        let roll = self.streams.run(RunStream::CardRng).random(99) as i32 + self.card_rarity_factor;
+        let (rare, uncommon) = if kind == EnemyKind::Elite {
+            (CARD_RARE_CHANCE_ELITE, CARD_UNCOMMON_CHANCE_ELITE)
+        } else {
+            (CARD_RARE_CHANCE_NON_ELITE, CARD_UNCOMMON_CHANCE_NON_ELITE)
+        };
+        if roll < rare {
+            Rarity::Rare
+        } else if roll < rare + uncommon {
             Rarity::Uncommon
         } else {
-            Rarity::Rare
-        };
-        self.roll_card_of(rarity)
+            Rarity::Common
+        }
     }
 
     /// 同一次奖励/商店里不重复:已经在 sold 里的就重抽
@@ -2415,15 +2720,26 @@ impl Run {
         if pool.is_empty() {
             return None;
         }
-        Some(*self.rng.pick(&pool))
+        Some(*self.streams.run(RunStream::CardRng).pick(&pool))
     }
+}
 
-    fn roll_card_of(&mut self, rarity: Rarity) -> Option<&'static CardDef> {
-        let pool = cards::reward_pool(rarity);
-        if pool.is_empty() {
-            return None;
-        }
-        Some(*self.rng.pick(&pool))
+/// 商店底价(按稀有度查表)
+fn shop_base(table: [(Rarity, i32); 3], rarity: Rarity) -> i32 {
+    table
+        .iter()
+        .find(|(r, _)| *r == rarity)
+        .map(|(_, v)| *v)
+        .unwrap_or(50)
+}
+
+/// 存档里记的稀有度名字换回枚举
+fn rarity_from_name(name: &str) -> Rarity {
+    match name {
+        "Common" => Rarity::Common,
+        "Uncommon" => Rarity::Uncommon,
+        "Rare" => Rarity::Rare,
+        _ => Rarity::Common,
     }
 }
 
@@ -2919,6 +3235,8 @@ mod tests {
         let mut r = run(53);
         r.open_event();
         assert_eq!(r.screen, Screen::Event);
+        // 随机抽到的事件可能是多屏或翻牌那种,结算挑一个选项 0 就直接给结果的
+        r.debug_open_event("big_fish").unwrap();
         let before = r.player.gold;
         r.choose_event(0).unwrap();
         assert!(r.event.as_ref().unwrap().result.is_some());

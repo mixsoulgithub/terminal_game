@@ -115,6 +115,7 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "fat_gremlin",
             "shield_gremlin",
         ],
+        weight: 2,
         ..Encounter::PLAIN
     },
     Encounter {
@@ -126,6 +127,7 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "shield_gremlin",
             "gremlin_wizard",
         ],
+        weight: 0,
         ..Encounter::PLAIN
     },
     Encounter {
@@ -138,54 +140,63 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "acid_slime_small",
             "acid_slime_small",
         ],
+        weight: 2,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "red_slaver_solo",
         kind: EnemyKind::Normal,
         enemies: &["red_slaver"],
+        weight: 2,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "exordium_thugs",
         kind: EnemyKind::Normal,
         enemies: &["red_louse", "blue_slaver"],
+        weight: 3,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "exordium_wildlife",
         kind: EnemyKind::Normal,
         enemies: &["fungi_beast", "jaw_worm"],
+        weight: 3,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "blue_slaver_solo",
         kind: EnemyKind::Normal,
         enemies: &["blue_slaver"],
+        weight: 4,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "looter_solo",
         kind: EnemyKind::Normal,
         enemies: &["looter"],
+        weight: 4,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "large_slime",
         kind: EnemyKind::Normal,
         enemies: &["acid_slime_large"],
+        weight: 4,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "three_louses",
         kind: EnemyKind::Normal,
         enemies: &["red_louse", "green_louse", "red_louse"],
+        weight: 4,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "two_fungi_beasts",
         kind: EnemyKind::Normal,
         enemies: &["fungi_beast", "fungi_beast"],
+        weight: 4,
         ..Encounter::PLAIN
     },
 ];
@@ -284,48 +295,56 @@ pub static ACT2: &[Encounter] = &[
         id: "chosen_and_byrds",
         kind: EnemyKind::Normal,
         enemies: &["byrd", "chosen"],
+        weight: 2,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "sentry_and_sphere",
         kind: EnemyKind::Normal,
         enemies: &["sentry", "spheric_guardian"],
+        weight: 2,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "cultist_and_chosen",
         kind: EnemyKind::Normal,
         enemies: &["cultist", "chosen"],
+        weight: 3,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "three_cultists",
         kind: EnemyKind::Normal,
         enemies: &["cultist", "cultist", "cultist"],
+        weight: 3,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "shelled_parasite_and_fungi",
         kind: EnemyKind::Normal,
         enemies: &["shelled_parasite", "fungi_beast"],
+        weight: 3,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "snecko_solo",
         kind: EnemyKind::Normal,
         enemies: &["snecko"],
+        weight: 4,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "snake_plant_solo",
         kind: EnemyKind::Normal,
         enemies: &["snake_plant"],
+        weight: 6,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "centurion_and_healer",
         kind: EnemyKind::Normal,
         enemies: &["centurion", "mystic"],
+        weight: 6,
         ..Encounter::PLAIN
     },
 ];
@@ -667,6 +686,192 @@ pub fn enemy_def_or_panic(id: &str) -> &'static EnemyDef {
 
 pub fn encounter_def(id: &str) -> Option<&'static Encounter> {
     all_encounters().find(|e| e.id == id)
+}
+
+// ---- 遭遇名单的生成(参考实现 engine/run/encounters.ts) ----
+
+/// 每章弱怪名单抽几条:第一章 3,之后 2
+fn weak_count(act: u32) -> usize {
+    if act == 1 {
+        3
+    } else {
+        2
+    }
+}
+
+/// 强怪名单抽几条:1 条"首强" + 12 条
+const STRONG_GENERATED: usize = 12;
+/// 精英名单抽几条
+const ELITE_GENERATED: usize = 10;
+/// 重抽上限:池子太小时当场炸掉,而不是死循环
+const REROLL_CAP: u32 = 10_000;
+
+fn weak_table(act: u32) -> &'static [Encounter] {
+    match act {
+        1 => ENCOUNTERS_WEAK,
+        2 => ACT2_WEAK,
+        _ => ACT3_WEAK,
+    }
+}
+
+fn strong_table(act: u32) -> &'static [Encounter] {
+    match act {
+        1 => ENCOUNTERS,
+        2 => ACT2,
+        _ => ACT3,
+    }
+}
+
+fn elite_table(act: u32) -> &'static [Encounter] {
+    match act {
+        1 => ELITES,
+        2 => ACT2_ELITES,
+        _ => ACT3_ELITES,
+    }
+}
+
+fn boss_table(act: u32) -> &'static [Encounter] {
+    match act {
+        1 => BOSSES,
+        2 => ACT2_BOSSES,
+        _ => ACT3_BOSSES,
+    }
+}
+
+/// 一张表里进抽取池的条目:weight 为 0 的只当固定阵容存在,不参与抽取
+fn pool_entries(table: &'static [Encounter]) -> Vec<&'static Encounter> {
+    table.iter().filter(|e| e.weight > 0).collect()
+}
+
+/// 候选名单里不许出现名单末尾两条(参考实现的 no-repeat 规则)
+fn populate_monster_list(
+    list: &mut Vec<&'static str>,
+    ids: &[&'static str],
+    weights: &[f32],
+    count: usize,
+    rng: &mut Rng,
+) {
+    let mut guard = 0;
+    let mut done = 0;
+    while done < count {
+        let to_add = ids[rng.weighted_idx_f32(weights).expect("权重表非空")];
+        let n = list.len();
+        if n > 0 && (to_add == list[n - 1] || (n > 1 && to_add == list[n - 2])) {
+            guard += 1;
+            assert!(guard <= REROLL_CAP, "遭遇池太小,满足不了不重样的规则");
+            continue;
+        }
+        list.push(to_add);
+        done += 1;
+    }
+}
+
+/// 首强:弱怪尾巴是 small_slimes 时避开大史莱姆系,尾巴是 two_louses 时避开三只跳蚤
+fn populate_first_strong_enemy(
+    list: &mut Vec<&'static str>,
+    ids: &[&'static str],
+    weights: &[f32],
+    rng: &mut Rng,
+) {
+    let last = *list.last().expect("弱怪名单非空");
+    let mut guard = 0;
+    loop {
+        let to_add = ids[rng.weighted_idx_f32(weights).expect("权重表非空")];
+        let slime = (to_add == "large_slime" || to_add == "lots_of_slimes") && last == "small_slimes";
+        let louse = to_add == "three_louses" && last == "two_louses";
+        if slime || louse {
+            guard += 1;
+            assert!(guard <= REROLL_CAP, "首强重抽次数超上限");
+            continue;
+        }
+        list.push(to_add);
+        return;
+    }
+}
+
+/// 一章的遭遇名单:怪/精英/Boss,都按顺序消耗
+pub struct EncounterLists {
+    pub monster: Vec<&'static str>,
+    pub elite: Vec<&'static str>,
+    pub boss: Vec<&'static str>,
+}
+
+/// 名单里的 id 换成遭遇定义
+pub fn resolve(id: &str) -> &'static Encounter {
+    encounter_def(id).unwrap_or_else(|| panic!("名单里的遭遇 {id} 不存在"))
+}
+
+/// 生成一章的遭遇名单(全部掷点走 monsterRng)
+pub fn generate_encounters(act: u32, rng: &mut Rng) -> EncounterLists {
+    let mut monster: Vec<&'static str> = Vec::new();
+
+    // 弱怪:逐只等概率
+    let weak = pool_entries(weak_table(act));
+    let weak_ids: Vec<&'static str> = weak.iter().map(|e| e.id).collect();
+    let w = 1.0f32 / weak_ids.len() as f32;
+    let weak_weights = vec![w; weak_ids.len()];
+    populate_monster_list(&mut monster, &weak_ids, &weak_weights, weak_count(act), rng);
+
+    // 强怪:权重取自参考实现(分母是权重之和)
+    let strong = pool_entries(strong_table(act));
+    let strong_ids: Vec<&'static str> = strong.iter().map(|e| e.id).collect();
+    let total: u32 = strong.iter().map(|e| e.weight).sum();
+    let strong_weights: Vec<f32> = strong
+        .iter()
+        .map(|e| e.weight as f32 / total as f32)
+        .collect();
+    populate_first_strong_enemy(&mut monster, &strong_ids, &strong_weights, rng);
+    populate_monster_list(
+        &mut monster,
+        &strong_ids,
+        &strong_weights,
+        STRONG_GENERATED,
+        rng,
+    );
+
+    // 精英:三选一,不许和上一条重样
+    let elites = pool_entries(elite_table(act));
+    let elite_ids: Vec<&'static str> = elites.iter().map(|e| e.id).collect();
+    let ew = 1.0f32 / elite_ids.len() as f32;
+    let elite_weights = vec![ew; elite_ids.len()];
+    let mut elite: Vec<&'static str> = Vec::new();
+    let mut guard = 0;
+    while elite.len() < ELITE_GENERATED {
+        let to_add = elite_ids[rng.weighted_idx_f32(&elite_weights).expect("权重表非空")];
+        let n = elite.len();
+        if n > 0 && to_add == elite[n - 1] && elite_ids.len() > 1 {
+            guard += 1;
+            assert!(guard <= REROLL_CAP, "精英重抽次数超上限");
+            continue;
+        }
+        elite.push(to_add);
+    }
+
+    // Boss 顺序:一次 monsterRng.randomLong() 给 JavaRandom 定种再洗
+    let bosses = boss_table(act);
+    let mut idxs: Vec<usize> = (0..bosses.len()).collect();
+    crate::rng::java_shuffle(&mut idxs, &mut crate::rng::JavaRandom::new(rng.random_long()));
+    let boss: Vec<&'static str> = idxs.into_iter().map(|i| bosses[i].id).collect();
+
+    EncounterLists {
+        monster,
+        elite,
+        boss,
+    }
+}
+
+/// 名单抽干了就再补一批强怪(参考实现的 generateExtraStrongEncounters)
+pub fn generate_extra_strong(act: u32, rng: &mut Rng, count: usize) -> Vec<&'static str> {
+    let strong = pool_entries(strong_table(act));
+    let strong_ids: Vec<&'static str> = strong.iter().map(|e| e.id).collect();
+    let total: u32 = strong.iter().map(|e| e.weight).sum();
+    let strong_weights: Vec<f32> = strong
+        .iter()
+        .map(|e| e.weight as f32 / total as f32)
+        .collect();
+    let mut list = Vec::new();
+    populate_monster_list(&mut list, &strong_ids, &strong_weights, count, rng);
+    list
 }
 
 /// 按敌人 id 找一场能打的遭遇(调试入口用)
