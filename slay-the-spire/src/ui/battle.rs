@@ -62,7 +62,9 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     // 底部:能量+小结线 / 手牌行 / 成本+类型线 / 说明两行 / 收尾线
     let desc_text = card.map(|x| x.display_text()).unwrap_or_default();
     let desc_lines = 2u16;
-    let bottom_h = 3 + desc_lines + 1;
+    // 手牌放不下一行就用两行(行数由同一个分行函数决定)
+    let hand_lines = hand_row_layout(c, main.width as usize, 2).len() as u16;
+    let bottom_h = 2 + hand_lines + 1 + desc_lines + 1;
     let top_h = main.height.saturating_sub(bottom_h).max(4);
     let top = Rect::new(main.x, main.y, main.width, top_h);
     render_character(
@@ -148,9 +150,9 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     }
     put(buf, rx, y, &right, theme::fg(theme::INFO));
     y += 1;
-    // 手牌一行
-    put_cards_row(buf, y, main, app, c);
-    y += 1;
+    // 手牌(一到两行)
+    put_cards_row(buf, y, main, app, c, hand_lines);
+    y += hand_lines;
     // 这一行:卡牌自己的费用在左,类型在右
     put(buf, main.x, y, &crate::ui::BOX_H.to_string(), theme::fg(theme::BORDER));
     let used = match card {
@@ -264,27 +266,67 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat, off: i32) {
 }
 
 /// 一行手牌:行首一个 │,每张牌后面跟一个 │,宽度贴着内容
-fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
+/// 手牌分几行(每张牌不跨行):能一行就一行,否则两行均分,
+/// 且第一行不短于第二行(长度接近时优先让第一行更长)
+fn hand_row_layout(c: &Combat, width: usize, lines_max: u16) -> Vec<Vec<usize>> {
+    let n = c.hand.len();
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let card_w = |card: &crate::core::card::CardInstance| -> usize {
+        display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label())
+    };
+    // 一行:行首竖线 + 每格(内容 + 尾巴竖线)
+    let row_w = |range: &[usize]| -> usize {
+        range.iter().map(|k| card_w(&c.hand[*k]) + 2).sum::<usize>() + 1
+    };
+    let all: Vec<usize> = (0..n).collect();
+    if lines_max < 2 || row_w(&all) <= width {
+        return vec![all];
+    }
+    // 两行:挑差距最小的一刀,第一行短于第二行的方案加重罚
+    let mut best: Option<(i32, usize)> = None;
+    for k in 1..n {
+        let (w1, w2) = (row_w(&all[..k]), row_w(&all[k..]));
+        if w1 > width || w2 > width {
+            continue;
+        }
+        let score = if w2 > w1 {
+            1000 + (w2 - w1) as i32
+        } else {
+            (w1 - w2) as i32
+        };
+        if best.map_or(true, |(b, _)| score < b) {
+            best = Some((score, k));
+        }
+    }
+    if let Some((_, k)) = best {
+        return vec![all[..k].to_vec(), all[k..].to_vec()];
+    }
+    // 怎么切都塞不下(牌大到一行一张都放不下):退回贪心装填
+    let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut used = 1usize;
+    for k in 0..n {
+        let cell = card_w(&c.hand[k]) + 2;
+        if !rows.last().unwrap().is_empty() && used + cell > width {
+            if rows.len() as u16 >= lines_max {
+                break;
+            }
+            rows.push(Vec::new());
+            used = 1;
+        }
+        rows.last_mut().unwrap().push(k);
+        used += cell;
+    }
+    rows
+}
+
+fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat, lines_max: u16) {
     let n = c.hand.len();
     if n == 0 || area.width < 3 {
         return;
     }
-    let bar = |buf: &mut Buffer, x: u16, ch: &str| {
-        put(
-            buf,
-            x,
-            y,
-            ch,
-            theme::fg(if ch == "│" { theme::BORDER } else { theme::SEL_FG }),
-        );
-    };
-    // 每张牌占的格数(按内容),整行连竖线一起居中;选中的那张要多留两个方格放 []
     let sel = app.hand_sel.min(n - 1);
-    let lengths: Vec<usize> = c
-        .hand
-        .iter()
-        .map(|card| display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label()))
-        .collect();
     // {} 只画在光标那张;已经选中的(背景色)不画括号
     let marked = |k: usize| k == sel;
     let highlighted = |k: usize| k == sel || app.choice_sel.contains(&k);
@@ -294,8 +336,7 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
         .combat()
         .filter(|c| c.choice.is_some())
         .map(|c| c.choice_candidates().into_iter().map(|(i, _)| i).collect());
-    let widths: Vec<usize> = lengths.clone();
-    // 分隔符:选中的牌把它左右两根竖线换成 [ 和 ](宽度不变)
+    // 分隔符:选中的牌把它左右两根竖线换成 { 和 }(宽度不变)
     let bar_at = |before: usize| -> &'static str {
         if before < n && marked(before) {
             "{"
@@ -305,30 +346,66 @@ fn put_cards_row(buf: &mut Buffer, y: u16, area: Rect, app: &App, c: &Combat) {
             "│"
         }
     };
-    let total: usize = widths.iter().sum::<usize>() + n + 1;
-    let mut cx = if total <= area.width as usize {
-        area.x + ((area.width as usize - total) / 2) as u16
-    } else {
-        area.x
+    let width_of = |card: &crate::core::card::CardInstance| -> usize {
+        display_width(&crate::ui::cost_label(card)) + 1 + display_width(&card.label())
     };
-    let last_x = area.x + area.width - 1;
-    bar(buf, cx, bar_at(0));
-    cx += 1;
-    for (k, card) in c.hand.iter().enumerate() {
-        let want = widths[k];
-        let remain = last_x.saturating_sub(cx) as usize;
-        if remain == 0 {
-            break;
+    for (r, cards) in hand_row_layout(c, area.width as usize, lines_max.max(1))
+        .iter()
+        .enumerate()
+    {
+        if cards.is_empty() {
+            continue;
         }
-        let w = want.min(remain.saturating_sub(1)).max(1);
-        let dim = match &choosable {
-            Some(list) => !list.contains(&k),
-            None => c.blocked_reason(k).is_some(),
+        let y = y + r as u16;
+        // 这一行连竖线一起居中
+        let total: usize = cards.iter().map(|k| width_of(&c.hand[*k])).sum::<usize>()
+            + cards.len()
+            + 1;
+        let mut cx = if total <= area.width as usize {
+            area.x + ((area.width as usize - total) / 2) as u16
+        } else {
+            area.x
         };
-        crate::ui::put_card_cell(buf, cx, y, w as u16, card, highlighted(k), dim);
-        cx += w as u16;
-        bar(buf, cx, bar_at(k + 1));
+        let last_x = area.x + area.width - 1;
+        let bar = |buf: &mut Buffer, x: u16, ch: &str| {
+            put(
+                buf,
+                x,
+                y,
+                ch,
+                theme::fg(if ch == "│" { theme::BORDER } else { theme::SEL_FG }),
+            );
+        };
+        // 行首只看本行第一张:上一行末尾那张的 } 已经在自己行尾画过了
+        let head = if marked(cards[0]) { "{" } else { "│" };
+        bar(buf, cx, head);
         cx += 1;
+        for (i, k) in cards.iter().enumerate() {
+            let card = &c.hand[*k];
+            let want = width_of(card);
+            let remain = last_x.saturating_sub(cx) as usize;
+            if remain == 0 {
+                break;
+            }
+            let w = want.min(remain.saturating_sub(1)).max(1);
+            let dim = match &choosable {
+                Some(list) => !list.contains(k),
+                None => c.blocked_reason(*k).is_some(),
+            };
+            crate::ui::put_card_cell(buf, cx, y, w as u16, card, highlighted(*k), dim);
+            cx += w as u16;
+            let ch = if i + 1 == cards.len() {
+                if marked(*k) {
+                    "}"
+                } else {
+                    "│"
+                }
+            } else {
+                bar_at(k + 1)
+            };
+            bar(buf, cx, ch);
+            cx += 1;
+        }
     }
 }
 
