@@ -1,7 +1,8 @@
-// 图鉴:把语料里的全量卡牌/遗物/药水按"标签页"分组,每组一个条目列表.
-// 只做展示;能不能真的打出来/用出去看 cards.rs relics.rs potions.rs.
+// 图鉴:把语料里的全量卡牌/遗物/药水/事件/怪物按"标签页"分组,每组一个条目列表.
+// 只做展示;能不能真的打出来/用出去看 cards.rs relics.rs potions.rs events.rs enemies.rs.
 use crate::core::cards;
 use crate::core::corpus;
+use crate::core::enemies;
 use crate::core::events;
 use crate::core::potions;
 use crate::core::relics;
@@ -12,11 +13,17 @@ pub enum Library {
     Relics,
     Potions,
     Events,
+    Enemies,
 }
 
 impl Library {
-    pub const ALL: [Library; 4] =
-        [Library::Cards, Library::Relics, Library::Potions, Library::Events];
+    pub const ALL: [Library; 5] = [
+        Library::Cards,
+        Library::Relics,
+        Library::Potions,
+        Library::Events,
+        Library::Enemies,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -24,6 +31,7 @@ impl Library {
             Library::Relics => "relic collection",
             Library::Potions => "potion lab",
             Library::Events => "event ledger",
+            Library::Enemies => "enemy list",
         }
     }
 }
@@ -114,7 +122,33 @@ pub fn groups(lib: Library) -> Vec<Group> {
             .iter()
             .map(|&(_, title, color)| group(title, color))
             .collect(),
+        // 怪物按层分页,见 MONSTER_ACTS
+        Library::Enemies => MONSTER_ACTS
+            .iter()
+            .map(|&(_, title, color)| group(title, color))
+            .collect(),
     }
+}
+
+/// 怪物册的标签页:(层关键词, 页名, 底色)
+const MONSTER_ACTS: [(&str, &str, &str); 3] = [
+    ("1", "Act 1", "red"),
+    ("2", "Act 2", "green"),
+    ("34", "Act 3+4", "blue"),
+];
+
+/// 怪物在哪一页:只看它出现的最早一层(语料 acts 是升序),
+/// 3 层和 4 层合成一页,这样每只怪物只出现一次
+fn monster_tab(m: &corpus::MonsterInfo) -> &'static str {
+    let first = m.acts.split(',').next().unwrap_or("");
+    MONSTER_ACTS
+        .iter()
+        .find(|(act, _, _)| match *act {
+            "34" => first == "3" || first == "4",
+            a => first == a,
+        })
+        .map(|(_, title, _)| *title)
+        .unwrap_or("Other")
 }
 
 /// 事件册的标签页:语料 pool 值 -> (页名, 底色)
@@ -146,25 +180,33 @@ pub fn items(lib: Library, tab: usize) -> Vec<Item> {
         Library::Relics => relic_items(g.name),
         Library::Potions => potion_items(g.name),
         Library::Events => event_items(g.name),
+        Library::Enemies => monster_items(g.name),
     }
 }
 
-/// 事件册列表上方那一行统计;别的册没有
+/// 事件册和怪物册列表上方那一行统计;别的册没有
 pub fn header_note(lib: Library) -> Option<String> {
-    match lib {
-        Library::Events => {
-            let (done, total) = progress(Library::Events);
-            let there = corpus::EVENTS
+    let (there, all) = match lib {
+        Library::Events => (
+            corpus::EVENTS
                 .iter()
                 .filter(|e| slate_cli_event_implemented(e.id))
-                .count();
-            Some(format!(
-                "implemented here {done}/{total}   slay-the-cli {there}/{}",
-                corpus::EVENTS.len()
-            ))
-        }
-        _ => None,
-    }
+                .count(),
+            corpus::EVENTS.len(),
+        ),
+        Library::Enemies => (
+            corpus::MONSTERS
+                .iter()
+                .filter(|m| slate_cli_monster_implemented(m.corpus_id))
+                .count(),
+            corpus::MONSTERS.len(),
+        ),
+        _ => return None,
+    };
+    let (done, total) = progress(lib);
+    Some(format!(
+        "implemented here {done}/{total}   slay-the-cli {there}/{all}"
+    ))
 }
 
 /// 已实现/全部条数,标题上显示
@@ -350,6 +392,139 @@ pub fn slate_cli_event_implemented(id: &str) -> bool {
     SLATE_CLI_EVENTS.binary_search(&id).is_ok()
 }
 
+/// 怪物册的一条:名字、类别/层数,详情里是血量和招式名,最后附两行对齐信息
+fn monster_items(tab: &str) -> Vec<Item> {
+    let mut src: Vec<&corpus::MonsterInfo> = corpus::MONSTERS.iter().collect();
+    src.sort_by_key(|m| (category_rank(m.category), m.name));
+    src.iter()
+        .filter(|m| monster_tab(m) == tab)
+        .map(|m| {
+            let here = monster_here_implemented(m.id);
+            let there = slate_cli_monster_implemented(m.corpus_id);
+            let mut text = format!(
+                "hp {}\nasc {}",
+                hp_range(m.hp_lo, m.hp_hi),
+                hp_range(m.hp_asc_lo, m.hp_asc_hi)
+            );
+            text.push_str("\nmoves:");
+            for mv in m.moves {
+                text.push_str("\n- ");
+                text.push_str(&move_title(m.corpus_id, mv));
+            }
+            text.push_str("\n\nhere: ");
+            text.push_str(if here { "implemented" } else { "not implemented" });
+            text.push_str("\nslay-the-cli: ");
+            text.push_str(if there { "implemented" } else { "not implemented" });
+            Item {
+                name: m.name,
+                sub: format!("{} / acts {}", category_title(m.category), m.acts),
+                tag: category_tag(m.category).to_string(),
+                text,
+                text_up: String::new(),
+                done: here,
+                rarity_key: category_color_key(m.category),
+                tag_up: String::new(),
+                kind: "",
+                target_tag: String::new(),
+                color_key: "gray",
+                show_cost: false,
+            }
+        })
+        .collect()
+}
+
+/// 血量区间:同值只写一个数
+fn hp_range(lo: i32, hi: i32) -> String {
+    if lo == hi {
+        lo.to_string()
+    } else {
+        format!("{lo}-{hi}")
+    }
+}
+
+fn category_title(c: &str) -> &'static str {
+    match c {
+        "normal" => "normal",
+        "elite" => "elite",
+        "boss" => "boss",
+        "minion" => "minion",
+        "event" => "event",
+        _ => "other",
+    }
+}
+
+/// 排序用的类别顺序:先普通,再精英、Boss、小怪、事件
+fn category_rank(c: &str) -> u8 {
+    match c {
+        "normal" => 0,
+        "elite" => 1,
+        "boss" => 2,
+        "minion" => 3,
+        "event" => 4,
+        _ => 5,
+    }
+}
+
+/// 列表左边的小标记
+fn category_tag(c: &str) -> &'static str {
+    match c {
+        "normal" => "N",
+        "elite" => "E",
+        "boss" => "B",
+        "minion" => "M",
+        "event" => "?",
+        _ => "-",
+    }
+}
+
+/// 名字的颜色:借用现有的稀有度配色
+fn category_color_key(c: &str) -> &'static str {
+    match c {
+        "elite" => "uncommon",
+        "boss" => "boss",
+        "minion" => "special",
+        "event" => "event",
+        _ => "common",
+    }
+}
+
+/// 招式 id -> 展示名:裁掉怪物 id 前缀,下划线换空格,首字母大写
+fn move_title(corpus_id: &str, move_id: &str) -> String {
+    let prefix = format!("{corpus_id}_");
+    let rest = move_id.strip_prefix(prefix.as_str()).unwrap_or(move_id);
+    rest.split('_')
+        .map(|w| title_case(&w.to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 本作是否实现了这只怪物:它得出现在某场遭遇的敌人表里,
+/// 也就是说真的能打出来(含分裂/召唤出来的和事件直接开战的),只定义不出来的不算
+pub fn monster_here_implemented(game_id: &str) -> bool {
+    enemies::encounter_with_enemy(game_id).is_some()
+}
+
+/// slay-the-cli 参考实现的怪物 id,来自
+/// refs/slay-the-cli/src/content/monsters/{act1,act2,act34}/*.ts 里的 `MonsterDef = { id: "..." }`,
+/// 共 65 条,与语料一一对应(大小写和语料一致).
+pub const SLATE_CLI_MONSTERS: &[&str] = &[
+    "ACID_SLIME_L", "ACID_SLIME_M", "ACID_SLIME_S", "AWAKENED_ONE", "BEAR", "BLUE_SLAVER",
+    "BOOK_OF_STABBING", "BRONZE_AUTOMATON", "BRONZE_ORB", "BYRD", "CENTURION", "CHOSEN",
+    "CORRUPT_HEART", "CULTIST", "DAGGER", "DARKLING", "DECA", "DONU", "EXPLODER", "FAT_GREMLIN",
+    "FUNGI_BEAST", "GIANT_HEAD", "GREEN_LOUSE", "GREMLIN_LEADER", "GREMLIN_NOB",
+    "GREMLIN_WIZARD", "HEXAGHOST", "JAW_WORM", "LAGAVULIN", "LOOTER", "MAD_GREMLIN", "MUGGER",
+    "MYSTIC", "NEMESIS", "ORB_WALKER", "POINTY", "RED_LOUSE", "RED_SLAVER", "REPTOMANCER",
+    "REPULSOR", "ROMEO", "SENTRY", "SHELLED_PARASITE", "SHIELD_GREMLIN", "SLIME_BOSS",
+    "SNAKE_PLANT", "SNEAKY_GREMLIN", "SNECKO", "SPHERIC_GUARDIAN", "SPIKER", "SPIKE_SLIME_L",
+    "SPIKE_SLIME_M", "SPIKE_SLIME_S", "SPIRE_GROWTH", "SPIRE_SHIELD", "SPIRE_SPEAR",
+    "TASKMASTER", "THE_CHAMP", "THE_COLLECTOR", "THE_GUARDIAN", "THE_MAW", "TIME_EATER",
+    "TORCH_HEAD", "TRANSIENT", "WRITHING_MASS",
+];
+
+pub fn slate_cli_monster_implemented(corpus_id: &str) -> bool {
+    SLATE_CLI_MONSTERS.binary_search(&corpus_id).is_ok()
+}
+
 /// 语料里的 target -> 列表右边的小标签
 fn target_tag(target: &str) -> &'static str {
     match target {
@@ -512,5 +687,180 @@ mod tests {
         assert!(header_note(Library::Cards).is_none());
         assert!(header_note(Library::Relics).is_none());
         assert!(header_note(Library::Potions).is_none());
+    }
+
+    /// 语料里三张怪物 json 的条数之和
+    const MONSTER_JSON_ROWS: usize = 25 + 20 + 20;
+
+    /// act1 目前能打出来的 18 只,后面的 act 会陆续加,所以只断言这批至少还在
+    const ACT1_ENEMIES: [&str; 18] = [
+        "cultist",
+        "jaw_worm",
+        "red_louse",
+        "green_louse",
+        "acid_slime_small",
+        "spike_slime_small",
+        "acid_slime_medium",
+        "spike_slime_medium",
+        "fungi_beast",
+        "looter",
+        "blue_slaver",
+        "red_slaver",
+        "gremlin_nob",
+        "lagavulin",
+        "sentry",
+        "the_guardian",
+        "hexaghost",
+        "slime_boss",
+    ];
+
+    #[test]
+    fn monster_items_match_corpus() {
+        assert_eq!(corpus::MONSTERS.len(), MONSTER_JSON_ROWS);
+        let total: usize = groups(Library::Enemies)
+            .iter()
+            .enumerate()
+            .map(|(i, _)| items(Library::Enemies, i).len())
+            .sum();
+        assert_eq!(total, MONSTER_JSON_ROWS);
+        // 名字唯一,页面之间不会互相盖掉
+        let mut names: Vec<&str> = Vec::new();
+        for m in corpus::MONSTERS {
+            assert!(!names.contains(&m.name), "重名 {}", m.name);
+            names.push(m.name);
+        }
+    }
+
+    #[test]
+    fn every_act_tab_holds_only_its_own_monsters() {
+        let mut seen: Vec<&str> = Vec::new();
+        for (act, title, _color) in MONSTER_ACTS {
+            let tab = groups(Library::Enemies)
+                .iter()
+                .position(|g| g.name == title)
+                .expect("每个 act 都要有标签页");
+            let mut n = 0;
+            for it in items(Library::Enemies, tab) {
+                let m = corpus::MONSTERS
+                    .iter()
+                    .find(|m| m.name == it.name)
+                    .expect("列表里的怪物不在语料里");
+                let first = m.acts.split(',').next().unwrap_or("");
+                let ok = if act == "34" {
+                    first == "3" || first == "4"
+                } else {
+                    first == act
+                };
+                assert!(ok, "{} 不该出现在 {} 页", m.id, title);
+                seen.push(m.id);
+                n += 1;
+            }
+            assert!(n > 0, "{} 页是空的", title);
+        }
+        // 每只怪物只算一次,三页加起来就是全部
+        assert_eq!(seen.len(), corpus::MONSTERS.len());
+    }
+
+    #[test]
+    fn monster_done_flag_matches_encounters() {
+        let (done, total) = progress(Library::Enemies);
+        assert_eq!(total, corpus::MONSTERS.len());
+        let want = corpus::MONSTERS
+            .iter()
+            .filter(|m| monster_here_implemented(m.id))
+            .count();
+        assert_eq!(done, want, "已实现计数与遭遇表对不上");
+        // 判定要能真打出来:有定义,而且出现在某场遭遇里
+        for m in corpus::MONSTERS
+            .iter()
+            .filter(|m| monster_here_implemented(m.id))
+        {
+            assert!(enemies::enemy_def(m.id).is_some(), "{} 没有 EnemyDef", m.id);
+        }
+        // 本作定义的敌人都能对上语料,不然统计会漏
+        for def in enemies::ENEMIES {
+            assert!(
+                enemies::all_encounters().any(|e| e.enemies.contains(&def.id)),
+                "{} 不在任何遭遇里",
+                def.id
+            );
+            assert!(
+                corpus::MONSTERS.iter().any(|m| m.id == def.id),
+                "{} 不在语料里",
+                def.id
+            );
+        }
+        // 遇到的敌人也都要有定义
+        for enc in enemies::all_encounters() {
+            for id in enc.enemies {
+                assert!(enemies::enemy_def(id).is_some(), "{} 没有定义", id);
+            }
+        }
+        // 这些 act1 的老敌人必须还能打(新增的遭遇只会让 done 更大)
+        for id in ACT1_ENEMIES {
+            assert!(monster_here_implemented(id), "{id} 应该还能打");
+            assert!(
+                corpus::MONSTERS.iter().any(|m| m.id == id),
+                "{id} 不在语料里"
+            );
+        }
+        assert!(done >= ACT1_ENEMIES.len(), "done {done} 比 act1 还少");
+    }
+
+    #[test]
+    fn reference_monster_table_matches_corpus() {
+        assert_eq!(SLATE_CLI_MONSTERS.len(), MONSTER_JSON_ROWS);
+        assert!(
+            SLATE_CLI_MONSTERS.windows(2).all(|w| w[0] < w[1]),
+            "常量表要排序好给 binary_search 用"
+        );
+        for m in corpus::MONSTERS {
+            assert!(
+                slate_cli_monster_implemented(m.corpus_id),
+                "参考实现少了 {}",
+                m.corpus_id
+            );
+        }
+        for id in SLATE_CLI_MONSTERS {
+            assert!(
+                corpus::MONSTERS.iter().any(|m| m.corpus_id == *id),
+                "参考实现多了 {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn monster_header_note_counts() {
+        let (done, total) = progress(Library::Enemies);
+        assert_eq!(total, MONSTER_JSON_ROWS);
+        assert!(done >= ACT1_ENEMIES.len());
+        let n = header_note(Library::Enemies).expect("怪物册要有统计行");
+        assert!(n.contains(&format!("implemented here {done}/{total}")), "{n}");
+        assert!(n.contains("slay-the-cli 65/65"), "{n}");
+    }
+
+    #[test]
+    fn monster_detail_lists_moves() {
+        let tab = groups(Library::Enemies)
+            .iter()
+            .position(|g| g.name == "Act 1")
+            .unwrap();
+        let cultist = items(Library::Enemies, tab)
+            .into_iter()
+            .find(|i| i.name == "Cultist")
+            .expect("Cultist 在 Act 1");
+        assert!(cultist.done, "Cultist 本作能打");
+        assert!(cultist.sub.contains("normal") && cultist.sub.contains("acts 1,2,3"));
+        assert!(cultist.text.contains("hp 48-54"), "{}", cultist.text);
+        assert!(cultist.text.contains("asc 50-56"), "{}", cultist.text);
+        assert!(cultist.text.contains("\n- Incantation"), "{}", cultist.text);
+        assert!(cultist.text.contains("\n- Dark Strike"), "{}", cultist.text);
+        // 语料里的 boss 血量是单值,只写一个数
+        let boss = items(Library::Enemies, tab)
+            .into_iter()
+            .find(|i| i.name == "The Guardian")
+            .expect("The Guardian 在 Act 1");
+        assert!(boss.text.contains("hp 240\n"), "{}", boss.text);
+        assert!(boss.text.contains("asc 250\n"), "{}", boss.text);
     }
 }

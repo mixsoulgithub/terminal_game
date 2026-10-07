@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::{App, Mode};
 use crate::core::combat::Combat;
-use crate::core::enemy::{EnemyFx, Intent};
+use crate::core::enemy::Intent;
 use crate::ui::theme;
 use crate::ui::{display_width, put, put_padded, truncate};
 
@@ -502,24 +502,31 @@ fn enemy_lines(c: &Combat, i: usize) -> Vec<Vec<(String, Style)>> {
     vec![hp_line, name_line, action, status]
 }
 
-/// 本回合动作记号:给玩家的减益病绿、自身增益紫、攻击红(带加减益后的实际值)、格挡蓝
+/// 本回合动作记号:按意图分类,攻击伤害用实算值(含增减益与随回合成长)
 fn enemy_action_tokens(c: &Combat, i: usize) -> Vec<(String, Color)> {
     let e = &c.enemies[i];
-    if e.intent() == Intent::Sleep {
-        return vec![("SLEEP".to_string(), theme::DIM)];
+    if !e.up() {
+        return vec![("--".to_string(), theme::DIM)];
     }
-    let Some(mv) = e.def.moves.get(e.next_move) else {
-        return vec![("???".to_string(), theme::DIM)];
-    };
-    let (mut attack, mut block, mut buff, mut debuff) = (false, 0, false, false);
-    for fx in mv.effects {
-        match fx {
-            EnemyFx::Attack { .. } => attack = true,
-            EnemyFx::Block { amount } => block += *amount,
-            EnemyFx::GainStatus { .. } => buff = true,
-            EnemyFx::PlayerStatus { .. } => debuff = true,
-        }
+    let intent = e.intent();
+    match intent {
+        Intent::Sleep => return vec![("SLEEP".to_string(), theme::DIM)],
+        Intent::Stun => return vec![("STUNNED".to_string(), theme::DIM)],
+        Intent::Escape => return vec![("ESCAPE".to_string(), theme::DEBUFF)],
+        Intent::Unknown => return vec![("???".to_string(), theme::DIM)],
+        _ => {}
     }
+    let debuff = matches!(
+        intent,
+        Intent::Debuff
+            | Intent::StrongDebuff
+            | Intent::AttackDebuff { .. }
+            | Intent::DefendDebuff { .. }
+    );
+    let buff = matches!(
+        intent,
+        Intent::Buff | Intent::DefendBuff { .. } | Intent::AttackBuff { .. }
+    );
     let mut out: Vec<(String, Color)> = Vec::new();
     if debuff {
         out.push(("DEBUFF".to_string(), theme::DEBUFF));
@@ -527,7 +534,7 @@ fn enemy_action_tokens(c: &Combat, i: usize) -> Vec<(String, Color)> {
     if buff {
         out.push(("BUFF".to_string(), theme::BUFF));
     }
-    if attack {
+    if intent.attacks() {
         let (per, times) = c.predicted_damage(i);
         out.push((
             if times > 1 {
@@ -538,8 +545,9 @@ fn enemy_action_tokens(c: &Combat, i: usize) -> Vec<(String, Color)> {
             theme::BAD,
         ));
     }
+    let block = c.intent_block(i);
     if block > 0 {
-        out.push((format!("BLOCK {}", c.intent_block(i)), theme::BLOCK));
+        out.push((format!("BLOCK {block}"), theme::BLOCK));
     }
     if out.is_empty() {
         out.push(("???".to_string(), theme::DIM));

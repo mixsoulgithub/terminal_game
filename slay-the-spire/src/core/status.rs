@@ -37,9 +37,72 @@ pub enum Status {
     Magnetism,
     Panache,
     SadisticNature,
+    // 玩家与敌人共用、来自敌人的状态
+    /// 回合结束获得等量格挡,受到未被格挡的伤害时减一
+    PlatedArmor,
+    /// 玩家回合结束时受到等量伤害(缠绕)
+    Constricted,
+    /// 抽到的牌费用随机化(蛇眼)
+    Confused,
+    /// 每打出一张非攻击牌就往抽牌堆洗入等量眩晕(被选中者)
+    Hex,
+    /// 下回合少抽等量张牌
+    DrawReduction,
+    /// 被两面夹击:从背后受到攻击时多吃 50% 伤害
+    Surrounded,
+    /// 受到的所有伤害降为 1(复仇女神的循环)
+    Intangible,
     // 敌人能力
     Ritual,
     Enrage,
+    /// 受到攻击伤害时获得等量力量(狂怒小鬼)
+    Anger,
+    /// 玩家每打出一张攻击牌就受到等量伤害(守护者的防御姿态)
+    SharpHide,
+    /// 玩家每打出一张牌就受到等量伤害(心脏)
+    BeatOfDeath,
+    /// 玩家每打出一张能力牌就获得等量力量(觉醒者)
+    Curiosity,
+    /// 第一次受到攻击伤害时获得等量格挡,一次性(虱子)
+    CurlUp,
+    /// 倒计时,回合数到就自爆
+    Explosive,
+    /// 倒计时,回合数到就消失(瞬变体)
+    Fading,
+    /// 受到的攻击伤害减半,每次被命中掉一层,掉光则落地眩晕(鸟)
+    Flight,
+    /// 本回合最多再掉等量生命(心脏)
+    Invincible,
+    /// 受到攻击伤害时获得等量格挡,每命中一次层数加一,自己回合结束重置(扭动巨物/蛇草)
+    Malleable,
+    /// 首领死亡时一起退场(召唤物)
+    Minion,
+    /// 死亡时带走所有召唤物
+    MinionLeader,
+    /// 掉够等量生命就换防御姿态(守护者)
+    ModeShift,
+    /// 造成未被格挡的攻击伤害时往玩家弃牌堆塞等量伤口(痛苦刺击)
+    PainfulStabs,
+    /// 受到攻击伤害就重新选招(扭动巨物)
+    Reactive,
+    /// 死亡后若还有同伴就半血复活一次(暗灵)
+    Regrow,
+    /// 掉血时临时扣除等量力量,自己回合结束回补(瞬变体)
+    Shifting,
+    /// 玩家每打出一张牌就多吃 10% 攻击伤害,自己回合结束重置(巨大头颅)
+    Slow,
+    /// 死亡时给玩家上等量易伤(孢子云)
+    SporeCloud,
+    /// 血量掉到一半就分裂成两只小史莱姆
+    Split,
+    /// 身上压着一张被偷走的牌,死亡时归还
+    Stasis,
+    /// 每回合结束时获得等量力量(圆球步行者)
+    StrengthUp,
+    /// 玩家每打出第 12 张牌就结束其回合并获得等量力量(时间吞噬者)
+    TimeWarp,
+    /// 睡着(拉格文):不行动,挨打会醒
+    Asleep,
 }
 
 impl Status {
@@ -76,8 +139,39 @@ impl Status {
             Magnetism => "Magnetism",
             Panache => "Panache",
             SadisticNature => "Sadistic Nature",
+            PlatedArmor => "Plated Armor",
+            Constricted => "Constricted",
+            Confused => "Confused",
+            Hex => "Hex",
+            DrawReduction => "Draw Reduction",
+            Surrounded => "Surrounded",
+            Intangible => "Intangible",
             Ritual => "Ritual",
             Enrage => "Enrage",
+            Anger => "Anger",
+            SharpHide => "Sharp Hide",
+            BeatOfDeath => "Beat of Death",
+            Curiosity => "Curiosity",
+            CurlUp => "Curl Up",
+            Explosive => "Explosive",
+            Fading => "Fading",
+            Flight => "Flight",
+            Invincible => "Invincible",
+            Malleable => "Malleable",
+            Minion => "Minion",
+            MinionLeader => "Minion Leader",
+            ModeShift => "Mode Shift",
+            PainfulStabs => "Painful Stabs",
+            Reactive => "Reactive",
+            Regrow => "Regrow",
+            Shifting => "Shifting",
+            Slow => "Slow",
+            SporeCloud => "Spore Cloud",
+            Split => "Split",
+            Stasis => "Stasis",
+            StrengthUp => "Strength Up",
+            TimeWarp => "Time Warp",
+            Asleep => "Asleep",
         }
     }
 
@@ -115,26 +209,67 @@ impl Status {
             Magnetism => "MAGN",
             Panache => "PAN",
             SadisticNature => "SAD",
+            PlatedArmor => "PLATE",
+            Constricted => "CSTR",
+            Confused => "CNFS",
+            Hex => "HEX",
+            DrawReduction => "DRED",
+            Surrounded => "SURR",
+            Intangible => "INTG",
             Ritual => "RITUAL",
             Enrage => "ENRAGE",
+            Anger => "ANGR",
+            SharpHide => "HIDE",
+            BeatOfDeath => "BEAT",
+            Curiosity => "CURI",
+            CurlUp => "CURL",
+            Explosive => "XPLS",
+            Fading => "FADE",
+            Flight => "FLGT",
+            Invincible => "INVC",
+            Malleable => "MALL",
+            Minion => "MINN",
+            MinionLeader => "LEAD",
+            ModeShift => "MODE",
+            PainfulStabs => "PSTB",
+            Reactive => "REAC",
+            Regrow => "RGRW",
+            Shifting => "SHFT",
+            Slow => "SLOW",
+            SporeCloud => "SPOR",
+            Split => "SPLT",
+            Stasis => "STAS",
+            StrengthUp => "STR+",
+            TimeWarp => "TIME",
+            Asleep => "SLP",
         }
     }
 
-    /// 回合结束时层数减一
+    /// 负面状态(渲染成红色、会被"清除减益"清掉)
     pub fn is_debuff(self) -> bool {
         use Status::*;
-        // 本回合就失效的也放这儿,靠回合结束时递减
         matches!(
             self,
             Vulnerable
                 | Weak
                 | Frail
                 | Entangled
-                | DoubleTap
-                | Rage
-                | FlameBarrier
-                | NoBlock
+                | Confused
+                | Hex
+                | DrawReduction
+                | Surrounded
+                | Constricted
+                | Slow
         )
+    }
+
+    /// 回合结束时层数减一(持续整场战斗的减益不算)
+    pub fn decays(self) -> bool {
+        use Status::*;
+        if matches!(self, Confused | Hex | Surrounded | Constricted | Slow) {
+            return false;
+        }
+        self.is_debuff() || matches!(self, DoubleTap | Rage | FlameBarrier | NoBlock)
     }
 
 }
@@ -168,6 +303,29 @@ impl Statuses {
         self.get(s) != 0
     }
 
+    /// 状态栏里挂没挂这一条(层数 0 也算挂着,慢速开局显示的就是 Slow 0)
+    pub fn holds(&self, s: Status) -> bool {
+        self.list.iter().any(|(k, _)| *k == s)
+    }
+
+    /// 挂上一条层数为 0 的状态(用于开局就显示的倒计时/慢速)
+    pub fn mark(&mut self, s: Status) {
+        if !self.holds(s) {
+            self.list.push((s, 0));
+        }
+    }
+
+    /// 直接把层数设成 n(每回合重置延展/慢速/飞行用);
+    /// 0 且不会自然递减的状态留一条空壳,界面上仍然显示(Slow 0)
+    pub fn set(&mut self, s: Status, n: i32) {
+        if let Some(slot) = self.list.iter_mut().find(|(k, _)| *k == s) {
+            slot.1 = n;
+        } else if n > 0 || !s.decays() {
+            self.list.push((s, n));
+        }
+        self.list.retain(|(k, n)| *k != s || *n != 0 || !k.decays());
+    }
+
     /// 叠加 n,n 可以为负;层数降到 0 以下就移除
     pub fn add(&mut self, s: Status, n: i32) {
         if n == 0 {
@@ -194,14 +352,15 @@ impl Statuses {
         }
     }
 
-    /// 每个减益层数减一
+    /// 每个到期的状态层数减一
     pub fn decay_debuffs(&mut self) {
         for slot in self.list.iter_mut() {
-            if slot.0.is_debuff() {
+            if slot.0.decays() {
                 slot.1 -= 1;
             }
         }
-        self.list.retain(|(_, n)| *n > 0);
+        // 不递减的状态留着(包括层数为 0 的标记,比如 Slow 0)
+        self.list.retain(|(k, n)| *n > 0 || !k.decays());
     }
 
     pub fn clear_debuffs(&mut self) {

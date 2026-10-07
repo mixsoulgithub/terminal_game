@@ -174,6 +174,52 @@ def gen_events(src: str) -> str:
     return "\n".join(rows)
 
 
+# 语料里的史莱姆用 _S/_M/_L 表示小/中/大型, 本游戏的敌人 id 写全
+SLIME_SIZES = {"_S": "_small", "_M": "_medium", "_L": "_large"}
+
+
+def monster_id(corpus_id: str) -> str:
+    """语料怪物 id 转成本游戏敌人 id: CULTIST -> cultist, ACID_SLIME_S -> acid_slime_small.
+
+    只有史莱姆的体型后缀要展开, 和 enemies.rs 里的 id 对齐.
+    """
+    s = corpus_id.lower()
+    if s.startswith(("acid_slime_", "spike_slime_")):
+        for suf, full in SLIME_SIZES.items():
+            if s.endswith(suf.lower()):
+                s = s[: -len(suf)] + full
+                break
+    return s
+
+
+def gen_monsters(src: str) -> str:
+    ms = load(src, "monsters-act1") + load(src, "monsters-act2")
+    ms += load(src, "monsters-act34")["monsters"]
+    rows = []
+    for m in ms:
+        hp = m.get("hp") or {}
+        base = hp.get("base") or [0, 0]
+        asc = hp.get("asc") or base
+        moves = list((m.get("moves") or {}).keys())
+        mv = "&[{}]".format(", ".join(rs(k) for k in moves))
+        rows.append(
+            "    MonsterInfo {{ id: {}, corpus_id: {}, name: {}, category: {}, acts: {}, "
+            "hp_lo: {}, hp_hi: {}, hp_asc_lo: {}, hp_asc_hi: {}, moves: {} }},".format(
+                rs(monster_id(m["id"])),
+                rs(m["id"]),
+                rs(m["name"]),
+                rs(m.get("category", "")),
+                rs(",".join(str(a) for a in (m.get("acts") or []))),
+                int(base[0]),
+                int(base[1]),
+                int(asc[0]),
+                int(asc[1]),
+                mv,
+            )
+        )
+    return "\n".join(rows)
+
+
 def gen_characters(src: str) -> str:
     rows = []
     for c in load(src, "characters"):
@@ -200,7 +246,7 @@ def gen_characters(src: str) -> str:
 
 
 HEADER = '''#![allow(dead_code)]
-// 全量语料(卡牌/遗物/药水/事件/角色), 由 tools/gen_corpus.py 从
+// 全量语料(卡牌/遗物/药水/事件/怪物/角色), 由 tools/gen_corpus.py 从
 // refs/slay-the-cli/data/corpus/*.json 生成, 不要手改.
 // 这里只有展示数据; 能不能打/能不能用由 cards.rs relics.rs potions.rs events.rs 决定.
 
@@ -251,6 +297,23 @@ pub struct EventInfo {
     pub text: &\'static str,
 }
 
+pub struct MonsterInfo {
+    /// 本游戏的敌人 id(语料 id 转小写, 史莱姆的 _S/_M/_L 展开成 _small/_medium/_large)
+    pub id: &\'static str,
+    pub corpus_id: &\'static str,
+    pub name: &\'static str,
+    /// normal / elite / boss / minion / event
+    pub category: &\'static str,
+    /// 出现的层, 逗号分隔(如 "1,2,3")
+    pub acts: &\'static str,
+    pub hp_lo: i32,
+    pub hp_hi: i32,
+    pub hp_asc_lo: i32,
+    pub hp_asc_hi: i32,
+    /// 招式 id(名字里带怪物 id 前缀, 展示时再裁)
+    pub moves: &\'static [&\'static str],
+}
+
 pub struct CharacterInfo {
     pub id: &\'static str,
     /// red / green / blue / purple
@@ -277,6 +340,7 @@ def main():
         ("relics", "RelicInfo", gen_relics),
         ("potions", "PotionInfo", gen_potions),
         ("events", "EventInfo", gen_events),
+        ("monsters", "MonsterInfo", gen_monsters),
         ("characters", "CharacterInfo", gen_characters),
     ]:
         body = fn(src)

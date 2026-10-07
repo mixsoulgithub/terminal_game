@@ -2,7 +2,9 @@
 // 纯逻辑,不碰终端;一局流程(run.rs)只负责在一次战斗前后同步生命与遗物结算.
 use crate::core::card::{CardInstance, Cost, Effect, Target};
 use crate::core::cards;
-use crate::core::enemy::{Ai, EnemyDef, EnemyFx, EnemyKind, Encounter, Intent};
+use crate::core::enemy::{
+    CardSpot, Encounter, EnemyDef, EnemyFx, EnemyKind, EnemyState, Intent, PickCtx, Scope, Special,
+};
 use crate::core::potions::{PotionDef, PotionFx};
 use crate::core::relics::RelicDef;
 use crate::core::status::{Status, Statuses};
@@ -50,29 +52,41 @@ pub struct Enemy {
     pub statuses: Statuses,
     /// 下一招在 def.moves 里的下标
     pub next_move: usize,
-    /// 睡眠 AI 剩余回合数
-    pub sleep_left: u8,
-    pub awake: bool,
     /// 死亡触发是否已结算,避免重复触发
     pub death_done: bool,
     /// 本回合被扣掉的力量(黑暗镣铐),回合结束回补
     pub temp_strength: i32,
+    /// 已经脱离战斗(逃跑 / 被首领带走),不会再行动也不再算敌人
+    pub escaped: bool,
+    /// 跨回合的怪物状态(回合数、招式历史、各种计数)
+    pub state: EnemyState,
 }
 
 impl Enemy {
+    /// 还站着、能被选中:逃跑的和半死的觉醒者都不算
     pub fn alive(&self) -> bool {
-        self.hp > 0
+        self.hp > 0 && !self.escaped && !self.state.half_dead
+    }
+
+    /// 还在战斗里(半死的觉醒者仍然要回合)
+    pub fn up(&self) -> bool {
+        (self.hp > 0 || self.state.half_dead) && !self.escaped
     }
 
     pub fn dead(&self) -> bool {
-        self.hp <= 0
+        !self.up()
+    }
+
+    /// 这只怪是不是召唤物
+    pub fn is_minion(&self) -> bool {
+        self.statuses.holds(Status::Minion)
     }
 
     pub fn intent(&self) -> Intent {
-        if self.sleep_left > 0 && !self.awake {
-            return Intent::Sleep;
+        if self.state.half_dead {
+            return Intent::Unknown;
         }
-        self.def.moves[self.next_move].intent()
+        self.def.moves[self.next_move].intent
     }
 }
 
@@ -91,6 +105,8 @@ pub struct CombatSetup {
     pub max_hp: i32,
     pub deck: Vec<CardInstance>,
     pub relics: Vec<&'static RelicDef>,
+    /// 玩家身上的金币(抢劫类敌人要用)
+    pub gold: i32,
 }
 
 /// 抖动:谁在抖、往哪边(负 = 左,正 = 右)。表现层取走后自己清空。
@@ -227,6 +243,18 @@ pub struct Combat {
     /// 定时炸弹:(剩余回合, 伤害)
     bombs: Vec<(u8, i32)>,
     relic_thorns: i32,
+    /// 玩家身上的金币(抢劫类敌人要用,由一局流程填)
+    pub player_gold: i32,
+    /// 被圆球哨卫偷走的牌:(持有者下标, 牌),持有者死了就还回来
+    pub stasis: Vec<(usize, CardInstance)>,
+    /// 上一招实际打掉的血(吸血与"格挡等于伤害"要看它)
+    last_hit: i32,
+    /// 战斗中永久塞进牌组的牌(寄生),一局流程在战斗结束后收走
+    pub deck_cards: Vec<CardInstance>,
+    /// 时间吞噬者的时间扭曲:这一张牌打完就要结束回合
+    pub force_end_turn: bool,
+    /// 玩家最近一次指向的敌人(被夹击时判断从哪边挨打)
+    pub facing: usize,
 }
 
 /// 单次打牌过程中的临时统计
@@ -255,24 +283,32 @@ impl Combat {
             let hp = rng.range_inclusive(def.hp.0, def.hp.1);
             let mut statuses = Statuses::new();
             for (s, n) in def.innate {
-                statuses.add(*s, *n);
+                if *n == 0 {
+                    statuses.mark(*s);
+                } else {
+                    statuses.add(*s, *n);
+                }
             }
-            let sleep_left = match def.ai {
-                Ai::Sleep { turns, .. } => turns,
-                _ => 0,
+            let mut state = EnemyState::default();
+            let block = def.start_block;
+            let mut spawn = crate::core::enemy::SpawnCtx {
+                rng: &mut rng,
+                statuses: &mut statuses,
+                state: &mut state,
             };
+            (def.spawn)(&mut spawn);
             enemies.push(Enemy {
                 def,
                 name,
                 hp,
                 max_hp: hp,
-                block: 0,
+                block,
                 statuses,
                 next_move: 0,
-                sleep_left,
-                awake: sleep_left == 0,
                 death_done: false,
                 temp_strength: 0,
+                escaped: false,
+                state,
             });
         }
 
@@ -315,6 +351,12 @@ impl Combat {
             cards_played: 0,
             bombs: Vec::new(),
             relic_thorns: 0,
+            player_gold: setup.gold,
+            stasis: Vec::new(),
+            last_hit: 0,
+            deck_cards: Vec::new(),
+            force_end_turn: false,
+            facing: 1,
         };
 
         // 遗物:战斗开始结算
@@ -344,6 +386,10 @@ impl Combat {
         c.max_energy = BASE_ENERGY + extra_energy;
         if start_heal > 0 {
             c.heal_player(start_heal);
+        }
+        // 开局的第一次掷招(参考实现里这一掷看到的是 turn == 0)
+        for i in 0..c.enemies.len() {
+            c.roll_first_move(i);
         }
         let summary = c.enemy_summary();
         c.push_log(LogKind::Info, format!("Combat begins: {summary}"));
@@ -434,7 +480,15 @@ impl Combat {
             );
         }
         self.push_log(LogKind::Info, format!("-- Turn {} --", self.turn));
-        self.draw_cards(DRAW_PER_TURN + extra_draw);
+        // 时间吞噬者的头疼:下回合少抽几张
+        let less = self.player.statuses.get(Status::DrawReduction).max(0) as usize;
+        if less > 0 {
+            self.push_log(
+                LogKind::Player,
+                format!("Draw Reduction: you draw {less} fewer cards"),
+            );
+        }
+        self.draw_cards((DRAW_PER_TURN + extra_draw).saturating_sub(less));
         let brutal = self.player.statuses.get(Status::Brutality);
         if brutal > 0 {
             // 掉血来自能力而不是卡牌,所以不触发渴望
@@ -483,6 +537,7 @@ impl Combat {
             LogKind::Player,
             format!("{} plays {label}", if exhaust_after { "Havoc" } else { "Mayhem" }),
         );
+        let kind = card.kind();
         // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
         self.havoc_depth = self.havoc_depth.saturating_add(1);
         self.havoc_chain.push((self.havoc_depth, label));
@@ -496,12 +551,12 @@ impl Combat {
         } else {
             self.discard.push(card);
         }
-        self.note_card_played();
+        self.note_card_played(kind);
         self.check_win();
     }
 
     /// 记一张打出的牌;浮夸每打满 5 张就对所有敌人来一下;痛苦手里有就掉血
-    fn note_card_played(&mut self) {
+    fn note_card_played(&mut self, kind: crate::core::card::CardType) {
         self.cards_played += 1;
         // 痛苦:在自己手里时,别人被打出就掉 1 血(本张牌已经从手牌/抽牌堆拿走)
         let pain: i32 = self
@@ -517,18 +572,106 @@ impl Combat {
             self.push_log(LogKind::Player, format!("Pain: lose {pain} HP"));
             self.lose_hp_player(pain, true);
         }
+        self.on_enemy_card_hooks(kind);
         let pan = self.player.statuses.get(Status::Panache);
         if pan <= 0 || self.cards_played % 5 != 0 {
             return;
         }
         for i in self.alive_enemies() {
-            self.damage_enemy(i, pan);
+            self.damage_enemy_plain(i, pan);
         }
         self.push_log(
             LogKind::Player,
             format!("Panache deals {pan} to all enemies"),
         );
         self.settle_deaths();
+    }
+
+    /// 敌人身上"玩家每打出一张牌"就触发的机制
+    fn on_enemy_card_hooks(&mut self, kind: crate::core::card::CardType) {
+        use crate::core::card::CardType;
+        for i in 0..self.enemies.len() {
+            if !self.enemies[i].alive() {
+                continue;
+            }
+            let name = self.enemies[i].name.clone();
+            // 慢速:每打一张牌就让巨大头颅多挨一成
+            if self.enemies[i].statuses.holds(Status::Slow) {
+                let slow = self.enemies[i].statuses.get(Status::Slow);
+                self.enemies[i].statuses.set(Status::Slow, slow + 1);
+            }
+            // 死亡律动:打一张掉一次血
+            let beat = self.enemies[i].statuses.get(Status::BeatOfDeath);
+            if beat > 0 {
+                let (taken, _) = self.hit_player(beat);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s Beat of Death deals {taken}"),
+                );
+                if self.phase == Phase::Lost {
+                    return;
+                }
+            }
+            // 尖刺外壳:打攻击牌就挨刺
+            let hide = self.enemies[i].statuses.get(Status::SharpHide);
+            if hide > 0 && kind == CardType::Attack {
+                let (taken, _) = self.hit_player(hide);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s Sharp Hide deals {taken}"),
+                );
+                if self.phase == Phase::Lost {
+                    return;
+                }
+            }
+            // 好奇:打能力牌就给觉醒者涨力量
+            let cur = self.enemies[i].statuses.get(Status::Curiosity);
+            if cur > 0 && kind == CardType::Power {
+                self.enemies[i].statuses.add(Status::Strength, cur);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s Curiosity: +{cur} Strength"),
+                );
+            }
+            // 狂怒:打技能牌就给小鬼头目涨力量
+            let enrage = self.enemies[i].statuses.get(Status::Enrage);
+            if enrage > 0 && kind == CardType::Skill {
+                self.enemies[i].statuses.add(Status::Strength, enrage);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s Enrage: +{enrage} Strength"),
+                );
+            }
+            // 诅咒之眼:打非攻击牌就往抽牌堆塞眩晕
+            let hex = self.enemies[i].statuses.get(Status::Hex);
+            if hex > 0 && kind != CardType::Attack {
+                for _ in 0..hex {
+                    let mut inst = CardInstance::new(cards::card_def_or_panic("dazed"));
+                    self.fix_new_card(&mut inst);
+                    let pos = self.rng.below(self.draw.len() as u32 + 1) as usize;
+                    self.draw.insert(pos, inst);
+                }
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s Hex shuffles {hex} Dazed into your draw pile"),
+                );
+            }
+            // 时间扭曲:打满 12 张就结束这一回合
+            if self.enemies[i].statuses.holds(Status::TimeWarp) {
+                let n = self.enemies[i].statuses.get(Status::TimeWarp) + 1;
+                if n >= 12 {
+                    self.enemies[i].statuses.set(Status::TimeWarp, 0);
+                    self.enemies[i].statuses.add(Status::Strength, 2);
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name}'s Time Warp stops time (turn over)"),
+                    );
+                    self.force_end_turn = true;
+                } else {
+                    self.enemies[i].statuses.set(Status::TimeWarp, n);
+                }
+            }
+        }
     }
 
     /// 抽牌;抽牌堆空了就把弃牌堆洗回来
@@ -552,6 +695,18 @@ impl Combat {
             }
             let card = self.draw.pop().unwrap();
             self.hand.push(card);
+            // 混乱:抽到的牌费用随机化
+            if self.player.statuses.has(Status::Confused) {
+                let i = self.hand.len() - 1;
+                let base = match self.hand[i].def.cost {
+                    Cost::Fixed(n) => n as i32,
+                    _ => -1,
+                };
+                if base >= 0 {
+                    let target = self.rng.below(4) as i32;
+                    self.hand[i].cost_delta = target - base;
+                }
+            }
             self.on_card_drawn();
         }
     }
@@ -574,7 +729,7 @@ impl Combat {
         let fire = self.player.statuses.get(Status::FireBreathing);
         if fire > 0 {
             for i in self.alive_enemies() {
-                self.damage_enemy(i, fire);
+                self.damage_enemy_plain(i, fire);
             }
             self.push_log(
                 LogKind::Player,
@@ -639,6 +794,19 @@ impl Combat {
         if self.phase != Phase::PlayerTurn {
             return;
         }
+        self.force_end_turn = false;
+        // 缠绕:回合结束先挨一下(非攻击伤害)
+        let constricted = self.player.statuses.get(Status::Constricted);
+        if constricted > 0 {
+            let (taken, _) = self.hit_player(constricted);
+            self.push_log(
+                LogKind::Enemy,
+                format!("Constricted tightens: {taken} damage"),
+            );
+            if self.phase != Phase::PlayerTurn {
+                return;
+            }
+        }
         // 定时炸弹:回合数减一,归零就炸
         let mut boom: Vec<i32> = Vec::new();
         for b in self.bombs.iter_mut() {
@@ -651,7 +819,7 @@ impl Combat {
         for dmg in boom {
             for i in self.alive_enemies() {
                 let d = self.player_attack_damage(dmg, i);
-                self.damage_enemy(i, d);
+                self.damage_enemy_plain(i, d);
             }
             self.push_log(LogKind::Player, format!("The Bomb explodes for {dmg}"));
             self.settle_deaths();
@@ -669,7 +837,7 @@ impl Combat {
             self.lose_hp_player(1, false);
             let n = self.enemies.len();
             for i in 0..n {
-                if self.damage_enemy(i, combust) > 0 {
+                if self.damage_enemy_plain(i, combust) > 0 {
                     self.push_log(LogKind::Player, format!("Combust: {combust} to all enemies"));
                 }
             }
@@ -719,12 +887,22 @@ impl Combat {
     }
 
     fn enemy_turn(&mut self) {
-        for idx in self.alive_enemies() {
+        let actors: Vec<usize> = (0..self.enemies.len())
+            .filter(|i| self.enemies[*i].up())
+            .collect();
+        for idx in actors {
             if self.phase != Phase::EnemyTurn {
                 return;
             }
+            if !self.enemies[idx].up() {
+                continue;
+            }
             self.enemy_act(idx);
         }
+        if self.phase != Phase::EnemyTurn {
+            return;
+        }
+        self.check_win();
         if self.phase != Phase::EnemyTurn {
             return;
         }
@@ -733,75 +911,510 @@ impl Combat {
     }
 
     fn enemy_act(&mut self, idx: usize) {
-        let move_idx = self.enemies[idx].next_move;
         let def = self.enemies[idx].def;
-        let effects = def.moves[move_idx].effects;
+        let move_idx = self.enemies[idx].next_move;
         let mname = def.moves[move_idx].name;
         let name = self.enemies[idx].name.clone();
-        if self.enemies[idx].sleep_left > 0 && !self.enemies[idx].awake {
-            self.push_log(LogKind::Enemy, format!("{name} is asleep ({mname})"));
-        } else {
-            for fx in effects {
-                match *fx {
-                    EnemyFx::Attack { amount, times } => {
-                        self.shake(ShakeWho::Enemy(idx), -1, ShakeKind::Attack, 0);
-                        let per = self.enemy_attack_damage(idx, amount);
-                        let mut blocked_total = 0;
-                        for _ in 0..times.max(1) {
-                            let (taken, blocked) = self.hit_player(per);
-                            blocked_total += blocked;
-                            if taken > 0 {
-                                self.push_log(
-                                    LogKind::Enemy,
-                                    format!("{name} uses {mname}: {taken} damage"),
-                                );
-                            }
-                            if self.phase == Phase::Lost {
-                                return;
-                            }
-                        }
-                        if blocked_total > 0 {
-                            self.push_log(
-                                LogKind::Info,
-                                format!("{name} hit into {blocked_total} block"),
-                            );
-                        }
-                        // 荆棘反伤
-                        if self.relic_thorns > 0 {
-                            let thorns = self.relic_thorns;
-                            self.damage_enemy(idx, thorns);
-                            self.push_log(
-                                LogKind::Player,
-                                format!("Thorns deal {thorns} to {name}"),
-                            );
-                            self.settle_deaths();
-                        }
-                    }
-                    EnemyFx::Block { amount } => {
-                        self.enemies[idx].block += amount;
-                        self.push_log(
-                            LogKind::Enemy,
-                            format!("{name} gains {amount} Block ({mname})"),
-                        );
-                    }
-                    EnemyFx::GainStatus { status, n } => {
-                        self.enemies[idx].statuses.add(status, n);
-                        self.push_log(
-                            LogKind::Enemy,
-                            format!("{name} gains {n} {}", status.name()),
-                        );
-                    }
-                    EnemyFx::PlayerStatus { status, n } => {
-                        self.add_player_status_from_enemy(status, n);
-                        self.push_log(
-                            LogKind::Enemy,
-                            format!("{name} applies {n} {} to you", status.name()),
-                        );
+        // 本回合开始的伤害统计(心脏的无敌按回合算)
+        let turn = {
+            let st = &mut self.enemies[idx].state;
+            st.turns += 1;
+            st.taken_this_turn = 0;
+            st.turns
+        };
+        if self.enemies[idx].statuses.holds(Status::Asleep) {
+            self.push_log(LogKind::Enemy, format!("{name} is asleep"));
+        }
+        for fx in def.moves[move_idx].effects {
+            self.apply_enemy_fx(idx, *fx, turn, &name, mname);
+            if self.phase == Phase::Lost {
+                return;
+            }
+        }
+        // 觉醒者复活:半死那一回合就是来补血的,血补上就进二阶段
+        if def.special == Special::Rebirth
+            && self.enemies[idx].state.half_dead
+            && self.enemies[idx].hp > 0
+        {
+            self.enemies[idx].state.half_dead = false;
+            self.enemies[idx].state.phase2 = true;
+            self.push_log(LogKind::Enemy, format!("{name} rises again!"));
+        }
+        // 自己已经离场(分裂/自爆)就不用收尾了
+        if !self.enemies[idx].up() {
+            return;
+        }
+        self.enemy_end_of_turn(idx, &name);
+        if self.phase == Phase::Lost {
+            return;
+        }
+        // 无形循环:复仇女神每次行动完都会补上两层
+        if def.special == Special::Intangible
+            && !self.enemies[idx].statuses.has(Status::Intangible)
+        {
+            self.enemies[idx].statuses.add(Status::Intangible, 2);
+            self.push_log(LogKind::Enemy, format!("{name} becomes intangible"));
+        }
+        // 记进出招历史,再定下一招
+        let e = &mut self.enemies[idx];
+        e.state.prev = e.state.last;
+        e.state.last = Some(move_idx);
+        self.pick_next_move(idx);
+    }
+
+    /// 一段敌人招式的效果
+    fn apply_enemy_fx(&mut self, idx: usize, fx: EnemyFx, turn: u32, name: &str, mname: &str) {
+        match fx {
+            EnemyFx::Attack { amount, times } => {
+                self.enemy_attack(idx, amount, times, name, mname);
+            }
+            EnemyFx::AttackScaling {
+                amount,
+                per_turn,
+                cap,
+                times,
+            } => {
+                let extra = per_turn * turn.saturating_sub(1).min(cap) as i32;
+                self.enemy_attack(idx, amount + extra, times, name, mname);
+            }
+            EnemyFx::AttackGrowing { amount } => {
+                let hits = ((turn + 1) / 2).max(1) as u8;
+                self.enemy_attack(idx, amount, hits, name, mname);
+            }
+            EnemyFx::AttackStabCount { amount } => {
+                let hits = self.enemies[idx].state.stab.max(1) as u8;
+                self.enemy_attack(idx, amount, hits, name, mname);
+            }
+            EnemyFx::AttackRolled { times } => {
+                let d = self.enemies[idx].state.rolled;
+                self.enemy_attack(idx, d, times, name, mname);
+            }
+            EnemyFx::PlainDamage { amount } => {
+                let (taken, _) = self.hit_player(amount);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} blasts you for {taken} damage"),
+                );
+            }
+            EnemyFx::Block { amount, scope } => {
+                let targets = self.scope_targets(idx, scope);
+                for t in targets {
+                    self.enemies[t].block += amount;
+                    let who = self.enemies[t].name.clone();
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{who} gains {amount} Block ({mname})"),
+                    );
+                }
+            }
+            EnemyFx::BlockFromDamage => {
+                let n = self.last_hit;
+                self.enemies[idx].block += n;
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} gains {n} Block ({mname})"),
+                );
+            }
+            EnemyFx::GainStatus { status, n, scope } => {
+                for t in self.scope_targets(idx, scope) {
+                    self.enemies[t].statuses.add(status, n);
+                }
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} gains {n} {} ({mname})", status.name()),
+                );
+            }
+            EnemyFx::PlayerStatus { status, n } => {
+                self.add_player_status_from_enemy(status, n);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} applies {n} {} to you", status.name()),
+                );
+            }
+            EnemyFx::Heal { n, scope } => {
+                for t in self.scope_targets(idx, scope) {
+                    let healed = self.enemies[t].max_hp.min(self.enemies[t].hp + n) - self.enemies[t].hp;
+                    self.enemies[t].hp += healed;
+                    if healed > 0 {
+                        let who = self.enemies[t].name.clone();
+                        self.push_log(LogKind::Enemy, format!("{who} heals {healed} HP"));
                     }
                 }
             }
+            EnemyFx::HealFromDamage => {
+                let n = self.last_hit;
+                if n > 0 {
+                    let healed = self.enemies[idx].max_hp.min(self.enemies[idx].hp + n) - self.enemies[idx].hp;
+                    self.enemies[idx].hp += healed;
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} drains {healed} HP ({mname})"),
+                    );
+                }
+            }
+            EnemyFx::HealToHalf => {
+                let half = self.enemies[idx].max_hp / 2;
+                if self.enemies[idx].hp < half {
+                    self.enemies[idx].hp = half;
+                    self.push_log(LogKind::Enemy, format!("{name} heals to {half} HP"));
+                }
+            }
+            EnemyFx::ClearDebuffs => {
+                self.enemies[idx].statuses.clear_debuffs();
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} shakes off its debuffs"),
+                );
+            }
+            EnemyFx::ResetStrength { n } => {
+                let s = self.enemies[idx].statuses.get(Status::Strength);
+                if s < 0 {
+                    self.enemies[idx].statuses.add(Status::Strength, -s);
+                }
+                self.enemies[idx].statuses.add(Status::Strength, n);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} gains {n} Strength ({mname})"),
+                );
+            }
+            EnemyFx::Escalate => {
+                let stage = {
+                    let st = &mut self.enemies[idx].state;
+                    st.stage += 1;
+                    st.stage
+                };
+                self.heart_escalate(idx, stage, name);
+            }
+            EnemyFx::PlayerCard { card, spot, n } => {
+                for _ in 0..n {
+                    let mut inst = CardInstance::new(cards::card_def_or_panic(card));
+                    self.fix_new_card(&mut inst);
+                    let label = inst.label();
+                    match spot {
+                        CardSpot::Discard => self.discard.push(inst),
+                        CardSpot::DrawShuffle => {
+                            let pos = self.rng.below(self.draw.len() as u32 + 1) as usize;
+                            self.draw.insert(pos, inst);
+                        }
+                        CardSpot::Deck => self.deck_cards.push(inst),
+                    }
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} puts a {label} in your deck"),
+                    );
+                }
+            }
+            EnemyFx::StealGold { n } => {
+                let got = n.min(self.player_gold.max(0));
+                self.player_gold -= got;
+                self.enemies[idx].state.stolen += got;
+                if got > 0 {
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} steals {got} gold from you"),
+                    );
+                }
+            }
+            EnemyFx::StealCard => {
+                self.enemy_steal_card(idx, name);
+            }
+            EnemyFx::Summon { ids } => {
+                for id in ids {
+                    let at = self.spawn_enemy(id, None);
+                    // 召唤出来的都是召唤物:首领倒下时一起退场
+                    self.enemies[at].statuses.add(Status::Minion, 1);
+                    let who = self.enemies[at].name.clone();
+                    self.push_log(LogKind::Enemy, format!("{name} calls {who} for help"));
+                }
+            }
+            EnemyFx::DrawReduction { n } => {
+                self.player.statuses.add(Status::DrawReduction, n);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} clouds your next draw"),
+                );
+            }
+            EnemyFx::Charge => {
+                self.enemies[idx].state.charge += 1;
+            }
+            EnemyFx::WakeUp { at_turn } => {
+                if turn >= at_turn && self.enemies[idx].statuses.holds(Status::Asleep) {
+                    self.enemies[idx].statuses.add(Status::Asleep, -1);
+                    let met = self.enemies[idx].statuses.get(Status::Metallicize);
+                    if met > 0 {
+                        self.enemies[idx].statuses.add(Status::Metallicize, -met);
+                    }
+                    self.push_log(LogKind::Info, format!("{name} wakes up!"));
+                }
+            }
+            EnemyFx::RollDamage { div, add } => {
+                self.enemies[idx].state.rolled = self.player.hp / div.max(1) + add;
+            }
+            EnemyFx::LoseStatus { status, scope } => {
+                for t in self.scope_targets(idx, scope) {
+                    let n = self.enemies[t].statuses.get(status);
+                    if n > 0 {
+                        self.enemies[t].statuses.add(status, -n);
+                    } else {
+                        self.enemies[t].statuses.add(status, -1);
+                    }
+                }
+            }
+            EnemyFx::ForceNext { idx: next } => {
+                self.enemies[idx].state.forced = Some(next);
+            }
+            EnemyFx::Split => {
+                self.enemy_split(idx, name);
+            }
+            EnemyFx::Suicide => {
+                self.enemies[idx].hp = 0;
+                self.push_log(LogKind::Enemy, format!("{name} is destroyed"));
+                self.settle_deaths();
+            }
+            EnemyFx::Escape => {
+                self.enemies[idx].escaped = true;
+                self.enemies[idx].death_done = true;
+                self.push_log(LogKind::Enemy, format!("{name} escapes"));
+                self.check_win();
+            }
         }
-        // 回合结束的敌人能力
+    }
+
+    /// 一次敌人攻击:算一次伤害,然后打 times 下
+    fn enemy_attack(&mut self, idx: usize, amount: i32, times: u8, name: &str, mname: &str) {
+        if !self.enemies[idx].alive() {
+            return;
+        }
+        self.shake(ShakeWho::Enemy(idx), -1, ShakeKind::Attack, 0);
+        let per = self.enemy_attack_damage(idx, amount);
+        let mut blocked_total = 0;
+        let mut hit_total = 0;
+        for _ in 0..times.max(1) {
+            let (taken, blocked) = self.hit_player(per);
+            blocked_total += blocked;
+            hit_total += taken;
+            if taken > 0 {
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} uses {mname}: {taken} damage"),
+                );
+            }
+            // 痛苦刺击:命中一次塞一张伤口
+            let stabs = self.enemies[idx].statuses.get(Status::PainfulStabs);
+            if stabs > 0 && taken > 0 {
+                for _ in 0..stabs {
+                    let mut inst = CardInstance::new(cards::card_def_or_panic("wound"));
+                    self.fix_new_card(&mut inst);
+                    self.discard.push(inst);
+                }
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s stabs leave {stabs} Wound in your discard pile"),
+                );
+            }
+            if self.phase == Phase::Lost {
+                return;
+            }
+        }
+        self.last_hit = hit_total;
+        if blocked_total > 0 {
+            self.push_log(
+                LogKind::Info,
+                format!("{name} hit into {blocked_total} block"),
+            );
+        }
+        // 玩家的荆棘反伤
+        if self.relic_thorns > 0 {
+            let thorns = self.relic_thorns;
+            self.damage_enemy_plain(idx, thorns);
+            self.push_log(
+                LogKind::Player,
+                format!("Thorns deal {thorns} to {name}"),
+            );
+            self.settle_deaths();
+        }
+    }
+
+    /// 效果的作用范围
+    fn scope_targets(&mut self, idx: usize, scope: Scope) -> Vec<usize> {
+        match scope {
+            Scope::SelfOnly => vec![idx],
+            Scope::Team => (0..self.enemies.len())
+                .filter(|i| self.enemies[*i].alive())
+                .collect(),
+            Scope::Allies => (0..self.enemies.len())
+                .filter(|i| *i != idx && self.enemies[*i].alive())
+                .collect(),
+            Scope::RandomOne => {
+                let alive: Vec<usize> =
+                    (0..self.enemies.len()).filter(|i| self.enemies[*i].alive()).collect();
+                if alive.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![alive[self.rng.below(alive.len() as u32) as usize]]
+                }
+            }
+        }
+    }
+
+    /// 心脏的递增增益:每用一次涨一档
+    fn heart_escalate(&mut self, idx: usize, stage: i32, name: &str) {
+        match stage {
+            1 => {
+                self.enemies[idx].statuses.add(Status::Artifact, 2);
+                self.push_log(LogKind::Enemy, format!("{name} gains 2 Artifact"));
+            }
+            2 => {
+                self.enemies[idx].statuses.add(Status::BeatOfDeath, 1);
+                self.push_log(LogKind::Enemy, format!("{name}'s Beat of Death quickens"));
+            }
+            3 => {
+                self.enemies[idx].statuses.add(Status::PainfulStabs, 1);
+                self.push_log(LogKind::Enemy, format!("{name} sharpens its stabs"));
+            }
+            4 => {
+                self.enemies[idx].statuses.add(Status::Strength, 10);
+                self.push_log(LogKind::Enemy, format!("{name} gains 10 Strength"));
+            }
+            _ => {
+                self.enemies[idx].statuses.add(Status::Strength, 50);
+                self.push_log(LogKind::Enemy, format!("{name} gains 50 Strength"));
+            }
+        }
+    }
+
+    /// 圆球哨卫的停滞:从抽牌堆偷一张牌,它死了再还回来
+    fn enemy_steal_card(&mut self, idx: usize, name: &str) {
+        let pile = if !self.draw.is_empty() {
+            &mut self.draw
+        } else if !self.discard.is_empty() {
+            &mut self.discard
+        } else {
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name} finds nothing to steal"),
+            );
+            return;
+        };
+        let pick = self.rng.below(pile.len() as u32) as usize;
+        let card = pile.remove(pick);
+        let label = card.label();
+        self.stasis.push((idx, card));
+        self.enemies[idx].statuses.add(Status::Stasis, 1);
+        self.push_log(
+            LogKind::Enemy,
+            format!("{name} takes {label} and holds it in stasis"),
+        );
+    }
+
+    /// 被偷的牌回到玩家手里(哨卫死了就吐出来)
+    fn return_stolen_card(&mut self, idx: usize) {
+        let Some(pos) = self.stasis.iter().position(|(i, _)| *i == idx) else {
+            return;
+        };
+        let (_, card) = self.stasis.remove(pos);
+        let label = card.label();
+        if self.hand.len() < HAND_LIMIT {
+            self.hand.push(card);
+            self.push_log(LogKind::Info, format!("{label} returns to your hand"));
+        } else {
+            self.discard.push(card);
+            self.push_log(LogKind::Info, format!("{label} returns to your discard pile"));
+        }
+    }
+
+    /// 大史莱姆分裂:自己离场,原地补上两只小史莱姆(生命等于分裂时的血量)
+    fn enemy_split(&mut self, idx: usize, name: &str) {
+        let Special::Split { a, b } = self.enemies[idx].def.special else {
+            return;
+        };
+        let hp = self.enemies[idx].hp;
+        self.enemies[idx].escaped = true;
+        self.enemies[idx].death_done = true;
+        self.push_log(
+            LogKind::Enemy,
+            format!("{name} splits into two slimes ({hp} HP each)"),
+        );
+        self.spawn_enemy(a, Some(hp));
+        self.spawn_enemy(b, Some(hp));
+    }
+
+    /// 生成一只新敌人(召唤/分裂).hp 为 None 时按区间掷,一律排在队尾
+    fn spawn_enemy(&mut self, id: &str, hp: Option<i32>) -> usize {
+        let def = crate::core::enemies::enemy_def_or_panic(id);
+        let same = self.enemies.iter().filter(|e| e.def.id == def.id).count();
+        let name = if same > 0 {
+            format!("{} #{}", def.name, same + 1)
+        } else {
+            def.name.to_string()
+        };
+        let hp = hp.unwrap_or_else(|| self.rng.range_inclusive(def.hp.0, def.hp.1));
+        let mut statuses = Statuses::new();
+        for (s, n) in def.innate {
+            if *n == 0 {
+                statuses.mark(*s);
+            } else {
+                statuses.add(*s, *n);
+            }
+        }
+        let mut state = EnemyState::default();
+        let block = def.start_block;
+        {
+            let mut ctx = crate::core::enemy::SpawnCtx {
+                rng: &mut self.rng,
+                statuses: &mut statuses,
+                state: &mut state,
+            };
+            (def.spawn)(&mut ctx);
+        }
+        let e = Enemy {
+            def,
+            name,
+            hp,
+            max_hp: hp,
+            block,
+            statuses,
+            next_move: 0,
+            death_done: false,
+            temp_strength: 0,
+            escaped: false,
+            state,
+        };
+        self.enemies.push(e);
+        let at = self.enemies.len() - 1;
+        self.roll_first_move(at);
+        at
+    }
+
+    /// 敌人自己的回合结束:回合末生效的能力与倒计时
+    fn enemy_end_of_turn(&mut self, idx: usize, name: &str) {
+        let def = self.enemies[idx].def;
+        let metallicize = self.enemies[idx].statuses.get(Status::Metallicize);
+        let plated = self.enemies[idx].statuses.get(Status::PlatedArmor);
+        if metallicize + plated > 0 {
+            self.enemies[idx].block += metallicize + plated;
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name} gains {} Block", metallicize + plated),
+            );
+        }
+        let up = self.enemies[idx].statuses.get(Status::StrengthUp);
+        if up > 0 {
+            self.enemies[idx].statuses.add(Status::Strength, up);
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name} gains {up} Strength"),
+            );
+        }
+        let regen = self.enemies[idx].statuses.get(Status::Regenerate);
+        if regen > 0 {
+            let healed = self.enemies[idx].max_hp.min(self.enemies[idx].hp + regen)
+                - self.enemies[idx].hp;
+            self.enemies[idx].hp += healed;
+            if healed > 0 {
+                self.push_log(LogKind::Enemy, format!("{name} regenerates {healed} HP"));
+            }
+        }
         let ritual = self.enemies[idx].statuses.get(Status::Ritual);
         if ritual > 0 {
             self.enemies[idx].statuses.add(Status::Strength, ritual);
@@ -810,49 +1423,111 @@ impl Combat {
                 format!("{name} channels Ritual: +{ritual} Strength"),
             );
         }
+        // 每回合回满的能力:延展、慢速、飞行
+        for s in [Status::Malleable, Status::Slow, Status::Flight] {
+            if !self.enemies[idx].statuses.holds(s) {
+                continue;
+            }
+            if s == Status::Flight && self.enemies[idx].statuses.get(s) == 0 {
+                continue;
+            }
+            let base = Self::innate_amount_of(def, s);
+            self.enemies[idx].statuses.set(s, base);
+        }
+        // 暗灵的复活倒计时:半死的那一只熬到头就半血站起来
+        if self.enemies[idx].state.half_dead
+            && self.enemies[idx].def.special == Special::Regrow
+            && self.enemies[idx].state.regrow_ticks <= 1
+        {
+            let half = self.enemies[idx].max_hp / 2;
+            self.enemies[idx].hp = half;
+            self.enemies[idx].state.half_dead = false;
+            self.push_log(LogKind::Enemy, format!("{name} regrows ({half} HP)"));
+        }
+        // 倒计时:爆裂与消逝
+        let explosive = self.enemies[idx].statuses.get(Status::Explosive);
+        if explosive > 0 {
+            self.enemies[idx].statuses.set(Status::Explosive, explosive - 1);
+        }
+        let fading = self.enemies[idx].statuses.get(Status::Fading);
+        if fading > 0 {
+            if fading == 1 {
+                self.enemies[idx].hp = 0;
+                self.enemies[idx].escaped = true;
+                self.enemies[idx].death_done = true;
+                self.push_log(LogKind::Enemy, format!("{name} fades away"));
+                self.check_win();
+                return;
+            }
+            self.enemies[idx].statuses.set(Status::Fading, fading - 1);
+        }
         self.enemies[idx].statuses.decay_debuffs();
-        self.pick_next_move(idx);
     }
 
     /// 选出下一招
     fn pick_next_move(&mut self, idx: usize) {
+        if idx >= self.enemies.len() {
+            return;
+        }
         let def = self.enemies[idx].def;
         let len = def.moves.len();
+        // 被上一招指定的后继
+        if let Some(f) = self.enemies[idx].state.forced.take() {
+            self.enemies[idx].next_move = f.min(len - 1);
+            return;
+        }
+        let pick = self.run_script(idx, def.pick);
+        self.enemies[idx].next_move = pick.min(len - 1);
+    }
+
+    /// 开局的那一次掷招(这时候回合数还是 0,参考实现里 firstTurn 为真)
+    fn roll_first_move(&mut self, idx: usize) {
+        let def = self.enemies[idx].def;
+        let len = def.moves.len();
+        let m = self.run_script(idx, def.pick);
+        self.enemies[idx].next_move = m.min(len - 1);
+    }
+
+    /// 跑一遍某只怪的选招函数.状态是副本,跑完写回(选招里可以记账)
+    fn run_script(&mut self, idx: usize, f: crate::core::enemy::PickFn) -> usize {
+        let mut state = self.enemies[idx].state.clone();
+        let pick = {
+            let Combat {
+                enemies,
+                player,
+                rng,
+                ..
+            } = self;
+            let mut ctx = PickCtx {
+                rng,
+                idx,
+                all: enemies,
+                player,
+                state: &mut state,
+            };
+            f(&mut ctx)
+        };
+        self.enemies[idx].state = state;
+        pick
+    }
+
+    /// 重新掷一次当前意图(扭动巨物的反应)
+    fn reroll_intent(&mut self, idx: usize) {
         let cur = self.enemies[idx].next_move;
-        match def.ai {
-            Ai::Cycle => {
-                self.enemies[idx].next_move = (cur + 1) % len;
-            }
-            Ai::Random {
-                weights,
-                no_repeat,
-            } => {
-                let pick = if no_repeat && len > 1 {
-                    let mut w = weights.to_vec();
-                    if cur < w.len() {
-                        w[cur] = 0;
-                    }
-                    if w.iter().all(|x| *x == 0) {
-                        self.rng.below(len as u32) as usize
-                    } else {
-                        self.rng.weighted_idx(&w).unwrap_or(cur)
-                    }
-                } else {
-                    self.rng.weighted_idx(weights).unwrap_or(0)
-                };
-                self.enemies[idx].next_move = pick.min(len - 1);
-            }
-            Ai::Sleep { wake, .. } => {
-                let left = self.enemies[idx].sleep_left;
-                if left > 1 {
-                    self.enemies[idx].sleep_left = left - 1;
-                    self.enemies[idx].next_move = 0;
-                } else {
-                    self.enemies[idx].sleep_left = 0;
-                    self.enemies[idx].awake = true;
-                    self.enemies[idx].next_move = wake.min(len - 1);
-                }
-            }
+        let saved = (self.enemies[idx].state.last, self.enemies[idx].state.prev);
+        self.enemies[idx].state.last = Some(cur);
+        self.enemies[idx].state.prev = saved.0;
+        self.pick_next_move(idx);
+        let now = self.enemies[idx].next_move;
+        self.enemies[idx].state.last = saved.0;
+        self.enemies[idx].state.prev = saved.1;
+        if now != cur {
+            let name = self.enemies[idx].name.clone();
+            let m = self.enemies[idx].def.moves[now].name;
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name} shifts its stance: {m}"),
+            );
         }
     }
 
@@ -881,7 +1556,7 @@ impl Combat {
         let jug = self.player.statuses.get(Status::Juggernaut);
         if jug > 0 {
             if let Some(t) = self.pick_random_alive() {
-                self.damage_enemy(t, jug);
+                self.damage_enemy_plain(t, jug);
                 self.push_log(LogKind::Player, format!("Juggernaut: {jug} damage"));
             }
         }
@@ -1153,6 +1828,10 @@ impl Combat {
     /// 敌人攻击一次的计算
     fn enemy_attack_damage(&self, idx: usize, raw: i32) -> i32 {
         let mut d = raw + self.enemies[idx].statuses.get(Status::Strength);
+        // 被夹击:从背后打过来的多吃一半
+        if self.player.statuses.has(Status::Surrounded) && idx != self.facing {
+            d = (d as f32 * 1.5).floor() as i32;
+        }
         if self.enemies[idx].statuses.has(Status::Weak) {
             d = (d as f32 * 0.75).floor() as i32;
         }
@@ -1162,33 +1841,63 @@ impl Combat {
         d.max(0)
     }
 
+    /// 开局写死的层数(每回合重置的延展/慢速/飞行要看它)
+    fn innate_amount_of(def: &'static EnemyDef, s: Status) -> i32 {
+        def.innate
+            .iter()
+            .find(|(k, _)| *k == s)
+            .map(|(_, n)| *n)
+            .unwrap_or(0)
+    }
+
+    /// 下一招的基础伤害与命中次数(还没算力量/虚弱/易伤),按当前回合数动态算
+    pub fn intent_raw_damage(&self, idx: usize) -> (i32, u8) {
+        let e = &self.enemies[idx];
+        let mv = &e.def.moves[e.next_move];
+        let turn = e.state.turns + 1;
+        let mut damage = 0;
+        let mut times = 0u8;
+        for fx in mv.effects {
+            let (d, t) = match *fx {
+                EnemyFx::Attack { amount, times } => (amount, times),
+                EnemyFx::AttackScaling {
+                    amount,
+                    per_turn,
+                    cap,
+                    times,
+                } => (amount + per_turn * turn.saturating_sub(1).min(cap) as i32, times),
+                EnemyFx::AttackGrowing { amount } => (amount, ((turn + 1) / 2).max(1) as u8),
+                EnemyFx::AttackStabCount { amount } => {
+                    (amount, e.state.stab.max(1) as u8)
+                }
+                EnemyFx::AttackRolled { times } => (e.state.rolled, times),
+                _ => continue,
+            };
+            damage += d;
+            times = times.saturating_add(t);
+        }
+        (damage, times)
+    }
+
     /// UI 用:敌人下一招的显示数值(伤害已计入增减益)
     pub fn predicted_damage(&self, idx: usize) -> (i32, u8) {
-        match self.enemies[idx].intent() {
-            Intent::Attack { damage, times }
-            | Intent::AttackDebuff { damage, times }
-            | Intent::AttackDefend { damage, times, .. } => {
-                (self.enemy_attack_damage(idx, damage), times)
-            }
-            _ => (0, 0),
+        if !self.enemies[idx].intent().attacks() {
+            return (0, 0);
         }
+        let (damage, times) = self.intent_raw_damage(idx);
+        (self.enemy_attack_damage(idx, damage), times)
     }
 
     /// UI 用:敌人下一招的格挡量
     pub fn intent_block(&self, idx: usize) -> i32 {
-        match self.enemies[idx].intent() {
-            Intent::AttackDefend { block, .. } => block,
-            Intent::Defend => {
-                let mut total = 0;
-                for fx in self.enemies[idx].def.moves[self.enemies[idx].next_move].effects {
-                    if let EnemyFx::Block { amount } = fx {
-                        total += *amount;
-                    }
-                }
-                total
+        let e = &self.enemies[idx];
+        let mut total = 0;
+        for fx in e.def.moves[e.next_move].effects {
+            if let EnemyFx::Block { amount, .. } = fx {
+                total += *amount;
             }
-            _ => 0,
         }
+        total
     }
 
     /// 玩家掉了血:嗜血的费用跟着降(手牌/抽牌堆/弃牌堆/消耗堆里那些)
@@ -1209,76 +1918,327 @@ impl Combat {
 
     /// 这个敌人这回合是不是要攻击(观察弱点用)
     fn enemy_intends_attack(&self, idx: usize) -> bool {
-        use crate::core::enemy::Intent;
         let Some(e) = self.enemies.get(idx) else {
             return false;
         };
         let Some(m) = e.def.moves.get(e.next_move) else {
             return false;
         };
-        matches!(
-            m.intent(),
-            Intent::Attack { .. } | Intent::AttackDefend { .. } | Intent::AttackDebuff { .. }
-        )
+        m.intent.attacks()
     }
 
-    /// 打敌人:damage 是算好的最终值;返回扣格挡后实际造成的伤害
+    /// 打敌人:damage 是算好的最终值;返回扣格挡后实际造成的伤害.
+    /// 卡牌打出来的是"攻击伤害",会走飞行/慢速/无形/无敌这一整套.
     fn damage_enemy(&mut self, idx: usize, damage: i32) -> i32 {
-        if idx >= self.enemies.len() || self.enemies[idx].dead() {
+        self.hit_enemy(idx, damage, true)
+    }
+
+    /// 非攻击伤害(中毒、燃烧、荆棘之类):不吃飞行/慢速这些减免
+    fn damage_enemy_plain(&mut self, idx: usize, damage: i32) -> i32 {
+        self.hit_enemy(idx, damage, false)
+    }
+
+    fn hit_enemy(&mut self, idx: usize, damage: i32, is_attack: bool) -> i32 {
+        if idx >= self.enemies.len() || !self.enemies[idx].alive() {
             return 0;
         }
-        let dmg = damage.max(0);
-        let blocked = self.enemies[idx].block.min(dmg);
-        self.enemies[idx].block -= blocked;
-        let taken = dmg - blocked;
-        if taken > 0 {
-            self.enemies[idx].hp -= taken;
-            self.damage_dealt += taken;
-            self.shake(ShakeWho::Enemy(idx), 1, ShakeKind::Hurt, taken);
-        }
-        // 睡眠中的敌人被打醒
-        if taken > 0 && !self.enemies[idx].awake && self.enemies[idx].sleep_left > 0 {
-            if let Ai::Sleep { wake, .. } = self.enemies[idx].def.ai {
-                let e = &mut self.enemies[idx];
-                e.sleep_left = 0;
-                e.awake = true;
-                e.next_move = wake.min(e.def.moves.len() - 1);
-                let name = e.name.clone();
-                self.push_log(LogKind::Info, format!("{name} wakes up!"));
+        let mut dmg = damage.max(0);
+        if is_attack {
+            // 飞行:受到的攻击伤害减半
+            if self.enemies[idx].statuses.has(Status::Flight) {
+                dmg = (dmg as f32 * 0.5).floor() as i32;
+            }
+            // 慢速:这回合每打出一张牌就多吃 10%
+            let slow = self.enemies[idx].statuses.get(Status::Slow);
+            if slow > 0 {
+                dmg = (dmg as f32 * (1.0 + 0.1 * slow as f32)).floor() as i32;
             }
         }
+        // 无形:什么伤害都降到 1
+        if self.enemies[idx].statuses.has(Status::Intangible) && dmg > 1 {
+            dmg = 1;
+        }
+        let blocked = self.enemies[idx].block.min(dmg);
+        self.enemies[idx].block -= blocked;
+        let mut taken = dmg - blocked;
+        // 无敌:一回合之内最多再掉这么多
+        let inv = self.enemies[idx].statuses.get(Status::Invincible);
+        if inv > 0 {
+            let left = (inv - self.enemies[idx].state.taken_this_turn).max(0);
+            taken = taken.min(left);
+        }
+        if taken > 0 {
+            self.enemies[idx].hp -= taken;
+            self.enemies[idx].state.taken_this_turn += taken;
+            self.damage_dealt += taken;
+            self.shake(ShakeWho::Enemy(idx), 1, ShakeKind::Hurt, taken);
+            self.on_enemy_hp_lost(idx, taken, is_attack);
+        }
+        if is_attack {
+            self.on_enemy_attacked(idx, taken);
+        }
         taken
+    }
+
+    /// 敌人真的掉血了(阈值触发都挂在这儿)
+    fn on_enemy_hp_lost(&mut self, idx: usize, taken: i32, is_attack: bool) {
+        // 睡着的怪被打醒
+        if self.enemies[idx].statuses.holds(Status::Asleep) {
+            self.enemies[idx].statuses.add(Status::Asleep, -1);
+            let met = self.enemies[idx].statuses.get(Status::Metallicize);
+            if met > 0 {
+                self.enemies[idx].statuses.add(Status::Metallicize, -met);
+            }
+            let name = self.enemies[idx].name.clone();
+            self.push_log(LogKind::Info, format!("{name} wakes up!"));
+        }
+        if is_attack {
+            // 卷曲:第一次被攻击就获得格挡,一次性
+            let curl = self.enemies[idx].statuses.get(Status::CurlUp);
+            if curl > 0 {
+                self.enemies[idx].block += curl;
+                self.enemies[idx].statuses.add(Status::CurlUp, -curl);
+                let name = self.enemies[idx].name.clone();
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} curls up: {curl} Block"),
+                );
+            }
+            // 延展:先按当前层数拿格挡,层数再涨
+            if self.enemies[idx].statuses.holds(Status::Malleable) {
+                let mal = self.enemies[idx].statuses.get(Status::Malleable);
+                self.enemies[idx].block += mal;
+                self.enemies[idx].statuses.set(Status::Malleable, mal + 1);
+            }
+            // 甲壳:每掉一次血掉一层
+            let plated = self.enemies[idx].statuses.get(Status::PlatedArmor);
+            if plated > 0 {
+                self.enemies[idx].statuses.add(Status::PlatedArmor, -1);
+                if plated == 1 && self.stun_move(idx).is_some() {
+                    let stun = self.stun_move(idx).unwrap();
+                    self.enemies[idx].next_move = stun;
+                    let name = self.enemies[idx].name.clone();
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name}'s shell cracks: it is stunned"),
+                    );
+                }
+            }
+            // 飞行:每次被攻击削一层,掉光就落地
+            let flight = self.enemies[idx].statuses.get(Status::Flight);
+            if flight > 0 {
+                if flight == 1 {
+                    self.enemies[idx].statuses.add(Status::Flight, -1);
+                    if let Some(stun) = self.stun_move(idx) {
+                        self.enemies[idx].next_move = stun;
+                    }
+                    let name = self.enemies[idx].name.clone();
+                    self.push_log(LogKind::Info, format!("{name} is knocked to the ground"));
+                } else {
+                    self.enemies[idx].statuses.add(Status::Flight, -1);
+                }
+            }
+            // 移形换影:掉多少血就临时少多少力量
+            if self.enemies[idx].statuses.holds(Status::Shifting) {
+                self.enemies[idx].temp_strength -= taken;
+            }
+        }
+        self.check_hp_thresholds(idx, taken);
+    }
+
+    /// 命中就触发、掉不掉血都算的(荆棘、狂怒)
+    fn on_enemy_attacked(&mut self, idx: usize, _taken: i32) {
+        let angry = self.enemies[idx].statuses.get(Status::Anger);
+        if angry > 0 {
+            self.enemies[idx].statuses.add(Status::Strength, angry);
+            let name = self.enemies[idx].name.clone();
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name}'s Anger: +{angry} Strength"),
+            );
+        }
+        let thorns = self.enemies[idx].statuses.get(Status::Thorns);
+        if thorns > 0 {
+            let name = self.enemies[idx].name.clone();
+            let (hurt, _) = self.hit_player(thorns);
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name}'s Thorns deal {hurt} to you"),
+            );
+        }
+        // 扭动巨物:挨打就换招
+        if self.enemies[idx].def.special == Special::Reactive && self.phase == Phase::PlayerTurn {
+            self.reroll_intent(idx);
+        }
+    }
+
+    /// 招式表里有没有"眩晕"那一招
+    fn stun_move(&self, idx: usize) -> Option<usize> {
+        let def = self.enemies[idx].def;
+        def.moves
+            .iter()
+            .position(|m| m.intent == Intent::Stun)
+    }
+
+    /// 血量阈值:分裂、形态切换
+    fn check_hp_thresholds(&mut self, idx: usize, taken: i32) {
+        if idx >= self.enemies.len() || self.enemies[idx].hp <= 0 {
+            return;
+        }
+        let def = self.enemies[idx].def;
+        // 史莱姆:掉到一半就把意图换成"分裂"那一招,自己回合执行
+        if matches!(def.special, Special::Split { .. }) {
+            if self.enemies[idx].hp <= self.enemies[idx].max_hp / 2 {
+                if let Some(split) = def
+                    .moves
+                    .iter()
+                    .position(|m| m.effects.contains(&EnemyFx::Split))
+                {
+                    if self.enemies[idx].next_move != split {
+                        self.enemies[idx].next_move = split;
+                        let name = self.enemies[idx].name.clone();
+                        self.push_log(LogKind::Enemy, format!("{name} is about to split"));
+                    }
+                }
+            }
+        }
+        // 守护者:形态切换的额度掉光就换防御姿态
+        if let Special::ModeShift { guard, .. } = def.special {
+            let left = self.enemies[idx].statuses.get(Status::ModeShift) - taken;
+            if self.enemies[idx].statuses.holds(Status::ModeShift) && left <= 0 {
+                self.enemies[idx].statuses.add(Status::ModeShift, -999);
+                self.enemies[idx].block += 20;
+                self.enemies[idx].next_move = guard;
+                let name = self.enemies[idx].name.clone();
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} shifts into defensive mode"),
+                );
+            } else if left > 0 {
+                self.enemies[idx].statuses.set(Status::ModeShift, left);
+            }
+        }
     }
 
     /// 结算本回合新死的敌人(死亡触发只在第一次结算)
     fn settle_deaths(&mut self) {
         for i in 0..self.enemies.len() {
             if self.enemies[i].dead() && !self.enemies[i].death_done {
-                self.enemies[i].death_done = true;
-                let on_death = self.enemies[i].def.on_death;
-                if on_death.is_empty() {
-                    continue;
+                self.handle_death(i);
+            }
+        }
+    }
+
+    /// 一只怪死了:先看它的独有机制,再走通用的死亡触发
+    fn handle_death(&mut self, i: usize) {
+        let def = self.enemies[i].def;
+        // 觉醒者:第一阶段"死"掉只是半死,躺着等复活
+        if def.special == Special::Rebirth && !self.enemies[i].state.phase2 {
+            self.enemies[i].state.half_dead = true;
+            self.enemies[i].statuses.clear_debuffs();
+            self.enemies[i].statuses.add(Status::Curiosity, -999);
+            let strength = self.enemies[i].statuses.get(Status::Strength);
+            if strength < 0 {
+                self.enemies[i].statuses.add(Status::Strength, -strength);
+            }
+            // 当前意图立刻换成复活那一招
+            if let Some(rebirth) = def.moves.iter().position(|m| m.name == "Rebirth") {
+                self.enemies[i].next_move = rebirth;
+            }
+            let name = self.enemies[i].name.clone();
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name}'s body crumbles... it is not done yet"),
+            );
+            return;
+        }
+        // 暗灵:只要有别的暗灵还活着,就先半死等着复活
+        if def.special == Special::Regrow && !self.enemies[i].state.regrow_used {
+            let id = def.id;
+            let kin = self
+                .enemies
+                .iter()
+                .enumerate()
+                .any(|(j, e)| j != i && e.def.id == id && e.hp > 0 && !e.escaped && !e.state.half_dead);
+            if kin {
+                let e = &mut self.enemies[i];
+                e.state.half_dead = true;
+                e.state.regrow_used = true;
+                e.state.regrow_ticks = 2;
+                e.statuses = Statuses::new();
+                e.statuses.add(Status::Regrow, 1);
+                e.block = 0;
+                e.death_done = true;
+                if let Some(regrow) = def.moves.iter().position(|m| m.name == "Regrow") {
+                    e.next_move = regrow;
                 }
-                let name = self.enemies[i].name.clone();
-                for fx in on_death {
-                    match *fx {
-                        EnemyFx::PlayerStatus { status, n } => {
-                            self.add_player_status_from_enemy(status, n);
-                            self.push_log(
-                                LogKind::Enemy,
-                                format!("{name} bursts: you gain {n} {}", status.name()),
-                            );
-                        }
-                        EnemyFx::Attack { amount, .. } => {
-                            let (taken, _) = self.hit_player(amount);
-                            self.push_log(
-                                LogKind::Enemy,
-                                format!("{name} bursts for {taken} damage"),
-                            );
-                        }
-                        _ => {}
-                    }
+                let name = e.name.clone();
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} clings to life and will regrow"),
+                );
+                return;
+            }
+            // 同族都倒下了,半死的那些也一起彻底死掉
+            for j in 0..self.enemies.len() {
+                if self.enemies[j].def.id == id {
+                    self.enemies[j].state.half_dead = false;
                 }
+            }
+        }
+        self.enemies[i].death_done = true;
+        self.return_stolen_card(i);
+        // 抢钱的被打死了,赃款吐出来
+        let stolen = self.enemies[i].state.stolen;
+        if stolen > 0 {
+            self.enemies[i].state.stolen = 0;
+            self.player_gold += stolen;
+            let name = self.enemies[i].name.clone();
+            self.push_log(
+                LogKind::Player,
+                format!("{name} drops the {stolen} gold it stole"),
+            );
+        }
+        // 首领死了,召唤物一起退场(不算它们死亡)
+        if def.special == Special::Leader {
+            for j in 0..self.enemies.len() {
+                if self.enemies[j].up() && self.enemies[j].is_minion() {
+                    self.enemies[j].escaped = true;
+                    self.enemies[j].death_done = true;
+                    let name = self.enemies[j].name.clone();
+                    self.push_log(LogKind::Info, format!("{name} flees"));
+                }
+            }
+        }
+        let on_death = def.on_death;
+        if on_death.is_empty() {
+            return;
+        }
+        let name = self.enemies[i].name.clone();
+        for fx in on_death {
+            match *fx {
+                EnemyFx::PlayerStatus { status, n } => {
+                    self.add_player_status_from_enemy(status, n);
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} bursts: you gain {n} {}", status.name()),
+                    );
+                }
+                EnemyFx::Attack { amount, .. } => {
+                    let (taken, _) = self.hit_player(amount);
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} bursts for {taken} damage"),
+                    );
+                }
+                EnemyFx::PlainDamage { amount } => {
+                    let (taken, _) = self.hit_player(amount);
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} bursts for {taken} damage"),
+                    );
+                }
+                _ => {}
             }
         }
     }
@@ -1288,10 +2248,18 @@ impl Combat {
             return;
         }
         self.settle_deaths();
-        if self.alive_enemies().is_empty() {
-            self.phase = Phase::Won;
-            self.push_log(LogKind::Info, "victory".to_string());
+        // 召唤物不算数:首领倒了它们就散
+        if self.enemies.iter().any(|e| e.up() && !e.is_minion()) {
+            return;
         }
+        for i in 0..self.enemies.len() {
+            if self.enemies[i].up() && self.enemies[i].is_minion() {
+                self.enemies[i].escaped = true;
+                self.enemies[i].death_done = true;
+            }
+        }
+        self.phase = Phase::Won;
+        self.push_log(LogKind::Info, "victory".to_string());
     }
 
     // ---- 打牌 ----
@@ -1375,7 +2343,12 @@ impl Combat {
             _ => None,
         };
         let label = card.label();
-        let is_skill = card.kind() == crate::core::card::CardType::Skill;
+        // 被夹击时,玩家指哪边就朝哪边
+        if card.target() == Target::Enemy {
+            if let Some(t) = chosen {
+                self.facing = t;
+            }
+        }
         if card.kind() == crate::core::card::CardType::Attack {
             self.shake(ShakeWho::Hero, 1, ShakeKind::Attack, 0);
         }
@@ -1402,7 +2375,7 @@ impl Combat {
             self.push_log(LogKind::Info, format!("dealt {} damage", ctx.unblocked));
         }
         // 浮夸按"本回合打出的牌数"结算(被人替打出来的牌也算)
-        self.note_card_played();
+        self.note_card_played(card.kind());
         // 有选牌待定:牌和花的能量先存着,等选完(choose)或取消(cancel)再收尾
         if let Some(ch) = self.choice.as_mut() {
             ch.played = Some((card, cost));
@@ -1416,22 +2389,6 @@ impl Combat {
             self.exhaust_card(card);
         } else {
             self.discard.push(card);
-        }
-        // 怒意:玩家打出技能时敌人获得力量
-        if is_skill {
-            for i in 0..self.enemies.len() {
-                if self.enemies[i].alive() {
-                    let enrage = self.enemies[i].statuses.get(Status::Enrage);
-                    if enrage > 0 {
-                        self.enemies[i].statuses.add(Status::Strength, enrage);
-                        let name = self.enemies[i].name.clone();
-                        self.push_log(
-                            LogKind::Enemy,
-                            format!("{name}'s Enrage: +{enrage} Strength"),
-                        );
-                    }
-                }
-            }
         }
         self.check_win();
         Ok(())
@@ -2072,6 +3029,16 @@ impl Combat {
         if idx >= self.enemies.len() || self.enemies[idx].dead() {
             return;
         }
+        // 神器:先拿一层顶掉这次减益
+        if n > 0 && status.is_debuff() && self.enemies[idx].statuses.has(Status::Artifact) {
+            self.enemies[idx].statuses.add(Status::Artifact, -1);
+            let name = self.enemies[idx].name.clone();
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name}'s Artifact blocks {}", status.name()),
+            );
+            return;
+        }
         self.enemies[idx].statuses.add(status, n);
         if n <= 0 || !status.is_debuff() {
             return;
@@ -2080,7 +3047,7 @@ impl Combat {
         if sad <= 0 {
             return;
         }
-        self.damage_enemy(idx, sad);
+        self.damage_enemy_plain(idx, sad);
         self.push_log(
             LogKind::Player,
             format!("Sadistic Nature deals {sad} damage"),
@@ -2110,7 +3077,7 @@ impl Combat {
                     .filter(|i| self.enemies.get(*i).map(|e| e.alive()).unwrap_or(false))
                     .or_else(|| self.first_alive());
                 if let Some(t) = t {
-                    let taken = self.damage_enemy(t, amount);
+                    let taken = self.damage_enemy_plain(t, amount);
                     self.push_log(
                         LogKind::Player,
                         format!("{} deals {taken} damage", def.name),
@@ -2119,7 +3086,7 @@ impl Combat {
             }
             PotionFx::DamageAll { amount } => {
                 for t in self.alive_enemies() {
-                    self.damage_enemy(t, amount);
+                    self.damage_enemy_plain(t, amount);
                 }
             }
             PotionFx::Block { amount } => {
@@ -2175,6 +3142,7 @@ mod tests {
             max_hp: hp,
             deck: ids.iter().map(|id| cards::card(id)).collect(),
             relics: Vec::new(),
+            gold: 0,
         }
     }
 
@@ -2681,26 +3649,24 @@ mod tests {
     fn sleeping_enemy_wakes_when_hit() {
         let sleeper = crate::core::enemies::ENEMIES
             .iter()
-            .find(|e| matches!(e.ai, Ai::Sleep { .. }));
-        let Some(sleeper) = sleeper else {
-            return;
-        };
-        let enc_id = crate::core::enemies::ENCOUNTERS
-            .iter()
-            .chain(crate::core::enemies::ELITES.iter())
-            .chain(crate::core::enemies::BOSSES.iter())
-            .find(|en| en.enemies.contains(&sleeper.id))
-            .map(|en| en.id);
-        let Some(enc_id) = enc_id else { return };
-        let mut c = combat_with(enc_id, &["strike"; 10]);
+            .find(|e| e.innate.iter().any(|(s, _)| *s == Status::Asleep))
+            .expect("总得有一只睡着的怪");
+        let enc = crate::core::enemies::encounter_with_enemy(sleeper.id)
+            .expect("睡着的怪要能打得到");
+        let mut c = combat_with(enc.id, &["strike"; 10]);
         let i = c
             .enemies
             .iter()
             .position(|e| e.def.id == sleeper.id)
             .unwrap();
-        assert!(!c.enemies[i].awake);
+        assert!(c.enemies[i].statuses.has(Status::Asleep));
+        // 开局自带的格挡要先打掉,不然这一下不算掉血
+        c.enemies[i].block = 0;
         c.play_card(0, Some(i)).unwrap();
-        assert!(c.enemies[i].awake, "睡眠中的敌人被打后应醒来");
+        assert!(
+            !c.enemies[i].statuses.has(Status::Asleep),
+            "睡眠中的敌人被打后应醒来"
+        );
     }
 
     #[test]
@@ -3434,5 +4400,738 @@ mod tests {
             c.hand.iter().any(|x| x.def.id == "necronomicurse"),
             "消耗之后手里又回来一张"
         );
+    }
+}
+
+#[cfg(test)]
+mod monster_tests {
+    use super::*;
+    use crate::core::cards::card;
+
+    /// 打一场指定遭遇:80 血,牌组给几张打击/防御够用就行
+    fn lock(id: &'static str) -> Combat {
+        let enc = crate::core::enemies::encounter_def(id)
+            .unwrap_or_else(|| panic!("no such encounter {id}"));
+        let deck = vec![
+            card("strike"),
+            card("strike"),
+            card("strike"),
+            card("defend"),
+            card("defend"),
+            card("strike"),
+            card("strike"),
+            card("defend"),
+            card("strike"),
+            card("strike"),
+        ];
+        let setup = CombatSetup {
+            hp: 80,
+            max_hp: 80,
+            deck,
+            relics: Vec::new(),
+            gold: 0,
+        };
+        Combat::new(enc, setup, 7)
+    }
+
+    /// 敌人这一招的意图(不看睡眠/半死这些覆盖)
+    fn intent(c: &Combat, i: usize) -> Intent {
+        c.enemies[i].def.moves[c.enemies[i].next_move].intent
+    }
+
+    #[test]
+    fn cultist_charges_once_then_strikes() {
+        let mut c = lock("cultist_solo");
+        assert_eq!(intent(&c, 0), Intent::Buff, "开场先充能");
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Ritual), 3);
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 3, "仪式当回合结算成力量");
+        assert_eq!(intent(&c, 0), Intent::Attack { damage: 6, times: 1 });
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(c.player.hp, hp - 9, "黑暗打击 6 + 3 力量");
+    }
+
+    #[test]
+    fn jaw_worm_opens_with_chomp() {
+        let c = lock("jaw_worm_solo");
+        assert_eq!(intent(&c, 0), Intent::Attack { damage: 11, times: 1 });
+    }
+
+    #[test]
+    fn louse_rolls_one_bite_damage_and_curls_up_once() {
+        let mut c = lock("two_louses");
+        let bite = c.enemies[0].state.rolled;
+        assert!((5..=7).contains(&bite), "咬的伤害开局掷在 5..7,实得 {bite}");
+        assert!(c.enemies[0].statuses.has(Status::CurlUp), "虱子开局带卷曲");
+        let curl = c.enemies[0].statuses.get(Status::CurlUp);
+        assert!((3..=7).contains(&curl));
+        // 挨第一下:拿到等量格挡,卷曲消耗掉
+        c.damage_enemy(0, 1);
+        assert_eq!(c.enemies[0].block, curl);
+        assert!(!c.enemies[0].statuses.has(Status::CurlUp), "卷曲只吃一次");
+        // 挨第二下不再给格挡
+        let block = c.enemies[0].block;
+        c.damage_enemy(0, 1);
+        assert_eq!(c.enemies[0].block, block - 1);
+    }
+
+    #[test]
+    fn gremlin_wizard_charges_twice_then_blasts() {
+        let mut c = lock("gremlin_gang_alt");
+        let w = c
+            .enemies
+            .iter()
+            .position(|e| e.def.id == "gremlin_wizard")
+            .expect("阵容里要有小鬼巫师");
+        assert_eq!(intent(&c, w), Intent::Unknown, "第一回合充能");
+        c.end_turn();
+        assert_eq!(intent(&c, w), Intent::Unknown, "第二回合还在充能");
+        c.end_turn();
+        assert_eq!(intent(&c, w), Intent::Attack { damage: 25, times: 1 });
+    }
+
+    #[test]
+    fn sentry_alternates_and_artifact_blocks_a_debuff() {
+        let mut c = lock("three_sentries");
+        assert_eq!(c.enemies[0].statuses.get(Status::Artifact), 1);
+        assert_eq!(intent(&c, 0), Intent::Debuff, "偶数位先放螺栓");
+        assert_eq!(intent(&c, 1), Intent::Attack { damage: 9, times: 1 }, "奇数位先射线");
+        // 神器挡掉一次减益
+        c.add_enemy_status(0, Status::Weak, 2);
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 0, "被神器顶掉");
+        assert_eq!(c.enemies[0].statuses.get(Status::Artifact), 0);
+        c.add_enemy_status(0, Status::Weak, 2);
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 2);
+        // 交替
+        let before = c.enemies[0].next_move;
+        c.end_turn();
+        assert_ne!(c.enemies[0].next_move, before);
+    }
+
+    #[test]
+    fn lagavulin_sleeps_then_attacks_and_wakes_on_damage() {
+        let mut c = lock("lagavulin_solo");
+        assert!(c.enemies[0].statuses.has(Status::Asleep));
+        assert_eq!(c.enemies[0].block, 8, "开局自带 8 格挡");
+        assert_eq!(intent(&c, 0), Intent::Sleep);
+        c.end_turn();
+        c.end_turn();
+        assert_eq!(intent(&c, 0), Intent::Sleep, "前三回合都在睡");
+        c.end_turn();
+        assert!(!c.enemies[0].statuses.has(Status::Asleep), "睡满三回合自己醒");
+        assert_eq!(c.enemies[0].statuses.get(Status::Metallicize), 0, "醒来丢掉金属化");
+        assert_eq!(intent(&c, 0), Intent::Attack { damage: 18, times: 1 });
+
+        // 挨打会提前醒:先破掉它开局的 8 点格挡
+        let mut c = lock("lagavulin_solo");
+        c.damage_enemy(0, 8);
+        assert!(c.enemies[0].statuses.has(Status::Asleep), "全挡住的时候不醒");
+        c.damage_enemy(0, 5);
+        assert!(!c.enemies[0].statuses.has(Status::Asleep));
+        assert_eq!(c.enemies[0].statuses.get(Status::Metallicize), 0, "醒来丢掉金属化");
+    }
+
+    #[test]
+    fn gremlin_nob_bellow_then_enrage_punishes_skills() {
+        let mut c = lock("gremlin_nob_solo");
+        assert_eq!(intent(&c, 0), Intent::Buff);
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Enrage), 2);
+        let strength = c.enemies[0].statuses.get(Status::Strength);
+        // 玩家打一张技能牌 → 狂怒 +2 力量
+        c.energy = 3;
+        let defend = c.hand.iter().position(|x| x.def.id == "defend").unwrap();
+        c.play_card(defend, None).unwrap();
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), strength + 2);
+    }
+
+    #[test]
+    fn slime_boss_goops_then_splits_at_half_health() {
+        let mut c = lock("slime_boss");
+        assert_eq!(intent(&c, 0), Intent::StrongDebuff, "开场喷粘液");
+        c.end_turn();
+        assert_eq!(c.discard.iter().filter(|x| x.def.id == "slimed").count(), 3);
+        // 掉到一半血:意图立刻换成分裂
+        c.enemies[0].hp = 70;
+        c.damage_enemy(0, 1);
+        let split = c.enemies[0].next_move;
+        assert_eq!(
+            c.enemies[0].def.moves[split].name, "Split",
+            "半血必须改成分裂"
+        );
+        // 轮到它时分成两只大史莱姆,生命等于分裂时的血量
+        let hp = c.enemies[0].hp;
+        c.end_turn();
+        assert!(c.enemies.iter().any(|e| e.def.id == "spike_slime_large"));
+        assert!(c.enemies.iter().any(|e| e.def.id == "acid_slime_large"));
+        for e in c.enemies.iter().filter(|e| e.def.id != "slime_boss") {
+            assert_eq!(e.hp, hp, "小史莱姆继承分裂时的血量");
+        }
+    }
+
+    #[test]
+    fn large_slime_splits_into_two_mediums() {
+        let mut c = lock("large_slime");
+        assert_eq!(c.enemies[0].def.id, "acid_slime_large");
+        c.enemies[0].hp = 30;
+        c.damage_enemy(0, 1);
+        c.end_turn();
+        let mediums = c
+            .enemies
+            .iter()
+            .filter(|e| e.def.id == "acid_slime_medium")
+            .count();
+        assert_eq!(mediums, 2, "大史莱姆分裂成两只中史莱姆");
+    }
+
+    #[test]
+    fn guardian_shifts_to_defensive_mode_after_enough_damage() {
+        let mut c = lock("the_guardian");
+        assert_eq!(c.enemies[0].statuses.get(Status::ModeShift), 30);
+        assert_eq!(intent(&c, 0), Intent::Defend, "开场蓄力");
+        c.damage_enemy(0, 20);
+        assert_eq!(c.enemies[0].statuses.get(Status::ModeShift), 10);
+        assert_eq!(intent(&c, 0), Intent::Defend, "还没掉够,不改意图");
+        c.damage_enemy(0, 10);
+        assert!(!c.enemies[0].statuses.has(Status::ModeShift));
+        assert_eq!(c.enemies[0].block, 20, "切换时白拿 20 格挡");
+        assert_eq!(c.enemies[0].def.moves[c.enemies[0].next_move].name, "Defensive Mode");
+    }
+
+    #[test]
+    fn guardian_defensive_mode_has_sharp_hide_and_twin_slam_removes_it() {
+        let mut c = lock("the_guardian");
+        c.damage_enemy(0, 30);
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::SharpHide), 3);
+        // 玩家打攻击牌 → 挨尖刺
+        c.energy = 3;
+        let hp = c.player.hp;
+        let strike = c.hand.iter().position(|x| x.def.id == "strike").unwrap();
+        c.play_card(strike, Some(0)).unwrap();
+        assert!(c.player.hp < hp, "尖刺外壳反伤");
+        // 双拳合击会把尖刺收起来
+        let twin = c.enemies[0]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.name == "Twin Slam")
+            .expect("守护者要有双拳合击");
+        c.enemies[0].next_move = twin;
+        c.end_turn();
+        assert!(!c.enemies[0].statuses.has(Status::SharpHide));
+    }
+
+    #[test]
+    fn hexaghost_divider_scales_with_player_health() {
+        let mut c = lock("hexaghost");
+        c.player.hp = 72;
+        assert_eq!(intent(&c, 0), Intent::Unknown, "开场点火");
+        c.end_turn();
+        assert_eq!(c.enemies[0].state.rolled, 7, "72/12 + 1");
+        assert_eq!(intent(&c, 0), Intent::Attack { damage: 0, times: 6 });
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(c.player.hp, hp - 7 * 6, "分裂打 6 下,每下 7");
+    }
+
+    #[test]
+    fn thief_steals_gold_and_flees() {
+        let mut enc = lock("looter_solo");
+        enc.player_gold = 100;
+        let mut c = enc;
+        assert_eq!(intent(&c, 0), Intent::Attack { damage: 10, times: 1 });
+        c.end_turn();
+        assert_eq!(c.player_gold, 85, "抢走 15");
+        assert_eq!(c.enemies[0].state.stolen, 15);
+        // 抢完两回合就霰雾弹跑路
+        for _ in 0..6 {
+            if c.enemies[0].escaped {
+                break;
+            }
+            c.end_turn();
+        }
+        assert!(c.enemies[0].escaped, "最后一定会逃");
+        assert_eq!(c.phase, Phase::Won, "只剩它一只,逃跑就算赢");
+    }
+
+    #[test]
+    fn killing_a_thief_gives_the_gold_back() {
+        let mut c = lock("looter_solo");
+        c.player_gold = 100;
+        c.end_turn();
+        assert_eq!(c.player_gold, 85);
+        c.damage_enemy(0, 999);
+        c.settle_deaths();
+        assert_eq!(c.player_gold, 100, "打死就把赃款吐出来");
+    }
+
+    #[test]
+    fn fungi_beast_bursts_on_death() {
+        let mut c = lock("two_fungi_beasts");
+        assert_eq!(c.enemies[0].statuses.get(Status::SporeCloud), 2);
+        c.damage_enemy(0, 999);
+        c.settle_deaths();
+        assert_eq!(c.player.statuses.get(Status::Vulnerable), 2);
+    }
+
+    #[test]
+    fn maw_nom_hits_grow_and_force_drool() {
+        let mut c = lock("the_maw_solo");
+        let nom = c.enemies[0]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.name == "Nom")
+            .expect("巨口要有咬这一招");
+        let drool = c.enemies[0]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.name == "Drool")
+            .expect("巨口要有流口水");
+        // 直接把它推到 NOM:第 2 回合咬一下
+        c.enemies[0].next_move = nom;
+        c.enemies[0].state.turns = 1;
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 5, "第 2 回合咬一下");
+        assert_eq!(c.enemies[0].next_move, drool, "咬完必定接流口水");
+    }
+
+    #[test]
+    fn acid_slime_small_alternates_lick_and_tackle() {
+        let mut c = lock("lots_of_slimes");
+        // 只留中间那只小酸液,免得被别的走位干扰
+        c.enemies.drain(0..3);
+        assert_eq!(c.enemies[0].def.id, "acid_slime_small");
+        let first = c.enemies[0].next_move;
+        c.end_turn();
+        assert_ne!(c.enemies[0].next_move, first, "两个动作严格交替");
+        c.end_turn();
+        assert_eq!(c.enemies[0].next_move, first);
+    }
+
+    #[test]
+    fn enemy_intent_shows_damage_after_modifiers() {
+        let mut c = lock("jaw_worm_solo");
+        // 敌人身上有力量,意图显示的伤害要跟着涨
+        c.enemies[0].statuses.add(Status::Strength, 3);
+        c.enemies[0].next_move = 0;
+        assert_eq!(c.predicted_damage(0), (14, 1));
+        // 玩家易伤 → 再多一半
+        c.player.statuses.add(Status::Vulnerable, 2);
+        assert_eq!(c.predicted_damage(0), (21, 1));
+    }
+}
+
+#[cfg(test)]
+mod power_tests {
+    use super::*;
+    use crate::core::cards::card;
+
+    /// 打一场指定遭遇:80 血,牌组给几张打击/防御
+    fn lock(id: &'static str) -> Combat {
+        let enc = crate::core::enemies::encounter_def(id)
+            .unwrap_or_else(|| panic!("no such encounter {id}"));
+        let deck = vec![
+            card("strike"),
+            card("strike"),
+            card("defend"),
+            card("strike"),
+            card("defend"),
+            card("strike"),
+            card("strike"),
+            card("defend"),
+            card("strike"),
+            card("strike"),
+        ];
+        let setup = CombatSetup {
+            hp: 80,
+            max_hp: 80,
+            deck,
+            relics: Vec::new(),
+            gold: 0,
+        };
+        Combat::new(enc, setup, 11)
+    }
+
+    fn idx_of(c: &Combat, id: &str) -> usize {
+        c.enemies
+            .iter()
+            .position(|e| e.def.id == id)
+            .unwrap_or_else(|| panic!("no {id} in this fight"))
+    }
+
+    #[test]
+    fn spheric_guardian_keeps_block_and_blocks_debuffs() {
+        let mut c = lock("spheric_guardian_solo");
+        assert_eq!(c.enemies[0].block, 40);
+        assert_eq!(c.enemies[0].statuses.get(Status::Artifact), 3);
+        // 壁垒:回合开始不清格挡
+        c.end_turn();
+        assert!(c.enemies[0].block >= 40, "壁垒让它一直攒着格挡");
+        // 神器一层一层顶
+        for left in (0..3).rev() {
+            c.add_enemy_status(0, Status::Weak, 5);
+            assert_eq!(c.enemies[0].statuses.get(Status::Artifact), left);
+        }
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 0, "三次都被顶掉");
+        c.add_enemy_status(0, Status::Weak, 5);
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 5, "神器用完就挡不住了");
+    }
+
+    #[test]
+    fn nemesis_intangible_caps_damage_and_comes_back() {
+        let mut c = lock("nemesis_solo");
+        let hp = c.enemies[0].hp;
+        // 开场还没有无形:这一下打满
+        c.damage_enemy(0, 30);
+        assert_eq!(c.enemies[0].hp, hp - 30);
+        // 它行动一次就会补上无形
+        c.end_turn();
+        assert!(c.enemies[0].statuses.has(Status::Intangible));
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 30);
+        assert_eq!(c.enemies[0].hp, hp - 1, "无形把伤害压到 1");
+    }
+
+    #[test]
+    fn byrd_flight_halves_damage_and_grounds_after_three_hits() {
+        let mut c = lock("three_byrds");
+        assert_eq!(c.enemies[0].statuses.get(Status::Flight), 3);
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 11);
+        assert_eq!(c.enemies[0].hp, hp - 5, "飞行让 11 变成 5");
+        c.damage_enemy(0, 11);
+        assert_eq!(c.enemies[0].statuses.get(Status::Flight), 1);
+        c.damage_enemy(0, 11);
+        assert!(!c.enemies[0].statuses.has(Status::Flight), "第三次命中就落地");
+        // 落地之后被打不再减半
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 11);
+        assert_eq!(c.enemies[0].hp, hp - 11);
+    }
+
+    #[test]
+    fn snake_plant_malleable_grows_then_resets() {
+        let mut c = lock("snake_plant_solo");
+        assert_eq!(c.enemies[0].statuses.get(Status::Malleable), 3);
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 10);
+        assert_eq!(c.enemies[0].hp, hp - 10, "这一下还没格挡可用");
+        assert_eq!(c.enemies[0].block, 3, "挨完打才长出 3 点格挡");
+        assert_eq!(c.enemies[0].statuses.get(Status::Malleable), 4);
+        // 下一次挨打就先吃这 3 点格挡
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 10);
+        assert_eq!(c.enemies[0].hp, hp - 7);
+        // 自己回合结束重置回 3
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Malleable), 3);
+    }
+
+    #[test]
+    fn shelled_parasite_plated_armor_and_stun() {
+        let mut c = lock("shelled_parasite_solo");
+        assert_eq!(c.enemies[0].statuses.get(Status::PlatedArmor), 14);
+        assert_eq!(c.enemies[0].block, 14);
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 20);
+        assert_eq!(c.enemies[0].statuses.get(Status::PlatedArmor), 13);
+        assert_eq!(c.enemies[0].hp, hp - 6);
+        // 打光甲壳那一下会把它打懵
+        c.enemies[0].statuses.set(Status::PlatedArmor, 1);
+        c.damage_enemy(0, 4);
+        assert!(!c.enemies[0].statuses.has(Status::PlatedArmor));
+        assert_eq!(
+            c.enemies[0].intent(),
+            Intent::Stun,
+            "破甲的那一下把它打成眩晕"
+        );
+    }
+
+    #[test]
+    fn spiker_thorns_hurt_the_player() {
+        let mut c = lock("three_shapes");
+        let spiker = idx_of(&c, "spiker");
+        c.enemies.retain(|e| e.def.id == "spiker");
+        let _ = spiker;
+        assert_eq!(c.enemies[0].statuses.get(Status::Thorns), 3);
+        let hp = c.player.hp;
+        c.damage_enemy(0, 5);
+        assert_eq!(c.player.hp, hp - 3, "荆棘反伤 3");
+        // 非攻击伤害不吃荆棘
+        let hp = c.player.hp;
+        c.damage_enemy_plain(0, 5);
+        assert_eq!(c.player.hp, hp);
+    }
+
+    #[test]
+    fn book_of_stabbing_hits_grow_and_leave_wounds() {
+        let mut c = lock("book_of_stabbing_solo");
+        assert_eq!(c.enemies[0].statuses.get(Status::PainfulStabs), 1);
+        let multi = c.enemies[0]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.effects.iter().any(|fx| matches!(fx, EnemyFx::AttackStabCount { .. })))
+            .expect("刺击之书要多段刺击");
+        c.enemies[0].next_move = multi;
+        c.enemies[0].state.stab = 1;
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 6, "开场段数是 1,先刺一下");
+        assert!(c.discard.iter().any(|x| x.def.id == "wound"), "命中塞伤口");
+        // 之后每次多刺一下
+        let mut last = 0;
+        for _ in 0..3 {
+            if c.phase != Phase::PlayerTurn {
+                break;
+            }
+            let before = c.player.hp;
+            let m = c.enemies[0].next_move;
+            if m != multi {
+                // 这回合不是多段刺击,跳过
+                c.end_turn();
+                continue;
+            }
+            let stab = c.enemies[0].state.stab;
+            c.end_turn();
+            let dealt = before - c.player.hp;
+            assert_eq!(dealt, 6 * stab as i32, "每段 6 点,共 {stab} 段");
+            assert!(stab >= last, "段数只会涨");
+            last = stab;
+        }
+        assert!(last >= 2, "刺击段数确实在积累");
+    }
+
+    #[test]
+    fn orb_walker_gains_strength_every_turn() {
+        let mut c = lock("orb_walker_solo");
+        assert_eq!(c.enemies[0].statuses.get(Status::StrengthUp), 3);
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 3);
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 6);
+    }
+
+    #[test]
+    fn giant_head_slow_scales_damage_and_resets() {
+        let mut c = lock("giant_head_solo");
+        assert!(c.enemies[0].statuses.holds(Status::Slow));
+        assert_eq!(c.enemies[0].statuses.get(Status::Slow), 0, "开场是 Slow 0");
+        c.energy = 3;
+        let strike = c.hand.iter().position(|x| x.def.id == "strike").unwrap();
+        c.play_card(strike, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].statuses.get(Status::Slow), 1, "每张牌加一层");
+        // 慢速放大的是"之后"的攻击伤害
+        let hp = c.enemies[0].hp;
+        c.damage_enemy(0, 10);
+        assert_eq!(c.enemies[0].hp, hp - 11, "10 * 1.1");
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Slow), 0, "自己回合结束重置");
+    }
+
+    #[test]
+    fn transient_fades_after_its_countdown() {
+        let mut c = lock("transient_solo");
+        c.player.hp = 999;
+        assert_eq!(c.enemies[0].hp, 999);
+        assert_eq!(c.enemies[0].statuses.get(Status::Fading), 5);
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 30, "第一回合打 30");
+        assert_eq!(c.enemies[0].statuses.get(Status::Fading), 4);
+        // 掉血会让它掉等量力量(移形换影)
+        c.damage_enemy(0, 40);
+        assert!(c.enemies[0].temp_strength < 0, "挨打就掉力量");
+        for _ in 0..4 {
+            if c.phase != Phase::PlayerTurn {
+                break;
+            }
+            c.end_turn();
+        }
+        assert!(c.enemies[0].escaped, "倒计时走完就自己消失");
+        assert_eq!(c.phase, Phase::Won);
+    }
+
+    #[test]
+    fn exploder_slams_twice_then_blows_up() {
+        let mut c = lock("three_shapes");
+        let i = idx_of(&c, "exploder");
+        c.enemies.retain(|e| e.def.id == "exploder");
+        let i = i.min(0);
+        let _ = i;
+        assert_eq!(c.enemies[0].hp, 30);
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 9);
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::Explosive), 1);
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 30, "自爆打 30 点非攻击伤害");
+        assert!(c.enemies[0].dead(), "自爆之后自己也死了");
+        c.check_win();
+        assert_eq!(c.phase, Phase::Won);
+    }
+
+    #[test]
+    fn darkling_regrows_once_while_kin_lives() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 999;
+        assert_eq!(c.enemies[0].statuses.get(Status::Regrow), 1);
+        c.enemies[0].hp = 10;
+        c.damage_enemy(0, 20);
+        c.settle_deaths();
+        assert!(c.enemies[0].state.half_dead, "有同伴在就先半死");
+        assert!(c.enemies[0].hp <= 0);
+        // 熬过复活倒计时之后以半血站起来
+        for _ in 0..4 {
+            if !c.enemies[0].state.half_dead || c.phase != Phase::PlayerTurn {
+                break;
+            }
+            c.end_turn();
+        }
+        assert!(!c.enemies[0].state.half_dead, "倒计时结束就复活");
+        assert!(c.enemies[0].hp > 0);
+    }
+
+    #[test]
+    fn mad_gremlin_gains_strength_when_hit() {
+        let mut c = lock("gremlin_gang_alt");
+        let i = idx_of(&c, "mad_gremlin");
+        assert_eq!(c.enemies[i].statuses.get(Status::Anger), 1);
+        // 全挡住也算
+        c.enemies[i].block = 99;
+        c.damage_enemy(i, 5);
+        assert_eq!(c.enemies[i].statuses.get(Status::Strength), 1);
+    }
+
+    #[test]
+    fn champion_enters_phase_two_below_half_health() {
+        let mut c = lock("the_champ");
+        assert_eq!(c.enemies[0].hp, 420);
+        let first = c.enemies[0].def.moves[c.enemies[0].next_move].name;
+        assert!(
+            ["Defensive Stance", "Gloat", "Face Slap", "Heavy Slash"].contains(&first),
+            "开场只能用共用表里的招,实得 {first}"
+        );
+        // 打到一半以下,下一次掷招就会进入二阶段(那一掷是暴怒)
+        c.enemies[0].statuses.add(Status::Vulnerable, 3);
+        c.damage_enemy(0, 215);
+        c.end_turn();
+        assert_eq!(
+            c.enemies[0].def.moves[c.enemies[0].next_move].name,
+            "Anger",
+            "掉到一半以下的那一掷必是暴怒"
+        );
+        c.end_turn();
+        assert!(c.enemies[0].statuses.get(Status::Strength) >= 6, "暴怒给 6 力量");
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 0, "先清掉自己的减益");
+    }
+
+    #[test]
+    fn time_eater_stops_time_after_twelve_cards() {
+        let mut c = lock("time_eater");
+        assert!(c.enemies[0].statuses.holds(Status::TimeWarp));
+        // 手里塞一堆 0 费牌,连打 12 张
+        c.hand.clear();
+        for _ in 0..12 {
+            let mut inst = cards::card("strike");
+            inst.cost_delta = -1;
+            c.hand.push(inst);
+        }
+        c.energy = 12;
+        for i in 0..12 {
+            if c.force_end_turn || c.phase != Phase::PlayerTurn {
+                break;
+            }
+            let _ = c.play_card(0, Some(0));
+            let _ = i;
+        }
+        assert!(c.force_end_turn, "第 12 张牌打完就该结束回合");
+        assert_eq!(c.enemies[0].statuses.get(Status::TimeWarp), 0, "计数清零");
+        assert!(c.enemies[0].statuses.get(Status::Strength) >= 2, "时间扭曲还给力量");
+    }
+
+    #[test]
+    fn corrupt_heart_beat_of_death_and_invincible() {
+        let mut c = lock("the_heart");
+        assert_eq!(c.enemies[0].statuses.get(Status::BeatOfDeath), 1);
+        assert_eq!(c.enemies[0].statuses.get(Status::Invincible), 300);
+        c.energy = 3;
+        let strike = c.hand.iter().position(|x| x.def.id == "strike").unwrap();
+        let hp = c.player.hp;
+        c.play_card(strike, Some(0)).unwrap();
+        assert_eq!(c.player.hp, hp - 1, "每打一张牌挨一下死亡律动");
+        // 无敌:一回合最多掉 300(刚才那张打击已经用掉 6 点额度)
+        let spent = c.enemies[0].state.taken_this_turn;
+        let ehp = c.enemies[0].hp;
+        c.damage_enemy(0, 400);
+        assert_eq!(c.enemies[0].hp, ehp - (300 - spent));
+        assert_eq!(c.enemies[0].state.taken_this_turn, 300);
+        let ehp = c.enemies[0].hp;
+        c.damage_enemy(0, 400);
+        assert_eq!(c.enemies[0].hp, ehp, "这一回合已经不能再掉血了");
+        // 下一回合额度重新回满
+        c.end_turn();
+        let ehp = c.enemies[0].hp;
+        c.damage_enemy(0, 50);
+        assert_eq!(c.enemies[0].hp, ehp - 50);
+    }
+
+    #[test]
+    fn awakened_one_revives_into_phase_two() {
+        let mut c = lock("awakened_one");
+        let i = idx_of(&c, "awakened_one");
+        assert_eq!(c.enemies[i].statuses.get(Status::Curiosity), 1);
+        assert_eq!(c.enemies[i].statuses.get(Status::Regenerate), 10);
+        c.damage_enemy(i, 400);
+        c.settle_deaths();
+        assert!(c.enemies[i].state.half_dead, "一阶段被打死只是半死");
+        assert_eq!(c.phase, Phase::PlayerTurn, "还没赢");
+        // 轮到它时会复活
+        c.end_turn();
+        assert!(!c.enemies[i].state.half_dead);
+        assert!(c.enemies[i].state.phase2);
+        assert_eq!(c.enemies[i].hp, c.enemies[i].max_hp, "复活回满血");
+    }
+
+    #[test]
+    fn leader_death_takes_its_minions_with_it() {
+        let mut c = lock("bronze_automaton");
+        c.end_turn();
+        let orbs = c
+            .enemies
+            .iter()
+            .filter(|e| e.def.id == "bronze_orb")
+            .count();
+        assert_eq!(orbs, 2, "铜制机械人开场召两个铜球");
+        assert!(c.enemies.iter().any(|e| e.is_minion()));
+        c.damage_enemy(0, 999);
+        c.check_win();
+        assert!(c.enemies.iter().all(|e| !e.is_minion() || !e.up()));
+        assert_eq!(c.phase, Phase::Won, "首领倒下,召唤物一起退场");
+    }
+
+    #[test]
+    fn collector_spawns_torch_heads_and_mega_debuffs_on_turn_four() {
+        let mut c = lock("the_collector");
+        c.end_turn();
+        assert_eq!(
+            c.enemies
+                .iter()
+                .filter(|e| e.def.id == "torch_head")
+                .count(),
+            2,
+            "开场召两只火炬头"
+        );
+        // 打到第 4 回合那一次掷招必定是超大减益
+        c.end_turn();
+        c.end_turn();
+        assert_eq!(c.enemies[0].def.moves[c.enemies[0].next_move].name, "Mega Debuff");
     }
 }

@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-// 全量语料(卡牌/遗物/药水/事件/角色), 由 tools/gen_corpus.py 从
+// 全量语料(卡牌/遗物/药水/事件/怪物/角色), 由 tools/gen_corpus.py 从
 // refs/slay-the-cli/data/corpus/*.json 生成, 不要手改.
 // 这里只有展示数据; 能不能打/能不能用由 cards.rs relics.rs potions.rs events.rs 决定.
 
@@ -48,6 +48,23 @@ pub struct EventInfo {
     pub pool: &'static str,
     pub options: &'static [&'static str],
     pub text: &'static str,
+}
+
+pub struct MonsterInfo {
+    /// 本游戏的敌人 id(语料 id 转小写, 史莱姆的 _S/_M/_L 展开成 _small/_medium/_large)
+    pub id: &'static str,
+    pub corpus_id: &'static str,
+    pub name: &'static str,
+    /// normal / elite / boss / minion / event
+    pub category: &'static str,
+    /// 出现的层, 逗号分隔(如 "1,2,3")
+    pub acts: &'static str,
+    pub hp_lo: i32,
+    pub hp_hi: i32,
+    pub hp_asc_lo: i32,
+    pub hp_asc_hi: i32,
+    /// 招式 id(名字里带怪物 id 前缀, 展示时再裁)
+    pub moves: &'static [&'static str],
 }
 
 pub struct CharacterInfo {
@@ -719,6 +736,74 @@ pub static EVENTS: &[EventInfo] = &[
     EventInfo { id: "the_joust", name: "The Joust", acts: "2", pool: "oneTime", options: &["Bet on the murderer: pay 50 gold; 70% chance to win 100 gold", "Bet on the owner: pay 50 gold; 30% chance to win 250 gold"], text: "A forced 50-gold wager on a duel between a knight and his pet's murderer." },
     EventInfo { id: "we_meet_again", name: "We Meet Again!", acts: "1,2,3", pool: "oneTime", options: &["Give potion: lose a random held potion, obtain a random relic", "Give gold: lose a random 50-150 gold amount, obtain a random relic", "Give card: lose a random non-basic, non-curse card, obtain a random relic", "Attack: no effect, event ends"], text: "A stranger claims friendship and trades a random relic for a potion, gold, or a card." },
     EventInfo { id: "the_woman_in_blue", name: "The Woman in Blue", acts: "1,2,3", pool: "oneTime", options: &["Buy 1 potion: pay 20 gold, receive 1 random potion", "Buy 2 potions: pay 30 gold, receive 2 random potions", "Buy 3 potions: pay 40 gold, receive 3 random potions", "Leave: no effect (at A15+: lose 5% of max HP)"], text: "A pushy shopkeeper insists you buy 1-3 random potions; refusing has a price at high ascension." },
+];
+
+pub static MONSTERS: &[MonsterInfo] = &[
+    MonsterInfo { id: "cultist", corpus_id: "CULTIST", name: "Cultist", category: "normal", acts: "1,2,3", hp_lo: 48, hp_hi: 54, hp_asc_lo: 50, hp_asc_hi: 56, moves: &["CULTIST_INCANTATION", "CULTIST_DARK_STRIKE"] },
+    MonsterInfo { id: "jaw_worm", corpus_id: "JAW_WORM", name: "Jaw Worm", category: "normal", acts: "1,3", hp_lo: 40, hp_hi: 44, hp_asc_lo: 42, hp_asc_hi: 46, moves: &["JAW_WORM_CHOMP", "JAW_WORM_THRASH", "JAW_WORM_BELLOW"] },
+    MonsterInfo { id: "red_louse", corpus_id: "RED_LOUSE", name: "Red Louse", category: "normal", acts: "1", hp_lo: 10, hp_hi: 15, hp_asc_lo: 11, hp_asc_hi: 16, moves: &["RED_LOUSE_BITE", "RED_LOUSE_GROW"] },
+    MonsterInfo { id: "green_louse", corpus_id: "GREEN_LOUSE", name: "Green Louse", category: "normal", acts: "1", hp_lo: 11, hp_hi: 17, hp_asc_lo: 12, hp_asc_hi: 18, moves: &["GREEN_LOUSE_BITE", "GREEN_LOUSE_SPIT_WEB"] },
+    MonsterInfo { id: "acid_slime_small", corpus_id: "ACID_SLIME_S", name: "Acid Slime (S)", category: "normal", acts: "1", hp_lo: 8, hp_hi: 12, hp_asc_lo: 9, hp_asc_hi: 13, moves: &["ACID_SLIME_S_LICK", "ACID_SLIME_S_TACKLE"] },
+    MonsterInfo { id: "acid_slime_medium", corpus_id: "ACID_SLIME_M", name: "Acid Slime (M)", category: "normal", acts: "1", hp_lo: 28, hp_hi: 32, hp_asc_lo: 29, hp_asc_hi: 34, moves: &["ACID_SLIME_M_CORROSIVE_SPIT", "ACID_SLIME_M_TACKLE", "ACID_SLIME_M_LICK"] },
+    MonsterInfo { id: "acid_slime_large", corpus_id: "ACID_SLIME_L", name: "Acid Slime (L)", category: "normal", acts: "1", hp_lo: 65, hp_hi: 69, hp_asc_lo: 68, hp_asc_hi: 72, moves: &["ACID_SLIME_L_CORROSIVE_SPIT", "ACID_SLIME_L_TACKLE", "ACID_SLIME_L_LICK", "ACID_SLIME_L_SPLIT"] },
+    MonsterInfo { id: "spike_slime_small", corpus_id: "SPIKE_SLIME_S", name: "Spike Slime (S)", category: "normal", acts: "1", hp_lo: 10, hp_hi: 14, hp_asc_lo: 11, hp_asc_hi: 15, moves: &["SPIKE_SLIME_S_TACKLE"] },
+    MonsterInfo { id: "spike_slime_medium", corpus_id: "SPIKE_SLIME_M", name: "Spike Slime (M)", category: "normal", acts: "1", hp_lo: 28, hp_hi: 32, hp_asc_lo: 29, hp_asc_hi: 34, moves: &["SPIKE_SLIME_M_FLAME_TACKLE", "SPIKE_SLIME_M_LICK"] },
+    MonsterInfo { id: "spike_slime_large", corpus_id: "SPIKE_SLIME_L", name: "Spike Slime (L)", category: "normal", acts: "1", hp_lo: 64, hp_hi: 70, hp_asc_lo: 67, hp_asc_hi: 73, moves: &["SPIKE_SLIME_L_FLAME_TACKLE", "SPIKE_SLIME_L_LICK", "SPIKE_SLIME_L_SPLIT"] },
+    MonsterInfo { id: "mad_gremlin", corpus_id: "MAD_GREMLIN", name: "Mad Gremlin", category: "normal", acts: "1,2", hp_lo: 20, hp_hi: 24, hp_asc_lo: 21, hp_asc_hi: 25, moves: &["MAD_GREMLIN_SCRATCH"] },
+    MonsterInfo { id: "sneaky_gremlin", corpus_id: "SNEAKY_GREMLIN", name: "Sneaky Gremlin", category: "normal", acts: "1,2", hp_lo: 10, hp_hi: 14, hp_asc_lo: 11, hp_asc_hi: 15, moves: &["SNEAKY_GREMLIN_PUNCTURE"] },
+    MonsterInfo { id: "fat_gremlin", corpus_id: "FAT_GREMLIN", name: "Fat Gremlin", category: "normal", acts: "1,2", hp_lo: 13, hp_hi: 17, hp_asc_lo: 14, hp_asc_hi: 18, moves: &["FAT_GREMLIN_SMASH"] },
+    MonsterInfo { id: "shield_gremlin", corpus_id: "SHIELD_GREMLIN", name: "Shield Gremlin", category: "normal", acts: "1,2", hp_lo: 12, hp_hi: 15, hp_asc_lo: 13, hp_asc_hi: 17, moves: &["SHIELD_GREMLIN_PROTECT", "SHIELD_GREMLIN_SHIELD_BASH"] },
+    MonsterInfo { id: "gremlin_wizard", corpus_id: "GREMLIN_WIZARD", name: "Gremlin Wizard", category: "normal", acts: "1,2", hp_lo: 21, hp_hi: 25, hp_asc_lo: 22, hp_asc_hi: 26, moves: &["GREMLIN_WIZARD_CHARGING", "GREMLIN_WIZARD_ULTIMATE_BLAST"] },
+    MonsterInfo { id: "looter", corpus_id: "LOOTER", name: "Looter", category: "normal", acts: "1,2", hp_lo: 44, hp_hi: 48, hp_asc_lo: 46, hp_asc_hi: 50, moves: &["LOOTER_MUG", "LOOTER_LUNGE", "LOOTER_SMOKE_BOMB", "LOOTER_ESCAPE"] },
+    MonsterInfo { id: "fungi_beast", corpus_id: "FUNGI_BEAST", name: "Fungi Beast", category: "normal", acts: "1,2", hp_lo: 22, hp_hi: 28, hp_asc_lo: 24, hp_asc_hi: 28, moves: &["FUNGI_BEAST_BITE", "FUNGI_BEAST_GROW"] },
+    MonsterInfo { id: "blue_slaver", corpus_id: "BLUE_SLAVER", name: "Blue Slaver", category: "normal", acts: "1,2", hp_lo: 46, hp_hi: 50, hp_asc_lo: 48, hp_asc_hi: 52, moves: &["BLUE_SLAVER_STAB", "BLUE_SLAVER_RAKE"] },
+    MonsterInfo { id: "red_slaver", corpus_id: "RED_SLAVER", name: "Red Slaver", category: "normal", acts: "1,2", hp_lo: 46, hp_hi: 50, hp_asc_lo: 48, hp_asc_hi: 52, moves: &["RED_SLAVER_STAB", "RED_SLAVER_SCRAPE", "RED_SLAVER_ENTANGLE"] },
+    MonsterInfo { id: "gremlin_nob", corpus_id: "GREMLIN_NOB", name: "Gremlin Nob", category: "elite", acts: "1,2", hp_lo: 82, hp_hi: 86, hp_asc_lo: 85, hp_asc_hi: 90, moves: &["GREMLIN_NOB_BELLOW", "GREMLIN_NOB_RUSH", "GREMLIN_NOB_SKULL_BASH"] },
+    MonsterInfo { id: "lagavulin", corpus_id: "LAGAVULIN", name: "Lagavulin", category: "elite", acts: "1", hp_lo: 109, hp_hi: 111, hp_asc_lo: 112, hp_asc_hi: 115, moves: &["LAGAVULIN_SLEEP", "LAGAVULIN_ATTACK", "LAGAVULIN_SIPHON_SOUL"] },
+    MonsterInfo { id: "sentry", corpus_id: "SENTRY", name: "Sentry", category: "elite", acts: "1,2", hp_lo: 38, hp_hi: 42, hp_asc_lo: 39, hp_asc_hi: 45, moves: &["SENTRY_BOLT", "SENTRY_BEAM"] },
+    MonsterInfo { id: "slime_boss", corpus_id: "SLIME_BOSS", name: "Slime Boss", category: "boss", acts: "1", hp_lo: 140, hp_hi: 140, hp_asc_lo: 150, hp_asc_hi: 150, moves: &["SLIME_BOSS_GOOP_SPRAY", "SLIME_BOSS_PREPARING", "SLIME_BOSS_SLAM", "SLIME_BOSS_SPLIT"] },
+    MonsterInfo { id: "the_guardian", corpus_id: "THE_GUARDIAN", name: "The Guardian", category: "boss", acts: "1", hp_lo: 240, hp_hi: 240, hp_asc_lo: 250, hp_asc_hi: 250, moves: &["THE_GUARDIAN_CHARGING_UP", "THE_GUARDIAN_FIERCE_BASH", "THE_GUARDIAN_VENT_STEAM", "THE_GUARDIAN_WHIRLWIND", "THE_GUARDIAN_DEFENSIVE_MODE", "THE_GUARDIAN_ROLL_ATTACK", "THE_GUARDIAN_TWIN_SLAM"] },
+    MonsterInfo { id: "hexaghost", corpus_id: "HEXAGHOST", name: "Hexaghost", category: "boss", acts: "1", hp_lo: 250, hp_hi: 250, hp_asc_lo: 264, hp_asc_hi: 264, moves: &["HEXAGHOST_ACTIVATE", "HEXAGHOST_DIVIDER", "HEXAGHOST_SEAR", "HEXAGHOST_TACKLE", "HEXAGHOST_INFLAME", "HEXAGHOST_INFERNO"] },
+    MonsterInfo { id: "spheric_guardian", corpus_id: "SPHERIC_GUARDIAN", name: "Spheric Guardian", category: "normal", acts: "2,3", hp_lo: 20, hp_hi: 20, hp_asc_lo: 20, hp_asc_hi: 20, moves: &["SPHERIC_GUARDIAN_ACTIVATE", "SPHERIC_GUARDIAN_ATTACK_DEBUFF", "SPHERIC_GUARDIAN_SLAM", "SPHERIC_GUARDIAN_HARDEN"] },
+    MonsterInfo { id: "chosen", corpus_id: "CHOSEN", name: "Chosen", category: "normal", acts: "2", hp_lo: 95, hp_hi: 99, hp_asc_lo: 98, hp_asc_hi: 103, moves: &["CHOSEN_POKE", "CHOSEN_ZAP", "CHOSEN_DEBILITATE", "CHOSEN_DRAIN", "CHOSEN_HEX"] },
+    MonsterInfo { id: "shelled_parasite", corpus_id: "SHELLED_PARASITE", name: "Shelled Parasite", category: "normal", acts: "2", hp_lo: 68, hp_hi: 72, hp_asc_lo: 70, hp_asc_hi: 75, moves: &["SHELLED_PARASITE_FELL", "SHELLED_PARASITE_DOUBLE_STRIKE", "SHELLED_PARASITE_SUCK", "SHELLED_PARASITE_STUNNED"] },
+    MonsterInfo { id: "byrd", corpus_id: "BYRD", name: "Byrd", category: "normal", acts: "2", hp_lo: 25, hp_hi: 31, hp_asc_lo: 26, hp_asc_hi: 33, moves: &["BYRD_PECK", "BYRD_SWOOP", "BYRD_CAW", "BYRD_STUNNED", "BYRD_HEADBUTT", "BYRD_FLY"] },
+    MonsterInfo { id: "mugger", corpus_id: "MUGGER", name: "Mugger", category: "normal", acts: "2", hp_lo: 48, hp_hi: 52, hp_asc_lo: 50, hp_asc_hi: 54, moves: &["MUGGER_MUG", "MUGGER_LUNGE", "MUGGER_SMOKE_BOMB", "MUGGER_ESCAPE"] },
+    MonsterInfo { id: "centurion", corpus_id: "CENTURION", name: "Centurion", category: "normal", acts: "2", hp_lo: 76, hp_hi: 80, hp_asc_lo: 78, hp_asc_hi: 83, moves: &["CENTURION_SLASH", "CENTURION_FURY", "CENTURION_DEFEND"] },
+    MonsterInfo { id: "mystic", corpus_id: "MYSTIC", name: "Mystic", category: "normal", acts: "2", hp_lo: 48, hp_hi: 56, hp_asc_lo: 50, hp_asc_hi: 58, moves: &["MYSTIC_ATTACK_DEBUFF", "MYSTIC_HEAL", "MYSTIC_BUFF"] },
+    MonsterInfo { id: "snake_plant", corpus_id: "SNAKE_PLANT", name: "Snake Plant", category: "normal", acts: "2", hp_lo: 75, hp_hi: 79, hp_asc_lo: 78, hp_asc_hi: 82, moves: &["SNAKE_PLANT_CHOMP", "SNAKE_PLANT_ENFEEBLING_SPORES"] },
+    MonsterInfo { id: "snecko", corpus_id: "SNECKO", name: "Snecko", category: "normal", acts: "2", hp_lo: 114, hp_hi: 120, hp_asc_lo: 120, hp_asc_hi: 125, moves: &["SNECKO_PERPLEXING_GLARE", "SNECKO_BITE", "SNECKO_TAIL_WHIP"] },
+    MonsterInfo { id: "book_of_stabbing", corpus_id: "BOOK_OF_STABBING", name: "Book of Stabbing", category: "elite", acts: "2", hp_lo: 160, hp_hi: 164, hp_asc_lo: 168, hp_asc_hi: 172, moves: &["BOOK_OF_STABBING_MULTI_STAB", "BOOK_OF_STABBING_SINGLE_STAB"] },
+    MonsterInfo { id: "gremlin_leader", corpus_id: "GREMLIN_LEADER", name: "Gremlin Leader", category: "elite", acts: "2", hp_lo: 140, hp_hi: 148, hp_asc_lo: 145, hp_asc_hi: 155, moves: &["GREMLIN_LEADER_RALLY", "GREMLIN_LEADER_ENCOURAGE", "GREMLIN_LEADER_STAB"] },
+    MonsterInfo { id: "taskmaster", corpus_id: "TASKMASTER", name: "Taskmaster", category: "elite", acts: "2", hp_lo: 54, hp_hi: 60, hp_asc_lo: 57, hp_asc_hi: 64, moves: &["TASKMASTER_SCOURING_WHIP"] },
+    MonsterInfo { id: "bronze_automaton", corpus_id: "BRONZE_AUTOMATON", name: "Bronze Automaton", category: "boss", acts: "2", hp_lo: 300, hp_hi: 300, hp_asc_lo: 320, hp_asc_hi: 320, moves: &["BRONZE_AUTOMATON_SPAWN_ORBS", "BRONZE_AUTOMATON_FLAIL", "BRONZE_AUTOMATON_BOOST", "BRONZE_AUTOMATON_HYPER_BEAM", "BRONZE_AUTOMATON_STUNNED"] },
+    MonsterInfo { id: "bronze_orb", corpus_id: "BRONZE_ORB", name: "Bronze Orb", category: "minion", acts: "2", hp_lo: 52, hp_hi: 58, hp_asc_lo: 54, hp_asc_hi: 60, moves: &["BRONZE_ORB_BEAM", "BRONZE_ORB_SUPPORT_BEAM", "BRONZE_ORB_STASIS"] },
+    MonsterInfo { id: "the_collector", corpus_id: "THE_COLLECTOR", name: "The Collector", category: "boss", acts: "2", hp_lo: 282, hp_hi: 282, hp_asc_lo: 300, hp_asc_hi: 300, moves: &["THE_COLLECTOR_SPAWN", "THE_COLLECTOR_FIREBALL", "THE_COLLECTOR_BUFF", "THE_COLLECTOR_MEGA_DEBUFF"] },
+    MonsterInfo { id: "torch_head", corpus_id: "TORCH_HEAD", name: "Torch Head", category: "minion", acts: "2", hp_lo: 38, hp_hi: 40, hp_asc_lo: 40, hp_asc_hi: 45, moves: &["TORCH_HEAD_TACKLE"] },
+    MonsterInfo { id: "the_champ", corpus_id: "THE_CHAMP", name: "The Champ", category: "boss", acts: "2", hp_lo: 420, hp_hi: 420, hp_asc_lo: 440, hp_asc_hi: 440, moves: &["THE_CHAMP_HEAVY_SLASH", "THE_CHAMP_FACE_SLAP", "THE_CHAMP_DEFENSIVE_STANCE", "THE_CHAMP_GLOAT", "THE_CHAMP_TAUNT", "THE_CHAMP_ANGER", "THE_CHAMP_EXECUTE"] },
+    MonsterInfo { id: "bear", corpus_id: "BEAR", name: "Bear", category: "event", acts: "2", hp_lo: 38, hp_hi: 42, hp_asc_lo: 40, hp_asc_hi: 44, moves: &["BEAR_BEAR_HUG", "BEAR_LUNGE", "BEAR_MAUL"] },
+    MonsterInfo { id: "romeo", corpus_id: "ROMEO", name: "Romeo", category: "event", acts: "2", hp_lo: 35, hp_hi: 39, hp_asc_lo: 37, hp_asc_hi: 41, moves: &["ROMEO_MOCK", "ROMEO_AGONIZING_SLASH", "ROMEO_CROSS_SLASH"] },
+    MonsterInfo { id: "pointy", corpus_id: "POINTY", name: "Pointy", category: "event", acts: "2", hp_lo: 30, hp_hi: 30, hp_asc_lo: 34, hp_asc_hi: 34, moves: &["POINTY_ATTACK"] },
+    MonsterInfo { id: "darkling", corpus_id: "DARKLING", name: "Darkling", category: "normal", acts: "3", hp_lo: 48, hp_hi: 56, hp_asc_lo: 50, hp_asc_hi: 59, moves: &["DARKLING_NIP", "DARKLING_CHOMP", "DARKLING_HARDEN", "DARKLING_REGROW", "DARKLING_REINCARNATE"] },
+    MonsterInfo { id: "orb_walker", corpus_id: "ORB_WALKER", name: "Orb Walker", category: "normal", acts: "3", hp_lo: 90, hp_hi: 96, hp_asc_lo: 92, hp_asc_hi: 102, moves: &["ORB_WALKER_LASER", "ORB_WALKER_CLAW"] },
+    MonsterInfo { id: "spiker", corpus_id: "SPIKER", name: "Spiker", category: "normal", acts: "3", hp_lo: 42, hp_hi: 56, hp_asc_lo: 44, hp_asc_hi: 60, moves: &["SPIKER_CUT", "SPIKER_SPIKE"] },
+    MonsterInfo { id: "repulsor", corpus_id: "REPULSOR", name: "Repulsor", category: "normal", acts: "3", hp_lo: 29, hp_hi: 35, hp_asc_lo: 31, hp_asc_hi: 38, moves: &["REPULSOR_BASH", "REPULSOR_REPULSE"] },
+    MonsterInfo { id: "exploder", corpus_id: "EXPLODER", name: "Exploder", category: "normal", acts: "3", hp_lo: 30, hp_hi: 30, hp_asc_lo: 30, hp_asc_hi: 35, moves: &["EXPLODER_SLAM", "EXPLODER_EXPLODE"] },
+    MonsterInfo { id: "transient", corpus_id: "TRANSIENT", name: "Transient", category: "normal", acts: "3", hp_lo: 999, hp_hi: 999, hp_asc_lo: 999, hp_asc_hi: 999, moves: &["TRANSIENT_ATTACK"] },
+    MonsterInfo { id: "the_maw", corpus_id: "THE_MAW", name: "The Maw", category: "normal", acts: "3", hp_lo: 300, hp_hi: 300, hp_asc_lo: 300, hp_asc_hi: 300, moves: &["THE_MAW_ROAR", "THE_MAW_DROOL", "THE_MAW_SLAM", "THE_MAW_NOM"] },
+    MonsterInfo { id: "spire_growth", corpus_id: "SPIRE_GROWTH", name: "Spire Growth", category: "normal", acts: "3", hp_lo: 170, hp_hi: 170, hp_asc_lo: 190, hp_asc_hi: 190, moves: &["SPIRE_GROWTH_QUICK_TACKLE", "SPIRE_GROWTH_SMASH", "SPIRE_GROWTH_CONSTRICT"] },
+    MonsterInfo { id: "writhing_mass", corpus_id: "WRITHING_MASS", name: "Writhing Mass", category: "normal", acts: "3", hp_lo: 160, hp_hi: 160, hp_asc_lo: 175, hp_asc_hi: 175, moves: &["WRITHING_MASS_STRONG_STRIKE", "WRITHING_MASS_MULTI_STRIKE", "WRITHING_MASS_FLAIL", "WRITHING_MASS_WITHER", "WRITHING_MASS_IMPLANT"] },
+    MonsterInfo { id: "giant_head", corpus_id: "GIANT_HEAD", name: "Giant Head", category: "elite", acts: "3", hp_lo: 500, hp_hi: 500, hp_asc_lo: 520, hp_asc_hi: 520, moves: &["GIANT_HEAD_COUNT", "GIANT_HEAD_GLARE", "GIANT_HEAD_IT_IS_TIME"] },
+    MonsterInfo { id: "nemesis", corpus_id: "NEMESIS", name: "Nemesis", category: "elite", acts: "3", hp_lo: 185, hp_hi: 185, hp_asc_lo: 200, hp_asc_hi: 200, moves: &["NEMESIS_ATTACK", "NEMESIS_SCYTHE", "NEMESIS_DEBUFF"] },
+    MonsterInfo { id: "reptomancer", corpus_id: "REPTOMANCER", name: "Reptomancer", category: "elite", acts: "3", hp_lo: 180, hp_hi: 190, hp_asc_lo: 190, hp_asc_hi: 200, moves: &["REPTOMANCER_SUMMON", "REPTOMANCER_SNAKE_STRIKE", "REPTOMANCER_BIG_BITE"] },
+    MonsterInfo { id: "dagger", corpus_id: "DAGGER", name: "Dagger", category: "minion", acts: "3", hp_lo: 20, hp_hi: 25, hp_asc_lo: 20, hp_asc_hi: 25, moves: &["DAGGER_STAB", "DAGGER_EXPLODE"] },
+    MonsterInfo { id: "awakened_one", corpus_id: "AWAKENED_ONE", name: "Awakened One", category: "boss", acts: "3", hp_lo: 300, hp_hi: 300, hp_asc_lo: 300, hp_asc_hi: 320, moves: &["AWAKENED_ONE_SLASH", "AWAKENED_ONE_SOUL_STRIKE", "AWAKENED_ONE_REBIRTH", "AWAKENED_ONE_DARK_ECHO", "AWAKENED_ONE_SLUDGE", "AWAKENED_ONE_TACKLE"] },
+    MonsterInfo { id: "time_eater", corpus_id: "TIME_EATER", name: "Time Eater", category: "boss", acts: "3", hp_lo: 456, hp_hi: 456, hp_asc_lo: 480, hp_asc_hi: 480, moves: &["TIME_EATER_REVERBERATE", "TIME_EATER_HEAD_SLAM", "TIME_EATER_RIPPLE", "TIME_EATER_HASTE"] },
+    MonsterInfo { id: "donu", corpus_id: "DONU", name: "Donu", category: "boss", acts: "3", hp_lo: 250, hp_hi: 250, hp_asc_lo: 265, hp_asc_hi: 265, moves: &["DONU_CIRCLE_OF_POWER", "DONU_BEAM"] },
+    MonsterInfo { id: "deca", corpus_id: "DECA", name: "Deca", category: "boss", acts: "3", hp_lo: 250, hp_hi: 250, hp_asc_lo: 265, hp_asc_hi: 265, moves: &["DECA_BEAM", "DECA_SQUARE_OF_PROTECTION"] },
+    MonsterInfo { id: "spire_shield", corpus_id: "SPIRE_SHIELD", name: "Spire Shield", category: "elite", acts: "4", hp_lo: 110, hp_hi: 110, hp_asc_lo: 125, hp_asc_hi: 125, moves: &["SPIRE_SHIELD_BASH", "SPIRE_SHIELD_FORTIFY", "SPIRE_SHIELD_SMASH"] },
+    MonsterInfo { id: "spire_spear", corpus_id: "SPIRE_SPEAR", name: "Spire Spear", category: "elite", acts: "4", hp_lo: 160, hp_hi: 160, hp_asc_lo: 180, hp_asc_hi: 180, moves: &["SPIRE_SPEAR_BURN_STRIKE", "SPIRE_SPEAR_PIERCER", "SPIRE_SPEAR_SKEWER"] },
+    MonsterInfo { id: "corrupt_heart", corpus_id: "CORRUPT_HEART", name: "Corrupt Heart", category: "boss", acts: "4", hp_lo: 750, hp_hi: 750, hp_asc_lo: 800, hp_asc_hi: 800, moves: &["CORRUPT_HEART_DEBILITATE", "CORRUPT_HEART_BLOOD_SHOTS", "CORRUPT_HEART_ECHO", "CORRUPT_HEART_BUFF"] },
 ];
 
 pub static CHARACTERS: &[CharacterInfo] = &[

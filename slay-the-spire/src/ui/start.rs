@@ -165,7 +165,7 @@ pub fn char_select(buf: &mut Buffer, area: Rect, app: &App) {
 pub fn compendium(buf: &mut Buffer, area: Rect, app: &App) {
     let libs = Library::ALL;
     let box_h = libs.len() as u16 + 4;
-    let w = 52u16.min(area.width.saturating_sub(2));
+    let w = 66u16.min(area.width.saturating_sub(2));
     let h = box_h.min(area.height.saturating_sub(2));
     let rect = Rect::new(
         area.x + centered_x(area.width, w as usize),
@@ -206,17 +206,20 @@ pub fn compendium(buf: &mut Buffer, area: Rect, app: &App) {
             style,
         );
     }
-    let other = format!("cards {} / relics {} / potions {} / events {}", 
+    let other = format!(
+        "cards {} / relics {} / potions {} / events {} / enemies {}",
         compendium::progress(Library::Cards).1,
         compendium::progress(Library::Relics).1,
         compendium::progress(Library::Potions).1,
-        compendium::progress(Library::Events).1);
+        compendium::progress(Library::Events).1,
+        compendium::progress(Library::Enemies).1
+    );
     put_centered(
         buf,
         rect.x + 1,
         rect.y + rect.height - 2,
         rect.width as usize - 2,
-        &other,
+        &truncate(&other, rect.width as usize - 2),
         Style::default().fg(theme::DIM).bg(theme::BG),
     );
     let _ = Modifier::BOLD;

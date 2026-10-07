@@ -541,6 +541,7 @@ impl Run {
                     max_hp: run.player.max_hp,
                     deck: run.player.deck.clone(),
                     relics: run.player.relics.clone(),
+                    gold: run.player.gold,
                 };
                 let mut c = Combat::new(enc, setup, seed);
                 c.turn = int("combat_turn", 1).max(1) as u32;
@@ -733,6 +734,7 @@ impl Run {
             max_hp: self.player.max_hp,
             deck: self.player.deck.clone(),
             relics: self.player.relics.clone(),
+            gold: self.player.gold,
         };
         self.combat = Some(Combat::new(enc, setup, seed));
         self.win_hold = 0;
@@ -809,11 +811,24 @@ impl Run {
         // 战斗里赚到的金币(贪婪之手)在这里收走,收一次就清零
         let looted = c.gold_gained;
         c.gold_gained = 0;
+        // 抢劫类敌人会当场动玩家身上的金币
+        let gold = c.player_gold;
+        // 战斗中永久塞进牌组的牌(寄生)在这里并进去
+        let added: Vec<_> = c.deck_cards.drain(..).collect();
         self.player.hp = hp;
         self.player.max_hp = max_hp;
+        self.player.gold = gold;
+        for card in added {
+            self.say(format!("{} is added to your deck", card.label()));
+            self.player.deck.push(card);
+        }
         if looted > 0 {
             self.gain_gold(looted);
             self.say(format!("you loot {looted} gold"));
+        }
+        // 战斗里的金币以玩家身上的为准,免得下一次同步把它冲掉
+        if let Some(c) = self.combat.as_mut() {
+            c.player_gold = self.player.gold;
         }
         match phase {
             // 赢了先留在战场上看 2 秒(死亡/结算动画),由 tick_win_hold 收尾
@@ -2282,6 +2297,29 @@ impl Run {
                 Ok(format!("debug room: battle {id}"))
             }
             "boss" | "elite" | "enemy" => {
+                // 点名一只怪(:room enemy jaw_worm)或一场遭遇(:room enemy slime_boss)
+                if let Some(name) = arg {
+                    let wanted = name.trim().to_lowercase();
+                    let by_id = |id: &str| id == wanted;
+                    let enc = enemies::all_encounters()
+                        .find(|e| by_id(e.id))
+                        .or_else(|| {
+                            enemies::ENEMIES
+                                .iter()
+                                .find(|e| by_id(e.id) || e.name.to_lowercase() == wanted)
+                                .and_then(|e| enemies::encounter_with_enemy(e.id))
+                        });
+                    match enc {
+                        Some(enc) => {
+                            let id = enc.id;
+                            self.start_combat(enc);
+                            return Ok(format!("debug room: battle {id}"));
+                        }
+                        None => {
+                            return Err(format!("unknown enemy or encounter '{name}'"));
+                        }
+                    }
+                }
                 let kind = match kind {
                     "boss" => EnemyKind::Boss,
                     "elite" => EnemyKind::Elite,

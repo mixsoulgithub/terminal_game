@@ -79,7 +79,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     );
     let border = theme::fg(theme::BORDER);
     hsep(buf, inner, inner.y + 1, border);
-    // 事件册:列表上方压一行总数统计
+    // 事件册/怪物册:列表上方压一行总数统计
     let content = if let Some(note) = compendium::header_note(lib) {
         if content.height == 0 {
             return;
@@ -165,30 +165,27 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
             display_width(&item.target_tag)
         };
         let name_w = (list.width as usize).saturating_sub((x - list.x) as usize + right_w + 1);
-        put(
-            buf,
-            x,
-            y,
-            &truncate(item.name, name_w.max(1)),
-            style.fg(name_color),
-        );
+        let name_shown = truncate(item.name, name_w.max(1));
+        let name_end = x + display_width(&name_shown) as u16;
+        put(buf, x, y, &name_shown, style.fg(name_color));
         // 中间:没实现
         if !item.done {
             let mid = "(not implemented)";
             let mw = display_width(mid);
             let mx = list.x + ((list.width as usize).saturating_sub(mw) / 2) as u16;
-            if mx > x + display_width(item.name) as u16 {
-                put(
-                    buf,
-                    mx,
-                    y,
-                    mid,
-                    if selected {
-                        theme::selected()
-                    } else {
-                        Style::default().fg(theme::WARN).bg(theme::BG)
-                    },
-                );
+            let mid_style = if selected {
+                theme::selected()
+            } else {
+                Style::default().fg(theme::WARN).bg(theme::BG)
+            };
+            if mx > name_end {
+                put(buf, mx, y, mid, mid_style);
+            } else if item.target_tag.is_empty() {
+                // 名字太长压到中间了,就靠着右边写
+                let rx = list.x + list.width.saturating_sub(mw as u16 + 1);
+                if rx > name_end + 1 {
+                    put(buf, rx, y, mid, mid_style);
+                }
             }
         }
         // 右边:目标

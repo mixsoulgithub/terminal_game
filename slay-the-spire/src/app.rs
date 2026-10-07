@@ -180,7 +180,7 @@ impl App {
         vec![
             ("continue", save::exists(), "resume the saved run"),
             ("new game", true, "pick a character"),
-            ("compendium", true, "cards, relics, potions and events"),
+            ("compendium", true, "cards, relics, potions, events and monsters"),
             ("quit", true, "leave the spire"),
         ]
     }
@@ -283,7 +283,7 @@ impl App {
         }
     }
 
-    /// 图鉴:h/l/Tab 换标签页(循环),j/k 在页内选(循环),1/2/3/4 换册子
+    /// 图鉴:h/l/Tab 换标签页(循环),j/k 在页内选(循环),1/2/3/4/5 换册子
     fn lib_key(&mut self, key: KeyEvent) {
         let tabs = compendium::groups(self.library).len().max(1);
         let n = compendium::items(self.library, self.lib_tab).len();
@@ -308,12 +308,17 @@ impl App {
                 self.lib_sel = 0;
                 self.info(self.tab_title());
             }
-            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
+            KeyCode::Char('1')
+            | KeyCode::Char('2')
+            | KeyCode::Char('3')
+            | KeyCode::Char('4')
+            | KeyCode::Char('5') => {
                 let i = match key.code {
                     KeyCode::Char('1') => 0,
                     KeyCode::Char('2') => 1,
                     KeyCode::Char('3') => 2,
-                    _ => 3,
+                    KeyCode::Char('4') => 3,
+                    _ => 4,
                 };
                 self.library = Library::ALL[i];
                 self.lib_tab = 0;
@@ -1389,6 +1394,21 @@ impl App {
         // 需要从弃牌堆/消耗堆选牌就自动弹窗
         self.open_choice_window();
         self.clamp();
+        // 时间扭曲打满 12 张:这张牌落地就轮到对面
+        self.maybe_forced_end_turn();
+    }
+
+    /// 敌人要求立刻结束这一回合(时间吞噬者)时把回合交出去
+    fn maybe_forced_end_turn(&mut self) {
+        if !self.run.combat().is_some_and(|c| c.force_end_turn) {
+            return;
+        }
+        if let Some(c) = self.run.combat_mut() {
+            c.end_turn();
+        }
+        self.run.sync_combat();
+        self.info("time stops: your turn ends");
+        self.clamp();
     }
 
     // ---- 奖励 ----
@@ -2036,7 +2056,7 @@ impl App {
             Screen::Library => vec![
                 ("j/k", "pick"),
                 ("h/l tab", "change tab"),
-                ("1-4", "cards/relics/potions/events"),
+                ("1-5", "cards/relics/potions/events/monsters"),
                 ("g/G", "top/bottom"),
                 ("esc", "back"),
             ],
