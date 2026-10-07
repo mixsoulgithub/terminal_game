@@ -4,7 +4,9 @@ pub mod act1;
 pub mod act2;
 pub mod act34;
 
-use crate::core::enemy::{Encounter, EnemyDef, EnemyKind};
+use crate::core::enemy::{Encounter, EnemyDef, EnemyKind, EnemyPreset};
+use crate::core::status::Status;
+use crate::rng::Rng;
 
 /// 本作实现的全部怪物(按 act1 / act2 / act3+4 的顺序)
 pub static ENEMIES: &[EnemyDef] = &[
@@ -81,21 +83,25 @@ pub static ENCOUNTERS_WEAK: &[Encounter] = &[
         id: "cultist_solo",
         kind: EnemyKind::Normal,
         enemies: &["cultist"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "jaw_worm_solo",
         kind: EnemyKind::Normal,
         enemies: &["jaw_worm"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "two_louses",
         kind: EnemyKind::Normal,
         enemies: &["red_louse", "green_louse"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "small_slimes",
         kind: EnemyKind::Normal,
         enemies: &["spike_slime_small", "acid_slime_medium"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -109,6 +115,7 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "fat_gremlin",
             "shield_gremlin",
         ],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "gremlin_gang_alt",
@@ -119,6 +126,7 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "shield_gremlin",
             "gremlin_wizard",
         ],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "lots_of_slimes",
@@ -130,46 +138,55 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "acid_slime_small",
             "acid_slime_small",
         ],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "red_slaver_solo",
         kind: EnemyKind::Normal,
         enemies: &["red_slaver"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "exordium_thugs",
         kind: EnemyKind::Normal,
         enemies: &["red_louse", "blue_slaver"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "exordium_wildlife",
         kind: EnemyKind::Normal,
         enemies: &["fungi_beast", "jaw_worm"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "blue_slaver_solo",
         kind: EnemyKind::Normal,
         enemies: &["blue_slaver"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "looter_solo",
         kind: EnemyKind::Normal,
         enemies: &["looter"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "large_slime",
         kind: EnemyKind::Normal,
         enemies: &["acid_slime_large"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "three_louses",
         kind: EnemyKind::Normal,
         enemies: &["red_louse", "green_louse", "red_louse"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "two_fungi_beasts",
         kind: EnemyKind::Normal,
         enemies: &["fungi_beast", "fungi_beast"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -178,17 +195,32 @@ pub static ELITES: &[Encounter] = &[
         id: "gremlin_nob_solo",
         kind: EnemyKind::Elite,
         enemies: &["gremlin_nob"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "lagavulin_solo",
         kind: EnemyKind::Elite,
         enemies: &["lagavulin"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "three_sentries",
         kind: EnemyKind::Elite,
         enemies: &["sentry", "sentry", "sentry"],
+        presets: THREE_SENTRIES_PRESETS,
+        ..Encounter::PLAIN
     },
+];
+
+/// 三哨兵遭遇里的哨兵开局就算"已经行动过一回合":
+/// 参考实现给它们预置了一段招式历史,于是 firstTurn 为假,首招由严格的
+/// 螺栓/射线交替决定.外两只的上一招是射线(所以先放螺栓),中间那只的上一招
+/// 是螺栓(所以先射线),与按站位定的相位一致.
+const THREE_SENTRIES_PRESETS: &[EnemyPreset] = &[
+    // 外两侧的上一招是射线,于是首招是螺栓
+    EnemyPreset::acted(&[0, 2], 1, Some("Beam")),
+    // 中间那只的上一招是螺栓,于是首招是射线
+    EnemyPreset::acted(&[1], 1, Some("Bolt")),
 ];
 
 pub static BOSSES: &[Encounter] = &[
@@ -196,16 +228,19 @@ pub static BOSSES: &[Encounter] = &[
         id: "the_guardian",
         kind: EnemyKind::Boss,
         enemies: &["the_guardian"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "hexaghost",
         kind: EnemyKind::Boss,
         enemies: &["hexaghost"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "slime_boss",
         kind: EnemyKind::Boss,
         enemies: &["slime_boss"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -215,26 +250,31 @@ pub static ACT2_WEAK: &[Encounter] = &[
         id: "spheric_guardian_solo",
         kind: EnemyKind::Normal,
         enemies: &["spheric_guardian"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "chosen_solo",
         kind: EnemyKind::Normal,
         enemies: &["chosen"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "shelled_parasite_solo",
         kind: EnemyKind::Normal,
         enemies: &["shelled_parasite"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "three_byrds",
         kind: EnemyKind::Normal,
         enemies: &["byrd", "byrd", "byrd"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "two_thieves",
         kind: EnemyKind::Normal,
         enemies: &["looter", "mugger"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -244,59 +284,76 @@ pub static ACT2: &[Encounter] = &[
         id: "chosen_and_byrds",
         kind: EnemyKind::Normal,
         enemies: &["byrd", "chosen"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "sentry_and_sphere",
         kind: EnemyKind::Normal,
         enemies: &["sentry", "spheric_guardian"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "cultist_and_chosen",
         kind: EnemyKind::Normal,
         enemies: &["cultist", "chosen"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "three_cultists",
         kind: EnemyKind::Normal,
         enemies: &["cultist", "cultist", "cultist"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "shelled_parasite_and_fungi",
         kind: EnemyKind::Normal,
         enemies: &["shelled_parasite", "fungi_beast"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "snecko_solo",
         kind: EnemyKind::Normal,
         enemies: &["snecko"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "snake_plant_solo",
         kind: EnemyKind::Normal,
         enemies: &["snake_plant"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "centurion_and_healer",
         kind: EnemyKind::Normal,
         enemies: &["centurion", "mystic"],
+        ..Encounter::PLAIN
     },
 ];
+
+/// 小鬼头目开局带的两只小鬼是它的随从(参考实现里由头目的开战动作挂上 MINION):
+/// 头目一倒它们就跟着退场,场上只剩随从时这一场也算结束.
+const GREMLIN_LEADER_PRESETS: &[EnemyPreset] =
+    &[EnemyPreset::buffed(&[0, 1], &[(Status::Minion, 1)])];
 
 pub static ACT2_ELITES: &[Encounter] = &[
     Encounter {
         id: "gremlin_leader_gang",
         kind: EnemyKind::Elite,
         enemies: &["mad_gremlin", "sneaky_gremlin", "gremlin_leader"],
+        presets: GREMLIN_LEADER_PRESETS,
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "slavers",
         kind: EnemyKind::Elite,
         enemies: &["blue_slaver", "taskmaster", "red_slaver"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "book_of_stabbing_solo",
         kind: EnemyKind::Elite,
         enemies: &["book_of_stabbing"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -305,36 +362,94 @@ pub static ACT2_BOSSES: &[Encounter] = &[
         id: "bronze_automaton",
         kind: EnemyKind::Boss,
         enemies: &["bronze_automaton"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "the_collector",
         kind: EnemyKind::Boss,
         enemies: &["the_collector"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "the_champ",
         kind: EnemyKind::Boss,
         enemies: &["the_champ"],
+        ..Encounter::PLAIN
     },
 ];
 
-/// 第三章的弱怪池。三只"形状"的阵容在参考实现里是随机抽的,
-/// 这里固定成一手能打出来的组合。
+/// 三种"形状"遭遇的抽签池:参考实现从这 6 个里不放回地抽(每种最多两只)
+const SHAPE_POOL: [&str; 6] = [
+    "repulsor",
+    "repulsor",
+    "exploder",
+    "exploder",
+    "spiker",
+    "spiker",
+];
+
+/// 不放回地抽 n 只形状:每抽一只就把它从池子里删掉
+/// (参考实现里就是 miscRng.random(lastIdx),lastIdx 依次是 5、4、3、2)
+fn draw_shapes(rng: &mut Rng, n: usize) -> Vec<&'static str> {
+    let mut pool = SHAPE_POOL.to_vec();
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let i = rng.range_inclusive(0, pool.len() as i32 - 1) as usize;
+        out.push(pool.remove(i));
+    }
+    out
+}
+
+fn three_shapes_lineup(rng: &mut Rng) -> Vec<&'static str> {
+    draw_shapes(rng, 3)
+}
+
+fn four_shapes_lineup(rng: &mut Rng) -> Vec<&'static str> {
+    draw_shapes(rng, 4)
+}
+
+/// 两只形状放回地抽(池子只有三种),球体守卫固定排在最后
+fn sphere_and_two_shapes_lineup(rng: &mut Rng) -> Vec<&'static str> {
+    const POOL: [&str; 3] = ["spiker", "repulsor", "exploder"];
+    let mut out = Vec::with_capacity(3);
+    for _ in 0..2 {
+        out.push(POOL[rng.range_inclusive(0, 2) as usize]);
+    }
+    out.push("spheric_guardian");
+    out
+}
+
+/// 颚虫三连里的每只颚虫:开局带力量 3、格挡 5,并且算"已经行动过一回合".
+/// 参考实现把它的招式历史预置成一个匹配不到任何招式的哨兵值,于是第一回合那种
+/// "必定咬一口"的开局被跳过,从第一回合起就走 25/30/45 的常规分布.
+const JAW_WORM_HORDE_PRESETS: &[EnemyPreset] = &[EnemyPreset {
+    slots: &[0, 1, 2],
+    statuses: &[(Status::Strength, 3)],
+    block: 5,
+    acted_turns: 1,
+    last_move: None,
+}];
+
+/// 第三章的弱怪池。三只"形状"开局按参考规则从池子里抽(见 draw_shapes)。
 pub static ACT3_WEAK: &[Encounter] = &[
     Encounter {
         id: "three_darklings_weak",
         kind: EnemyKind::Normal,
         enemies: &["darkling", "darkling", "darkling"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "orb_walker_solo",
         kind: EnemyKind::Normal,
         enemies: &["orb_walker"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "three_shapes",
         kind: EnemyKind::Normal,
         enemies: &["spiker", "repulsor", "exploder"],
+        lineup: Some(three_shapes_lineup),
+        ..Encounter::PLAIN
     },
 ];
 
@@ -343,41 +458,52 @@ pub static ACT3: &[Encounter] = &[
         id: "spire_growth_solo",
         kind: EnemyKind::Normal,
         enemies: &["spire_growth"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "transient_solo",
         kind: EnemyKind::Normal,
         enemies: &["transient"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "four_shapes",
         kind: EnemyKind::Normal,
         enemies: &["repulsor", "exploder", "spiker", "repulsor"],
+        lineup: Some(four_shapes_lineup),
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "the_maw_solo",
         kind: EnemyKind::Normal,
         enemies: &["the_maw"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "sphere_and_two_shapes",
         kind: EnemyKind::Normal,
         enemies: &["spiker", "repulsor", "spheric_guardian"],
+        lineup: Some(sphere_and_two_shapes_lineup),
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "jaw_worm_horde",
         kind: EnemyKind::Normal,
         enemies: &["jaw_worm", "jaw_worm", "jaw_worm"],
+        presets: JAW_WORM_HORDE_PRESETS,
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "three_darklings",
         kind: EnemyKind::Normal,
         enemies: &["darkling", "darkling", "darkling"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "writhing_mass_solo",
         kind: EnemyKind::Normal,
         enemies: &["writhing_mass"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -386,16 +512,19 @@ pub static ACT3_ELITES: &[Encounter] = &[
         id: "giant_head_solo",
         kind: EnemyKind::Elite,
         enemies: &["giant_head"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "nemesis_solo",
         kind: EnemyKind::Elite,
         enemies: &["nemesis"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "reptomancer_solo",
         kind: EnemyKind::Elite,
         enemies: &["dagger", "reptomancer", "dagger"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -404,16 +533,19 @@ pub static ACT3_BOSSES: &[Encounter] = &[
         id: "awakened_one",
         kind: EnemyKind::Boss,
         enemies: &["cultist", "cultist", "awakened_one"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "time_eater",
         kind: EnemyKind::Boss,
         enemies: &["time_eater"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "donu_and_deca",
         kind: EnemyKind::Boss,
         enemies: &["deca", "donu"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -422,12 +554,16 @@ pub static ACT4_ELITES: &[Encounter] = &[Encounter {
     id: "shield_and_spear",
     kind: EnemyKind::Elite,
     enemies: &["spire_shield", "spire_spear"],
+    // 开局玩家就被包围,初始朝向是右边的长矛(slot 1):盾的攻击吃 1.5 倍
+    player_statuses: &[(Status::Surrounded, 1)],
+    ..Encounter::PLAIN
 }];
 
 pub static ACT4_BOSSES: &[Encounter] = &[Encounter {
     id: "the_heart",
     kind: EnemyKind::Boss,
     enemies: &["corrupt_heart"],
+    ..Encounter::PLAIN
 }];
 
 /// 只会从分裂里出来的怪(大史莱姆裂开时生成),单列一张表便于直接打到
@@ -436,11 +572,13 @@ pub static SPLIT_ONLY: &[Encounter] = &[
         id: "medium_slimes",
         kind: EnemyKind::Normal,
         enemies: &["spike_slime_medium", "acid_slime_medium"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "boss_split_slimes",
         kind: EnemyKind::Normal,
         enemies: &["spike_slime_large", "acid_slime_large"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -450,16 +588,19 @@ pub static MINIONS: &[Encounter] = &[
         id: "bronze_orbs",
         kind: EnemyKind::Normal,
         enemies: &["bronze_orb", "bronze_orb"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "torch_heads",
         kind: EnemyKind::Normal,
         enemies: &["torch_head", "torch_head"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "daggers",
         kind: EnemyKind::Normal,
         enemies: &["dagger", "dagger", "dagger"],
+        ..Encounter::PLAIN
     },
 ];
 
@@ -630,6 +771,107 @@ mod tests {
                 .map(|i| initial_slot(three, i))
                 .collect::<Vec<_>>(),
             vec![0, 1, 2]
+        );
+    }
+
+    /// 按遭遇自带的抽签规则抽一次阵容
+    fn lineup(enc: &Encounter, seed: u64) -> Vec<&'static str> {
+        let roll = enc.lineup.expect("这个遭遇没有抽签规则");
+        roll(&mut Rng::new(seed))
+    }
+
+    fn encounter_with_id(id: &str) -> &'static Encounter {
+        all_encounters()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("没有遭遇 {id}"))
+    }
+
+    #[test]
+    fn encounter_presets_point_at_real_slots_and_moves() {
+        for enc in all_encounters() {
+            for p in enc.presets {
+                assert!(!p.slots.is_empty(), "{} 有一条空槽位的预置", enc.id);
+                for slot in p.slots {
+                    assert!(
+                        *slot < enc.enemies.len(),
+                        "{} 的预置槽位 {} 越界",
+                        enc.id,
+                        slot
+                    );
+                    if let Some(name) = p.last_move {
+                        let def = enemy_def_or_panic(enc.enemies[*slot]);
+                        assert!(
+                            def.move_index(name).is_some(),
+                            "{} 的预置招式 {name} 在 {} 身上不存在",
+                            enc.id,
+                            def.id
+                        );
+                    }
+                }
+                for (s, n) in p.statuses {
+                    assert!(*n > 0, "{} 的预置状态 {s} 层数要为正", enc.id);
+                }
+            }
+            for (s, n) in enc.player_statuses {
+                assert!(*n > 0, "{} 给玩家的预置状态 {s} 层数要为正", enc.id);
+            }
+        }
+    }
+
+    #[test]
+    fn three_and_four_shapes_draw_without_replacement() {
+        let three = encounter_with_id("three_shapes");
+        let four = encounter_with_id("four_shapes");
+        let kinds = ["spiker", "repulsor", "exploder"];
+        let mut seen_three = std::collections::HashSet::new();
+        let mut seen_four = std::collections::HashSet::new();
+        for seed in 0..256u64 {
+            let a = lineup(three, seed);
+            assert_eq!(a.len(), 3, "三只形状就该抽三只");
+            assert_eq!(a, lineup(three, seed), "同一种子要抽出一致的阵容");
+            for k in kinds {
+                assert!(
+                    a.iter().filter(|x| **x == k).count() <= 2,
+                    "池子里每种只有两个,seed {seed} 抽出了 {a:?}"
+                );
+            }
+            seen_three.insert(a);
+
+            let b = lineup(four, seed);
+            assert_eq!(b.len(), 4, "四只形状就该抽四只");
+            for k in kinds {
+                assert!(
+                    b.iter().filter(|x| **x == k).count() <= 2,
+                    "seed {seed} 抽出了 {b:?}"
+                );
+            }
+            seen_four.insert(b);
+        }
+        assert!(seen_three.len() >= 3, "三只形状只抽出一种阵容");
+        assert!(seen_four.len() >= 3, "四只形状只抽出一种阵容");
+    }
+
+    #[test]
+    fn sphere_and_two_shapes_keeps_the_sphere_and_redraws_the_shapes() {
+        let enc = encounter_with_id("sphere_and_two_shapes");
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..128u64 {
+            let ids = lineup(enc, seed);
+            assert_eq!(ids.len(), 3);
+            assert_eq!(ids[2], "spheric_guardian", "球体守卫固定排在最后");
+            for id in &ids[..2] {
+                assert!(
+                    ["spiker", "repulsor", "exploder"].contains(id),
+                    "前两只要从形状池里放回地抽,抽到了 {id}"
+                );
+            }
+            seen.insert((ids[0], ids[1]));
+        }
+        assert!(seen.len() >= 3, "两只形状的抽签没变化过");
+        // 放回地抽,所以允许两只同种
+        assert!(
+            seen.contains(&("spiker", "spiker")) || seen.contains(&("exploder", "exploder")),
+            "放回地抽应该出现过两只同种"
         );
     }
 

@@ -242,6 +242,13 @@ pub struct EnemyDef {
     pub spawn: SpawnHook,
 }
 
+impl EnemyDef {
+    /// 招式名对应的下标(遭遇里的预置状态按名字点招)
+    pub fn move_index(&self, name: &str) -> Option<usize> {
+        self.moves.iter().position(|m| m.name == name)
+    }
+}
+
 /// 意图:给玩家看的预告,伤害是未计入增减益的原始值
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Intent {
@@ -382,12 +389,77 @@ impl PickCtx<'_> {
 
 }
 
-/// 一场遭遇战:同一组的敌人 id
+/// 遭遇开局挂在若干只怪身上的预置状态.参考实现里在怪物构造完之后按槽位写死的那点东西.
+#[derive(Clone, Copy, Debug)]
+pub struct EnemyPreset {
+    /// 目标在遭遇名单里的下标(一条预置可以一次点好几个槽位)
+    pub slots: &'static [usize],
+    /// 开局加的状态(力量、随从标记之类)
+    pub statuses: &'static [(Status, i32)],
+    /// 开局的格挡(叠在它自己的 start_block 之上)
+    pub block: i32,
+    /// 开局算"已经行动过"几回合.大于 0 时 firstTurn 为假,招式历史上的约束照它生效
+    pub acted_turns: u32,
+    /// 开局预置的"上一招"招式名;None 表示预置一个匹配不到任何招式的哨兵值
+    pub last_move: Option<&'static str>,
+}
+
+impl EnemyPreset {
+    /// 不加状态/格挡,只把这些槽位摆成"已经行动过"
+    pub const fn acted(
+        slots: &'static [usize],
+        turns: u32,
+        last_move: Option<&'static str>,
+    ) -> Self {
+        Self {
+            slots,
+            statuses: &[],
+            block: 0,
+            acted_turns: turns,
+            last_move,
+        }
+    }
+
+    /// 开局只给这些槽位挂状态
+    pub const fn buffed(slots: &'static [usize], statuses: &'static [(Status, i32)]) -> Self {
+        Self {
+            slots,
+            statuses,
+            block: 0,
+            acted_turns: 0,
+            last_move: None,
+        }
+    }
+}
+
+/// 遭遇开局按参考规则重抽阵容:返回按槽位排好的敌人 id
+pub type LineupFn = fn(&mut Rng) -> Vec<&'static str>;
+
+/// 一场遭遇战:同一组的敌人 id,加上开局的阵容抽签与预置状态
 #[derive(Debug)]
 pub struct Encounter {
     pub id: &'static str,
     pub kind: EnemyKind,
+    /// 固定阵容.有 lineup 时它只当代表阵容(图鉴/查找用),真正开局按抽签来
     pub enemies: &'static [&'static str],
+    /// 开局重新抽阵容(三种"形状"遭遇).None 时直接用 enemies
+    pub lineup: Option<LineupFn>,
+    /// 开局按槽位施加的预置状态
+    pub presets: &'static [EnemyPreset],
+    /// 开局给玩家的状态(第四幕精英的被包围)
+    pub player_statuses: &'static [(Status, i32)],
+}
+
+impl Encounter {
+    /// 固定阵容、开局没有任何预置的遭遇基线
+    pub const PLAIN: Encounter = Encounter {
+        id: "",
+        kind: EnemyKind::Normal,
+        enemies: &[],
+        lineup: None,
+        presets: &[],
+        player_statuses: &[],
+    };
 }
 
 /// 事件直接开战用的遭遇.不进地图的遭遇池,等级按普通算(奖励由事件自己给).
@@ -397,41 +469,49 @@ pub static EVENT_ENCOUNTERS: &[Encounter] = &[
         id: "event_three_fungi",
         kind: EnemyKind::Normal,
         enemies: &["fungi_beast", "fungi_beast", "fungi_beast"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_colosseum_slavers",
         kind: EnemyKind::Normal,
         enemies: &["blue_slaver", "taskmaster", "red_slaver"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_colosseum_nobs",
         kind: EnemyKind::Normal,
         enemies: &["taskmaster", "gremlin_nob"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_bandits",
         kind: EnemyKind::Normal,
         enemies: &["pointy", "romeo", "bear"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_two_orbs",
         kind: EnemyKind::Normal,
         enemies: &["orb_walker", "orb_walker"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_phantom_guardian",
         kind: EnemyKind::Normal,
         enemies: &["the_guardian"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_phantom_hexaghost",
         kind: EnemyKind::Normal,
         enemies: &["hexaghost"],
+        ..Encounter::PLAIN
     },
     Encounter {
         id: "event_phantom_slime_boss",
         kind: EnemyKind::Normal,
         enemies: &["slime_boss"],
+        ..Encounter::PLAIN
     },
 ];
 

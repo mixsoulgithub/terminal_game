@@ -276,11 +276,16 @@ struct PlayCtx {
 impl Combat {
     pub fn new(enc: &'static Encounter, setup: CombatSetup, seed: u64) -> Self {
         let mut rng = Rng::new(seed);
+        // 阵容:带抽签规则的遭遇(三种"形状")开局按参考规则重抽,其余用固定名单
+        let lineup: Vec<&'static str> = match enc.lineup {
+            Some(roll) => roll(&mut rng),
+            None => enc.enemies.to_vec(),
+        };
         let mut enemies = Vec::new();
-        for (i, id) in enc.enemies.iter().enumerate() {
+        for (i, id) in lineup.iter().enumerate() {
             let def = crate::core::enemies::enemy_def_or_panic(id);
             // 同名敌人加编号,保证日志与选中项能对上
-            let dup = enc.enemies.iter().filter(|e| *e == id).count() > 1;
+            let dup = lineup.iter().filter(|e| *e == id).count() > 1;
             let name = if dup {
                 format!("{} #{}", def.name, i + 1)
             } else {
@@ -296,13 +301,26 @@ impl Combat {
                 }
             }
             let mut state = EnemyState::default();
-            let block = def.start_block;
+            let mut block = def.start_block;
             let mut spawn = crate::core::enemy::SpawnCtx {
                 rng: &mut rng,
                 statuses: &mut statuses,
                 state: &mut state,
             };
             (def.spawn)(&mut spawn);
+            // 遭遇级预置状态:开局的状态/格挡,以及"已经行动过"的招式历史
+            for p in enc.presets.iter().filter(|p| p.slots.contains(&i)) {
+                for (s, n) in p.statuses {
+                    statuses.add(*s, *n);
+                }
+                block += p.block;
+                state.turns = p.acted_turns;
+                if let Some(name) = p.last_move {
+                    state.last = Some(def.move_index(name).unwrap_or_else(|| {
+                        panic!("enemy {} has no move named {name}", def.id)
+                    }));
+                }
+            }
             enemies.push(Enemy {
                 def,
                 name,
@@ -370,6 +388,10 @@ impl Combat {
             next_uid: enemies_len as u64,
         };
 
+        // 遭遇级预置:开战就给玩家的状态(第四幕精英的被包围)
+        for (s, n) in enc.player_statuses {
+            c.player.statuses.add(*s, *n);
+        }
         // 遗物:战斗开始结算
         let mut extra_energy = 0;
         let mut extra_draw = 0usize;
@@ -4513,6 +4535,11 @@ mod monster_tests {
 
     /// 打一场指定遭遇:80 血,牌组给几张打击/防御够用就行
     fn lock(id: &'static str) -> Combat {
+        lock_seed(id, 7)
+    }
+
+    /// 同上,但种子自己定(开局的阵容抽签要看它)
+    fn lock_seed(id: &'static str, seed: u64) -> Combat {
         let enc = crate::core::enemies::encounter_def(id)
             .unwrap_or_else(|| panic!("no such encounter {id}"));
         let deck = vec![
@@ -4534,12 +4561,22 @@ mod monster_tests {
             relics: Vec::new(),
             gold: 0,
         };
-        Combat::new(enc, setup, 7)
+        Combat::new(enc, setup, seed)
     }
 
     /// 敌人这一招的意图(不看睡眠/半死这些覆盖)
     fn intent(c: &Combat, i: usize) -> Intent {
         c.enemies[i].def.moves[c.enemies[i].next_move].intent
+    }
+
+    /// 阵容里的敌人 id(按槽位序)
+    fn lineup_ids(c: &Combat) -> Vec<&'static str> {
+        c.enemies.iter().map(|e| e.def.id).collect()
+    }
+
+    /// 敌人这一招的名字
+    fn move_name(c: &Combat, i: usize) -> &'static str {
+        c.enemies[i].def.moves[c.enemies[i].next_move].name
     }
 
     #[test]
@@ -4610,6 +4647,95 @@ mod monster_tests {
         let before = c.enemies[0].next_move;
         c.end_turn();
         assert_ne!(c.enemies[0].next_move, before);
+    }
+
+    #[test]
+    fn three_sentries_start_as_if_they_already_acted() {
+        let c = lock("three_sentries");
+        for e in &c.enemies {
+            assert_eq!(e.state.turns, 1, "三哨兵开局就算已经行动过一回合");
+        }
+        // 外两只先放螺栓、中间那只先射线(与参考实现一致)
+        assert_eq!(
+            (0..3).map(|i| move_name(&c, i)).collect::<Vec<_>>(),
+            vec!["Bolt", "Beam", "Bolt"]
+        );
+        // 别的遭遇里的哨兵没这段历史,首招仍按站位定
+        let pair = lock("sentry_and_sphere");
+        assert_eq!(pair.enemies[0].state.turns, 0, "单只哨兵不该被预置历史");
+        assert_eq!(move_name(&pair, 0), "Bolt");
+    }
+
+    #[test]
+    fn jaw_worm_horde_starts_buffed_and_rolls_its_first_move() {
+        let horde = lock("jaw_worm_horde");
+        assert_eq!(horde.enemies.len(), 3);
+        for e in &horde.enemies {
+            assert_eq!(e.statuses.get(Status::Strength), 3, "每只开局力量 3");
+            assert_eq!(e.block, 5, "每只开局格挡 5");
+            assert_eq!(e.state.turns, 1, "每只开局就算已经行动过一回合");
+        }
+        // 常规颚虫第一回合必定咬一口,三连里的颚虫被预置了历史,第一回合就按分布掷
+        assert_eq!(move_name(&lock("jaw_worm_solo"), 0), "Chomp");
+        let openers: std::collections::HashSet<&str> =
+            (0..64).map(|s| move_name(&lock_seed("jaw_worm_horde", s), 0)).collect();
+        assert!(
+            openers.iter().any(|m| *m != "Chomp"),
+            "三连的颚虫第一回合不该被锁死成咬一口"
+        );
+    }
+
+    #[test]
+    fn shape_encounters_roll_the_lineup_per_seed() {
+        // 同一种子两次进入,阵容要一致
+        assert_eq!(
+            lineup_ids(&lock_seed("three_shapes", 99)),
+            lineup_ids(&lock_seed("three_shapes", 99))
+        );
+        // 不同种子会抽出不同阵容
+        let seen: std::collections::HashSet<Vec<&str>> =
+            (0..64).map(|s| lineup_ids(&lock_seed("three_shapes", s))).collect();
+        assert!(seen.len() >= 3, "三只形状只抽出 {} 种阵容", seen.len());
+        assert!(seen.iter().all(|l| l.len() == 3), "三只形状就该抽三只");
+        // 四只的那场数量是 4;球体守卫固定在场
+        assert_eq!(lineup_ids(&lock_seed("four_shapes", 99)).len(), 4);
+        for seed in 0..16u64 {
+            let ids = lineup_ids(&lock_seed("sphere_and_two_shapes", seed));
+            assert_eq!(ids.len(), 3);
+            assert_eq!(ids[2], "spheric_guardian", "球体守卫恒定存在");
+        }
+    }
+
+    #[test]
+    fn gremlin_leader_escorts_are_minions() {
+        let mut c = lock("gremlin_leader_gang");
+        assert!(
+            c.enemies[0].is_minion() && c.enemies[1].is_minion(),
+            "头目开局带的两只小鬼是随从"
+        );
+        assert!(!c.enemies[2].is_minion(), "头目自己不是随从");
+        // 头目一倒,两只随从小鬼就退场,这一场立刻算赢
+        let leader = c
+            .enemies
+            .iter()
+            .position(|e| e.def.id == "gremlin_leader")
+            .unwrap();
+        c.damage_enemy(leader, 999);
+        c.check_win();
+        assert_eq!(c.phase, Phase::Won, "头目倒下就算赢");
+        assert!(
+            c.enemies.iter().all(|e| !e.is_minion() || !e.up()),
+            "随从跟着退场"
+        );
+    }
+
+    #[test]
+    fn shield_and_spear_start_with_the_player_surrounded() {
+        let c = lock("shield_and_spear");
+        assert!(c.player.statuses.has(Status::Surrounded), "开局就被包围");
+        // 初始朝向是右边的长矛(slot 1):盾从背后打,吃 1.5 倍
+        assert_eq!(c.enemy_attack_damage(0, 12), 18);
+        assert_eq!(c.enemy_attack_damage(1, 12), 12);
     }
 
     #[test]
