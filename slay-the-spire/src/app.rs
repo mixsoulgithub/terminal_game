@@ -1099,7 +1099,7 @@ impl App {
     /// 有待选择时,能量行中间那句提示
     pub fn select_hint(&self) -> Option<String> {
         let ch = self.run.combat()?.choice.as_ref()?;
-        Some(format!("select {} card(s)  ({})", ch.need, ch.label))
+        Some(format!("select {} card(s)", ch.need))
     }
 
     /// 确认选择:把手牌选择模式里选中的那张交出去
@@ -1204,6 +1204,11 @@ impl App {
         };
         self.ok(r);
         self.run.sync_combat();
+        // 开了选牌就不要再挂着"played xxx",让信息行让给选择提示
+        if self.run.combat().map(|c| c.choice.is_some()).unwrap_or(false) {
+            self.msg.clear();
+            self.msg_ttl = 0;
+        }
         // 需要从弃牌堆/消耗堆选牌就自动弹窗
         self.open_choice_window();
         self.clamp();

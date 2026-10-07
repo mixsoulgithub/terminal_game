@@ -197,9 +197,22 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App, ov: Overlay) {
         );
         return;
     }
+    // 选牌窗口:标题里带上"为什么弹出来"(来自 Choice::label)
+    let why = app
+        .run
+        .combat()
+        .and_then(|c| c.choice.as_ref())
+        .filter(|ch| match (ch.source, ov) {
+            (crate::core::combat::ChoiceSource::Discard, Overlay::Discard) => true,
+            (crate::core::combat::ChoiceSource::Exhaust, Overlay::Exhaust) => true,
+            _ => false,
+        })
+        .map(|ch| format!("  ({})", ch.label))
+        .unwrap_or_default();
     let title = format!(
-        "{}  (j/k scroll, {} or esc close)",
+        "{}{}  (j/k scroll, {} or esc close)",
         ov.title(),
+        why,
         ov.close_key()
     );
     draw_box(buf, rect, &title, theme::fg(theme::SEL_FG), theme::fg(theme::INFO));

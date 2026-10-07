@@ -500,20 +500,33 @@ fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     } else {
         c.blocked_reason(sel)
     };
-    let (text, style) = match reason {
-        Some(r) => (format!("cannot play: {r}"), theme::fg(theme::WARN)),
-        None if !app.msg.is_empty() => (app.msg.clone(), theme::fg(theme::FG)),
-        None if c.hand.is_empty() => (
-            "no cards - press e to end the turn".to_string(),
-            theme::dim(),
-        ),
-        None => match c.hand.get(sel) {
-            Some(card) if card.needs_target() => match c.enemies.get(app.target_sel) {
-                Some(e) if e.alive() => (format!("[enter] play on {}", e.name), theme::dim()),
+    // 选牌模式:只显示"怎么选",不再掺打牌提示与打不出的原因
+    let choice_source = c.choice.as_ref().map(|ch| ch.source);
+    let (text, style) = if let Some(source) = choice_source {
+        if !app.msg.is_empty() {
+            (app.msg.clone(), theme::fg(theme::WARN))
+        } else if source == crate::core::combat::ChoiceSource::Hand {
+            ("space to choose, enter to confirm.".to_string(), theme::dim())
+        } else {
+            ("enter to pick, esc to cancel.".to_string(), theme::dim())
+        }
+    } else {
+        let (text, style) = match reason {
+            Some(r) => (format!("cannot play: {r}"), theme::fg(theme::WARN)),
+            None if !app.msg.is_empty() => (app.msg.clone(), theme::fg(theme::FG)),
+            None if c.hand.is_empty() => (
+                "no cards - press e to end the turn".to_string(),
+                theme::dim(),
+            ),
+            None => match c.hand.get(sel) {
+                Some(card) if card.needs_target() => match c.enemies.get(app.target_sel) {
+                    Some(e) if e.alive() => (format!("[enter] play on {}", e.name), theme::dim()),
+                    _ => ("[enter] play".to_string(), theme::dim()),
+                },
                 _ => ("[enter] play".to_string(), theme::dim()),
             },
-            _ => ("[enter] play".to_string(), theme::dim()),
-        },
+        };
+        (text, style)
     };
     // 提示要抖的时候整句话往右挪一格(和商店那套一致)
     let x = area.x + 2 + app.shake_nudge() as u16;
