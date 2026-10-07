@@ -455,12 +455,14 @@ impl App {
             || self.msg_ttl > 0
             || !self.battle_shakes.is_empty()
             || !self.play_banners.is_empty()
+            || self.run.holding_victory()
     }
 
     /// 走一帧;返回是否还要继续。
     /// 出手方会一直顶在最大幅度上,直到对面把自己的抖动演完才收回来。
     pub fn tick(&mut self) -> bool {
         use crate::core::combat::ShakeWho;
+        self.run.tick_win_hold();
         self.shake = self.shake.saturating_sub(1);
         if self.msg_ttl > 0 {
             self.msg_ttl -= 1;
@@ -1221,6 +1223,10 @@ impl App {
     }
 
     fn combat_key(&mut self, key: KeyEvent) {
+        // 已经赢了:停 2 秒看结算,这期间不接受任何战斗操作
+        if self.run.holding_victory() {
+            return;
+        }
         // 有待选择的牌:先让选择模式处理(esc 取消、空格选、回车确认)
         if self.choice_key(key) {
             return;
@@ -2584,6 +2590,9 @@ mod tests {
             c.phase = crate::core::combat::Phase::Won;
         }
         app.run.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            app.run.tick_win_hold();
+        }
         assert_eq!(app.run.screen, Screen::Reward);
         app.handle_key(key('j'));
         app.handle_key(esc());
@@ -2603,6 +2612,9 @@ mod tests {
             c.phase = crate::core::combat::Phase::Won;
         }
         app.run.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            app.run.tick_win_hold();
+        }
         // 造一份"金币 + 三张牌 + 遗物"的奖励
         {
             let r = app.run.reward.as_mut().unwrap();

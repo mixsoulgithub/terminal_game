@@ -203,6 +203,8 @@ pub struct Run {
     pub character: &'static str,
     /// 第几场战斗(每次开打 +1),表现层用它判断要不要重新拍快照
     pub fight_seq: u64,
+    /// 赢了之后还要在战场上多停几帧(>0 表示正在停,满了才进奖励)
+    pub win_hold: u8,
     pub rng: Rng,
     pub player: Player,
     pub map: ActMap,
@@ -302,6 +304,7 @@ impl Run {
             seed,
             character: ch.id,
             fight_seq: 0,
+            win_hold: 0,
             rng,
             player: Player {
                 hp: ch.max_hp,
@@ -545,8 +548,13 @@ impl Run {
                         }
                     }
                 }
+                if c.enemies.iter().all(|e| !e.alive()) {
+                    c.phase = Phase::Won;
+                }
                 run.combat = Some(c);
                 run.screen = Screen::Combat;
+                run.win_hold = 0;
+                run.sync_combat();
             }
         }
         // 还没出现过的遗物:重建一遍(已经拿到的都排掉)
@@ -692,6 +700,7 @@ impl Run {
             relics: self.player.relics.clone(),
         };
         self.combat = Some(Combat::new(enc, setup, seed));
+        self.win_hold = 0;
         self.fight_seq += 1;
         self.combat_log_seen = 0;
         self.screen = Screen::Combat;
@@ -765,12 +774,42 @@ impl Run {
         self.player.hp = hp;
         self.player.max_hp = max_hp;
         match phase {
-            Phase::Won => self.resolve_victory(),
+            // 赢了先留在战场上看 2 秒(死亡/结算动画),由 tick_win_hold 收尾
+            Phase::Won => {
+                if self.win_hold == 0 {
+                    self.win_hold = Self::VICTORY_HOLD;
+                }
+            }
             Phase::Lost => self.resolve_defeat(),
             _ => {}
         }
         self.stats.turns = self.stats.turns.max(turns);
         let _ = damage;
+    }
+
+    /// 战斗胜利后在原地停留的帧数(60ms 一帧,34 帧约 2 秒)
+    pub const VICTORY_HOLD: u8 = 34;
+
+    /// 赢了但还没进奖励(这段时间不吃战斗操作)
+    pub fn holding_victory(&self) -> bool {
+        self.win_hold > 0
+    }
+
+    /// 胜利停留的倒计时;归零就把这场战斗结算掉
+    pub fn tick_win_hold(&mut self) {
+        if self.win_hold == 0 {
+            return;
+        }
+        self.win_hold -= 1;
+        if self.win_hold == 0 {
+            let won = self
+                .combat
+                .as_ref()
+                .is_some_and(|c| c.phase == Phase::Won);
+            if won {
+                self.resolve_victory();
+            }
+        }
     }
 
     fn post_combat_heal(&mut self) -> i32 {
@@ -1824,6 +1863,14 @@ impl Run {
 
 #[cfg(test)]
 mod tests {
+    /// 测试里把"胜利后停留 2 秒"一步走完(真实流程由事件循环逐帧 tick)
+    fn settle(r: &mut Run) {
+        r.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            r.tick_win_hold();
+        }
+    }
+
     use super::*;
     use crate::core::map::FLOORS;
 
@@ -1881,7 +1928,7 @@ mod tests {
                         e.hp = 0;
                     }
                     c.phase = Phase::Won;
-                    r.sync_combat();
+                    settle(&mut r);
                 }
                 Screen::Reward => {
                     // 药水奖励在格子满时拿不走,所以要给循环一个上限
@@ -1973,7 +2020,7 @@ mod tests {
                 }
                 c.phase = Phase::Won;
             }
-            r.sync_combat();
+            settle(&mut r);
             let cards = &r.reward.as_ref().unwrap().cards;
             let mut ids: Vec<&str> = cards.iter().map(|c| c.def.id).collect();
             let before = ids.len();
@@ -1997,7 +2044,7 @@ mod tests {
             }
             c.phase = Phase::Won;
         }
-        r.sync_combat();
+        settle(&mut r);
         assert_eq!(r.screen, Screen::Reward);
         let reward = r.reward.as_ref().unwrap();
         assert!(reward.gold > 0);
@@ -2034,7 +2081,7 @@ mod tests {
             e.hp = 0;
         }
         c.phase = Phase::Won;
-        r.sync_combat();
+        settle(&mut r);
         assert_eq!(r.screen, Screen::Reward);
         let next = r.reward.as_ref().unwrap().next;
         assert_eq!(next, Screen::Victory);
@@ -2050,7 +2097,7 @@ mod tests {
             c.player.hp = 0;
             c.phase = Phase::Lost;
         }
-        r.sync_combat();
+        settle(&mut r);
         assert_eq!(r.screen, Screen::Death);
         assert_eq!(r.player.hp, 0);
     }
@@ -2232,7 +2279,7 @@ mod tests {
             }
             c.phase = Phase::Won;
         }
-        r.sync_combat();
+        settle(&mut r);
         let joined = r
             .history
             .iter()
@@ -2273,7 +2320,7 @@ mod tests {
             }
             c.phase = Phase::Won;
         }
-        r.sync_combat();
+        settle(&mut r);
         let reward = r.reward.as_mut().unwrap();
         reward.potion = Some(def);
         reward.potion_taken = false;
@@ -2414,7 +2461,7 @@ mod tests {
                         }
                         r.combat.as_mut().unwrap().end_turn();
                     }
-                    r.sync_combat();
+                    settle(&mut r);
                 }
                 Screen::Reward => {
                     for _ in 0..12 {
