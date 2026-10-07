@@ -33,13 +33,12 @@ pub struct BattleShake {
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
-const COMMANDS: &[&str] = &[
-    "card", "help", "q", "quit", "relic", "restart", "room", "seed", "win",
-];
+const COMMANDS: &[&str] = &["card", "help", "q", "quit", "relic", "room", "run", "save", "seed", "win"];
 /// :room / :relic / :card 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
 const RELIC_ARGS: &[&str] = &["add", "remove"];
 const CARD_ARGS: &[&str] = &["add", "remove", "upgrade"];
+const RUN_ARGS: &[&str] = &["save", "seed"];
 
 pub struct App {
     pub run: Run,
@@ -312,6 +311,21 @@ impl App {
         format!("{} / {}", self.library.title(), g)
     }
 
+    /// 把一局装进来,顺手把各种光标复位
+    fn adopt_run(&mut self, run: Run) {
+        self.run = run;
+        self.hand_sel = 0;
+        self.target_sel = 0;
+        self.map_sel = 0;
+        self.map_scroll = 0;
+        self.rest_index = 0;
+        self.potion_sel = None;
+        self.potion_pending = None;
+        self.overlay = None;
+        self.choice_sel.clear();
+        self.battle_shakes.clear();
+    }
+
     fn load_save(&mut self) {
         let Some(text) = save::read() else {
             self.warn("no saved run");
@@ -319,14 +333,7 @@ impl App {
         };
         match Run::from_save(&text) {
             Ok(run) => {
-                self.run = run;
-                self.hand_sel = 0;
-                self.target_sel = 0;
-                self.map_sel = 0;
-                self.map_scroll = 0;
-                self.rest_index = 0;
-                self.potion_sel = None;
-                self.potion_pending = None;
+                self.adopt_run(run);
                 self.info("continued run");
             }
             Err(e) => self.warn(e),
@@ -377,6 +384,7 @@ impl App {
                     Some("room") => ROOM_ARGS,
                     Some("relic") => RELIC_ARGS,
                     Some("card") => CARD_ARGS,
+                    Some("run") => RUN_ARGS,
                     _ => &[],
                 };
                 matching(args, cur)
@@ -1552,16 +1560,74 @@ impl App {
                     self.warn("not in a battle");
                 }
             }
-            // 重开一局:不给种子就随机,给了就用给的
-            "restart" => {
-                if rest.is_empty() {
-                    self.restart(crate::rng::random_seed());
-                } else {
-                    match rest.parse::<u64>() {
-                        Ok(seed) => self.restart(seed),
-                        Err(_) => self.warn("usage: restart [seed]"),
+            // :run 用当前种子重来;:run seed [n] 换种子(不给就随机);:run save <名字> 读存档
+            "run" => {
+                let (sub, args) = split_sub(rest);
+                let r: Result<String, String> = match sub {
+                    "" => {
+                        let seed = self.run.seed;
+                        self.restart(seed);
+                        Ok(format!("rerun seed {seed}"))
                     }
-                }
+                    "seed" => {
+                        let seed = if args.is_empty() {
+                            crate::rng::random_seed()
+                        } else {
+                            match args.parse::<u64>() {
+                                Ok(n) => n,
+                                Err(_) => {
+                                    self.warn(format!("bad seed: {args}"));
+                                    return;
+                                }
+                            }
+                        };
+                        self.restart(seed);
+                        Ok(format!("new run, seed {seed}"))
+                    }
+                    "save" => {
+                        if args.is_empty() {
+                            let names = crate::core::save::list();
+                            Err(format!(
+                                "usage: run save <name>   available: {}",
+                                if names.is_empty() {
+                                    "(none)".to_string()
+                                } else {
+                                    names.join(", ")
+                                }
+                            ))
+                        } else {
+                            match crate::core::save::read_named(args) {
+                                Some(text) => match Run::from_save(&text) {
+                                    Ok(run) => {
+                                        self.adopt_run(run);
+                                        Ok(format!("loaded save {args}"))
+                                    }
+                                    Err(e) => Err(e),
+                                },
+                                None => Err(format!(
+                                    "no save named {args} in {}",
+                                    crate::core::save::dir().display()
+                                )),
+                            }
+                        }
+                    }
+                    _ => Err("usage: run | run seed [seed] | run save <name>".to_string()),
+                };
+                self.ok(r);
+                self.clamp();
+            }
+            // :save [名字] 另存一份(不给名字就用 角色-层数-ISO时间)
+            "save" => {
+                let name = if rest.trim().is_empty() {
+                    let stamp = crate::core::save::now_stamp().replace(':', "-");
+                    format!("{}-{}-{}", self.run.character, self.run.floor_reached, stamp)
+                } else {
+                    rest.trim().to_string()
+                };
+                let r = crate::core::save::write_named(&name, &self.run.save_text())
+                    .map(|p| format!("saved {}", p.display()))
+                    .map_err(|e| e.to_string());
+                self.ok(r);
             }
             "" => {}
             other => self.warn(format!("unknown command: {other}")),
@@ -1690,8 +1756,11 @@ impl App {
                 "change your deck / hand by name (debug)",
             ),
             (":win", "win the current battle (skip to the reward)"),
-            (":restart [seed]", "restart from the beginning (random seed if omitted)"),
-            ("R n", "after the run ends: restart with the same / a new seed"),
+            (":run", "run the current seed from the beginning"),
+            (":run seed [n]", "start a new run (random seed if omitted)"),
+            (":run save <name>", "load a save from the save directory"),
+            (":save [name]", "save the current run (auto-named if omitted)"),
+
             ("ctrl-c", "quit at any time"),
         ]
     }
@@ -2183,7 +2252,7 @@ mod tests {
         app.handle_key(enter());
         assert_eq!(app.run.screen, Screen::Combat);
         app.handle_key(key(':'));
-        for c in "restart 77".chars() {
+        for c in "run seed 77".chars() {
             app.handle_key(key(c));
         }
         app.handle_key(enter());
@@ -2191,7 +2260,7 @@ mod tests {
         assert_eq!(app.run.seed, 77);
         // 不给种子就是随机种子
         app.handle_key(key(':'));
-        for c in "restart".chars() {
+        for c in "run seed".chars() {
             app.handle_key(key(c));
         }
         app.handle_key(enter());
