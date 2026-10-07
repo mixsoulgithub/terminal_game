@@ -39,6 +39,7 @@ pub struct LogLine {
     pub seq: u64,
 }
 
+#[derive(Clone)]
 pub struct Enemy {
     pub def: &'static EnemyDef,
     /// 同名敌人会带 #1/#2 后缀
@@ -137,6 +138,7 @@ pub enum ChoiceAction {
 }
 
 /// 一次待选择:比如"从手牌选一张消耗"
+#[derive(Clone)]
 pub struct Choice {
     pub source: ChoiceSource,
     pub action: ChoiceAction,
@@ -150,7 +152,10 @@ pub struct Choice {
     pub played: Option<(CardInstance, i32)>,
 }
 
+#[derive(Clone)]
 pub struct Combat {
+    /// 本场玩家掉血的次数(嗜血按这个降费)
+    pub hp_losses: i32,
     /// 待选择(选牌窗口/手牌选择模式)
     pub choice: Option<Choice>,
     /// 这一帧攒下来的抖动事件,表现层消费
@@ -227,6 +232,7 @@ impl Combat {
             deck.into_iter().partition(|c| c.is_innate());
 
         let mut c = Combat {
+            hp_losses: 0,
             choice: None,
             shakes: Vec::new(),
             enemies,
@@ -651,6 +657,17 @@ impl Combat {
         }
     }
 
+    /// 战斗中后来拿到的牌:把本场已有的降费补给嗜血
+    pub fn fix_new_card(&self, card: &mut CardInstance) {
+        if card.def.id == "blood_for_blood" {
+            let base = match card.def.cost {
+                crate::core::card::Cost::Fixed(n) => n as i32,
+                _ => 0,
+            };
+            card.cost_delta = -(self.hp_losses.min(base));
+        }
+    }
+
     /// 调试用:开一个"从手牌里删牌"的选择
     pub fn debug_begin_hand_remove(&mut self) {
         self.begin_choice(
@@ -719,8 +736,9 @@ impl Combat {
                 self.hand.push(card);
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
+                // 抽牌堆的"顶"是 Vec 末尾(draw_cards 从末尾 pop),所以 push 才是放顶上
                 let card = self.hand.remove(idx);
-                self.draw.insert(0, card);
+                self.draw.push(card);
             }
             (ChoiceSource::Exhaust, ChoiceAction::ToHand) => {
                 let card = self.exhaust.remove(idx);
@@ -728,7 +746,7 @@ impl Combat {
             }
             (ChoiceSource::Discard, ChoiceAction::ToDrawTop) => {
                 let card = self.discard.remove(idx);
-                self.draw.insert(0, card);
+                self.draw.push(card);
             }
             (ChoiceSource::Hand, ChoiceAction::Remove) => {
                 self.hand.remove(idx);
@@ -870,6 +888,7 @@ impl Combat {
 
     /// 玩家掉了血:嗜血的费用跟着降(手牌/抽牌堆/弃牌堆/消耗堆里那些)
     fn note_hp_loss(&mut self) {
+        self.hp_losses += 1;
         for card in self
             .hand
             .iter_mut()
@@ -1333,7 +1352,9 @@ impl Combat {
                 }                Effect::AddCardToDraw { id, n } => {
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
-                        self.draw.push(CardInstance::new(def));
+                        let mut inst = CardInstance::new(def);
+                        self.fix_new_card(&mut inst);
+                        self.draw.push(inst);
                     }
                 }
                 Effect::ExhaustFromHand => {
@@ -1379,6 +1400,7 @@ impl Combat {
                     if !pool.is_empty() && self.hand.len() < HAND_LIMIT {
                         let def = self.rng.pick(&pool);
                         let mut inst = CardInstance::new(def);
+                        self.fix_new_card(&mut inst);
                         inst.free_this_turn = true;
                         let label = inst.label();
                         self.hand.push(inst);
@@ -1402,7 +1424,9 @@ impl Combat {
                         if self.hand.len() >= HAND_LIMIT {
                             break;
                         }
-                        self.hand.push(CardInstance::new(def));
+                        let mut inst = CardInstance::new(def);
+                        self.fix_new_card(&mut inst);
+                        self.hand.push(inst);
                     }
                 }
                 Effect::EnergyOnExhaust { .. } => {
@@ -1419,7 +1443,9 @@ impl Combat {
                 Effect::AddCardToDiscard { id, n } => {
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
-                        self.discard.push(CardInstance::new(def));
+                        let mut inst = CardInstance::new(def);
+                        self.fix_new_card(&mut inst);
+                        self.discard.push(inst);
                     }
                 }
                 Effect::UpgradeRandomInHand { n } => {
@@ -1637,8 +1663,10 @@ mod tests {
         let mut c = combat_with("jaw_worm_solo", &["warcry"; 5]);
         c.play_card(0, None).unwrap();
         let picked = c.hand[0].def.id;
+        let before = c.draw.len();
         c.choose(0).unwrap();
-        assert_eq!(c.draw[0].def.id, picked, "放到抽牌堆顶");
+        assert_eq!(c.draw.last().unwrap().def.id, picked, "放到抽牌堆顶");
+        assert_eq!(c.draw.len(), before + 1);
         assert_eq!(c.exhaust.len(), 1, "战吼自己被消耗");
 
         // 二重身:复制一张手牌
@@ -1674,7 +1702,16 @@ mod tests {
         assert_eq!(c.enemies[0].hp, e_hp - 9, "先打 9");
         assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Discard);
         c.choose(0).unwrap();
-        assert_eq!(c.draw[0].def.id, "defend");
+        // 抽牌堆的顶是末尾,而且下一次抽牌就要抽到它
+        assert_eq!(c.draw.last().unwrap().def.id, "defend", "应该放在抽牌堆顶");
+        let hand_before = c.hand.len();
+        c.draw_cards(1);
+        assert_eq!(
+            c.hand.len(),
+            hand_before + 1,
+            "下一次抽牌应该抽到它(手牌 +1)"
+        );
+        assert_eq!(c.hand.last().unwrap().def.id, "defend");
 
         // esc 取消:能量退回、牌回手牌
         let mut c = combat_with("jaw_worm_solo", &["burning_pact"; 5]);

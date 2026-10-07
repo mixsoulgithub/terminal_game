@@ -33,12 +33,15 @@ pub struct BattleShake {
 }
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
-const COMMANDS: &[&str] = &["card", "help", "q", "quit", "relic", "room", "run", "save", "seed", "win"];
+const COMMANDS: &[&str] = &[
+    "card", "help", "q", "quit", "relic", "restart", "room", "run", "save", "seed", "win",
+];
 /// :room / :relic / :card 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
 const RELIC_ARGS: &[&str] = &["add", "remove"];
 const CARD_ARGS: &[&str] = &["add", "remove", "upgrade"];
 const RUN_ARGS: &[&str] = &["save", "seed"];
+const RESTART_ARGS: &[&str] = &["fight", "run", "turn"];
 
 pub struct App {
     pub run: Run,
@@ -84,6 +87,14 @@ pub struct App {
     pub choice_sel: Vec<usize>,
     /// 战斗里的抖动(掉血/出手),自带帧数与重复次数
     pub battle_shakes: Vec<BattleShake>,
+    /// 战斗开始时的快照(:restart fight)
+    pub fight_snap: Option<crate::core::combat::Combat>,
+    /// 本回合开始时的快照(:restart turn)
+    turn_snap: Option<crate::core::combat::Combat>,
+    /// 快照对应的 战斗序号 / 回合数
+    snap_fight_seq: u64,
+    snap_turn: u32,
+
     /// 商店里买不成时抖一下动画:还剩几帧
     pub shake: u8,
     /// 抖的是哪一行
@@ -122,6 +133,10 @@ impl App {
             msg_ttl: 0,
             choice_sel: Vec::new(),
             battle_shakes: Vec::new(),
+            fight_snap: None,
+            turn_snap: None,
+            snap_fight_seq: 0,
+            snap_turn: 0,
             shake: 0,
             shake_row: None,
             library: Library::Cards,
@@ -388,6 +403,7 @@ impl App {
                     Some("relic") => RELIC_ARGS,
                     Some("card") => CARD_ARGS,
                     Some("run") => RUN_ARGS,
+                    Some("restart") => RESTART_ARGS,
                     _ => &[],
                 };
                 matching(args, cur)
@@ -735,7 +751,13 @@ impl App {
                 self.clamp();
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.overlay == Some(Overlay::Deck) {
+                if matches!(
+                    self.overlay,
+                    Some(Overlay::Deck)
+                        | Some(Overlay::Draw)
+                        | Some(Overlay::Discard)
+                        | Some(Overlay::Exhaust)
+                ) {
                     self.move_deck_cursor(1);
                 } else {
                     // 夹在底部:到底之后继续按 j 不会攒着,免得按 k 要先"还回去"
@@ -746,14 +768,40 @@ impl App {
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if self.overlay == Some(Overlay::Deck) {
+                if matches!(
+                    self.overlay,
+                    Some(Overlay::Deck)
+                        | Some(Overlay::Draw)
+                        | Some(Overlay::Discard)
+                        | Some(Overlay::Exhaust)
+                ) {
                     self.move_deck_cursor(-1);
                 } else {
                     self.overlay_scroll = self.overlay_scroll.saturating_sub(1);
                 }
             }
-            KeyCode::Char('g') if self.overlay == Some(Overlay::Deck) => self.deck_cursor_end(false),
-            KeyCode::Char('G') if self.overlay == Some(Overlay::Deck) => self.deck_cursor_end(true),
+            KeyCode::Char('g')
+                if matches!(
+                    self.overlay,
+                    Some(Overlay::Deck)
+                        | Some(Overlay::Draw)
+                        | Some(Overlay::Discard)
+                        | Some(Overlay::Exhaust)
+                ) =>
+            {
+                self.deck_cursor_end(false)
+            }
+            KeyCode::Char('G')
+                if matches!(
+                    self.overlay,
+                    Some(Overlay::Deck)
+                        | Some(Overlay::Draw)
+                        | Some(Overlay::Discard)
+                        | Some(Overlay::Exhaust)
+                ) =>
+            {
+                self.deck_cursor_end(true)
+            }
             KeyCode::Char('g') => self.overlay_scroll = 0,
             KeyCode::Char('G') => self.overlay_scroll = u16::MAX / 2,
             KeyCode::Char('t') if self.overlay == Some(Overlay::Potions) => {
@@ -824,8 +872,18 @@ impl App {
     }
 
     /// 牌组窗口的光标移动:只在可选的行之间走
+    /// 当前叠加层的卡片行(牌组 / 三个牌堆)
+    fn overlay_rows(&self) -> Vec<crate::ui::CardRow> {
+        match self.overlay {
+            Some(ov @ (Overlay::Draw | Overlay::Discard | Overlay::Exhaust)) => {
+                crate::ui::overlay::deck_rows(self, ov)
+            }
+            _ => crate::ui::overlay::deck_rows(self, Overlay::Deck),
+        }
+    }
+
     fn move_deck_cursor(&mut self, delta: i32) {
-        let rows = crate::ui::overlay::deck_rows(self, Overlay::Deck);
+        let rows = self.overlay_rows();
         let picks: Vec<usize> = rows
             .iter()
             .enumerate()
@@ -845,7 +903,7 @@ impl App {
     }
 
     fn deck_cursor_end(&mut self, last: bool) {
-        let rows = crate::ui::overlay::deck_rows(self, Overlay::Deck);
+        let rows = self.overlay_rows();
         let picks: Vec<usize> = rows
             .iter()
             .enumerate()
@@ -1524,6 +1582,7 @@ impl App {
                 self.mode = Mode::Normal;
                 self.cmd.clear();
             }
+            KeyCode::Tab => self.complete_command(),
             KeyCode::Backspace => {
                 self.cmd.pop();
             }
@@ -1539,6 +1598,41 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Tab 补全:唯一候选就补上;多个就补到它们的公共前缀;
+    /// 补完是一个完整命令名的话再跟一个空格,接着敲参数。
+    fn complete_command(&mut self) {
+        let hints = self.completions();
+        if hints.is_empty() {
+            return;
+        }
+        let target = if hints.len() == 1 {
+            hints[0].clone()
+        } else {
+            let mut p = hints[0].clone();
+            for h in &hints[1..] {
+                while !h.starts_with(&p) {
+                    p.pop();
+                    if p.is_empty() {
+                        return;
+                    }
+                }
+            }
+            p
+        };
+        if target.is_empty() {
+            return;
+        }
+        // 只替换正在敲的那一段(命令名或参数)
+        let text = std::mem::take(&mut self.cmd);
+        match text.rfind(' ') {
+            Some(i) => self.cmd = format!("{} {}", &text[..i], target),
+            None => self.cmd = target.clone(),
+        }
+        if self.completions().is_empty() {
+            self.cmd.push(' ');
         }
     }
 
@@ -1610,6 +1704,34 @@ impl App {
                 } else {
                     self.warn("not in a battle");
                 }
+            }
+            // :restart run|fight|turn(不给就是 turn)
+            "restart" => {
+                let (sub, _) = split_sub(rest);
+                let r: Result<String, String> = match sub {
+                    "" | "turn" => match (self.turn_snap.clone(), self.run.combat_mut()) {
+                        (Some(snap), Some(c)) => {
+                            *c = snap;
+                            Ok("restarted the turn".to_string())
+                        }
+                        _ => Err("no battle to restart".to_string()),
+                    },
+                    "fight" => match (self.fight_snap.clone(), self.run.combat_mut()) {
+                        (Some(snap), Some(c)) => {
+                            *c = snap;
+                            Ok("restarted the fight".to_string())
+                        }
+                        _ => Err("no battle to restart".to_string()),
+                    },
+                    "run" => {
+                        let seed = self.run.seed;
+                        self.restart(seed);
+                        Ok(format!("restarted the run (seed {seed})"))
+                    }
+                    other => Err(format!("unknown restart target: {other}")),
+                };
+                self.ok(r);
+                self.clamp();
             }
             // :run 用当前种子重来;:run seed [n] 换种子(不给就随机);:run save <名字> 读存档
             "run" => {
@@ -1687,8 +1809,29 @@ impl App {
 
     // ---- 状态维护 ----
 
+    /// 战斗开始 / 新回合开始时拍快照,供 :restart fight|turn 回退
+    fn sync_snapshots(&mut self) {
+        let seq = self.run.fight_seq;
+        let Some(c) = self.run.combat() else {
+            self.fight_snap = None;
+            self.turn_snap = None;
+            return;
+        };
+        let (turn, snap) = (c.turn, c.clone());
+        if self.fight_snap.is_none() || self.snap_fight_seq != seq {
+            self.snap_fight_seq = seq;
+            self.fight_snap = Some(snap.clone());
+            self.turn_snap = Some(snap);
+            self.snap_turn = turn;
+        } else if self.snap_turn != turn {
+            self.snap_turn = turn;
+            self.turn_snap = Some(snap);
+        }
+    }
+
     /// 每次操作后把光标限制在合法范围内
     pub fn clamp(&mut self) {
+        self.sync_snapshots();
         self.collect_battle_shakes();
         if let Some(c) = self.run.combat() {
             if c.hand.is_empty() {
@@ -1807,6 +1950,7 @@ impl App {
                 "change your deck / hand by name (debug)",
             ),
             (":win", "win the current battle (skip to the reward)"),
+            (":restart [run|fight|turn]", "roll back to the run/fight/turn start (turn)"),
             (":run", "run the current seed from the beginning"),
             (":run seed [n]", "start a new run (random seed if omitted)"),
             (":run save <name>", "load a save from the save directory"),

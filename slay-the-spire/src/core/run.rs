@@ -201,6 +201,8 @@ pub struct Run {
     pub seed: u64,
     /// 开局选的角色的语料 id
     pub character: &'static str,
+    /// 第几场战斗(每次开打 +1),表现层用它判断要不要重新拍快照
+    pub fight_seq: u64,
     pub rng: Rng,
     pub player: Player,
     pub map: ActMap,
@@ -262,6 +264,7 @@ impl Run {
         let mut run = Run {
             seed,
             character: ch.id,
+            fight_seq: 0,
             rng,
             player: Player {
                 hp: ch.max_hp,
@@ -561,6 +564,7 @@ impl Run {
             relics: self.player.relics.clone(),
         };
         self.combat = Some(Combat::new(enc, setup, seed));
+        self.fight_seq += 1;
         self.combat_log_seen = 0;
         self.screen = Screen::Combat;
         self.stats.fights += 1;
@@ -1413,7 +1417,9 @@ impl Run {
             if c.hand.len() >= crate::core::combat::HAND_LIMIT {
                 return Ok(format!("hand is full, {label} not added"));
             }
-            c.hand.push(cards::card(def.id));
+            let mut inst = cards::card(def.id);
+            c.fix_new_card(&mut inst);
+            c.hand.push(inst);
         } else {
             self.player.deck.push(cards::card(def.id));
         }

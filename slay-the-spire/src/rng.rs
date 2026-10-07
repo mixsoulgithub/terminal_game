@@ -10,6 +10,7 @@ pub fn random_seed() -> u64 {
     nanos ^ (std::process::id() as u64) << 32
 }
 
+#[derive(Clone)]
 pub struct Rng {
     s: [u64; 4],
 }
