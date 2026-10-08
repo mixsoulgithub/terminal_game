@@ -105,26 +105,35 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
 
 /// 光标停着的那间房之后的整片未来(含它自己);还没上路时就是起点们的未来
 fn chosen_future(app: &App) -> Option<Vec<bool>> {
-    let reach = app.run.reachable();
+    let reach = app.run.travel_options();
     let chosen = *reach.get(app.map_sel.min(reach.len().saturating_sub(1)))?;
     Some(app.run.map.forward_reachable(chosen))
 }
 
 /// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
-    vec![
-        ("[] you are here".to_string(), Style::default().add_modifier(Modifier::BOLD)),
+    let mut out: Vec<(String, Style)> = Vec::new();
+    if run.wing_boots_charges() > 0 {
+        out.push((
+            format!("Wing Boots  x{}", run.wing_boots_charges()),
+            theme::fg(theme::GOLD),
+        ));
+    }
+    out.extend(vec![
+        ("[] you".to_string(), Style::default().add_modifier(Modifier::BOLD)),
         ("?  Unknown".to_string(), theme::kind_style(NodeKind::Event)),
         ("$  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
         ("T  Treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
         ("R  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
         ("e  Enemy".to_string(), theme::kind_style(NodeKind::Monster)),
         ("E  Elite".to_string(), theme::kind_style(NodeKind::Elite)),
+        ("E  Burning".to_string(), theme::burning_style()),
         (
             format!("B  {}", run.boss_name()),
             theme::kind_style(NodeKind::Boss),
         ),
-    ]
+    ]);
+    out
 }
 
 /// 一屏能放几层
@@ -148,7 +157,8 @@ fn render_floor(
     legend: Option<(u16, u16)>,
 ) {
     let run = &app.run;
-    let reach = run.reachable();
+    // 羽翼靴有电时,往后的任意节点都算候选(飞过去要花一次充能)
+    let reach = run.travel_options();
     let reachable_here: Vec<usize> = reach
         .iter()
         .copied()
@@ -196,7 +206,11 @@ fn render_floor(
             continue;
         }
         let sigil = node.kind.sigil();
-        let kind_style = theme::kind_style(node.kind);
+        let kind_style = if node.burning {
+            theme::burning_style()
+        } else {
+            theme::kind_style(node.kind)
+        };
         let visited = run.path.contains(i);
         // 选中的房间用 [ ] 框出来:符号仍然落在本列,方括号借用左右各一格
         let (px, text, style) = if is_sel && x > 0 {

@@ -3,6 +3,11 @@
   "seedString": "A2Q",
   "mapHeight": 15,
   "map": "                     M3     M5\n                     M2,4          M4,5,6\n              M3            ?3,5   M5     $6\n                     M2,4          ?4,5   M5\n              ?1            M5     ?5,6\n       R0                          E4,5,6 ?6\n?0,1                        ?4     M5     R5\nE1     ?2                   E3     M4,5,6\n       T1     T2     T4     T4     T4     T5\n       M2     ?2            M3,4   M4\n              R1,3   ?3     M3,4,5\n       M2            E2,3   R5     M5\n              R2,3   M3,4          ?6\n              M2     $4     M4            M5,6\n              R3            R3     R3     R3",
+  "burningElite": {
+    "x": 5,
+    "y": 5,
+    "buff": 2
+  },
   "monsterList": [
     "CULTIST",
     "JAW_WORM",
@@ -176,5 +181,357 @@
         false
       ]
     ]
-  }
+  },
+  "neowOptions": [
+    [
+      "THREE_CARDS",
+      "NONE"
+    ],
+    [
+      "TEN_PERCENT_HP_BONUS",
+      "NONE"
+    ],
+    [
+      "TWENTY_PERCENT_HP_BONUS",
+      "CURSE"
+    ],
+    [
+      "BOSS_RELIC",
+      "LOSE_STARTER_RELIC"
+    ]
+  ],
+  "neowState": {
+    "seed0": "1505920526026846079",
+    "seed1": "6869085240783069670",
+    "counter": 5
+  },
+  "neowPick": {
+    "bonus": "TEN_PERCENT_HP_BONUS",
+    "drawback": "NONE",
+    "hp": 80,
+    "maxHp": 88,
+    "gold": 99,
+    "deck": 10,
+    "relics": [
+      "BURNING_BLOOD"
+    ],
+    "pending": false,
+    "roomKind": "map"
+  },
+  "unknownRooms": [
+    "monster",
+    "event",
+    "event",
+    "event",
+    "shop",
+    "monster",
+    "treasure",
+    "event",
+    "monster",
+    "event",
+    "monster",
+    "shop"
+  ],
+  "eventPicks": [
+    "WE_MEET_AGAIN",
+    "TRANSMORGRIFIER",
+    "FACE_TRADER",
+    "PURIFIER",
+    "THE_WOMAN_IN_BLUE",
+    "LAB",
+    "WHEEL_OF_CHANGE",
+    "UPGRADE_SHRINE",
+    "OMINOUS_FORGE",
+    "BONFIRE_SPIRITS",
+    "NOTE_FOR_YOURSELF",
+    "MATCH_AND_KEEP"
+  ],
+  "eventRolls": [
+    "monster",
+    "event:GOLDEN_IDOL",
+    "event:WING_STATUE",
+    "event:SHINING_LIGHT",
+    "shop",
+    "monster",
+    "treasure",
+    "event:THE_CLERIC"
+  ],
+  "shop": {
+    "cards": [
+      {
+        "id": "SWORD_BOOMERANG",
+        "rarity": "common",
+        "price": 45,
+        "colorless": false
+      },
+      {
+        "id": "DROPKICK",
+        "rarity": "uncommon",
+        "price": 74,
+        "colorless": false
+      },
+      {
+        "id": "WARCRY",
+        "rarity": "common",
+        "price": 26,
+        "colorless": false
+      },
+      {
+        "id": "BLOODLETTING",
+        "rarity": "uncommon",
+        "price": 76,
+        "colorless": false
+      },
+      {
+        "id": "FEEL_NO_PAIN",
+        "rarity": "uncommon",
+        "price": 74,
+        "colorless": false
+      },
+      {
+        "id": "FLASH_OF_STEEL",
+        "rarity": "uncommon",
+        "price": 89,
+        "colorless": true
+      },
+      {
+        "id": "HAND_OF_GREED",
+        "rarity": "rare",
+        "price": 168,
+        "colorless": true
+      }
+    ],
+    "relics": [
+      {
+        "id": "DISCERNING_MONOCLE",
+        "tier": "uncommon",
+        "price": 242
+      },
+      {
+        "id": "TUNGSTEN_ROD",
+        "tier": "rare",
+        "price": 293
+      },
+      {
+        "id": "PRISMATIC_SHARD",
+        "tier": "shop",
+        "price": 153
+      }
+    ],
+    "potions": [
+      {
+        "id": "DISTILLED_CHAOS",
+        "price": 74
+      },
+      {
+        "id": "ELIXIR_POTION",
+        "price": 74
+      },
+      {
+        "id": "EXPLOSIVE_POTION",
+        "price": 48
+      }
+    ],
+    "removalCost": 75,
+    "streams": {
+      "card": 12,
+      "merchant": 16,
+      "potion": 12
+    }
+  },
+  "potionRewardSeq": {
+    "ids": [
+      null,
+      "EXPLOSIVE_POTION",
+      null,
+      "EXPLOSIVE_POTION",
+      null,
+      "STRENGTH_POTION",
+      null,
+      "WEAK_POTION",
+      null,
+      null,
+      null,
+      null
+    ],
+    "counter": 24,
+    "pity": 40
+  },
+  "potionShopSeq": {
+    "ids": [
+      "DISTILLED_CHAOS",
+      "ELIXIR_POTION",
+      "EXPLOSIVE_POTION",
+      "CULTIST_POTION",
+      "STRENGTH_POTION",
+      "FAIRY_POTION",
+      "SWIFT_POTION",
+      "ESSENCE_OF_STEEL",
+      "STRENGTH_POTION",
+      "SKILL_POTION",
+      "DUPLICATION_POTION",
+      "POWER_POTION"
+    ],
+    "counter": 35
+  },
+  "relicCombatSeq": [
+    {
+      "tier": "common",
+      "id": "ORICHALCUM"
+    },
+    {
+      "tier": "common",
+      "id": "AKABEKO"
+    },
+    {
+      "tier": "uncommon",
+      "id": "DISCERNING_MONOCLE"
+    },
+    {
+      "tier": "uncommon",
+      "id": "MEAT_ON_THE_BONE"
+    },
+    {
+      "tier": "rare",
+      "id": "TUNGSTEN_ROD"
+    },
+    {
+      "tier": "common",
+      "id": "LANTERN"
+    },
+    {
+      "tier": "common",
+      "id": "BLOOD_VIAL"
+    },
+    {
+      "tier": "rare",
+      "id": "GAMBLING_CHIP"
+    },
+    {
+      "tier": "common",
+      "id": "BRONZE_SCALES"
+    },
+    {
+      "tier": "uncommon",
+      "id": "INK_BOTTLE"
+    },
+    {
+      "tier": "uncommon",
+      "id": "QUESTION_CARD"
+    },
+    {
+      "tier": "rare",
+      "id": "BIRD_FACED_URN"
+    }
+  ],
+  "relicEliteSeq": [
+    {
+      "tier": "common",
+      "id": "ORICHALCUM"
+    },
+    {
+      "tier": "common",
+      "id": "AKABEKO"
+    },
+    {
+      "tier": "uncommon",
+      "id": "DISCERNING_MONOCLE"
+    },
+    {
+      "tier": "uncommon",
+      "id": "MEAT_ON_THE_BONE"
+    },
+    {
+      "tier": "rare",
+      "id": "TUNGSTEN_ROD"
+    },
+    {
+      "tier": "common",
+      "id": "LANTERN"
+    },
+    {
+      "tier": "common",
+      "id": "BLOOD_VIAL"
+    },
+    {
+      "tier": "rare",
+      "id": "GAMBLING_CHIP"
+    },
+    {
+      "tier": "common",
+      "id": "BRONZE_SCALES"
+    },
+    {
+      "tier": "uncommon",
+      "id": "INK_BOTTLE"
+    },
+    {
+      "tier": "uncommon",
+      "id": "QUESTION_CARD"
+    },
+    {
+      "tier": "rare",
+      "id": "BIRD_FACED_URN"
+    }
+  ],
+  "relicBossSeq": [
+    [
+      "BUSTED_CROWN",
+      "EMPTY_CAGE",
+      "PHILOSOPHERS_STONE"
+    ],
+    [
+      "FUSION_HAMMER",
+      "VELVET_CHOKER",
+      "SACRED_BARK"
+    ],
+    [
+      "RUNIC_DOME",
+      "ECTOPLASM",
+      "MARK_OF_PAIN"
+    ],
+    [
+      "CALLING_BELL",
+      "COFFEE_DRIPPER",
+      "CURSED_KEY"
+    ]
+  ],
+  "relicChestSeq": [
+    {
+      "size": "large",
+      "goldPresent": true,
+      "tier": "uncommon",
+      "id": "DISCERNING_MONOCLE"
+    },
+    {
+      "size": "medium",
+      "goldPresent": false,
+      "tier": "uncommon",
+      "id": "MEAT_ON_THE_BONE"
+    },
+    {
+      "size": "small",
+      "goldPresent": true,
+      "tier": "common",
+      "id": "ORICHALCUM"
+    },
+    {
+      "size": "medium",
+      "goldPresent": false,
+      "tier": "rare",
+      "id": "TUNGSTEN_ROD"
+    },
+    {
+      "size": "small",
+      "goldPresent": true,
+      "tier": "common",
+      "id": "AKABEKO"
+    },
+    {
+      "size": "small",
+      "goldPresent": false,
+      "tier": "common",
+      "id": "LANTERN"
+    }
+  ]
 }

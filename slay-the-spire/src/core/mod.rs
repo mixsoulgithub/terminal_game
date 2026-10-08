@@ -57,8 +57,8 @@ mod content_tests {
             assert!(card_ids.contains(&c.id), "事件专用牌 {} 没有语料条目", c.id);
         }
         let relic_ids: Vec<&str> = corpus::RELICS.iter().map(|r| r.id).collect();
-        for r in events::EVENT_RELICS {
-            assert!(relic_ids.contains(&r.id), "事件专用遗物 {} 没有语料条目", r.id);
+        for id in events::EVENT_RELICS {
+            assert!(relic_ids.contains(id), "事件专用遗物 {id} 没有语料条目");
         }
     }
 
@@ -166,12 +166,18 @@ mod content_tests {
     }
 
     #[test]
-    fn every_relic_rarity_can_drop() {
-        // 宝箱按稀有度随机,某个稀有度为空时宝箱会静默变成空箱子
-        for rarity in [Rarity::Common, Rarity::Uncommon, Rarity::Rare] {
+    fn every_relic_tier_can_drop() {
+        // 宝箱/商店/精英/Boss 都要按档次抽遗物,某个档次为空就抽不到
+        for tier in [
+            relics::RelicTier::Common,
+            relics::RelicTier::Uncommon,
+            relics::RelicTier::Rare,
+            relics::RelicTier::Shop,
+            relics::RelicTier::Boss,
+        ] {
             assert!(
-                !relics::relics_of(rarity).is_empty(),
-                "{rarity:?} 没有遗物,宝箱/商店会抽不到"
+                !relics::pool_for(tier, "red").is_empty(),
+                "{tier:?} 没有遗物,宝箱/商店会抽不到"
             );
         }
     }

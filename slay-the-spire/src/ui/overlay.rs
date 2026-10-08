@@ -109,6 +109,8 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
     };
     // 未抽堆:把"特意放到顶上"的牌单列一段,最近放的在最前(也就是接下来抽到的顺序)
     if let (Overlay::Draw, Some(c)) = (ov, run.combat()) {
+        // 冰冻之眼:整堆都按"下一个抽到的排最前"的顺序显示
+        let in_order = run.player.relic_fx_sum(|r| i32::from(r.fx.draw_pile_in_order)) > 0;
         let mut topped: Vec<&CardInstance> = c.draw.iter().filter(|x| x.topped > 0).collect();
         if !topped.is_empty() {
             topped.sort_by(|a, b| b.topped.cmp(&a.topped));
@@ -119,13 +121,24 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
             let list: Vec<CardInstance> = topped.iter().map(|c| (*c).clone()).collect();
             push(&mut rows, &list);
             rows.push(CardRow::Header("the rest of the draw pile".to_string()));
-            let rest: Vec<CardInstance> = c
+            let mut rest: Vec<CardInstance> = c
                 .draw
                 .iter()
                 .filter(|x| x.topped == 0)
                 .cloned()
                 .collect();
+            if in_order {
+                rest.reverse();
+            }
             push(&mut rows, &rest);
+            return rows;
+        }
+        if in_order {
+            rows.push(CardRow::Header(
+                "draw pile, next drawn first".to_string(),
+            ));
+            let list: Vec<CardInstance> = c.draw.iter().rev().cloned().collect();
+            push(&mut rows, &list);
             return rows;
         }
     }
@@ -159,10 +172,14 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
         Overlay::Relics => {
             for (i, r) in run.player.relics.iter().enumerate() {
                 out.push((
-                    format!("{:>3}. {:<20} [{}]", i + 1, r.name, r.rarity.name()),
-                    theme::fg(theme::relic_color(r.rarity)),
+                    format!("{:>3}. {:<20} [{}]", i + 1, r.name, r.tier.name()),
+                    theme::fg(theme::relic_tier_color(r.tier)),
                 ));
                 out.push((format!("     {}", r.desc), theme::dim()));
+                // 本作没实现的遗物直接说明,免得以为是漏了效果
+                if !r.note.is_empty() {
+                    out.push((format!("     (no effect: {})", r.note), theme::dim()));
+                }
             }
         }
         Overlay::Potions => {

@@ -38,6 +38,20 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
 
     // 金币
     x = seg(buf, x, y, limit, &format!("${}", p.gold), theme::fg(theme::GOLD));
+    x += 2;
+
+    // 三把钥匙(绿/红/蓝):拿到的是彩字,没有的是暗色 -
+    x = seg(buf, x, y, limit, "K:", theme::dim());
+    let key = |owned: bool, c| {
+        if owned {
+            theme::fg(c)
+        } else {
+            theme::dim()
+        }
+    };
+    x = seg(buf, x, y, limit, if run.keys.emerald { "E" } else { "-" }, key(run.keys.emerald, theme::GOOD));
+    x = seg(buf, x, y, limit, if run.keys.ruby { "R" } else { "-" }, key(run.keys.ruby, theme::BAD));
+    x = seg(buf, x, y, limit, if run.keys.sapphire { "S" } else { "-" }, key(run.keys.sapphire, theme::BLOCK));
     x += 3;
 
     // 药水区:每个槽位一个 (),空的也写出来;选中那个铺底色

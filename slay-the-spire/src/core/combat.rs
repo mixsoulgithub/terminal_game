@@ -1,12 +1,12 @@
 // 战斗引擎:回合流转、抽牌弃牌、卡牌结算、敌人行动.
 // 纯逻辑,不碰终端;一局流程(run.rs)只负责在一次战斗前后同步生命与遗物结算.
-use crate::core::card::{CardInstance, Cost, Effect, Target};
+use crate::core::card::{CardInstance, Cost, Effect, Rarity, Target};
 use crate::core::cards;
 use crate::core::enemy::{
     CardSpot, Encounter, EnemyDef, EnemyFx, EnemyKind, EnemyState, Intent, PickCtx, Scope, Special,
 };
-use crate::core::potions::{PotionDef, PotionFx};
-use crate::core::relics::RelicDef;
+use crate::core::potions::{DiscoveryPool, PotionDef, PotionFx};
+use crate::core::relics::{RelicDef, RelicFx};
 use crate::core::status::{Status, Statuses};
 use crate::rng::{java_shuffle, FloorStream, JavaRandom, RngRegistry};
 
@@ -111,6 +111,10 @@ pub struct CombatSetup {
     pub relics: Vec<&'static RelicDef>,
     /// 玩家身上的金币(抢劫类敌人要用)
     pub gold: i32,
+    /// 开打前是否刚在营火休息过(古代茶具要看这个)
+    pub rested: bool,
+    /// 营火举铁攒下的力量(吉利亚),开局直接上身
+    pub lift_strength: i32,
 }
 
 /// 抖动:谁在抖、往哪边(负 = 左,正 = 右)。表现层取走后自己清空。
@@ -184,8 +188,12 @@ pub enum ChoiceAction {
     ToDrawTop,
     /// 放到抽牌堆底
     ToDrawBottom,
+    /// 弃掉(进弃牌堆)
+    Discard,
     /// 直接移出这局(调试用)
     Remove,
+    /// 洗进抽牌堆(尼尔瑞的抄本)
+    ToDrawShuffled,
 }
 
 /// 一次待选择:比如"从手牌选一张消耗"
@@ -205,6 +213,59 @@ pub struct Choice {
     pub played: Option<(CardInstance, i32)>,
     /// ChoiceSource::Offered 时亮出来的候选牌
     pub offered: Vec<CardInstance>,
+    /// 选完之后抽等量张(赌徒之酿)
+    pub draw_after: bool,
+    /// 选中的那份给几张(默认 1;神圣树皮把发现类药水的份数翻倍)
+    pub copies: usize,
+    /// 选中的牌本回合 0 费(发现类药水;工具箱与抄本不免费)
+    pub free: bool,
+}
+
+/// 战斗中遗物需要的计时器与一次性标记(与参考实现的 relicCounter 对应)
+#[derive(Clone, Debug, Default)]
+pub struct RelicState {
+    /// 本回合打出的攻击/技能数(苦无/手里剑/折扇/拆信刀)
+    pub attacks_this_turn: i32,
+    pub skills_this_turn: i32,
+    /// 本场累计打出的攻击数(双节棍)
+    pub attacks_total: i32,
+    /// 本场累计打出的牌数(墨水瓶)
+    pub cards_total: i32,
+    /// 笔尖 0..9:数到 9 时下一张攻击翻倍
+    pub pen_nib: i32,
+    /// 快乐花 0..2
+    pub happy_flower: i32,
+    /// 薰香 0..5
+    pub incense: i32,
+    /// 日晷 0..2
+    pub sundial: i32,
+    /// 上一回合打出的攻击数(战争艺术)与牌数(怀表)
+    pub attacks_last_turn: i32,
+    pub cards_last_turn: i32,
+    /// 本回合打出过的类型(橙皮,位掩码 1 攻击 2 技能 4 能力)
+    pub types_played: i32,
+    /// 本场掉过血(百年拼图)
+    pub hp_lost: bool,
+    /// 下回合补上的格挡(自成型黏土)
+    pub banked_block: i32,
+    /// 下回合多抽几张(怀表)
+    pub next_turn_draw: i32,
+    /// 振奋剩余层数(赤牛:第一次攻击加伤)
+    pub vigor: i32,
+    /// 只在第一回合有的力量(诱变力量),第 1 回合结束收回
+    pub strength_turn1: i32,
+    /// 化石螺壳还能挡几次掉血
+    pub helix: i32,
+    /// 本回合已经因为弃牌回过能(风筝)
+    pub kite_used: bool,
+    /// 本回合已经触发过死灵之书
+    pub necro_used: bool,
+    /// 红骷髅是否生效中
+    pub bloodied: bool,
+    /// 这一场已经靠蜥蜴尾巴保过一次命
+    pub lizard_used: bool,
+    /// 这个回合结束已经问过尼尔瑞的抄本
+    pub nilrys_used: bool,
 }
 
 #[derive(Clone)]
@@ -234,12 +295,24 @@ pub struct Combat {
     pub streams: RngRegistry,
     pub encounter_id: &'static str,
     pub kind: EnemyKind,
+    /// 这一场是不是"燃烧精英"的战斗(打通给绿钥匙)
+    pub burning: bool,
     /// 本场对敌人造成的总伤害,结算界面用
     pub damage_dealt: i32,
     /// 已经产出的日志条数(日志会截断,所以用序号而不是长度)
     pub log_seq: u64,
     /// 本场战斗通过卡牌赚到的金币,由一局流程收走(贪婪之手)
     pub gold_gained: i32,
+    /// 战斗内永久成长的牌(血祭匕首):(牌组原件下标, 增长量),由一局流程写回
+    pub deck_growth: Vec<(usize, i32)>,
+    /// 本场战斗带的遗物(效果在对应时机读)
+    pub relics: Vec<&'static RelicDef>,
+    /// 遗物的计时与一次性标记
+    pub rs: RelicState,
+    /// 冰激凌:上一回合没用完的能量
+    pub carry_energy: i32,
+    /// 开打前休息过(古代茶具)
+    pub rested: bool,
     /// 本场战斗的牌都算已升级(神化);之后新加进来的牌也直接升级
     all_upgraded: bool,
     /// 本回合已经打出几张牌(浮夸每 5 张结算一次)
@@ -261,6 +334,12 @@ pub struct Combat {
     pub facing: usize,
     /// 下一只怪的出生序号
     next_uid: u64,
+    /// 仙女在瓶中:身上有这瓶药时打开,致命伤改为回血
+    pub fairy_save: bool,
+    /// 这一场已经靠仙女药水保过一次命(run 层据此消耗那一格)
+    pub fairy_used: bool,
+    /// 回合结束正等一个选牌(尼尔瑞的抄本):选完才把回合交给对面
+    pub pending_end_turn: bool,
 }
 
 /// 单次打牌过程中的临时统计
@@ -339,6 +418,16 @@ impl Combat {
         // 战斗开始时洗牌:参考实现是 shuffleRng 掷一个 long 给 java.Random 定种,
         // 再用 Collections.shuffle 洗牌堆
         let mut deck = setup.deck;
+        // 记下每张牌在牌组原件里的下标:战斗内永久成长(血祭匕首)要写回去.
+        // setup.deck 是 run 牌组的按序克隆,所以这里的位置就是原件下标.
+        for (i, c) in deck.iter_mut().enumerate() {
+            c.master_idx = Some(i);
+        }
+        // 恶咒人偶:每张诅咒开局给力量,洗牌前先数一下
+        let deck_curses = deck
+            .iter()
+            .filter(|card| card.kind() == crate::core::card::CardType::Curse)
+            .count() as i32;
         java_shuffle(
             &mut deck,
             &mut JavaRandom::new(streams.floor(FloorStream::ShuffleRng).random_long()),
@@ -372,9 +461,15 @@ impl Combat {
             streams,
             encounter_id: enc.id,
             kind: enc.kind,
+            burning: false,
             damage_dealt: 0,
             log_seq: 0,
             gold_gained: 0,
+            deck_growth: Vec::new(),
+            relics: setup.relics.clone(),
+            rs: RelicState::default(),
+            carry_energy: 0,
+            rested: setup.rested,
             all_upgraded: false,
             cards_played: 0,
             bombs: Vec::new(),
@@ -386,6 +481,9 @@ impl Combat {
             force_end_turn: false,
             facing: 1,
             next_uid: enemies_len as u64,
+            fairy_save: false,
+            fairy_used: false,
+            pending_end_turn: false,
         };
 
         // 开局的 spawn 掷点(参考实现里这一批排在洗牌之后、掷首招之前).
@@ -408,29 +506,124 @@ impl Combat {
         for (s, n) in enc.player_statuses {
             c.player.statuses.add(*s, *n);
         }
-        // 遗物:战斗开始结算
+        // 遗物:战斗开始结算(参考实现的 atBattleStart / atBattleStartPreDraw)
         let mut extra_energy = 0;
         let mut extra_draw = 0usize;
         let mut start_heal = 0;
+        let elite_or_boss = matches!(enc.kind, EnemyKind::Elite | EnemyKind::Boss);
         for r in &setup.relics {
             let fx = r.fx;
-            extra_energy += fx.combat_start_energy;
+            extra_energy += fx.combat_start_energy_per_turn;
+            if elite_or_boss {
+                extra_energy += fx.combat_start_energy_elite_only;
+            }
             extra_draw += fx.combat_start_draw.max(0) as usize;
             c.relic_thorns += fx.thorns;
             start_heal += fx.combat_start_heal;
+            c.rs.vigor += fx.combat_start_vigor;
+            c.rs.helix += fx.combat_start_buffer;
             if fx.combat_start_strength != 0 {
                 c.player
                     .statuses
                     .add(Status::Strength, fx.combat_start_strength);
+            }
+            if fx.combat_start_strength_turn1 != 0 {
+                c.player
+                    .statuses
+                    .add(Status::Strength, fx.combat_start_strength_turn1);
+                c.rs.strength_turn1 += fx.combat_start_strength_turn1;
             }
             if fx.combat_start_dexterity != 0 {
                 c.player
                     .statuses
                     .add(Status::Dexterity, fx.combat_start_dexterity);
             }
-            if fx.combat_start_block != 0 {
-                c.player.block += fx.combat_start_block;
+            if fx.combat_start_artifact != 0 {
+                c.player
+                    .statuses
+                    .add(Status::Artifact, fx.combat_start_artifact);
             }
+            if fx.combat_start_plated_armor != 0 {
+                c.player
+                    .statuses
+                    .add(Status::PlatedArmor, fx.combat_start_plated_armor);
+            }
+            if fx.combat_start_confused {
+                c.player.statuses.add(Status::Confused, 1);
+            }
+            if fx.combat_start_self_weak != 0 {
+                c.player.statuses.add(Status::Weak, fx.combat_start_self_weak);
+            }
+            if fx.combat_start_strength_elite != 0 && elite_or_boss {
+                c.player
+                    .statuses
+                    .add(Status::Strength, fx.combat_start_strength_elite);
+            }
+            if fx.combat_start_strength_per_curse != 0 {
+                let curses = deck_curses;
+                if curses > 0 {
+                    c.player
+                        .statuses
+                        .add(Status::Strength, fx.combat_start_strength_per_curse * curses);
+                }
+            }
+            if fx.combat_start_enemy_strength != 0 {
+                for e in c.enemies.iter_mut() {
+                    e.statuses.add(Status::Strength, fx.combat_start_enemy_strength);
+                }
+            }
+            if fx.combat_start_enemy_vulnerable != 0 {
+                for e in c.enemies.iter_mut() {
+                    e.statuses
+                        .add(Status::Vulnerable, fx.combat_start_enemy_vulnerable);
+                }
+            }
+            if fx.combat_start_enemy_weak != 0 {
+                for e in c.enemies.iter_mut() {
+                    e.statuses.add(Status::Weak, fx.combat_start_enemy_weak);
+                }
+            }
+            if fx.elite_hp_reduction_pct > 0 && enc.kind == EnemyKind::Elite {
+                let pct = fx.elite_hp_reduction_pct;
+                for e in c.enemies.iter_mut() {
+                    let cut = e.max_hp * pct / 100;
+                    e.max_hp = (e.max_hp - cut).max(1);
+                    e.hp = (e.hp - cut).max(1);
+                }
+            }
+            if fx.boss_combat_heal > 0 && enc.kind == EnemyKind::Boss {
+                start_heal += fx.boss_combat_heal;
+            }
+            if fx.combat_start_wounds > 0 {
+                for _ in 0..fx.combat_start_wounds {
+                    c.draw.push(crate::core::cards::card("wound"));
+                }
+                let seed = c
+                    .streams
+                    .floor(FloorStream::ShuffleRng)
+                    .random_long();
+                java_shuffle(&mut c.draw, &mut JavaRandom::new(seed));
+            }
+        }
+        // 瓶装遗物:被封装的牌开局就压在抽牌堆顶,开局那一抽直接进手
+        let bottled: Vec<usize> = c
+            .draw
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| x.bottled)
+            .map(|(i, _)| i)
+            .collect();
+        for i in bottled.into_iter().rev() {
+            let card = c.draw.remove(i);
+            c.draw.push(card);
+        }
+        // 吉利亚:营火举铁的层数在开局上身(参考实现 atBattleStart)
+        if setup.lift_strength > 0 {
+            c.player.statuses.add(Status::Strength, setup.lift_strength);
+            c.push_log(
+                LogKind::Info,
+                format!("Girya grants {} Strength", setup.lift_strength),
+            );
         }
         c.max_energy = BASE_ENERGY + extra_energy;
         if start_heal > 0 {
@@ -487,8 +680,73 @@ impl Combat {
 
     // ---- 回合流转 ----
 
+    /// 所有遗物某个数值字段的和
+    fn relic_sum(&self, f: impl Fn(&RelicFx) -> i32) -> i32 {
+        self.relics.iter().map(|r| f(&r.fx)).sum()
+    }
+
+    /// 所有遗物某个数值字段的最大值(同一数值的多件遗物取大,不叠加)
+    fn relic_max(&self, f: impl Fn(&RelicFx) -> i32) -> i32 {
+        self.relics.iter().map(|r| f(&r.fx)).max().unwrap_or(0)
+    }
+
+    /// 有没有任意一件遗物满足这个开关
+    fn relic_any(&self, f: impl Fn(&RelicFx) -> bool) -> bool {
+        self.relics.iter().any(|r| f(&r.fx))
+    }
+
+    /// 红骷髅:血量掉到一半以下就补力量,回到一半以上就收回
+    fn refresh_bloodied(&mut self) {
+        let want = self.relic_sum(|fx| fx.strength_when_bloodied);
+        if want <= 0 {
+            return;
+        }
+        let below = self.player.hp * 2 <= self.player.max_hp;
+        if below == self.rs.bloodied {
+            return;
+        }
+        self.rs.bloodied = below;
+        let delta = if below { want } else { -want };
+        self.player.statuses.add(Status::Strength, delta);
+        self.push_log(
+            LogKind::Info,
+            format!("Red Skull: {} Strength", if below { "gains" } else { "loses" }),
+        );
+    }
+
+    /// 掉血后要看的遗物(百年拼图 / 符文方块 / 自成型黏土 / 红骷髅)
+    fn on_hp_lost(&mut self, amount: i32) {
+        if amount <= 0 {
+            return;
+        }
+        if !self.rs.hp_lost {
+            self.rs.hp_lost = true;
+            let n = self.relic_sum(|fx| fx.draw_on_first_hp_loss);
+            if n > 0 {
+                self.push_log(LogKind::Player, format!("Centennial Puzzle: draw {n}"));
+                self.draw_cards(n as usize);
+            }
+        }
+        let cube = self.relic_sum(|fx| fx.draw_on_hp_loss);
+        if cube > 0 {
+            self.draw_cards(cube as usize);
+        }
+        let clay = self.relic_sum(|fx| fx.block_next_turn_on_hp_loss);
+        if clay > 0 {
+            self.rs.banked_block += clay;
+        }
+        self.refresh_bloodied();
+    }
+
     fn start_turn(&mut self, extra_draw: usize) {
         self.turn += 1;
+        // 本回合的计时器归零
+        self.rs.attacks_this_turn = 0;
+        self.rs.skills_this_turn = 0;
+        self.rs.types_played = 0;
+        self.rs.kite_used = false;
+        self.rs.necro_used = false;
+        self.rs.nilrys_used = false;
         // 上回合"本回合 0 费 / 本回合降到 1 费"的效果恢复原样;
         // 四个牌堆都要清:牌可能已经不在手里(弃掉/洗完/被消耗).
         // 本场战斗的 0 费与费用上限(cost_cap_combat)不受影响.
@@ -512,9 +770,78 @@ impl Combat {
         }
         self.cards_played = 0;
         self.energy = self.max_energy;
-        // 格挡在回合开始清空,除非有壁垒
+        // 冰激凌:上一回合没用完的能量留到这一回合
+        if self.relic_any(|fx| fx.conserve_energy) {
+            self.energy += self.carry_energy;
+            self.carry_energy = 0;
+        }
+        // 格挡在回合开始清空,除非有壁垒;卡钳只掉固定的一截
         if !self.player.statuses.has(Status::Barricade) {
-            self.player.block = 0;
+            let cap = self.relic_sum(|fx| fx.block_loss_cap);
+            if cap > 0 {
+                self.player.block = (self.player.block - cap).max(0);
+            } else {
+                self.player.block = 0;
+            }
+        }
+        // 锚之类的"开局格挡"要在回合开始的清空之后再补,否则第 1 回合就被清掉了
+        if self.turn == 1 {
+            let b = self.relic_sum(|fx| fx.combat_start_block);
+            if b > 0 {
+                self.player.block += b;
+            }
+        }
+        // 自成型黏土:上一个回合攒下的格挡
+        if self.rs.banked_block > 0 {
+            let b = self.rs.banked_block;
+            self.rs.banked_block = 0;
+            self.gain_block(b, false, false);
+            self.push_log(LogKind::Player, format!("Self-Forming Clay: {b} Block"));
+        }
+        // 快乐花:每 3 个回合给 1 点能量
+        let flower = self.relic_sum(|fx| fx.energy_every_3_turns);
+        if flower > 0 {
+            self.rs.happy_flower += 1;
+            if self.rs.happy_flower >= 3 {
+                self.rs.happy_flower = 0;
+                self.energy += flower;
+            }
+        }
+        // 薰香:每 6 个回合给 1 层无形
+        let incense = self.relic_sum(|fx| fx.intangible_every_6_turns);
+        if incense > 0 {
+            self.rs.incense += 1;
+            if self.rs.incense >= 6 {
+                self.rs.incense = 0;
+                self.player.statuses.add(Status::Intangible, incense);
+                self.push_log(LogKind::Player, "Incense Burner: Intangible".to_string());
+            }
+        }
+        if self.turn == 1 {
+            // 灯笼之类的"第一回合"能量
+            self.energy += self.relic_sum(|fx| fx.combat_start_energy);
+            if self.rested {
+                self.energy += self.relic_sum(|fx| fx.energy_turn1_if_rested);
+            }
+        } else if self.rs.attacks_last_turn == 0 {
+            // 战争艺术:上一回合没打攻击就给能量
+            self.energy += self.relic_sum(|fx| fx.energy_if_no_attack_last_turn);
+        }
+        // 怀表:上一回合打出的牌少就多抽
+        if self.rs.cards_last_turn <= 3 {
+            self.rs.next_turn_draw += self.relic_sum(|fx| fx.draw_next_turn_if_low_play);
+        }
+        // 硫磺:每回合自己 +2 力量,敌人 +1
+        let brim = self.relic_max(|fx| fx.brimstone_self);
+        if brim > 0 {
+            self.player.statuses.add(Status::Strength, brim);
+            let enemy = self.relic_max(|fx| fx.brimstone_enemy);
+            for i in 0..self.enemies.len() {
+                if self.enemies[i].alive() {
+                    self.enemies[i].statuses.add(Status::Strength, enemy);
+                }
+            }
+            self.push_log(LogKind::Info, format!("Brimstone: +{brim} Strength"));
         }
         let berserk = self.player.statuses.get(Status::Berserk);
         if berserk > 0 {
@@ -537,7 +864,63 @@ impl Combat {
                 format!("Draw Reduction: you draw {less} fewer cards"),
             );
         }
-        self.draw_cards((DRAW_PER_TURN + extra_draw).saturating_sub(less));
+        let relic_draw = self.relic_sum(|fx| fx.draw_per_turn).max(0) as usize;
+        let bonus_draw = extra_draw + relic_draw + self.rs.next_turn_draw.max(0) as usize;
+        self.rs.next_turn_draw = 0;
+        self.draw_cards((DRAW_PER_TURN + bonus_draw).saturating_sub(less));
+        // 水银沙漏:回合开始对全体敌人造成伤害
+        let hourglass = self.relic_sum(|fx| fx.damage_all_turn_start);
+        if hourglass > 0 {
+            for i in self.alive_enemies() {
+                self.damage_enemy_plain(i, hourglass);
+            }
+            self.push_log(
+                LogKind::Player,
+                format!("Mercury Hourglass deals {hourglass} to all enemies"),
+            );
+            self.settle_deaths();
+        }
+        // 角盔/船长的轮子:第 2/第 3 回合给格挡
+        if self.turn == 2 {
+            let b = self.relic_sum(|fx| fx.block_turn2);
+            if b > 0 {
+                self.gain_block(b, false, false);
+            }
+        }
+        if self.turn == 3 {
+            let b = self.relic_sum(|fx| fx.block_turn3);
+            if b > 0 {
+                self.gain_block(b, false, false);
+            }
+        }
+        // 扭曲的钳子:回合开始随机升级手里一张牌
+        if self.relic_any(|fx| fx.upgrade_random_hand_at_turn_start) && !self.hand.is_empty() {
+            let idx = self
+                .streams
+                .floor(FloorStream::MiscRng)
+                .random(self.hand.len() as u32 - 1) as usize;
+            if self.hand[idx].upgrade() {
+                let label = self.hand[idx].label();
+                self.push_log(LogKind::Player, format!("Warped Tongs upgrades {label}"));
+            }
+        }
+        // 魔法书:开局往手里塞一张随机能力牌,本回合 0 费
+        if self.relic_any(|fx| fx.add_random_power_card) {
+            self.add_random_power_to_hand();
+        }
+        // 赌徒筹码:开局弃任意张再抽等量张
+        if self.turn == 1 && self.relic_any(|fx| fx.gambling_chip) && !self.hand.is_empty() {
+            self.begin_choice(
+                ChoiceSource::Hand,
+                ChoiceAction::Discard,
+                ChoiceFilter::Any,
+                0,
+                "Gambling Chip",
+            );
+            if let Some(ch) = self.choice.as_mut() {
+                ch.draw_after = true;
+            }
+        }
         let brutal = self.player.statuses.get(Status::Brutality);
         if brutal > 0 {
             // 掉血来自能力而不是卡牌,所以不触发渴望
@@ -546,12 +929,18 @@ impl Combat {
         }
         // 混乱:回合开始打出抽牌堆顶那张(打完按它自己的规矩去弃牌堆/消耗堆)
         if self.player.statuses.has(Status::Mayhem) {
-            self.play_top_of_draw(false);
+            self.play_top_of_draw(false, "Mayhem");
         }
         // 磁力:回合开始随机给一张无色牌
         let mag = self.player.statuses.get(Status::Magnetism);
         for _ in 0..mag {
             self.add_random_colorless_to_hand(false, false);
+        }
+        // 工具箱:第一回合抽完牌亮出几张无色牌,挑一张进手(参考实现 atStartOfTurnPostDraw)
+        let toolbox = self.relic_max(|fx| fx.combat_start_colorless_pick);
+        if self.turn == 1 && toolbox > 0 {
+            let pool = self.discovery_pool(DiscoveryPool::Colorless);
+            self.offer_pick(pool, toolbox as usize, false, "Toolbox: choose 1");
         }
     }
 
@@ -576,16 +965,14 @@ impl Combat {
         self.push_log(LogKind::Player, format!("{label} appears"));
     }
 
-    /// 打出抽牌堆顶那张;exhaust_after 为真时打完直接消耗(浩劫)
-    fn play_top_of_draw(&mut self, exhaust_after: bool) {
+    /// 打出抽牌堆顶那张;exhaust_after 为真时打完直接消耗(浩劫),
+    /// via 是播报里"谁打出了它"(浩劫/万物皆动/混沌药剂)
+    fn play_top_of_draw(&mut self, exhaust_after: bool, via: &str) {
         let Some(mut card) = self.draw.pop() else {
             return;
         };
         let label = card.label();
-        self.push_log(
-            LogKind::Player,
-            format!("{} plays {label}", if exhaust_after { "Havoc" } else { "Mayhem" }),
-        );
+        self.push_log(LogKind::Player, format!("{via} plays {label}"));
         let kind = card.kind();
         // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
         self.havoc_depth = self.havoc_depth.saturating_add(1);
@@ -622,6 +1009,7 @@ impl Combat {
             self.lose_hp_player(pain, true);
         }
         self.on_enemy_card_hooks(kind);
+        self.on_relic_card_played(kind);
         let pan = self.player.statuses.get(Status::Panache);
         if pan <= 0 || self.cards_played % 5 != 0 {
             return;
@@ -634,6 +1022,94 @@ impl Combat {
             format!("Panache deals {pan} to all enemies"),
         );
         self.settle_deaths();
+    }
+
+    /// 遗物里"每打出一张牌"就触发的部分
+    fn on_relic_card_played(&mut self, kind: crate::core::card::CardType) {
+        use crate::core::card::CardType;
+        self.rs.cards_total += 1;
+        match kind {
+            CardType::Attack => {
+                self.rs.attacks_this_turn += 1;
+                self.rs.attacks_total += 1;
+                self.rs.types_played |= 1;
+                // 笔尖:第 10 张攻击翻倍(判定在结算时用 pen_nib == 9)
+                self.rs.pen_nib += 1;
+            }
+            CardType::Skill => {
+                self.rs.skills_this_turn += 1;
+                self.rs.types_played |= 2;
+            }
+            CardType::Power => {
+                self.rs.types_played |= 4;
+                // 鸟面坛:每打出一张能力牌回血
+                let urn = self.relic_sum(|fx| fx.heal_on_power_card);
+                if urn > 0 {
+                    self.heal_player(urn);
+                }
+            }
+            _ => {}
+        }
+        // 双节棍:每 10 张攻击回 1 点能量
+        let nunchaku = self.relic_sum(|fx| fx.energy_per_10_attacks);
+        if nunchaku > 0 && kind == CardType::Attack && self.rs.attacks_total % 10 == 0 {
+            self.energy += nunchaku;
+            self.push_log(LogKind::Player, format!("Nunchaku: +{nunchaku} energy"));
+        }
+        // 墨水瓶:每 10 张牌抽 1
+        let ink = self.relic_sum(|fx| fx.draw_per_10_cards);
+        if ink > 0 && self.rs.cards_total % 10 == 0 {
+            self.draw_cards(ink as usize);
+        }
+        // 苦无/手里剑/折扇:每 3 张攻击
+        if kind == CardType::Attack && self.rs.attacks_this_turn % 3 == 0 {
+            let dex = self.relic_sum(|fx| fx.dexterity_per_3_attacks);
+            if dex > 0 {
+                self.player.statuses.add(Status::Dexterity, dex);
+            }
+            let str = self.relic_sum(|fx| fx.strength_per_3_attacks);
+            if str > 0 {
+                self.player.statuses.add(Status::Strength, str);
+            }
+            let block = self.relic_sum(|fx| fx.block_per_3_attacks);
+            if block > 0 {
+                self.gain_block(block, false, false);
+            }
+        }
+        // 拆信刀:每 3 张技能对全体敌人造成伤害
+        if kind == CardType::Skill && self.rs.skills_this_turn % 3 == 0 {
+            let dmg = self.relic_sum(|fx| fx.damage_all_per_3_skills);
+            if dmg > 0 {
+                for i in self.alive_enemies() {
+                    self.damage_enemy_plain(i, dmg);
+                }
+                self.push_log(
+                    LogKind::Player,
+                    format!("Letter Opener deals {dmg} to all enemies"),
+                );
+                self.settle_deaths();
+            }
+        }
+        // 木乃伊之手:打出能力牌就让手里一张随机牌本回合 0 费
+        if kind == CardType::Power && self.relic_any(|fx| fx.zero_hand_card_on_power) && !self.hand.is_empty() {
+            let idx = self
+                .streams
+                .floor(FloorStream::CardRandomRng)
+                .random(self.hand.len() as u32 - 1) as usize;
+            self.hand[idx].free_this_turn = true;
+            let label = self.hand[idx].label();
+            self.push_log(LogKind::Player, format!("Mummified Hand: {label} costs 0"));
+        }
+        // 橙皮:三种类型都打出过就清掉自己的减益
+        if self.relic_any(|fx| fx.clear_debuffs_on_all_types) && self.rs.types_played == 7 {
+            self.player.statuses.clear_debuffs();
+            self.push_log(LogKind::Player, "Orange Pellets clears your debuffs".to_string());
+            self.rs.types_played = 0;
+        }
+        // 不休陀螺:手里空了就补一张
+        if self.hand.is_empty() && self.relic_any(|fx| fx.draw_on_empty_hand) {
+            self.draw_cards(1);
+        }
     }
 
     /// 敌人身上"玩家每打出一张牌"就触发的机制
@@ -741,6 +1217,7 @@ impl Combat {
                     LogKind::Info,
                     format!("shuffled {count} cards into the draw pile"),
                 );
+                self.on_shuffle();
             }
             let card = self.draw.pop().unwrap();
             self.hand.push(card);
@@ -837,6 +1314,108 @@ impl Combat {
         if dark > 0 {
             self.draw_cards(dark as usize);
         }
+        // 卡戎之灰:消耗就给全体敌人来一下
+        let ashes = self.relic_sum(|fx| fx.damage_all_on_exhaust);
+        if ashes > 0 {
+            for i in self.alive_enemies() {
+                self.damage_enemy_plain(i, ashes);
+            }
+            self.push_log(
+                LogKind::Player,
+                format!("Charon's Ashes deals {ashes} to all enemies"),
+            );
+            self.settle_deaths();
+        }
+        // 枯枝:消耗时往手里塞一张随机牌(不是本场战斗里的牌;职业池任意稀有度)
+        let branch = self.relic_sum(|fx| fx.card_on_exhaust);
+        if branch > 0 {
+            self.add_random_class_card_to_hand();
+        }
+    }
+
+    /// 玩家主动弃牌时触发的遗物(荆棘之环/结实绷带/风筝)
+    fn on_manual_discard(&mut self) {
+        let tingsha = self.relic_sum(|fx| fx.damage_random_on_discard);
+        if tingsha > 0 {
+            if let Some(t) = self.pick_random_alive() {
+                self.damage_enemy_plain(t, tingsha);
+                self.push_log(
+                    LogKind::Player,
+                    format!("Tingsha deals {tingsha} to a random enemy"),
+                );
+                self.settle_deaths();
+            }
+        }
+        let bandages = self.relic_sum(|fx| fx.block_on_discard);
+        if bandages > 0 {
+            self.gain_block(bandages, false, false);
+        }
+        let kite = self.relic_sum(|fx| fx.gain_energy_first_discard_per_turn);
+        if kite > 0 && !self.rs.kite_used {
+            self.rs.kite_used = true;
+            self.energy += kite;
+            self.push_log(LogKind::Player, format!("Hovering Kite: +{kite} energy"));
+        }
+        // 不休陀螺:弃到手里没牌也补一张
+        if self.hand.is_empty() && self.relic_any(|fx| fx.draw_on_empty_hand) {
+            self.draw_cards(1);
+        }
+    }
+
+    /// 洗牌堆时触发(算盘给格挡,日晷每 3 次给能量)
+    fn on_shuffle(&mut self) {
+        let block = self.relic_sum(|fx| fx.block_on_shuffle);
+        if block > 0 {
+            self.gain_block(block, false, false);
+        }
+        let sundial = self.relic_sum(|fx| fx.energy_per_3_shuffles);
+        if sundial > 0 {
+            self.rs.sundial += 1;
+            if self.rs.sundial >= 3 {
+                self.rs.sundial = 0;
+                self.energy += sundial;
+                self.push_log(LogKind::Player, format!("Sundial: +{sundial} energy"));
+            }
+        }
+    }
+
+    /// 从本职业牌池里随机拿一张牌(任意稀有度)进手牌
+    fn add_random_class_card_to_hand(&mut self) {
+        if self.hand.len() >= HAND_LIMIT {
+            return;
+        }
+        let pool = crate::core::cards::class_card_pool();
+        if pool.is_empty() {
+            return;
+        }
+        let def = *self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
+        let mut inst = CardInstance::new(def);
+        self.fix_new_card(&mut inst);
+        let label = inst.label();
+        self.hand.push(inst);
+        self.push_log(LogKind::Player, format!("{label} appears"));
+    }
+
+    /// 魔法书:随机一张本职业能力牌进手牌,本回合 0 费
+    fn add_random_power_to_hand(&mut self) {
+        if self.hand.len() >= HAND_LIMIT {
+            return;
+        }
+        let pool: Vec<&'static crate::core::card::CardDef> =
+            crate::core::cards::class_card_pool()
+                .into_iter()
+                .filter(|c| c.kind == crate::core::card::CardType::Power)
+                .collect();
+        if pool.is_empty() {
+            return;
+        }
+        let def = *self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
+        let mut inst = CardInstance::new(def);
+        inst.free_this_turn = true;
+        self.fix_new_card(&mut inst);
+        let label = inst.label();
+        self.hand.push(inst);
+        self.push_log(LogKind::Player, format!("{label} appears (free)"));
     }
 
     pub fn end_turn(&mut self) {
@@ -844,6 +1423,48 @@ impl Combat {
             return;
         }
         self.force_end_turn = false;
+        // 下一回合要看的计数
+        self.rs.cards_last_turn = self.cards_played;
+        self.rs.attacks_last_turn = self.rs.attacks_this_turn;
+        // 冰激凌:把没用完的能量存起来
+        if self.relic_any(|fx| fx.conserve_energy) {
+            self.carry_energy = self.energy.max(0);
+        }
+        // 诱变力量:只在第一回合有的力量,回合结束收回
+        if self.turn == 1 && self.rs.strength_turn1 != 0 {
+            let n = self.rs.strength_turn1;
+            self.rs.strength_turn1 = 0;
+            self.player.statuses.add(Status::Strength, -n);
+            self.push_log(LogKind::Info, format!("Mutagenic Strength fades (-{n})"));
+        }
+        // 石历:第 7 回合结束来一下
+        if self.turn == 7 {
+            let dmg = self.relic_sum(|fx| fx.damage_all_turn7);
+            if dmg > 0 {
+                for i in self.alive_enemies() {
+                    self.damage_enemy_plain(i, dmg);
+                }
+                self.push_log(
+                    LogKind::Player,
+                    format!("Stone Calendar deals {dmg} to all enemies"),
+                );
+                self.settle_deaths();
+            }
+        }
+        // 山铜:回合结束时没有格挡就补一点(排在金属化之前)
+        if self.player.block == 0 {
+            let b = self.relic_sum(|fx| fx.block_if_no_block_at_end);
+            if b > 0 {
+                self.gain_block(b, false, false);
+            }
+        }
+        // 斗篷扣:手牌每张牌给 1 格挡
+        let clasp = self.relic_sum(|fx| fx.block_per_card_in_hand_at_end);
+        if clasp > 0 && !self.hand.is_empty() {
+            let n = self.hand.len() as i32 * clasp;
+            self.gain_block(n, false, false);
+            self.push_log(LogKind::Player, format!("Cloak Clasp: {n} Block"));
+        }
         // 缠绕:回合结束先挨一下(非攻击伤害)
         let constricted = self.player.statuses.get(Status::Constricted);
         if constricted > 0 {
@@ -881,6 +1502,31 @@ impl Combat {
         if metal > 0 {
             self.gain_block(metal, false, false);
         }
+        // 镀甲:回合结束获得等量格挡
+        let plated = self.player.statuses.get(Status::PlatedArmor);
+        if plated > 0 {
+            self.gain_block(plated, false, false);
+        }
+        // 仪式:回合结束获得等量力量
+        let ritual = self.player.statuses.get(Status::Ritual);
+        if ritual > 0 {
+            self.player.statuses.add(Status::Strength, ritual);
+            self.push_log(
+                LogKind::Info,
+                format!("Ritual grants {ritual} Strength"),
+            );
+        }
+        // 力量/敏捷药水:这一回合的力量/敏捷在回合结束时收回
+        let lose_str = self.player.statuses.get(Status::LoseStrength);
+        if lose_str > 0 {
+            self.player.statuses.add(Status::Strength, -lose_str);
+            self.player.statuses.add(Status::LoseStrength, -lose_str);
+        }
+        let lose_dex = self.player.statuses.get(Status::LoseDexterity);
+        if lose_dex > 0 {
+            self.player.statuses.add(Status::Dexterity, -lose_dex);
+            self.player.statuses.add(Status::LoseDexterity, -lose_dex);
+        }
         let combust = self.player.statuses.get(Status::Combust);
         if combust > 0 {
             self.lose_hp_player(1, false);
@@ -906,8 +1552,9 @@ impl Combat {
         let hand_size = self.hand.len() as i32;
         // 手牌:保留牌留下,虚灵牌消耗,其余进弃牌堆
         let hand = std::mem::take(&mut self.hand);
+        let keep_hand = self.relic_any(|fx| fx.retain_hand);
         for card in hand {
-            if card.is_retain() {
+            if card.is_retain() || keep_hand {
                 self.hand.push(card);
             } else if card.is_ethereal() {
                 self.exhaust_card(card);
@@ -931,8 +1578,22 @@ impl Combat {
         if self.phase != Phase::PlayerTurn {
             return;
         }
-        self.phase = Phase::EnemyTurn;
-        self.enemy_turn();
+        // 尼尔瑞的抄本:回合结束亮出几张随机牌,挑一张洗进抽牌堆(可以跳过)
+        let codex = self.relic_max(|fx| fx.end_turn_shuffle_pick);
+        if codex > 0 && !self.rs.nilrys_used {
+            self.rs.nilrys_used = true;
+            let pool = cards::class_card_pool();
+            self.offer_pick(pool, codex as usize, false, "Nilry's Codex: choose 1");
+            if let Some(ch) = self.choice.as_mut() {
+                ch.action = ChoiceAction::ToDrawShuffled;
+            }
+            if self.choice.is_some() {
+                // 选完(或跳过)之后由 resume_after_choice 把回合交出去
+                self.pending_end_turn = true;
+                return;
+            }
+        }
+        self.finish_end_turn();
     }
 
     fn enemy_turn(&mut self) {
@@ -1293,9 +1954,9 @@ impl Combat {
                 format!("{name} hit into {blocked_total} block"),
             );
         }
-        // 玩家的荆棘反伤
-        if self.relic_thorns > 0 {
-            let thorns = self.relic_thorns;
+        // 玩家的荆棘反伤(遗物 + 液态青铜给的荆棘)
+        let thorns = self.relic_thorns + self.player.statuses.get(Status::Thorns);
+        if thorns > 0 {
             self.damage_enemy_plain(idx, thorns);
             self.push_log(
                 LogKind::Player,
@@ -1530,6 +2191,20 @@ impl Combat {
     /// 敌人自己的回合结束:回合末生效的能力与倒计时
     fn enemy_end_of_turn(&mut self, idx: usize, name: &str) {
         let def = self.enemies[idx].def;
+        // 中毒:每回合掉等量生命(不吃格挡),再减一层
+        let poison = self.enemies[idx].statuses.get(Status::Poison);
+        if poison > 0 {
+            self.enemies[idx].hp -= poison;
+            self.enemies[idx].statuses.add(Status::Poison, -1);
+            self.push_log(
+                LogKind::Enemy,
+                format!("{name} suffers {poison} poison"),
+            );
+            if self.enemies[idx].hp <= 0 {
+                self.enemies[idx].hp = 0;
+            }
+            self.settle_deaths();
+        }
         let metallicize = self.enemies[idx].statuses.get(Status::Metallicize);
         let plated = self.enemies[idx].statuses.get(Status::PlatedArmor);
         if metallicize + plated > 0 {
@@ -1707,11 +2382,15 @@ impl Combat {
         if amount <= 0 {
             return;
         }
+        // 魔法花:战斗中的治疗多 50%
+        let pct = self.relic_max(|fx| fx.combat_heal_pct);
+        let amount = if pct > 100 { amount * pct / 100 } else { amount };
         let before = self.player.hp;
         self.player.hp = (self.player.hp + amount).min(self.player.max_hp);
         let healed = self.player.hp - before;
         if healed > 0 {
             self.push_log(LogKind::Player, format!("you heal {healed} HP"));
+            self.refresh_bloodied();
         }
     }
 
@@ -1759,6 +2438,9 @@ impl Combat {
             label: label.to_string(),
             played: None,
             offered: Vec::new(),
+            draw_after: false,
+            copies: 1,
+            free: false,
         });
     }
 
@@ -1837,18 +2519,48 @@ impl Combat {
             (ChoiceSource::Offered, ChoiceAction::ToHand) => {
                 let mut card = ch.offered.remove(idx);
                 // 发现:挑中的那张本回合 0 费,剩下的几张就此消失
-                card.free_this_turn = true;
+                card.free_this_turn = ch.free;
                 let label = card.label();
-                if self.hand.len() < HAND_LIMIT {
-                    self.hand.push(card);
+                for _ in 0..ch.copies.max(1) {
+                    if self.hand.len() < HAND_LIMIT {
+                        self.hand.push(card.clone());
+                    }
                 }
                 self.push_log(LogKind::Player, format!("{label} is added to your hand"));
+            }
+            (ChoiceSource::Offered, ChoiceAction::ToDrawShuffled) => {
+                // 尼尔瑞的抄本:挑中的那张洗进抽牌堆
+                let card = ch.offered.remove(idx);
+                let label = card.label();
+                self.draw.push(card);
+                let seed = self.streams.floor(FloorStream::ShuffleRng).random_long();
+                java_shuffle(&mut self.draw, &mut JavaRandom::new(seed));
+                self.on_shuffle();
+                self.push_log(
+                    LogKind::Player,
+                    format!("{label} is shuffled into your draw pile"),
+                );
             }
             (ChoiceSource::Discard, ChoiceAction::ToDrawTop) => {
                 let mut card = self.discard.remove(idx);
                 self.top_seq += 1;
                 card.topped = self.top_seq;
                 self.draw.push(card);
+            }
+            (ChoiceSource::Discard, ChoiceAction::ToHand) => {
+                if self.hand.len() < HAND_LIMIT {
+                    let mut card = self.discard.remove(idx);
+                    // 液态记忆:拿回来的这张本回合 0 费
+                    card.free_this_turn = true;
+                    let label = card.label();
+                    self.hand.push(card);
+                    self.push_log(LogKind::Player, format!("{label} returns to your hand"));
+                }
+            }
+            (ChoiceSource::Hand, ChoiceAction::Discard) => {
+                let card = self.hand.remove(idx);
+                self.discard.push(card);
+                self.on_manual_discard();
             }
             (ChoiceSource::Hand, ChoiceAction::Remove) => {
                 self.hand.remove(idx);
@@ -1859,17 +2571,44 @@ impl Combat {
         let full = ch.need != 0 && ch.taken >= ch.need;
         let empty = self.candidates_of(&ch).is_empty();
         if full || empty {
-            self.finish_played(ch.played.take());
+            let ch = self.choice.take().unwrap_or(ch);
+            self.close_choice(ch);
         } else {
             self.choice = Some(ch);
         }
         Ok(())
     }
 
+    /// 收尾一次选择:该弃的弃、该消耗的消耗,赌徒之酿再补抽等量张
+    fn close_choice(&mut self, mut ch: Choice) {
+        self.finish_played(ch.played.take());
+        if ch.draw_after && ch.taken > 0 {
+            self.draw_cards(ch.taken);
+        }
+        self.resume_after_choice();
+    }
+
+    /// 回合结束的尾巴:等着的选牌收完之后才把回合交给对面
+    fn resume_after_choice(&mut self) {
+        if self.pending_end_turn {
+            self.pending_end_turn = false;
+            self.finish_end_turn();
+        }
+    }
+
+    /// 把回合交给对面(所有收尾都走这里,免得漏掉一条路径)
+    fn finish_end_turn(&mut self) {
+        if self.phase != Phase::PlayerTurn {
+            return;
+        }
+        self.phase = Phase::EnemyTurn;
+        self.enemy_turn();
+    }
+
     /// 多选模式下玩家主动收工(比如"最多消耗 3 张",只消耗 1 张就结束)
     pub fn finish_choice(&mut self) {
-        if let Some(mut ch) = self.choice.take() {
-            self.finish_played(ch.played.take());
+        if let Some(ch) = self.choice.take() {
+            self.close_choice(ch);
         }
     }
 
@@ -1880,13 +2619,14 @@ impl Combat {
         };
         if ch.taken > 0 {
             // 前面几次已经生效了,这时 esc 只能当"选完了"
-            self.finish_played(ch.played.take());
+            self.close_choice(ch);
             return;
         }
         if let Some((card, cost)) = ch.played.take() {
             self.energy += cost;
             self.hand.push(card);
         }
+        self.resume_after_choice();
     }
 
     /// 出牌收尾:该消耗的消耗,该弃的弃
@@ -1894,16 +2634,46 @@ impl Combat {
         let Some((card, _)) = played else {
             return;
         };
-        let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
-            && self.player.statuses.has(Status::Corruption);
-        let exhaust_self = card.is_exhaust()
-            || card.effects().contains(&Effect::ExhaustSelf)
-            || corrupted_skill;
-        if exhaust_self {
+        let relic_play = self.relic_playable(&card);
+        if self.played_card_exhausts(&card, relic_play) {
             self.exhaust_card(card);
         } else {
             self.discard.push(card);
         }
+    }
+
+    /// 这张"不可打出"的牌能不能靠遗物打出去:蓝蜡烛放诅咒,医疗包放状态牌
+    fn relic_playable(&self, card: &CardInstance) -> bool {
+        if card.playable() {
+            return false;
+        }
+        match card.kind() {
+            crate::core::card::CardType::Curse => {
+                self.relic_sum(|fx| fx.playable_curses_hp) > 0
+            }
+            crate::core::card::CardType::Status => self.relic_any(|fx| fx.playable_statuses),
+            _ => false,
+        }
+    }
+
+    /// 打完的这张牌要不要进消耗堆:奇异勺按概率把它改成进弃牌堆
+    fn played_card_exhausts(&mut self, card: &CardInstance, relic_play: bool) -> bool {
+        let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
+            && self.player.statuses.has(Status::Corruption);
+        let forced = card.is_exhaust()
+            || card.effects().contains(&Effect::ExhaustSelf)
+            || corrupted_skill
+            || relic_play;
+        if !forced {
+            return false;
+        }
+        // 能力牌落地就消耗,奇异勺管不着
+        let pct = self.relic_sum(|fx| fx.exhaust_to_discard_pct);
+        if pct <= 0 || card.kind() == crate::core::card::CardType::Power {
+            return true;
+        }
+        let roll = self.streams.floor(FloorStream::CardRandomRng).random(99) as i32;
+        roll >= pct
     }
 
     /// 记一次抖动:谁、往哪边(负左正右)、出手还是挨打
@@ -1921,35 +2691,89 @@ impl Combat {
         if amount <= 0 {
             return;
         }
+        if self.rs.helix > 0 {
+            self.rs.helix -= 1;
+            self.push_log(LogKind::Info, "Fossilized Helix prevents the damage".to_string());
+            return;
+        }
+        let amount = (amount - self.relic_sum(|fx| fx.hp_loss_reduction)).max(0);
+        if amount <= 0 {
+            return;
+        }
         self.player.hp -= amount;
         self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, amount);
         self.note_hp_loss();
+        self.on_hp_lost(amount);
         let rupt = self.player.statuses.get(Status::Rupture);
         if from_card && rupt > 0 {
             self.player.statuses.add(Status::Strength, rupt);
         }
         if self.player.hp <= 0 {
-            self.player.hp = 0;
-            self.phase = Phase::Lost;
-            self.push_log(LogKind::Info, "you have been defeated".to_string());
+            self.resolve_player_death();
         }
+    }
+
+    /// 掉到 0 血时的收尾:仙女在瓶中 / 蜥蜴尾巴先保命,否则判负
+    fn resolve_player_death(&mut self) {
+        // 蜥蜴尾巴:每场一次,致命伤改为按最大生命的百分比回血
+        let pct = self.relic_max(|fx| fx.death_save_pct);
+        if pct > 0 && !self.rs.lizard_used {
+            self.rs.lizard_used = true;
+            let back = (self.player.max_hp * pct / 100).max(1);
+            self.player.hp = back;
+            self.push_log(
+                LogKind::Info,
+                format!("Lizard Tail heals you to {back} HP"),
+            );
+            return;
+        }
+        if self.fairy_save {
+            self.fairy_save = false;
+            self.fairy_used = true;
+            let back = (self.player.max_hp * 30 / 100).max(1);
+            self.player.hp = back;
+            self.push_log(
+                LogKind::Info,
+                format!("Fairy in a Bottle heals you to {back} HP"),
+            );
+            return;
+        }
+        self.player.hp = 0;
+        self.phase = Phase::Lost;
+        self.push_log(LogKind::Info, "you have been defeated".to_string());
     }
 
     /// 敌人打玩家一次;返回(实际掉血, 被格挡量)
     fn hit_player(&mut self, damage: i32) -> (i32, i32) {
-        let dmg = damage.max(0);
+        let mut dmg = damage.max(0);
+        // 无形:受到的所有伤害降为 1(幽灵在瓶中)
+        if dmg > 1 && self.player.statuses.has(Status::Intangible) {
+            dmg = 1;
+        }
         let blocked = self.player.block.min(dmg);
         self.player.block -= blocked;
         let taken = dmg - blocked;
         if taken > 0 {
+            // 化石螺壳:本场第一次掉血直接免掉
+            if self.rs.helix > 0 {
+                self.rs.helix -= 1;
+                self.push_log(LogKind::Info, "Fossilized Helix prevents the damage".to_string());
+                return (0, blocked);
+            }
+            // 钨钢棒:每次掉血少掉 1
+            let rod = self.relic_sum(|fx| fx.hp_loss_reduction);
+            let taken = (taken - rod).max(0);
             self.player.hp -= taken;
             self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, taken);
             self.note_hp_loss();
+            self.on_hp_lost(taken);
+            // 镀甲:挨到没格挡住的伤害就掉一层
+            if self.player.statuses.get(Status::PlatedArmor) > 0 {
+                self.player.statuses.add(Status::PlatedArmor, -1);
+            }
         }
         if self.player.hp <= 0 {
-            self.player.hp = 0;
-            self.phase = Phase::Lost;
-            self.push_log(LogKind::Info, "you have been defeated".to_string());
+            self.resolve_player_death();
         }
         (taken, blocked)
     }
@@ -1958,10 +2782,16 @@ impl Combat {
     fn player_attack_damage(&self, raw: i32, target: usize) -> i32 {
         let mut d = raw + self.player.statuses.get(Status::Strength);
         if self.player.statuses.has(Status::Weak) {
-            d = (d as f32 * 0.75).floor() as i32;
+            // 纸风筝:虚弱只减 40% 伤害(默认 25%)
+            let pct = self.relic_max(|fx| fx.weak_damage_pct);
+            let factor = if pct > 0 { pct as f32 / 100.0 } else { 0.75 };
+            d = (d as f32 * factor).floor() as i32;
         }
         if self.enemies[target].statuses.has(Status::Vulnerable) {
-            d = (d as f32 * 1.5).floor() as i32;
+            // 纸蛙:易伤多受 75% 伤害(默认 50%)
+            let pct = self.relic_max(|fx| fx.vulnerable_damage_pct);
+            let factor = if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
+            d = (d as f32 * factor).floor() as i32;
         }
         d.max(0)
     }
@@ -1977,7 +2807,15 @@ impl Combat {
             d = (d as f32 * 0.75).floor() as i32;
         }
         if self.player.statuses.has(Status::Vulnerable) {
-            d = (d as f32 * 1.5).floor() as i32;
+            // 奇异蘑菇:自己身上的易伤只多受 25% 伤害(默认 50%)
+            let pct = self.relic_max(|fx| fx.vulnerable_taken_pct);
+            let factor = if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
+            d = (d as f32 * factor).floor() as i32;
+        }
+        // 鸟居:5 点以下(含)的未被格挡攻击伤害降为 1
+        let torii = self.relic_max(|fx| fx.small_attack_reduce_to);
+        if torii > 0 && d > 1 && d <= 5 {
+            d = torii;
         }
         d.max(0)
     }
@@ -2071,6 +2909,13 @@ impl Combat {
     /// 打敌人:damage 是算好的最终值;返回扣格挡后实际造成的伤害.
     /// 卡牌打出来的是"攻击伤害",会走飞行/慢速/无形/无敌这一整套.
     fn damage_enemy(&mut self, idx: usize, damage: i32) -> i32 {
+        // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5
+        let boost = self.relic_max(|fx| fx.small_attack_boost_to);
+        let damage = if boost > 0 && damage > 0 && damage <= 4 && self.enemies[idx].block == 0 {
+            boost
+        } else {
+            damage
+        };
         self.hit_enemy(idx, damage, true)
     }
 
@@ -2099,8 +2944,11 @@ impl Combat {
         if self.enemies[idx].statuses.has(Status::Intangible) && dmg > 1 {
             dmg = 1;
         }
+        let had_block = self.enemies[idx].block > 0;
         let blocked = self.enemies[idx].block.min(dmg);
         self.enemies[idx].block -= blocked;
+        // 手钻:这一击把格挡打碎(打到 0)时给易伤
+        let broke_block = had_block && blocked > 0 && self.enemies[idx].block == 0;
         let mut taken = dmg - blocked;
         // 无敌:一回合之内最多再掉这么多
         let inv = self.enemies[idx].statuses.get(Status::Invincible);
@@ -2117,6 +2965,13 @@ impl Combat {
         }
         if is_attack {
             self.on_enemy_attacked(idx, taken);
+        }
+        if is_attack && broke_block {
+            let n = self.relic_sum(|fx| fx.vulnerable_on_block_break);
+            if n > 0 {
+                self.push_log(LogKind::Player, format!("Hand Drill applies {n} Vulnerable"));
+                self.add_enemy_status(idx, Status::Vulnerable, n);
+            }
         }
         taken
     }
@@ -2263,9 +3118,29 @@ impl Combat {
 
     /// 结算本回合新死的敌人(死亡触发只在第一次结算)
     fn settle_deaths(&mut self) {
+        let done_before = self.enemies.iter().filter(|e| e.death_done).count();
         for i in 0..self.enemies.len() {
             if self.enemies[i].dead() && !self.enemies[i].death_done {
                 self.handle_death(i);
+            }
+        }
+        // 小鬼号角:这一轮真死了几只就给能量并抽牌
+        let died = self
+            .enemies
+            .iter()
+            .filter(|e| e.death_done)
+            .count()
+            .saturating_sub(done_before) as i32;
+        if died > 0 {
+            let horn = self.relic_sum(|fx| fx.energy_on_kill);
+            if horn > 0 {
+                let gain = horn * died;
+                self.energy += gain;
+                self.push_log(LogKind::Player, format!("Gremlin Horn: +{gain} energy"));
+            }
+            let draw = self.relic_sum(|fx| fx.draw_on_kill);
+            if draw > 0 {
+                self.draw_cards((draw * died) as usize);
             }
         }
     }
@@ -2413,7 +3288,9 @@ impl Combat {
         let Some(card) = self.hand.get(hand_idx) else {
             return Err("no such card");
         };
-        if !card.playable() {
+        // 蓝蜡烛/医疗包让不可打出的诅咒与状态牌可以打出(费用按 0 算)
+        let relic_play = self.relic_playable(card);
+        if !card.playable() && !relic_play {
             return Err("unplayable");
         }
         // 冲撞:手里只要有一张不是攻击牌就打不出去
@@ -2425,10 +3302,15 @@ impl Combat {
         {
             return Err("clash needs a hand of only attacks");
         }
+        // 维可夹克:一回合最多打 6 张
+        let cap = self.relic_max(|fx| fx.card_play_cap);
+        if cap > 0 && self.cards_played >= cap {
+            return Err("Velvet Choker: no more cards this turn");
+        }
         // 腐化:技能都是 0 费,所以这里不能按原价拦
         let corrupted = card.kind() == crate::core::card::CardType::Skill
             && self.player.statuses.has(Status::Corruption);
-        if !corrupted && card.cost_value(self.energy) > self.energy {
+        if !corrupted && !relic_play && card.cost_value(self.energy) > self.energy {
             return Err("not enough energy");
         }
         if card.kind() == crate::core::card::CardType::Attack
@@ -2465,11 +3347,18 @@ impl Combat {
         card.free_this_turn = false;
         let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
             && self.player.statuses.has(Status::Corruption);
-        let cost = if corrupted_skill { 0 } else { card.cost_value(self.energy) };
+        let relic_play = self.relic_playable(&card);
+        let cost = if corrupted_skill || relic_play {
+            0
+        } else {
+            card.cost_value(self.energy)
+        };
         self.energy -= cost.min(self.energy);
         let is_x = card.cost() == Cost::X;
+        // 化学 X:X 费牌的 X 额外加 2(参考实现:效果按 X+2 结算,能量照常全花)
+        let x_bonus = self.relic_sum(|fx| fx.x_cost_bonus);
         let mut ctx = PlayCtx {
-            x: if is_x { cost } else { 0 },
+            x: if is_x { cost + x_bonus } else { 0 },
             hand_size: self.hand.len() as i32,
             ..Default::default()
         };
@@ -2508,6 +3397,22 @@ impl Combat {
                 self.gain_block(rage, false, false);
             }
         }
+        // 复制:这一张再打一次(任意类型)
+        let dup = self.player.statuses.get(Status::Duplication);
+        if dup > 0 {
+            self.player.statuses.add(Status::Duplication, -1);
+            self.resolve(&mut card, chosen, &mut ctx);
+        }
+        // 死灵之书:本回合第一张 2 费以上的攻击再打一次
+        let necro = self.relic_any(|fx| fx.double_first_big_attack)
+            && !self.rs.necro_used
+            && card.kind() == crate::core::card::CardType::Attack
+            && matches!(card.cost(), Cost::Fixed(c) if c >= 2);
+        if necro {
+            self.rs.necro_used = true;
+            self.push_log(LogKind::Player, "Necronomicon: the attack plays twice".to_string());
+            self.resolve(&mut card, chosen, &mut ctx);
+        }
         if self.player.block > blocked_before {
             let gained = self.player.block - blocked_before;
             self.push_log(LogKind::Player, format!("you gain {gained} Block"));
@@ -2522,11 +3427,16 @@ impl Combat {
             ch.played = Some((card, cost));
             return Ok(());
         }
+        // 蓝蜡烛:打出诅咒要掉血(掉死了这张牌也照样落地)
+        if relic_play && card.kind() == crate::core::card::CardType::Curse {
+            let hp = self.relic_sum(|fx| fx.playable_curses_hp);
+            if hp > 0 {
+                self.push_log(LogKind::Player, format!("Blue Candle costs {hp} HP"));
+                self.lose_hp_player(hp, false);
+            }
+        }
         // 结算完后决定去处
-        let exhaust_self = card.is_exhaust()
-            || card.effects().contains(&Effect::ExhaustSelf)
-            || corrupted_skill;
-        if exhaust_self {
+        if self.played_card_exhausts(&card, relic_play) {
             self.exhaust_card(card);
         } else {
             self.discard.push(card);
@@ -2558,6 +3468,20 @@ impl Combat {
     ) {
         let is_strike = card.is_strike();
         let card_bonus = card.bonus;
+        // 遗物给这张牌的加伤:打击木偶(名字带 Strike)+ 腕刃(0 费攻击)
+        let is_attack = card.kind() == crate::core::card::CardType::Attack;
+        let mut relic_add = 0;
+        if is_attack {
+            if is_strike {
+                relic_add += self.relic_sum(|fx| fx.strike_damage_bonus);
+            }
+            if matches!(card.cost(), crate::core::card::Cost::Fixed(0)) {
+                relic_add += self.relic_sum(|fx| fx.zero_cost_attack_bonus);
+            }
+        }
+        // 笔尖:第 10 张攻击翻倍
+        let pen_nib_double = is_attack && self.rs.pen_nib == 9 && self.relic_any(|fx| fx.double_damage_per_10_attacks);
+        let _ = pen_nib_double;
         for e in effects {
             match *e {
                 Effect::Damage { amount, times } => {
@@ -2566,7 +3490,11 @@ impl Combat {
                             if self.enemies[t].dead() {
                                 break;
                             }
-                            let d = self.player_attack_damage(amount, t);
+                            let mut raw = amount + relic_add;
+                            if pen_nib_double {
+                                raw *= 2;
+                            }
+                            let d = self.player_attack_damage(raw, t);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                     }
@@ -2574,7 +3502,11 @@ impl Combat {
                 Effect::DamageAll { amount, times } => {
                     for _ in 0..times.max(1) {
                         for t in self.alive_enemies() {
-                            let d = self.player_attack_damage(amount, t);
+                            let mut raw = amount + relic_add;
+                            if pen_nib_double {
+                                raw *= 2;
+                            }
+                            let d = self.player_attack_damage(raw, t);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                     }
@@ -2663,7 +3595,8 @@ impl Combat {
                             let d = self.player_attack_damage(amount, t);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
-                        if before > 0 && self.enemies[t].dead() {
+                        // 击杀随从不算数:只有非随从(含精英与首领)才给最大生命
+                        if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
                             self.player.max_hp += max_hp;
                             self.player.hp += max_hp;
                             self.push_log(
@@ -2863,7 +3796,7 @@ impl Combat {
                     }
                 }
                 Effect::PlayTopOfDraw => {
-                    self.play_top_of_draw(true);
+                    self.play_top_of_draw(true, "Havoc");
                 }
                 Effect::AddCardToHand { id, n } => {
                     let def = cards::card_def_or_panic(id);
@@ -2937,11 +3870,31 @@ impl Combat {
                             let d = self.player_attack_damage(amount, t);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
-                        if before > 0 && self.enemies[t].dead() {
+                        // 击杀随从不算数:只有非随从才掉金币
+                        if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
                             self.gold_gained += gold;
                             self.push_log(
                                 LogKind::Player,
                                 format!("you loot {gold} gold"),
+                            );
+                        }
+                    }
+                }
+                Effect::DamageAndKillBonusSelf { amount, bonus } => {
+                    if let Some(t) = target {
+                        let before = self.enemies[t].hp;
+                        let d = self.player_attack_damage(amount + card_bonus, t);
+                        ctx.unblocked += self.damage_enemy(t, d);
+                        // 击杀随从不算数:只有非随从(含精英与首领)才让这张牌成长
+                        if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
+                            card.bonus += bonus;
+                            // 写回牌组原件,让成长在战斗之间保留
+                            if let Some(mi) = card.master_idx {
+                                self.deck_growth.push((mi, bonus));
+                            }
+                            self.push_log(
+                                LogKind::Player,
+                                format!("the dagger grows: +{bonus} damage"),
                             );
                         }
                     }
@@ -3077,6 +4030,8 @@ impl Combat {
                     );
                     if let Some(ch) = self.choice.as_mut() {
                         ch.offered = offered;
+                        // 发现:挑中的那张本回合 0 费
+                        ch.free = true;
                     }
                 }
                 Effect::ExhaustUpTo { n } => {
@@ -3181,6 +4136,13 @@ impl Combat {
             return;
         }
         self.enemies[idx].statuses.add(status, n);
+        // 冠军腰带:玩家给敌人上易伤时附带虚弱
+        if status == Status::Vulnerable && n > 0 {
+            let weak = self.relic_sum(|fx| fx.weak_on_vulnerable);
+            if weak > 0 {
+                self.add_enemy_status(idx, Status::Weak, weak);
+            }
+        }
         if n <= 0 || !status.is_debuff() {
             return;
         }
@@ -3198,6 +4160,13 @@ impl Combat {
 
     /// 敌人给玩家上状态;有神器就先拿一层顶掉这次减益
     fn add_player_status_from_enemy(&mut self, status: Status, n: i32) {
+        // 姜:免疫虚弱;萝卜:免疫脆弱
+        if n > 0 && status == Status::Weak && self.relic_any(|fx| fx.immune_weak) {
+            return;
+        }
+        if n > 0 && status == Status::Frail && self.relic_any(|fx| fx.immune_frail) {
+            return;
+        }
         if n > 0 && status.is_debuff() && self.player.statuses.has(Status::Artifact) {
             self.player.statuses.add(Status::Artifact, -1);
             self.push_log(
@@ -3212,12 +4181,15 @@ impl Combat {
     /// 战斗中用药水
     pub fn use_potion(&mut self, def: &'static PotionDef, target: Option<usize>) {
         self.push_log(LogKind::Player, format!("you drink {}", def.name));
-        match def.fx {
+        // 神圣树皮:药水数值翻倍
+        let fx = if self.relic_sum(|f| f.potion_potency_pct) > 0 {
+            def.fx.doubled()
+        } else {
+            def.fx
+        };
+        match fx {
             PotionFx::Damage { amount } => {
-                let t = target
-                    .filter(|i| self.enemies.get(*i).map(|e| e.alive()).unwrap_or(false))
-                    .or_else(|| self.first_alive());
-                if let Some(t) = t {
+                if let Some(t) = self.potion_target(target) {
                     let taken = self.damage_enemy_plain(t, amount);
                     self.push_log(
                         LogKind::Player,
@@ -3230,6 +4202,21 @@ impl Combat {
                     self.damage_enemy_plain(t, amount);
                 }
             }
+            PotionFx::Weak { n } => {
+                if let Some(t) = self.potion_target(target) {
+                    self.add_enemy_status(t, Status::Weak, n);
+                }
+            }
+            PotionFx::Vulnerable { n } => {
+                if let Some(t) = self.potion_target(target) {
+                    self.add_enemy_status(t, Status::Vulnerable, n);
+                }
+            }
+            PotionFx::Poison { n } => {
+                if let Some(t) = self.potion_target(target) {
+                    self.add_enemy_status(t, Status::Poison, n);
+                }
+            }
             PotionFx::Block { amount } => {
                 self.gain_block(amount, false, false);
             }
@@ -3239,34 +4226,193 @@ impl Combat {
             PotionFx::Draw { n } => {
                 self.draw_cards(n as usize);
             }
-            PotionFx::Strength { n } => {
-                self.player.statuses.add(Status::Strength, n);
+            PotionFx::DrawAndRandomizeCosts { n } => {
+                self.draw_cards(n as usize);
+                self.randomize_hand_costs();
             }
-            PotionFx::Dexterity { n } => {
-                self.player.statuses.add(Status::Dexterity, n);
-            }
-            PotionFx::WeakAll { n } => {
-                for i in self.alive_enemies() {
-                    self.add_enemy_status(i, Status::Weak, n);
-                }
-            }
-            PotionFx::VulnerableAll { n } => {
-                for i in self.alive_enemies() {
-                    self.add_enemy_status(i, Status::Vulnerable, n);
-                }
-            }
-            PotionFx::Heal { amount } => {
+            PotionFx::HealPercent { pct } => {
+                let amount = self.player.max_hp * pct / 100;
                 self.heal_player(amount);
             }
             PotionFx::MaxHp { n } => {
                 self.player.max_hp += n;
                 self.player.hp += n;
             }
-            PotionFx::ClearDebuffs => {
-                self.player.statuses.clear_debuffs();
+            PotionFx::Status { status, n } => {
+                self.player.statuses.add(status, n);
             }
+            PotionFx::TempStatus { status, lose, n } => {
+                self.player.statuses.add(status, n);
+                self.player.statuses.add(lose, n);
+            }
+            PotionFx::Discovery { pool, n } => {
+                let cards = self.discovery_pool(pool);
+                self.offer_pick(cards, 3, true, def.name);
+                // 神圣树皮把份数翻倍:挑中的那张按 n 份进手
+                if let Some(ch) = self.choice.as_mut() {
+                    ch.copies = n.max(1) as usize;
+                }
+            }
+            PotionFx::ExhaustHand => {
+                if !self.hand.is_empty() {
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::Exhaust,
+                        ChoiceFilter::Any,
+                        0,
+                        &format!("{}: exhaust any number", def.name),
+                    );
+                }
+            }
+            PotionFx::DiscardHandThenDraw => {
+                if !self.hand.is_empty() {
+                    self.begin_choice(
+                        ChoiceSource::Hand,
+                        ChoiceAction::Discard,
+                        ChoiceFilter::Any,
+                        0,
+                        &format!("{}: discard any number", def.name),
+                    );
+                    if let Some(ch) = self.choice.as_mut() {
+                        ch.draw_after = true;
+                    }
+                }
+            }
+            PotionFx::ReturnFromDiscard { n } => {
+                if !self.discard.is_empty() {
+                    let need = (n as usize).min(self.discard.len());
+                    self.begin_choice(
+                        ChoiceSource::Discard,
+                        ChoiceAction::ToHand,
+                        ChoiceFilter::Any,
+                        need,
+                        &format!("{}: take a card back", def.name),
+                    );
+                }
+            }
+            PotionFx::UpgradeHand => {
+                let mut n = 0;
+                for c in self.hand.iter_mut() {
+                    if c.can_upgrade() {
+                        c.upgrade();
+                        n += 1;
+                    }
+                }
+                if n > 0 {
+                    self.push_log(
+                        LogKind::Info,
+                        format!("{n} cards are upgraded for this combat"),
+                    );
+                }
+            }
+            PotionFx::PlayTopCards { n } => {
+                for _ in 0..n {
+                    self.play_top_of_draw(false, "Distilled Chaos");
+                }
+            }
+            PotionFx::AddCardToHand { id, n, upgraded } => {
+                if let Some(card_def) = cards::card_def(id) {
+                    for _ in 0..n {
+                        if self.hand.len() >= HAND_LIMIT {
+                            break;
+                        }
+                        let mut inst = CardInstance::new(card_def);
+                        if upgraded {
+                            inst.upgrade();
+                        }
+                        self.fix_new_card(&mut inst);
+                        self.hand.push(inst);
+                    }
+                }
+            }
+            // 这两瓶由 run 层结算:脱战要换界面,填药水要动跑图状态
+            PotionFx::Escape | PotionFx::FillPotionSlots | PotionFx::Nothing => {}
+        }
+        // 玩具鸟:每次喝药回血
+        let bird = self.relic_sum(|fx| fx.heal_on_potion_use);
+        if bird > 0 {
+            self.heal_player(bird);
         }
         self.check_win();
+    }
+
+    /// 指定敌人的药水挑目标:玩家点的那个还活着就用它,否则打倒下的第一个
+    fn potion_target(&self, target: Option<usize>) -> Option<usize> {
+        target
+            .filter(|i| self.enemies.get(*i).map(|e| e.alive()).unwrap_or(false))
+            .or_else(|| self.first_alive())
+    }
+
+    /// 蛇油:手上能算出费用的牌重掷成 0~3 费(整场战斗有效,和蛇眼的"混乱"一致)
+    fn randomize_hand_costs(&mut self) {
+        let idxs: Vec<usize> = (0..self.hand.len())
+            .filter(|i| matches!(self.hand[*i].def.cost, Cost::Fixed(_)))
+            .collect();
+        for i in idxs {
+            let base = match self.hand[i].def.cost {
+                Cost::Fixed(n) => n as i32,
+                _ => continue,
+            };
+            let new = self.streams.floor(FloorStream::CardRandomRng).random(3) as i32;
+            self.hand[i].cost_delta = new - base;
+        }
+    }
+
+    /// 发现类药水的池子:本职业的某一类型(不含基础牌),或无色牌里的非普通档
+    fn discovery_pool(&self, kind: DiscoveryPool) -> Vec<&'static crate::core::card::CardDef> {
+        match kind {
+            DiscoveryPool::Colorless => cards::colorless_pool()
+                .into_iter()
+                .filter(|c| matches!(c.rarity, Rarity::Uncommon | Rarity::Rare))
+                .collect(),
+            _ => {
+                let want = match kind {
+                    DiscoveryPool::Attack => crate::core::card::CardType::Attack,
+                    DiscoveryPool::Power => crate::core::card::CardType::Power,
+                    _ => crate::core::card::CardType::Skill,
+                };
+                cards::class_card_pool()
+                    .into_iter()
+                    .filter(|c| c.kind == want)
+                    .collect()
+            }
+        }
+    }
+
+    /// 亮出 n 张不重样的候选,开一次"挑一张"的选择;牌池抽干了就少亮几张.
+    /// free 表示选中的那张本回合 0 费(发现类药水);工具箱与抄本不免费.
+    fn offer_pick(
+        &mut self,
+        mut pool: Vec<&'static crate::core::card::CardDef>,
+        n: usize,
+        free: bool,
+        label: &str,
+    ) {
+        let mut offered: Vec<CardInstance> = Vec::new();
+        while offered.len() < n && !pool.is_empty() {
+            let i = self
+                .streams
+                .floor(FloorStream::CardRandomRng)
+                .random(pool.len() as u32 - 1) as usize;
+            let def = pool.remove(i);
+            let mut inst = CardInstance::new(def);
+            self.fix_new_card(&mut inst);
+            offered.push(inst);
+        }
+        if offered.is_empty() {
+            return;
+        }
+        self.begin_choice(
+            ChoiceSource::Offered,
+            ChoiceAction::ToHand,
+            ChoiceFilter::Any,
+            1,
+            label,
+        );
+        if let Some(ch) = self.choice.as_mut() {
+            ch.offered = offered;
+            ch.free = free;
+        }
     }
 }
 
@@ -3279,11 +4425,13 @@ mod tests {
     /// 按 id 列表造一副牌
     fn from_ids(hp: i32, ids: &[&str]) -> CombatSetup {
         CombatSetup {
+            rested: false,
             hp,
             max_hp: hp,
             deck: ids.iter().map(|id| cards::card(id)).collect(),
             relics: Vec::new(),
             gold: 0,
+            lift_strength: 0,
         }
     }
 
@@ -3997,6 +5145,116 @@ mod tests {
     }
 
     #[test]
+    fn feed_only_grows_max_hp_on_non_minion_kills() {
+        // 普通怪:击杀给 3 最大生命,同时回 3 血
+        let mut c = combat_with("jaw_worm_solo", &["feed"; 5]);
+        c.enemies[0].hp = 5;
+        let (max0, hp0) = (c.player.max_hp, c.player.hp);
+        let idx = hand_idx(&c, "feed");
+        c.play_card(idx, Some(0)).unwrap();
+        assert!(c.enemies[0].dead(), "10 伤打死 5 血的虫子");
+        assert_eq!(c.player.max_hp, max0 + 3, "普通怪给上限");
+        assert_eq!(c.player.hp, hp0 + 3, "回等量血");
+
+        // 首领(不是随从):照给
+        let mut c = combat_with("bronze_automaton", &["feed"; 5]);
+        let boss = c.enemies.iter().position(|e| !e.is_minion()).unwrap();
+        c.enemies[boss].hp = 5;
+        let max0 = c.player.max_hp;
+        let idx = hand_idx(&c, "feed");
+        c.play_card(idx, Some(boss)).unwrap();
+        assert!(c.enemies[boss].dead(), "10 伤打死 5 血的首领");
+        assert_eq!(c.player.max_hp, max0 + 3, "首领不算随从,照给上限");
+
+        // 随从:打死也不给
+        let mut c = combat_with("daggers", &["feed"; 5]);
+        assert!(c.enemies[0].is_minion(), "小刀是随从");
+        c.enemies[0].hp = 5;
+        let (max0, hp0) = (c.player.max_hp, c.player.hp);
+        let idx = hand_idx(&c, "feed");
+        c.play_card(idx, Some(0)).unwrap();
+        assert!(c.enemies[0].dead(), "10 伤打死 5 血的小刀");
+        assert_eq!(c.player.max_hp, max0, "随从不算数");
+        assert_eq!(c.player.hp, hp0, "也不回血");
+    }
+
+    #[test]
+    fn hand_of_greed_does_not_pay_for_minion_kills() {
+        let mut c = combat_with("daggers", &["hand_of_greed"; 5]);
+        assert!(c.enemies[0].is_minion(), "小刀是随从");
+        c.enemies[0].hp = 5;
+        let idx = hand_idx(&c, "hand_of_greed");
+        c.play_card(idx, Some(0)).unwrap();
+        assert!(c.enemies[0].dead(), "20 伤打死 5 血的小刀");
+        assert_eq!(c.gold_gained, 0, "击杀随从不给金币");
+
+        let mut c = combat_with("jaw_worm_solo", &["hand_of_greed"; 5]);
+        c.enemies[0].hp = 5;
+        let idx = hand_idx(&c, "hand_of_greed");
+        c.play_card(idx, Some(0)).unwrap();
+        assert_eq!(c.gold_gained, 20, "普通怪照给");
+    }
+
+    /// 血祭匕首:只有"击杀非随从"才让这张牌永久 +bonus;随从与没打死都不长
+    #[test]
+    fn ritual_dagger_grows_only_on_a_non_minion_kill() {
+        let dagger = crate::core::events::event_card("ritual_dagger").expect("血祭匕首在事件牌里");
+        // 造一场手上全是匕首的战斗(匕首是事件牌,不在常规卡池里)
+        let with_dagger = |encounter: &'static str| -> Combat {
+            let deck: Vec<CardInstance> = (0..5).map(|_| CardInstance::new(dagger)).collect();
+            let setup = CombatSetup {
+                rested: false,
+                hp: 80,
+                max_hp: 80,
+                deck,
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+            };
+            let mut c = Combat::new(enc(encounter), setup, RngRegistry::new(9));
+            let rest: Vec<CardInstance> = c.draw.drain(..).collect();
+            c.hand.extend(rest);
+            c.energy = 9;
+            c
+        };
+        let dagger_bonus = |c: &Combat| -> i32 {
+            [&c.hand, &c.draw, &c.discard, &c.exhaust]
+                .into_iter()
+                .flatten()
+                .filter(|x| x.def.id == "ritual_dagger")
+                .map(|x| x.bonus)
+                .max()
+                .unwrap_or(0)
+        };
+
+        // 击杀普通怪:这张牌 +3
+        let mut c = with_dagger("jaw_worm_solo");
+        c.enemies[0].hp = 5;
+        let idx = hand_idx(&c, "ritual_dagger");
+        c.play_card(idx, Some(0)).unwrap();
+        assert!(c.enemies[0].dead(), "15 伤打死 5 血的虫子");
+        assert_eq!(dagger_bonus(&c), 3, "击杀非随从才成长");
+
+        // 击杀随从:不成长
+        let mut c = with_dagger("daggers");
+        assert!(c.enemies[0].is_minion(), "小刀是随从");
+        c.enemies[0].hp = 5;
+        let idx = hand_idx(&c, "ritual_dagger");
+        c.play_card(idx, Some(0)).unwrap();
+        assert!(c.enemies[0].dead(), "15 伤打死 5 血的小刀");
+        assert_eq!(dagger_bonus(&c), 0, "随从不算数");
+
+        // 没打死:不成长
+        let mut c = with_dagger("jaw_worm_solo");
+        c.enemies[0].hp = 200;
+        c.enemies[0].max_hp = 200;
+        let idx = hand_idx(&c, "ritual_dagger");
+        c.play_card(idx, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 185, "只打掉 15 血");
+        assert_eq!(dagger_bonus(&c), 0, "没打死不长");
+    }
+
+    #[test]
     fn panache_pays_out_on_every_fifth_card() {
         let deck = ["panache", "defend", "defend", "defend", "defend", "defend"];
         let mut c = staged(&deck, &deck);
@@ -4579,11 +5837,13 @@ mod monster_tests {
             card("strike"),
         ];
         let setup = CombatSetup {
+            rested: false,
             hp: 80,
             max_hp: 80,
             deck,
             relics: Vec::new(),
             gold: 0,
+            lift_strength: 0,
         };
         Combat::new(enc, setup, RngRegistry::new(seed))
     }
@@ -5001,11 +6261,13 @@ mod power_tests {
             card("strike"),
         ];
         let setup = CombatSetup {
+            rested: false,
             hp: 80,
             max_hp: 80,
             deck,
             relics: Vec::new(),
             gold: 0,
+            lift_strength: 0,
         };
         Combat::new(enc, setup, RngRegistry::new(11))
     }
@@ -5432,11 +6694,13 @@ mod summon_tests {
         Combat::new(
             enc,
             CombatSetup {
+            rested: false,
                 hp: 80,
                 max_hp: 80,
                 deck,
                 relics: Vec::new(),
                 gold: 0,
+                lift_strength: 0,
             },
             RngRegistry::new(seed),
         )
@@ -5669,5 +6933,270 @@ mod summon_tests {
         c.end_turn();
         assert_eq!(ids(&c), vec!["acid_slime_medium", "acid_slime_medium"]);
         assert_eq!(slots(&c), vec![0, 1], "两只子体占原来那一格和下一格");
+    }
+}
+
+
+/// 本批新实现的遗物:战斗侧的钩子各来一条真实断言
+#[cfg(test)]
+mod relic_hook_tests {
+    use super::*;
+    use crate::core::cards;
+    use crate::core::relics::{relic_def_or_panic, RelicDef, RelicFx, RelicTier};
+
+    /// 测试用遗物:把"打出即消耗"100% 改成进弃牌堆的奇异勺
+    static SPOON_ALL: RelicDef = RelicDef {
+        id: "test_spoon_all",
+        name: "Test Spoon",
+        desc: "test only",
+        tier: RelicTier::Shop,
+        pool: "shared",
+        fx: RelicFx {
+            exhaust_to_discard_pct: 100,
+            ..RelicFx::ZERO
+        },
+        note: "",
+    };
+
+    /// 一场可摆布的战斗:手牌/抽牌堆按参数摆好,遗物挂上,能量 9
+    fn staged(deck: &[&str], hand: &[&str], relics: &[&'static RelicDef]) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: deck.iter().map(|id| cards::card(id)).collect(),
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+        };
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
+        let mut c = Combat::new(enc, setup, RngRegistry::new(21));
+        c.hand.clear();
+        c.draw.clear();
+        c.discard.clear();
+        c.exhaust.clear();
+        for id in hand {
+            c.hand.push(cards::card(id));
+        }
+        for id in deck {
+            c.draw.push(cards::card(id));
+        }
+        c.energy = 9;
+        c
+    }
+
+    /// 瓶装火焰:被封装的牌开局就在手里
+    #[test]
+    fn bottled_card_is_in_the_opening_hand() {
+        let relics = vec![relic_def_or_panic("bottled_flame")];
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: {
+                let mut deck: Vec<CardInstance> = (0..10).map(|_| cards::card("strike")).collect();
+                let mut bottled = cards::card("bash");
+                bottled.bottled = true;
+                deck.push(bottled);
+                deck
+            },
+            relics,
+            gold: 0,
+            lift_strength: 0,
+        };
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
+        let c = Combat::new(enc, setup, RngRegistry::new(5));
+        assert_eq!(c.hand.len(), DRAW_PER_TURN, "开局抽五张");
+        assert!(
+            c.hand.iter().any(|x| x.def.id == "bash"),
+            "封装的牌开局就在手里"
+        );
+        assert_eq!(c.hand[0].def.id, "bash", "压在抽牌堆顶,第一个抽到");
+    }
+
+    /// 工具箱:第一回合亮出三张无色牌,挑中的进手
+    #[test]
+    fn toolbox_offers_three_colorless_cards() {
+        let relics = vec![relic_def_or_panic("toolbox")];
+        let mut c = staged(&["strike"; 10], &[], &relics);
+        let ch = c.choice.as_ref().expect("工具箱要亮牌");
+        assert_eq!(ch.source, ChoiceSource::Offered);
+        let cands = c.choice_candidates();
+        assert_eq!(cands.len(), 3, "亮三张");
+        assert!(
+            cands.iter().all(|(_, k)| cards::pool_of(k.def) == "colorless"),
+            "只给无色牌"
+        );
+        let picked = cands[0].1.def.id;
+        c.choose(0).unwrap();
+        assert!(c.choice.is_none());
+        assert!(c.hand.iter().any(|k| k.def.id == picked), "挑中的进手");
+    }
+
+    /// 尼尔瑞的抄本:回合结束亮三张,挑中的洗进抽牌堆,选完才轮到对面
+    #[test]
+    fn nilrys_codex_shuffles_a_chosen_card_into_the_draw_pile() {
+        let relics = vec![relic_def_or_panic("nilrys_codex")];
+        let mut c = staged(&["strike"; 10], &["defend"], &relics);
+        c.end_turn();
+        let ch = c.choice.as_ref().expect("回合结束要亮牌");
+        assert_eq!(ch.source, ChoiceSource::Offered);
+        assert_eq!(ch.action, ChoiceAction::ToDrawShuffled);
+        assert_eq!(c.choice_candidates().len(), 3, "亮三张");
+        let picked = c.choice_candidates()[0].1.def.id;
+        c.choose(0).unwrap();
+        assert!(c.choice.is_none());
+        assert!(c.pending_end_turn == false, "选完接着走回合尾巴");
+        assert!(
+            c.draw.iter().any(|k| k.def.id == picked),
+            "挑中的洗进抽牌堆"
+        );
+        assert_eq!(c.turn, 2, "回合已经交给对面并回到自己");
+    }
+
+    /// 抄本可以跳过:不选就不会往抽牌堆塞牌
+    #[test]
+    fn nilrys_codex_can_be_skipped() {
+        let relics = vec![relic_def_or_panic("nilrys_codex")];
+        let mut c = staged(&["strike"; 10], &["defend"], &relics);
+        c.end_turn();
+        assert!(c.choice.is_some());
+        let before = c.draw.len();
+        c.cancel_choice();
+        assert!(c.choice.is_none());
+        // 对面行动后自己抽了开局五张,抽牌堆只少这五张(没有多的牌被塞进来)
+        assert_eq!(c.draw.len(), before - DRAW_PER_TURN, "跳过就不塞牌");
+        assert_eq!(c.turn, 2, "跳过也要把回合交出去");
+    }
+
+    /// 冠军腰带:给敌人上易伤时附带 1 层虚弱
+    #[test]
+    fn champion_belt_adds_weak_when_vulnerable_lands() {
+        let relics = vec![relic_def_or_panic("champion_belt")];
+        let mut c = staged(&["bash"; 5], &["bash"], &relics);
+        c.enemies[0].hp = 999;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 2);
+        assert_eq!(c.enemies[0].statuses.get(Status::Weak), 1, "附带虚弱");
+    }
+
+    /// 蜥蜴尾巴:每场一次,致命伤改成回一半最大生命
+    #[test]
+    fn lizard_tail_saves_you_once_per_combat() {
+        let relics = vec![relic_def_or_panic("lizard_tail")];
+        let mut c = staged(&["strike"; 10], &[], &relics);
+        c.player.hp = 4;
+        c.hit_player(999);
+        assert_eq!(c.player.hp, 40, "回到最大生命的一半");
+        assert_ne!(c.phase, Phase::Lost, "没死");
+        c.player.hp = 4;
+        c.hit_player(999);
+        assert_eq!(c.phase, Phase::Lost, "同一场只有一次");
+    }
+
+    /// 蓝蜡烛:不可打出的诅咒可以打出,打出掉 1 血并消耗
+    #[test]
+    fn blue_candle_makes_curses_playable_at_a_price() {
+        let relics = vec![relic_def_or_panic("blue_candle")];
+        let mut c = staged(&["injury"; 5], &["injury"], &relics);
+        assert!(c.playable(0).is_ok(), "有蓝蜡烛就能打诅咒");
+        let hp = c.player.hp;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.hp, hp - 1, "打出诅咒掉 1 血");
+        assert_eq!(c.exhaust.len(), 1, "打完消耗");
+        assert!(c.discard.is_empty());
+    }
+
+    /// 医疗包:不可打出的状态牌可以打出,打出后消耗且不掉血
+    #[test]
+    fn medical_kit_makes_status_cards_playable_and_exhausts_them() {
+        let relics = vec![relic_def_or_panic("medical_kit")];
+        let mut c = staged(&["wound"; 5], &["wound"], &relics);
+        assert!(c.playable(0).is_ok(), "有医疗包就能打状态牌");
+        let hp = c.player.hp;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.hp, hp, "状态牌不掉血");
+        assert_eq!(c.exhaust.len(), 1, "打完消耗");
+    }
+
+    /// 没有遗物时,诅咒与状态牌还是打不出去
+    #[test]
+    fn curses_and_statuses_stay_unplayable_without_the_relics() {
+        for id in ["injury", "wound"] {
+            let c = staged(&[id; 5], &[id], &[]);
+            assert!(c.playable(0).is_err(), "{id} 不该能打出去");
+        }
+    }
+
+    /// 奇异勺:打出即消耗的牌改为进弃牌堆(每张各掷一次)
+    #[test]
+    fn strange_spoon_redirects_exhausting_cards() {
+        // 100% 版本:全都进弃牌堆
+        let mut c = staged(&["slimed"; 6], &["slimed"; 6], &[&SPOON_ALL]);
+        for _ in 0..6 {
+            c.play_card(0, None).unwrap();
+        }
+        assert_eq!(c.discard.len(), 6, "全都改进弃牌堆");
+        assert!(c.exhaust.is_empty());
+
+        // 真实奇异勺是 50%:六张里两边都该有
+        let spoon = relic_def_or_panic("strange_spoon");
+        let mut c = staged(&["slimed"; 6], &["slimed"; 6], &[spoon]);
+        for _ in 0..6 {
+            c.play_card(0, None).unwrap();
+        }
+        assert_eq!(c.discard.len() + c.exhaust.len(), 6, "六张都有去处");
+        assert!(!c.discard.is_empty() && !c.exhaust.is_empty(), "两边都该有");
+    }
+
+    /// 化学 X:X 费牌的 X 加 2(能量照常全花)
+    #[test]
+    fn chemical_x_adds_two_to_x_cost_cards() {
+        let relics = vec![relic_def_or_panic("chemical_x")];
+        let mut c = staged(&["whirlwind"; 5], &["whirlwind"], &relics);
+        c.enemies[0].hp = 999;
+        c.energy = 3;
+        let before = c.enemies[0].hp;
+        c.play_card(0, None).unwrap();
+        // 旋风每次 5 点,X = 3 + 2 = 5 次
+        assert_eq!(before - c.enemies[0].hp, 25);
+        assert_eq!(c.energy, 0, "能量还是按 X 全花掉");
+    }
+
+    /// 手钻:这一击打碎格挡时上 2 层易伤
+    #[test]
+    fn hand_drill_applies_vulnerable_when_block_breaks() {
+        let relics = vec![relic_def_or_panic("hand_drill")];
+        let mut c = staged(&["strike"; 5], &["strike"], &relics);
+        c.enemies[0].hp = 999;
+        // 打击 6 点,格挡正好 6:打碎但没掉血
+        c.enemies[0].block = 6;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].block, 0);
+        assert_eq!(c.enemies[0].hp, 999, "全被格挡吃掉");
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 2);
+
+        // 没打碎就不上易伤(场上已有易伤,这一击 6 -> 9)
+        c.enemies[0].block = 20;
+        c.hand.push(cards::card("strike"));
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].block, 11);
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 2, "不再加");
+    }
+
+    /// 神圣树皮:药水数值翻倍(火焰药剂 20 -> 40)
+    #[test]
+    fn sacred_bark_doubles_potion_effects() {
+        let potion = crate::core::potions::by_id("fire_potion").expect("火焰药剂");
+        let plain = staged(&["strike"; 10], &[], &[]);
+        let mut plain = plain;
+        plain.enemies[0].hp = 999;
+        plain.use_potion(potion, Some(0));
+        assert_eq!(999 - plain.enemies[0].hp, 20, "本来 20 点");
+
+        let mut c = staged(&["strike"; 10], &[], &[relic_def_or_panic("sacred_bark")]);
+        c.enemies[0].hp = 999;
+        c.use_potion(potion, Some(0));
+        assert_eq!(999 - c.enemies[0].hp, 40, "神圣树皮翻倍");
     }
 }

@@ -868,7 +868,7 @@ fn relic_bar(buf: &mut Buffer, area: Rect, app: &App) {
         } else {
             format!(", {}", r.name)
         };
-        put(buf, x, area.y, &text, theme::fg(theme::relic_color(r.rarity)));
+        put(buf, x, area.y, &text, theme::fg(theme::relic_tier_color(r.tier)));
         x += display_width(&text) as u16;
     }
 }
@@ -1209,6 +1209,37 @@ mod tests {
         assert!(c.choice.is_none());
         assert_eq!(c.hand.len(), 1, "挑中的那张进手");
         assert!(c.hand[0].free_this_turn, "本回合 0 费");
+    }
+
+    /// 冰冻之眼:抽牌堆按"下一个抽到的排最前"列出
+    #[test]
+    fn frozen_eye_shows_the_draw_pile_in_draw_order() {
+        let ids = |app: &App| -> Vec<&'static str> {
+            crate::ui::overlay::deck_rows(app, Overlay::Draw)
+                .iter()
+                .filter_map(|r| match r {
+                    crate::ui::CardRow::Card { card, .. } => Some(card.def.id),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut app = app_in_combat(4, "jaw_worm_solo");
+        {
+            let c = app.run.combat_mut().expect("战斗中");
+            c.hand.clear();
+            c.draw.clear();
+            // 抽牌堆的末尾是下一个抽到的
+            for id in ["bash", "defend", "strike"] {
+                c.draw.push(crate::core::cards::card(id));
+            }
+        }
+        assert_eq!(ids(&app), vec!["bash", "defend", "strike"], "本来按堆内顺序");
+        app.run.debug_add_relic("frozen_eye").unwrap();
+        assert_eq!(
+            ids(&app),
+            vec!["strike", "defend", "bash"],
+            "冰冻之眼:下一个抽到的排最前"
+        );
     }
 
     #[test]

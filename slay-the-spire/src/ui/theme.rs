@@ -52,15 +52,26 @@ pub fn kind_style(kind: NodeKind) -> Style {
     }
 }
 
-/// 遗物名字的颜色:按稀有度——starter(基本)/common 默认白,uncommon 蓝,
-/// rare 橙黄;Special 暂按金币色处理(数据里目前只有前四种)
-pub fn relic_color(rarity: crate::core::card::Rarity) -> Color {
-    use crate::core::card::Rarity;
-    match rarity {
-        Rarity::Uncommon => Color::Rgb(120, 170, 240),
-        Rarity::Rare => Color::Rgb(250, 186, 66),
-        Rarity::Special => GOLD,
-        _ => FG,
+/// 燃烧精英:橙底(和普通精英的暗红底区分),地图与图例共用
+pub fn burning_style() -> Style {
+    Style::default()
+        .fg(BG)
+        .bg(WARN)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// 遗物名字的颜色:按档次——起始/普通默认白,罕见蓝,稀有多橙黄,
+/// Boss 红,商店绿,事件紫,兜底(Special)用金币色
+pub fn relic_tier_color(tier: crate::core::relics::RelicTier) -> Color {
+    use crate::core::relics::RelicTier;
+    match tier {
+        RelicTier::Uncommon => Color::Rgb(120, 170, 240),
+        RelicTier::Rare => Color::Rgb(250, 186, 66),
+        RelicTier::Boss => Color::Rgb(236, 96, 108),
+        RelicTier::Shop => Color::Rgb(120, 222, 140),
+        RelicTier::Event => Color::Rgb(206, 150, 255),
+        RelicTier::Special => GOLD,
+        RelicTier::Starter | RelicTier::Common => FG,
     }
 }
 

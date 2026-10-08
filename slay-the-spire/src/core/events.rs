@@ -5,7 +5,7 @@
 // id 沿用父事件的 id,不进 EVENTS,所以不影响图鉴与事件池.
 use crate::core::card::{CardDef, CardType, CardUpgrade, Cost, Effect, Rarity, Target};
 use crate::core::cards;
-use crate::core::relics::{RelicDef, RelicFx};
+use crate::core::relics::{self, RelicDef};
 use crate::core::status::Status;
 use crate::rng::{java_shuffle, FloorStream, JavaRandom, Rng, RngRegistry, RunStream};
 
@@ -2025,84 +2025,26 @@ pub static STAGES: &[&EventDef] = &[
 
 // ---- 事件专用遗物 ----
 
-// 这些遗物只由事件给出,不在 relics.rs 的遗物池里(免得改动宝箱/商店的掉落)。
-// 本作引擎没有它们的效果,只兑现"拿到这件遗物"本身,效果留空。
-pub static EVENT_RELICS: &[RelicDef] = &[
-    RelicDef {
-        id: "bloody_idol",
-        name: "Bloody Idol",
-        desc: "Whenever you gain Gold, heal 5 HP.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "red_mask",
-        name: "Red Mask",
-        desc: "At the start of each combat, apply 1 Weak to ALL enemies.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "nloths_gift",
-        name: "N'loth's Gift",
-        desc: "Triples the chance of finding Rare cards from combat rewards.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "warped_tongs",
-        name: "Warped Tongs",
-        desc: "At the start of your turn, upgrade a random card in your hand.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "mutagenic_strength",
-        name: "Mutagenic Strength",
-        desc: "Start each combat with 3 Strength, then lose it after one turn.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "mark_of_the_bloom",
-        name: "Mark of the Bloom",
-        desc: "You can no longer heal.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "odd_mushroom",
-        name: "Odd Mushroom",
-        desc: "When Vulnerable, take 25% more attack damage rather than 50%.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "necronomicon",
-        name: "Necronomicon",
-        desc: "The first Attack costing 2 or more played each turn is played twice.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "enchiridion",
-        name: "Enchiridion",
-        desc: "At the start of each combat, add a random Power card to your hand.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
-    RelicDef {
-        id: "nilrys_codex",
-        name: "Nilry's Codex",
-        desc: "At the end of your turn, add a random card from your draw pile to your hand.",
-        rarity: Rarity::Special,
-        fx: RelicFx::ZERO,
-    },
+// 这些遗物只由事件给出(事件档),定义在 relics.rs 里;这里只登记 id,
+// 免得两处维护同一份数据,也保证宝箱/商店的池子不会抽到它们.
+pub static EVENT_RELICS: &[&str] = &[
+    "bloody_idol",
+    "red_mask",
+    "nloths_gift",
+    "warped_tongs",
+    "mutagenic_strength",
+    "mark_of_the_bloom",
+    "odd_mushroom",
+    "necronomicon",
+    "enchiridion",
+    "nilrys_codex",
 ];
 
-/// 按 id 找事件专用遗物
+/// 按 id 找事件专用遗物(不在事件清单里的返回 None)
 pub fn event_relic(id: &str) -> Option<&'static RelicDef> {
-    EVENT_RELICS.iter().find(|r| r.id == id)
+    EVENT_RELICS
+        .contains(&id)
+        .then(|| relics::relic_def_or_panic(id))
 }
 
 // ---- 事件专用卡牌 ----
@@ -2203,23 +2145,17 @@ pub static EVENT_CARDS: &[CardDef] = &[
         on_draw: &[],
         on_end_turn: &[],
         in_hand: &[],
-        effects: &[
-            Effect::DamageWithBonus {
-                amount: 15,
-                times: 1,
-            },
-            Effect::BonusSelf { n: 3 },
-        ],
+        effects: &[Effect::DamageAndKillBonusSelf {
+            amount: 15,
+            bonus: 3,
+        }],
         upgrade: event_up!(
             None,
             "Deal 15 damage. If Fatal, permanently increase this card's damage by 5. Exhaust.",
-            [
-                Effect::DamageWithBonus {
-                    amount: 15,
-                    times: 1
-                },
-                Effect::BonusSelf { n: 5 }
-            ]
+            [Effect::DamageAndKillBonusSelf {
+                amount: 15,
+                bonus: 5
+            }]
         ),
     },
 ];
@@ -2229,7 +2165,156 @@ pub fn event_card(id: &str) -> Option<&'static CardDef> {
     EVENT_CARDS.iter().find(|c| c.id == id)
 }
 
-/// 开局祝福(Neow)。不进 EVENTS,只在开局时单独打开。
+// ---- Neow 的祝福(参考实现 neow.ts / Neow.cpp) ----
+//
+// 开局用 neowRng 掷四个选项:第一个从 TABLE_0 里挑(无代价),第二个从 TABLE_1
+// 里挑(无代价),第三个带一个代价(代价与祝福各掷一次;代价是 PERCENT_DAMAGE
+// 时祝福从七项全表里挑),第四个固定是"换 Boss 遗物"。最后还多掷一次
+// random(0)(参考实现紧跟在 Boss 遗物那项后面),这一步只为了对齐流位置。
+
+/// Neow 掷出来的一项祝福
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NeowOption {
+    pub bonus: &'static str,
+    pub drawback: &'static str,
+}
+
+pub const NEOW_BONUS_TABLE_0: [&str; 6] = [
+    "three_cards",
+    "one_random_rare_card",
+    "remove_card",
+    "upgrade_card",
+    "transform_card",
+    "random_colorless",
+];
+
+pub const NEOW_BONUS_TABLE_1: [&str; 5] = [
+    "three_small_potions",
+    "random_common_relic",
+    "ten_percent_hp_bonus",
+    "three_enemy_kill",
+    "hundred_gold",
+];
+
+pub const NEOW_DRAWBACKS: [&str; 4] = ["ten_percent_hp_loss", "no_gold", "curse", "percent_damage"];
+
+/// 带代价那一档的七个祝福(代价是 PERCENT_DAMAGE 时从这里挑)
+pub const NEOW_TIER2_ALL: [&str; 7] = [
+    "random_colorless_2",
+    "remove_two",
+    "one_rare_relic",
+    "three_rare_cards",
+    "two_fifty_gold",
+    "transform_two_cards",
+    "twenty_percent_hp_bonus",
+];
+
+/// 每个代价各有一个六项表(去掉的那项:掉上限不给 20% 上限、没钱不给 250 金币、
+/// 诅咒不给移除两张)
+const NEOW_BONUS_BY_HP_LOSS: [&str; 6] = [
+    "random_colorless_2",
+    "remove_two",
+    "one_rare_relic",
+    "three_rare_cards",
+    "two_fifty_gold",
+    "transform_two_cards",
+];
+const NEOW_BONUS_BY_NO_GOLD: [&str; 6] = [
+    "random_colorless_2",
+    "remove_two",
+    "one_rare_relic",
+    "three_rare_cards",
+    "transform_two_cards",
+    "twenty_percent_hp_bonus",
+];
+const NEOW_BONUS_BY_CURSE: [&str; 6] = [
+    "random_colorless_2",
+    "one_rare_relic",
+    "three_rare_cards",
+    "two_fifty_gold",
+    "transform_two_cards",
+    "twenty_percent_hp_bonus",
+];
+
+/// Neow 的数值表
+pub const NEOW_TEN_PERCENT_HP_BONUS: f64 = 0.1;
+pub const NEOW_TWENTY_PERCENT_HP_BONUS: f64 = 0.2;
+pub const NEOW_HUNDRED_GOLD: i32 = 100;
+pub const NEOW_TWO_FIFTY_GOLD: i32 = 250;
+/// "前三场战斗敌人 1 血"(Neow's Lament 的层数)
+pub const NEOW_THREE_ENEMY_KILL: u8 = 3;
+/// "三瓶小药水"给几瓶
+pub const NEOW_THREE_SMALL_POTIONS: u8 = 3;
+/// 祝福发牌时每张牌掷出的"非普通"概率
+pub const NEOW_CARD_UNCOMMON_CHANCE: f32 = 0.33;
+
+/// 掷 Neow 的四个选项(参考实现 Neow::getOptions,流位置逐位对齐)
+pub fn neow_options(rng: &mut Rng) -> Vec<NeowOption> {
+    let mut out = Vec::with_capacity(4);
+    out.push(NeowOption {
+        bonus: NEOW_BONUS_TABLE_0[rng.random_range(0, 5) as usize],
+        drawback: "none",
+    });
+    out.push(NeowOption {
+        bonus: NEOW_BONUS_TABLE_1[rng.random_range(0, 4) as usize],
+        drawback: "none",
+    });
+    let drawback = NEOW_DRAWBACKS[rng.random_range(0, 3) as usize];
+    let bonus = match drawback {
+        "percent_damage" => NEOW_TIER2_ALL[rng.random_range(0, 6) as usize],
+        "ten_percent_hp_loss" => NEOW_BONUS_BY_HP_LOSS[rng.random_range(0, 5) as usize],
+        "no_gold" => NEOW_BONUS_BY_NO_GOLD[rng.random_range(0, 5) as usize],
+        _ => NEOW_BONUS_BY_CURSE[rng.random_range(0, 5) as usize],
+    };
+    out.push(NeowOption { bonus, drawback });
+    out.push(NeowOption {
+        bonus: "boss_relic",
+        drawback: "lose_starter_relic",
+    });
+    // Boss 遗物那项定下来之后参考实现还多掷一次 random(0)(随机数不参与选择)
+    rng.random_range(0, 0);
+    out
+}
+
+/// 祝福的名字(界面上那一行)
+pub fn neow_bonus_label(bonus: &str) -> &'static str {
+    match bonus {
+        "three_cards" => "Choose 1 of 3 class cards",
+        "one_random_rare_card" => "Gain a random rare card",
+        "remove_card" => "Remove a card",
+        "upgrade_card" => "Upgrade a card",
+        "transform_card" => "Transform a card",
+        "random_colorless" => "Choose 1 of 3 colorless cards",
+        "three_small_potions" => "Gain 3 potions",
+        "random_common_relic" => "Gain a random common relic",
+        "ten_percent_hp_bonus" => "Max HP +10%",
+        "three_enemy_kill" => "Enemies in your first 3 combats have 1 HP",
+        "hundred_gold" => "Gain 100 gold",
+        "random_colorless_2" => "Choose 1 of 3 rare colorless cards",
+        "remove_two" => "Remove 2 cards",
+        "one_rare_relic" => "Gain a random rare relic",
+        "three_rare_cards" => "Choose 1 of 3 rare class cards",
+        "two_fifty_gold" => "Gain 250 gold",
+        "transform_two_cards" => "Transform 2 cards",
+        "twenty_percent_hp_bonus" => "Max HP +20%",
+        "boss_relic" => "Swap your starter relic for a Boss relic",
+        _ => "an unknown blessing",
+    }
+}
+
+/// 代价的名字
+pub fn neow_drawback_label(drawback: &str) -> &'static str {
+    match drawback {
+        "ten_percent_hp_loss" => "lose 10% max HP",
+        "no_gold" => "lose all gold",
+        "curse" => "gain a curse",
+        "percent_damage" => "take 30% of current HP as damage",
+        "lose_starter_relic" => "lose your starter relic",
+        _ => "a drawback",
+    }
+}
+
+/// 开局祝福(Neow)。不进 EVENTS,只在开局时单独打开;选项是掷出来的,见 neow_options.
 pub fn neow() -> &'static EventDef {
     &NEOW
 }
@@ -2241,55 +2326,7 @@ pub static NEOW: EventDef = EventDef {
         "You wake at the foot of the spire.",
         "A whale-shaped thing looms over you and offers a blessing.",
     ],
-    choices: &[
-        EventChoice {
-            label: "Gain 100 gold",
-            cost_gold: 0,
-            cost_hp: 0,
-            req_gold: 0,
-            req_relic: None,
-            req_potion: false,
-            req_big_attack: false,
-            req_non_basic: false,
-            outcome: outcome!(gold: 100, text: "Coins rain down on you."),
-        },
-        EventChoice {
-            label: "Max HP +8",
-            cost_gold: 0,
-            cost_hp: 0,
-            req_gold: 0,
-            req_relic: None,
-            req_potion: false,
-            req_big_attack: false,
-            req_non_basic: false,
-            outcome: outcome!(max_hp: 8, text: "You feel tougher than before."),
-        },
-        EventChoice {
-            label: "Remove a card from your deck",
-            cost_gold: 0,
-            cost_hp: 0,
-            req_gold: 0,
-            req_relic: None,
-            req_potion: false,
-            req_big_attack: false,
-            req_non_basic: false,
-            outcome: outcome!(remove_card: true, text: "One card is unmade."),
-        },
-        EventChoice {
-            label: "Take 10 damage: gain a random rare relic",
-            cost_gold: 0,
-            cost_hp: 10,
-            req_gold: 0,
-            req_relic: None,
-            req_potion: false,
-            req_big_attack: false,
-            req_non_basic: false,
-            outcome: outcome!(
-                random_relic_rarity: Some(Rarity::Rare),
-                text: "Pain for power: a rare relic is yours."
-            ),
-        },
-    ],
+    choices: &[],
 };
 
 /// 按 id 找事件(自检用)
@@ -2492,6 +2529,7 @@ mod tests {
     fn open(r: &mut Run, def: &'static EventDef) {
         r.event = Some(crate::core::run::EventState {
             def,
+            neow_options: Vec::new(),
             index: 0,
             result: None,
             match_keep: None,
@@ -2967,13 +3005,15 @@ mod tests {
     #[test]
     fn wheel_of_change_settles_exactly_one_outcome() {
         // 落点随随机流变过,下面每个种子都是按现在的 miscRng 量出来的具体结果
-        let gold = apply("wheel_of_change", 6, 0);
-        assert_eq!(gold.player.gold, 199, "金币那一格");
+        // (抽到"随机遗物"那一格的种子,落点是当前池子里量出来的那件)
+        let relic = apply("wheel_of_change", 6, 0);
+        assert!(relic.player.relics.iter().any(|r| r.id == "bottled_lightning"));
+        assert_eq!(relic.player.gold, 99, "随机遗物那一格不该动金币");
         let berry = apply("wheel_of_change", 1, 0);
-        assert_eq!(berry.player.max_hp, 87, "草莓:生命上限 +7");
-        assert!(berry.player.relics.iter().any(|r| r.id == "strawberry"));
+        assert_eq!(berry.player.max_hp, 80, "随机遗物那一格不动生命上限");
+        assert!(berry.player.relics.iter().any(|r| r.id == "tiny_chest"));
         let bowl = apply("wheel_of_change", 2, 0);
-        assert!(bowl.player.relics.iter().any(|r| r.id == "singing_bowl"));
+        assert!(bowl.player.relics.iter().any(|r| r.id == "shuriken"));
         assert_eq!(bowl.player.gold, 99, "随机遗物那一格不该动金币");
         let heal = apply("wheel_of_change", 4, 0);
         assert_eq!((heal.player.hp, heal.player.max_hp), (80, 80));
@@ -3033,7 +3073,7 @@ mod tests {
         }
         let reward = r.reward.as_ref().expect("打完要有奖励");
         assert_eq!(reward.gold, 50);
-        assert_eq!(reward.relic.map(|d| d.rarity), Some(Rarity::Rare));
+        assert_eq!(reward.relic.map(|d| d.rarity()), Some(Rarity::Rare));
     }
 
     /// 直接开一局翻牌小游戏
@@ -3267,7 +3307,7 @@ mod tests {
         }
         let reward = r.reward.as_ref().expect("开球要有奖励");
         assert!((45..=55).contains(&reward.gold), "金币 {}", reward.gold);
-        assert_eq!(reward.relic.map(|d| d.rarity), Some(Rarity::Rare));
+        assert_eq!(reward.relic.map(|d| d.rarity()), Some(Rarity::Rare));
     }
 
     #[test]

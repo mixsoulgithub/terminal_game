@@ -1122,7 +1122,7 @@ impl App {
     }
 
     fn map_key(&mut self, key: KeyEvent) {
-        let reach_len = self.run.reachable().len();
+        let reach_len = self.run.travel_options().len();
         let max_start = self
             .run
             .map
@@ -1149,7 +1149,7 @@ impl App {
             KeyCode::Char('G') => self.map_scroll = max_start,
             KeyCode::Char('m') => {}
             KeyCode::Enter | KeyCode::Char(' ') => {
-                let reach = self.run.reachable();
+                let reach = self.run.travel_options();
                 let Some(node) = reach.get(self.map_sel.min(reach.len().saturating_sub(1))) else {
                     self.warn("nowhere to go");
                     return;
@@ -1428,6 +1428,7 @@ impl App {
                 Some(RewardSlot::Gold) => 0,
                 Some(RewardSlot::Card(_)) => 1,
                 Some(RewardSlot::Relic) => 2,
+                Some(RewardSlot::EmeraldKey) => 4,
                 _ => 3,
             }
         };
@@ -1567,22 +1568,33 @@ impl App {
     // ---- 营火 ----
 
     fn rest_key(&mut self, key: KeyEvent) {
+        let n = self.run.rest_option_count().max(1);
         match key.code {
             KeyCode::Char('j') | KeyCode::Char('l') | KeyCode::Down | KeyCode::Right => {
-                self.rest_index = (self.rest_index + 1) % 2;
+                self.rest_index = (self.rest_index + 1) % n;
             }
             KeyCode::Char('k') | KeyCode::Char('h') | KeyCode::Up | KeyCode::Left => {
-                self.rest_index = (self.rest_index + 1) % 2;
+                self.rest_index = (self.rest_index + 1) % n;
             }
-            KeyCode::Char('1') => self.rest_index = 0,
-            KeyCode::Char('2') => self.rest_index = 1,
+            // 数字键直接点第 i 项(最多 9 项)
+            KeyCode::Char(c @ '1'..='9') => {
+                let i = c as usize - '1' as usize;
+                if i < n {
+                    self.rest_index = i;
+                }
+            }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                if self.rest_index == 0 {
-                    self.run.rest_heal();
-                    self.info("you rest by the fire");
-                } else {
-                    self.run.rest_smith();
-                    self.info("choose a card to upgrade");
+                let opt = self
+                    .run
+                    .rest_options()
+                    .get(self.rest_index.min(n - 1))
+                    .copied();
+                match opt {
+                    Some(o) => match self.run.rest_choose(o) {
+                        Ok(msg) => self.info(msg),
+                        Err(e) => self.warn(e),
+                    },
+                    None => self.warn("nothing to do here"),
                 }
                 self.clamp();
             }
@@ -1642,6 +1654,12 @@ impl App {
     // ---- 宝箱 ----
 
     fn treasure_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Char('s') && self.run.chest_sapphire_available() {
+            self.run.take_sapphire_key();
+            self.info("you take the Sapphire Key");
+            self.clamp();
+            return;
+        }
         if matches!(
             key.code,
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('t') | KeyCode::Esc | KeyCode::Char('q')
@@ -2042,11 +2060,20 @@ impl App {
             self.hand_sel = 0;
             self.target_sel = 0;
         }
-        let reach = self.run.reachable().len();
+        let reach = self.run.travel_options().len();
         if reach == 0 {
             self.map_sel = 0;
         } else if self.map_sel >= reach {
             self.map_sel = reach - 1;
+        }
+        // 战斗里冒出待选择(工具箱/抄本/开局封印的选牌)就自动把窗口叫出来
+        if self.run.screen == Screen::Combat
+            && self.run.combat().is_some_and(|c| c.choice.is_some())
+            && self.overlay.is_none()
+        {
+            self.open_choice_window();
+            self.msg.clear();
+            self.msg_ttl = 0;
         }
     }
 
@@ -2098,7 +2125,7 @@ impl App {
             Screen::Shop => vec![("j/k", "pick"), ("enter", "buy"), ("esc", "leave")],
             Screen::Rest => vec![("j/k", "pick"), ("enter", "confirm")],
             Screen::Event => vec![("j/k", "pick"), ("enter", "choose")],
-            Screen::Treasure => vec![("enter", "take the relic")],
+            Screen::Treasure => vec![("enter", "take the relic"), ("s", "sapphire key")],
             Screen::Pick => vec![("j/k", "pick"), ("enter", "confirm"), ("esc", "cancel")],
             Screen::Victory | Screen::Death => vec![
                 ("R", "same seed"),

@@ -79,6 +79,8 @@ pub struct Node {
     pub floor: usize,
     pub col: usize,
     pub kind: NodeKind,
+    /// 这个精英是不是"燃烧精英":打通给绿钥匙,开局带一个增益
+    pub burning: bool,
     /// 上一层可通向本节点的节点下标
     pub prev: Vec<usize>,
     /// 本节点通向的下一层节点下标
@@ -92,11 +94,18 @@ pub struct ActMap {
     pub rows: Vec<Vec<usize>>,
     /// Boss 节点下标
     pub boss: usize,
+    /// 燃烧精英的增益编号(0..=3);没有燃烧精英时是 -1
+    pub burning_buff: i32,
 }
 
 impl ActMap {
     pub fn node(&self, i: usize) -> &Node {
         &self.nodes[i]
+    }
+
+    /// 燃烧精英的节点下标(没有就是 None)
+    pub fn burning_node(&self) -> Option<usize> {
+        self.nodes.iter().position(|n| n.burning)
     }
 
     pub fn row(&self, floor: usize) -> &[usize] {
@@ -147,15 +156,18 @@ impl ActMap {
         filter_redundant_edges_from_first_row(&mut g);
         assign_rooms(&mut g, rng);
 
-        // 参考实现还会再掷两下挑"燃烧精英"和它的增益.本作没有燃烧精英这套机制,
-        // 掷点照烧,保证 mapRng 的位置和参考实现一致
+        // 燃烧精英:从所有精英里随机挑一个(参考实现的 assignBurningElite),
+        // 再掷一个增益编号(0..=3).第一章一定会设置,和参考实现一样两掷都消耗.
         let elites = g.elites();
+        let mut burning = None;
+        let mut buff = -1;
         if !elites.is_empty() {
-            let _ = rng.random(elites.len() as u32 - 1);
-            let _ = rng.random_range(0, 3);
+            let idx = rng.random(elites.len() as u32 - 1) as usize;
+            burning = Some(elites[idx]);
+            buff = rng.random_range(0, 3);
         }
 
-        g.into_act_map()
+        g.into_act_map(burning, buff)
     }
 
     /// 按参考实现的 mapToString 排版,给金标准测试逐格对比用
@@ -271,8 +283,9 @@ impl Grid {
     }
 
     /// 把网格变成引擎用的 ActMap:存在的节点拼成下标,边接成 prev/next,
-    /// 顶上再挂一个 Boss 节点(第 14 行的路径终点都通向它)
-    fn into_act_map(self) -> ActMap {
+    /// 顶上再挂一个 Boss 节点(第 14 行的路径终点都通向它).
+    /// burning 是燃烧精英所在格 (列, 行),buff 是它的增益编号.
+    fn into_act_map(self, burning: Option<(usize, usize)>, buff: i32) -> ActMap {
         let present = |y: usize, x: usize| -> bool {
             if y == FLOORS - 1 {
                 self.n[FLOORS - 2].iter().any(|n| n.edges.contains(&x))
@@ -297,6 +310,7 @@ impl Grid {
                     floor: y,
                     col: x,
                     kind,
+                    burning: burning == Some((x, y)),
                     prev: Vec::new(),
                     next: Vec::new(),
                 });
@@ -307,6 +321,7 @@ impl Grid {
             floor: FLOORS,
             col: BOSS_COL,
             kind: NodeKind::Boss,
+            burning: false,
             prev: Vec::new(),
             next: Vec::new(),
         });
@@ -336,7 +351,12 @@ impl Grid {
         for r in rows.iter_mut() {
             r.sort_by_key(|i| nodes[*i].col);
         }
-        ActMap { nodes, rows, boss }
+        ActMap {
+            nodes,
+            rows,
+            boss,
+            burning_buff: buff,
+        }
     }
 }
 

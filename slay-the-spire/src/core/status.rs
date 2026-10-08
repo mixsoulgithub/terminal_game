@@ -103,6 +103,17 @@ pub enum Status {
     TimeWarp,
     /// 睡着(拉格文):不行动,挨打会醒
     Asleep,
+    // 药水需要的状态
+    /// 接下来的 n 张牌打两次(复制药水)
+    Duplication,
+    /// 自己回合结束时扣掉等量力量(力量药水)
+    LoseStrength,
+    /// 自己回合结束时扣掉等量敏捷(敏捷药水)
+    LoseDexterity,
+    /// 集中:本作没有充能球,挂上也不影响任何计算(集中药水)
+    Focus,
+    /// 自己回合开始时掉等量生命再减一层(毒药水)
+    Poison,
 }
 
 impl Status {
@@ -172,6 +183,11 @@ impl Status {
             StrengthUp => "Strength Up",
             TimeWarp => "Time Warp",
             Asleep => "Asleep",
+            Duplication => "Duplication",
+            LoseStrength => "Lose Strength",
+            LoseDexterity => "Lose Dexterity",
+            Focus => "Focus",
+            Poison => "Poison",
         }
     }
 
@@ -242,6 +258,11 @@ impl Status {
             StrengthUp => "STR+",
             TimeWarp => "TIME",
             Asleep => "SLP",
+            Duplication => "DUPL",
+            LoseStrength => "LSTR",
+            LoseDexterity => "LDEX",
+            Focus => "FOC",
+            Poison => "PSN",
         }
     }
 
@@ -260,16 +281,17 @@ impl Status {
                 | Surrounded
                 | Constricted
                 | Slow
+                | Poison
         )
     }
 
     /// 回合结束时层数减一(持续整场战斗的减益不算)
     pub fn decays(self) -> bool {
         use Status::*;
-        if matches!(self, Confused | Hex | Surrounded | Constricted | Slow) {
+        if matches!(self, Confused | Hex | Surrounded | Constricted | Slow | Poison) {
             return false;
         }
-        self.is_debuff() || matches!(self, DoubleTap | Rage | FlameBarrier | NoBlock)
+        self.is_debuff() || matches!(self, DoubleTap | Rage | FlameBarrier | NoBlock | Duplication)
     }
 
 }

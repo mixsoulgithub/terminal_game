@@ -3583,6 +3583,21 @@ pub fn reward_pool(rarity: Rarity) -> Vec<&'static CardDef> {
     out
 }
 
+/// 棱彩碎片用的奖励池:本职业牌 + 无色牌(语料里其余职业的牌本作没实装,
+/// 所以"其它颜色"在这里只能体现为无色牌)
+pub fn prismatic_reward_pool(rarity: Rarity) -> Vec<&'static CardDef> {
+    let mut out: Vec<&'static CardDef> = CARDS
+        .iter()
+        .filter(|c| {
+            c.rarity == rarity
+                && !matches!(c.kind, CardType::Status | CardType::Curse)
+                && matches!(pool_of(c), "class" | "colorless")
+        })
+        .collect();
+    bundle_order(&mut out);
+    out
+}
+
 /// 诅咒牌(事件与遗物会把它们塞进牌组)
 pub fn curses() -> Vec<&'static CardDef> {
     CARDS
@@ -3816,7 +3831,8 @@ mod tests {
                     | Effect::DamagePerStrike { .. }
                     | Effect::DamageStrengthMult { .. }
                     | Effect::DamageIfVulnerable { .. }
-                    | Effect::DamageAndKillMaxHp { .. } => true,
+                    | Effect::DamageAndKillMaxHp { .. }
+                    | Effect::DamageAndKillBonusSelf { .. } => true,
                     // 伤害为 0 的 ExhaustNonAttacks 只是在消耗非攻击牌(重整旗鼓),不需要目标
                     Effect::ExhaustNonAttacks { damage } => *damage != 0,
                     _ => false,

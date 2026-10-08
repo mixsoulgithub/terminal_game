@@ -153,6 +153,9 @@ pub enum Effect {
         times: u8,
         gold: i32,
     },
+    /// 造成伤害;若因此击杀非随从则永久提升本卡伤害(血祭匕首)
+    /// amount 是基础伤害,bonus 是击杀后 card.bonus 的增量(卡牌自身成长)
+    DamageAndKillBonusSelf { amount: i32, bonus: i32 },
     /// 手里没有攻击牌才抽 n 张(急躁)
     DrawIfNoAttacks { n: u8 },
     /// 随机无色牌进手牌(杂耍);free 表示本回合 0 费,upgraded 表示直接给升级版
@@ -268,6 +271,10 @@ pub struct CardInstance {
     pub plus: u8,
     /// 被明确"放到抽牌堆顶"的次序(0 = 没放过),数字越大越靠顶
     pub topped: u32,
+    /// 这张牌在牌组原件里的下标(战斗内成长要写回原件时用);新造的牌是 None
+    pub master_idx: Option<usize>,
+    /// 被瓶装遗物封装过:战斗开局直接进手牌(一张牌只会进一个瓶子)
+    pub bottled: bool,
 }
 
 impl CardInstance {
@@ -283,6 +290,8 @@ impl CardInstance {
             cost_cap_combat: 0,
             plus: 0,
             topped: 0,
+            master_idx: None,
+            bottled: false,
         }
     }
 
@@ -443,7 +452,8 @@ impl CardInstance {
         let mut total = 0;
         for e in self.effects() {
             match e {
-                Effect::DamageWithBonus { amount, .. } => total += amount + self.bonus,
+                Effect::DamageWithBonus { amount, .. }
+                | Effect::DamageAndKillBonusSelf { amount, .. } => total += amount + self.bonus,
                 _ => {}
             }
         }

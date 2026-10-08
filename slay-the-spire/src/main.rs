@@ -191,7 +191,7 @@ fn dump(what: &str) -> Result<(), String> {
         }
         "relics" => {
             for r in core::relics::RELICS {
-                println!("{:<20} {:<8} {}", r.id, r.rarity.name(), r.desc);
+                println!("{:<20} {:<8} {:<8} {}", r.id, r.tier.name(), r.rarity().name(), r.desc);
             }
             Ok(())
         }

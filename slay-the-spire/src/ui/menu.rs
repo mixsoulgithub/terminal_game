@@ -6,7 +6,7 @@ use ratatui::style::Style;
 
 use crate::app::App;
 use crate::core::card::CardInstance;
-use crate::core::run::{RewardSlot, ShopItem};
+use crate::core::run::{RestOption, RewardSlot, ShopItem};
 use crate::ui::theme;
 use crate::ui::{display_width, draw_box, put, put_padded, truncate, wrap_text};
 
@@ -45,7 +45,15 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
     let others: Vec<usize> = slots
         .iter()
         .enumerate()
-        .filter(|(_, s)| matches!(s, RewardSlot::Relic | RewardSlot::Potion))
+        .filter(|(_, s)| {
+            matches!(
+                s,
+                RewardSlot::Relic
+                    | RewardSlot::RelicChoice(_)
+                    | RewardSlot::Potion
+                    | RewardSlot::EmeraldKey
+            )
+        })
         .map(|(i, _)| i)
         .collect();
 
@@ -114,7 +122,14 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
             RewardSlot::Relic => match r.relic {
                 Some(d) => (
                     format!("Relic  {}  ({})", d.name, d.desc),
-                    theme::relic_color(d.rarity),
+                    theme::relic_tier_color(d.tier),
+                ),
+                None => continue,
+            },
+            RewardSlot::RelicChoice(k) => match r.relic_choices.get(k) {
+                Some(d) => (
+                    format!("Relic  {}  ({})", d.name, d.desc),
+                    theme::relic_tier_color(d.tier),
                 ),
                 None => continue,
             },
@@ -136,6 +151,10 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 }
                 None => continue,
             },
+            RewardSlot::EmeraldKey => (
+                "Emerald Key   from the burning elite".to_string(),
+                theme::GOOD,
+            ),
             _ => continue,
         };
         let style = if sel { theme::selected() } else { theme::fg(color) };
@@ -255,15 +274,15 @@ fn shop(buf: &mut Buffer, area: Rect, app: &App) {
             buf,
             detail,
             def.name,
-            theme::fg(theme::relic_color(def.rarity)),
-            Some(def.rarity.name()),
+            theme::fg(theme::relic_tier_color(def.tier)),
+            Some(def.tier.name()),
             def.desc,
         ),
         ShopItem::Potion(def, _) => put_centered_detail(
             buf,
             detail,
             &format!("({})", def.name),
-            theme::fg(theme::relic_color(def.rarity)),
+            theme::fg(theme::corpus_color(def.rarity.name())),
             Some(def.rarity.name()),
             def.desc,
         ),
@@ -321,7 +340,7 @@ fn shop_row(
             let style = if dead {
                 theme::dim().bg(bg)
             } else {
-                theme::fg(theme::relic_color(def.rarity)).bg(bg)
+                theme::fg(theme::relic_tier_color(def.tier)).bg(bg)
             };
             put(buf, nx, y, &truncate(def.name, name_w), style);
         }
@@ -330,7 +349,7 @@ fn shop_row(
             let style = if dead {
                 theme::dim().bg(bg)
             } else {
-                theme::fg(theme::relic_color(def.rarity)).bg(bg)
+                theme::fg(theme::corpus_color(def.rarity.name())).bg(bg)
             };
             put(buf, nx, y, &truncate(&format!("({})", def.name), name_w), style);
         }
@@ -398,11 +417,41 @@ fn rest(buf: &mut Buffer, area: Rect, app: &App) {
     if inner_w == 0 || area.height < 4 {
         return;
     }
-    // 和事件界面一样:没有描述,只有居中的选项,选中靠底色
-    let choices = [
-        (format!("Rest   heal {heal} HP"), theme::fg(theme::GOOD)),
-        ("Smith   upgrade a card".to_string(), theme::fg(theme::BLOCK)),
-    ];
+    // 和事件界面一样:没有描述,只有居中的选项,选中靠底色.
+    // 选项表由 Run 给(休息/锻造/回忆/举铁/删牌/挖宝)
+    let mut choices: Vec<(String, Style)> = Vec::new();
+    for opt in app.run.rest_options() {
+        let (text, style) = match opt {
+            RestOption::Rest => (
+                format!("Rest   heal {heal} HP"),
+                theme::fg(theme::GOOD),
+            ),
+            RestOption::Smith => (
+                "Smith   upgrade a card".to_string(),
+                theme::fg(theme::BLOCK),
+            ),
+            RestOption::Recall => (
+                "Recall   take the Ruby Key".to_string(),
+                theme::fg(theme::BAD),
+            ),
+            RestOption::Lift => (
+                format!(
+                    "Lift   +1 Strength next combat ({}/3)",
+                    app.run.lifts()
+                ),
+                theme::fg(theme::GOLD),
+            ),
+            RestOption::Toke => (
+                "Toke   remove a card".to_string(),
+                theme::fg(theme::INFO),
+            ),
+            RestOption::Dig => (
+                "Dig   dig up a relic".to_string(),
+                theme::fg(theme::GOLD),
+            ),
+        };
+        choices.push((text, style));
+    }
     let n = choices.len() as u16;
     let mut y = area.y + (area.height.saturating_sub(n)) / 2;
     for (i, (text, base)) in choices.iter().enumerate() {
@@ -445,9 +494,9 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
         }
     }
     y += 1;
-    match st.result {
+    match &st.result {
         Some(text) => {
-            for part in wrap_text(text, inner_w, 3) {
+            for part in wrap_text(text.as_str(), inner_w, 3) {
                 if y >= area.y + area.height - 1 {
                     break;
                 }
@@ -557,8 +606,8 @@ fn treasure(buf: &mut Buffer, area: Rect, app: &App) {
                 inner_x,
                 y,
                 inner_w,
-                &format!("{}  [{}]", relic.name, relic.rarity.name()),
-                theme::fg(theme::relic_color(relic.rarity)),
+                &format!("{}  [{}]", relic.name, relic.tier.name()),
+                theme::fg(theme::relic_tier_color(relic.tier)),
             );
             if y + 1 < area.y + area.height - 1 {
                 crate::ui::put_centered_line(
@@ -583,6 +632,17 @@ fn treasure(buf: &mut Buffer, area: Rect, app: &App) {
             inner_w,
             "press enter to take it",
             theme::dim(),
+        );
+    }
+    // 还没有蓝钥匙时,可以按 s 拿钥匙(遗物作废)
+    if app.run.chest_sapphire_available() && y + 4 < area.y + area.height - 1 {
+        crate::ui::put_centered_line(
+            buf,
+            inner_x,
+            y + 4,
+            inner_w,
+            "press s to take the Sapphire Key (forfeit the relic)",
+            theme::fg(theme::BLOCK),
         );
     }
 }
