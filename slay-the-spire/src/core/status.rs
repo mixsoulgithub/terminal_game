@@ -285,6 +285,17 @@ impl Status {
         )
     }
 
+    /// 持有者自己的回合结束时触发的能力(参考实现里 powers 的 atEndOfTurn 钩子).
+    /// 挂在敌人身上时,若在它本回合行动中刚挂上,当回合不触发(参考实现里挂能力的
+    /// 动作排在回合末钩子之后,等价于 skipFirst).
+    pub fn ticks_at_owner_end(self) -> bool {
+        use Status::*;
+        matches!(
+            self,
+            Ritual | StrengthUp | Metallicize | PlatedArmor | Regenerate
+        )
+    }
+
     /// 回合结束时层数减一(持续整场战斗的减益不算)
     pub fn decays(self) -> bool {
         use Status::*;
@@ -376,8 +387,15 @@ impl Statuses {
 
     /// 每个到期的状态层数减一
     pub fn decay_debuffs(&mut self) {
+        self.decay_debuffs_except(&[]);
+    }
+
+    /// 同 decay_debuffs,但 skip 里的状态这一次不减.
+    /// 敌人刚给玩家挂上的持续状态(参考实现里的 justApplied)要跳过第一次递减,
+    /// 否则持续时间会短一整回合
+    pub fn decay_debuffs_except(&mut self, skip: &[Status]) {
         for slot in self.list.iter_mut() {
-            if slot.0.decays() {
+            if slot.0.decays() && !skip.contains(&slot.0) {
                 slot.1 -= 1;
             }
         }

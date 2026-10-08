@@ -90,6 +90,11 @@ pub enum EnemyFx {
         spot: CardSpot,
         n: i32,
     },
+    /// 只为对齐随机流的一次掷点:第 turn 次行动时按 num/den 掷一次 aiRng 布尔,值不用.
+    /// (盗贼/强盗招式里的台词在原版里会消耗一次 aiRng,不掷就会让后面所有掷点错位)
+    ParityCoin { num: u32, den: u32, turn: u32 },
+    /// 只为对齐随机流:每次执行这一招都掷一次 aiRng.random(n),值不用(强盗家族的台词掷点)
+    ParityRand { n: u32 },
     /// 偷玩家金币
     StealGold { n: i32 },
     /// 偷玩家一张牌(圆球哨卫的停滞)
@@ -290,6 +295,11 @@ pub struct PickCtx<'a> {
     pub all: &'a [Enemy],
     pub player: &'a PlayerBattle,
     pub state: &'a mut EnemyState,
+    /// 引擎在选招前先掷的那次 aiRng.random(99):参考实现的 rollMove 每回合必掷,
+    /// 哪怕这一招用不到,不掷就会让后面所有掷点错位
+    pub first_roll: i32,
+    /// first_roll 是否已经被取走
+    pub roll_consumed: bool,
 }
 
 impl PickCtx<'_> {
@@ -297,8 +307,13 @@ impl PickCtx<'_> {
         &self.all[self.idx]
     }
 
-    /// 参考实现里的 aiRng.random(99)
+    /// 参考实现里的 aiRng.random(99).第一次取的是引擎预先掷好的那次
+    /// (rollMove 必掷的那个),之后再取才真的消耗掷点(参考实现里循环补掷的那种)
     pub fn roll(&mut self) -> i32 {
+        if !self.roll_consumed {
+            self.roll_consumed = true;
+            return self.first_roll;
+        }
         self.rng.floor(FloorStream::AiRng).random(99) as i32
     }
 
@@ -312,6 +327,12 @@ impl PickCtx<'_> {
         self.rng
             .floor(FloorStream::AiRng)
             .random_bool_chance(num as f32 / den.max(1) as f32)
+    }
+
+    /// 参考实现里不带概率的 aiRng.randomBoolean():取 next_long() 的最低位.
+    /// 跟 flip 走的不是同一条路,不给概率的地方必须用这个才对得上掷点流
+    pub fn coin(&mut self) -> bool {
+        self.rng.floor(FloorStream::AiRng).random_long() & 1 != 0
     }
 
     /// 这是开局第一掷(还没行动过)

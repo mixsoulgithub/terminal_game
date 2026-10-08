@@ -283,7 +283,7 @@ fn pick_acid_slime_small(ctx: &mut PickCtx) -> usize {
     const LICK: usize = 0;
     const TACKLE: usize = 1;
     if ctx.first_turn() {
-        return if ctx.flip(1, 2) { TACKLE } else { LICK };
+        return if ctx.coin() { TACKLE } else { LICK };
     }
     if ctx.last_is(LICK) {
         TACKLE
@@ -774,6 +774,11 @@ pub const LOOTER: EnemyDef = EnemyDef {
                 times: 1,
             },
             effects: &[
+                EnemyFx::ParityCoin {
+                    num: 3,
+                    den: 5,
+                    turn: 1,
+                },
                 EnemyFx::StealGold { n: 15 },
                 EnemyFx::Attack {
                     amount: 10,

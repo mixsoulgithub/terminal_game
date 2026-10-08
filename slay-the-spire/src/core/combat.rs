@@ -56,6 +56,9 @@ pub struct Enemy {
     pub death_done: bool,
     /// 本回合被扣掉的力量(黑暗镣铐),回合结束回补
     pub temp_strength: i32,
+    /// 本回合行动中刚挂上、当回合回合末不触发的能力(邪教徒的 Ritual).
+    /// 参考实现里挂能力是排队动作,排在它自己的回合末钩子之后,所以晚一回合生效.
+    pub fresh_powers: Vec<Status>,
     /// 已经脱离战斗(逃跑 / 被首领带走),不会再行动也不再算敌人
     pub escaped: bool,
     /// 参考实现里的槽位:站位与召唤都按它排,下标会变它不会
@@ -101,6 +104,8 @@ pub struct PlayerBattle {
     pub max_hp: i32,
     pub block: i32,
     pub statuses: Statuses,
+    /// 敌人这回合刚挂上、第一次回合末递减要跳过的持续状态(参考实现的 justApplied)
+    pub fresh_debuffs: Vec<Status>,
 }
 
 /// 构造一场战斗需要的输入.拥有所有权,避免借用纠缠.
@@ -115,6 +120,8 @@ pub struct CombatSetup {
     pub rested: bool,
     /// 营火举铁攒下的力量(吉利亚),开局直接上身
     pub lift_strength: i32,
+    /// 整局持续的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)
+    pub relic_counters: RunRelicCounters,
 }
 
 /// 抖动:谁在抖、往哪边(负 = 左,正 = 右)。表现层取走后自己清空。
@@ -221,23 +228,43 @@ pub struct Choice {
     pub free: bool,
 }
 
-/// 战斗中遗物需要的计时器与一次性标记(与参考实现的 relicCounter 对应)
+/// 整局持续的遗物计数器:参考实现里这些数挂在 Run 的遗物实例上(relic counter),
+/// 跨战斗累加并随存档走.进战斗时由一局流程注入,战斗中随时由 sync_combat 收回.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RunRelicCounters {
+    /// 笔尖 0..9:计数到 9 时打出的攻击翻倍,第 10 张打完归零
+    pub pen_nib: i32,
+    /// 快乐花 0..2:每 3 回合给 1 点能量
+    pub happy_flower: i32,
+    /// 薰香 0..5:每 6 回合给 1 层无形
+    pub incense: i32,
+    /// 日晷 0..2:每 3 次洗牌给 2 点能量
+    pub sundial: i32,
+    /// 双节棍累计打出的攻击数:每 10 张给 1 点能量
+    pub attacks_total: i32,
+    /// 墨水瓶累计打出的牌数:每 10 张抽 1 张
+    pub cards_total: i32,
+}
+
+/// 战斗中遗物需要的计时器与一次性标记(与参考实现的 relicCounter 对应).
+/// 其中"跨战斗累计"的那几个(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)在进出战斗时
+/// 与 Run::relic_counters 同步;其余都是本场战斗内的状态,每场重建.
 #[derive(Clone, Debug, Default)]
 pub struct RelicState {
     /// 本回合打出的攻击/技能数(苦无/手里剑/折扇/拆信刀)
     pub attacks_this_turn: i32,
     pub skills_this_turn: i32,
-    /// 本场累计打出的攻击数(双节棍)
+    /// 整局累计打出的攻击数(双节棍;跨战斗,随 Run 走)
     pub attacks_total: i32,
-    /// 本场累计打出的牌数(墨水瓶)
+    /// 整局累计打出的牌数(墨水瓶;跨战斗,随 Run 走)
     pub cards_total: i32,
-    /// 笔尖 0..9:数到 9 时下一张攻击翻倍
+    /// 笔尖 0..9:数到 9 时下一张攻击翻倍(跨战斗,随 Run 走)
     pub pen_nib: i32,
-    /// 快乐花 0..2
+    /// 快乐花 0..2(跨战斗,随 Run 走)
     pub happy_flower: i32,
-    /// 薰香 0..5
+    /// 薰香 0..5(跨战斗,随 Run 走)
     pub incense: i32,
-    /// 日晷 0..2
+    /// 日晷 0..2(跨战斗,随 Run 走)
     pub sundial: i32,
     /// 上一回合打出的攻击数(战争艺术)与牌数(怀表)
     pub attacks_last_turn: i32,
@@ -266,6 +293,30 @@ pub struct RelicState {
     pub lizard_used: bool,
     /// 这个回合结束已经问过尼尔瑞的抄本
     pub nilrys_used: bool,
+}
+
+impl RelicState {
+    /// 取出跨战斗累计的那部分计数(交给一局流程保存/写存档)
+    pub fn run_counters(&self) -> RunRelicCounters {
+        RunRelicCounters {
+            pen_nib: self.pen_nib,
+            happy_flower: self.happy_flower,
+            incense: self.incense,
+            sundial: self.sundial,
+            attacks_total: self.attacks_total,
+            cards_total: self.cards_total,
+        }
+    }
+
+    /// 注入跨战斗累计的那部分计数(战斗开始时;本场内的状态不受影响)
+    pub fn set_run_counters(&mut self, c: RunRelicCounters) {
+        self.pen_nib = c.pen_nib;
+        self.happy_flower = c.happy_flower;
+        self.incense = c.incense;
+        self.sundial = c.sundial;
+        self.attacks_total = c.attacks_total;
+        self.cards_total = c.cards_total;
+    }
 }
 
 #[derive(Clone)]
@@ -406,6 +457,7 @@ impl Combat {
                 next_move: 0,
                 death_done: false,
                 temp_strength: 0,
+                fresh_powers: Vec::new(),
                 escaped: false,
                 // 站位按遭遇表给的槽位,不一定是 0,1,2...(自动机的铜球要排在它前面)
                 slot: crate::core::enemies::initial_slot(enc, i),
@@ -432,8 +484,12 @@ impl Combat {
             &mut deck,
             &mut JavaRandom::new(streams.floor(FloorStream::ShuffleRng).random_long()),
         );
+        // 抽牌堆的顶牌是下标 0(draw_cards 从头取).Innate 牌在洗牌后挪到堆顶,
+        // 开局的 DRAW_PER_TURN 张照样从头抽,自然先把它们抓进手;
+        // 多张 Innate 之间保持洗出来的先后(参考实现也是稳定地挪到最前).
         let (innate, rest): (Vec<CardInstance>, Vec<CardInstance>) =
             deck.into_iter().partition(|c| c.is_innate());
+        let deck: Vec<CardInstance> = innate.into_iter().chain(rest).collect();
 
         let mut c = Combat {
             hp_losses: 0,
@@ -448,9 +504,10 @@ impl Combat {
                 max_hp: setup.max_hp,
                 block: 0,
                 statuses: Statuses::new(),
+                fresh_debuffs: Vec::new(),
             },
-            hand: innate,
-            draw: rest,
+            hand: Vec::new(),
+            draw: deck,
             discard: Vec::new(),
             exhaust: Vec::new(),
             energy: BASE_ENERGY,
@@ -485,6 +542,9 @@ impl Combat {
             fairy_used: false,
             pending_end_turn: false,
         };
+        // 跨战斗的遗物计数器由一局流程注入(参考实现里这些数挂在 Run 的遗物上,
+        // 开局第一回合就会 +1,所以必须在 start_turn 之前放进去)
+        c.rs.set_run_counters(setup.relic_counters);
 
         // 开局的 spawn 掷点(参考实现里这一批排在洗牌之后、掷首招之前).
         // 用的还是 monsterHpRng:卷曲层数、开局定死的咬伤都在这一掷
@@ -605,17 +665,23 @@ impl Combat {
                 java_shuffle(&mut c.draw, &mut JavaRandom::new(seed));
             }
         }
-        // 瓶装遗物:被封装的牌开局就压在抽牌堆顶,开局那一抽直接进手
-        let bottled: Vec<usize> = c
+        // 瓶装遗物:被封装的牌开局就压在抽牌堆顶(下标 0 一侧),
+        // 开局那一抽直接进手.多张封装的牌照参考实现:堆里越深的越靠上.
+        let idxs: Vec<usize> = c
             .draw
             .iter()
             .enumerate()
             .filter(|(_, x)| x.bottled)
             .map(|(i, _)| i)
             .collect();
-        for i in bottled.into_iter().rev() {
-            let card = c.draw.remove(i);
-            c.draw.push(card);
+        let mut bottled: Vec<CardInstance> = idxs
+            .into_iter()
+            .rev()
+            .map(|i| c.draw.remove(i))
+            .collect();
+        bottled.reverse();
+        for card in bottled {
+            c.draw.insert(0, card);
         }
         // 吉利亚:营火举铁的层数在开局上身(参考实现 atBattleStart)
         if setup.lift_strength > 0 {
@@ -968,9 +1034,10 @@ impl Combat {
     /// 打出抽牌堆顶那张;exhaust_after 为真时打完直接消耗(浩劫),
     /// via 是播报里"谁打出了它"(浩劫/万物皆动/混沌药剂)
     fn play_top_of_draw(&mut self, exhaust_after: bool, via: &str) {
-        let Some(mut card) = self.draw.pop() else {
+        if self.draw.is_empty() {
             return;
-        };
+        }
+        let mut card = self.draw.remove(0);
         let label = card.label();
         self.push_log(LogKind::Player, format!("{via} plays {label}"));
         let kind = card.kind();
@@ -1027,14 +1094,27 @@ impl Combat {
     /// 遗物里"每打出一张牌"就触发的部分
     fn on_relic_card_played(&mut self, kind: crate::core::card::CardType) {
         use crate::core::card::CardType;
-        self.rs.cards_total += 1;
+        // 墨水瓶:每 10 张牌抽 1 张(没有这件遗物时不数,拿到手时从 0 起)
+        let ink = self.relic_sum(|fx| fx.draw_per_10_cards);
+        if ink > 0 {
+            self.rs.cards_total += 1;
+        }
         match kind {
             CardType::Attack => {
                 self.rs.attacks_this_turn += 1;
-                self.rs.attacks_total += 1;
                 self.rs.types_played |= 1;
-                // 笔尖:第 10 张攻击翻倍(判定在结算时用 pen_nib == 9)
-                self.rs.pen_nib += 1;
+                // 双节棍:数满 10 张攻击回 1 点能量(没有这件遗物时不数)
+                if self.relic_sum(|fx| fx.energy_per_10_attacks) > 0 {
+                    self.rs.attacks_total += 1;
+                }
+                // 笔尖:数满 10 归零,第 10 张的攻击在结算时(pen_nib == 9)翻倍.
+                // 没有这件遗物时不数,拿到手时自然从 0 起(参考实现挂在遗物上)
+                if self.relic_any(|fx| fx.double_damage_per_10_attacks) {
+                    self.rs.pen_nib += 1;
+                    if self.rs.pen_nib >= 10 {
+                        self.rs.pen_nib = 0;
+                    }
+                }
             }
             CardType::Skill => {
                 self.rs.skills_this_turn += 1;
@@ -1050,15 +1130,16 @@ impl Combat {
             }
             _ => {}
         }
-        // 双节棍:每 10 张攻击回 1 点能量
+        // 双节棍:每 10 张攻击回 1 点能量(数满 10 归零,与参考实现一致)
         let nunchaku = self.relic_sum(|fx| fx.energy_per_10_attacks);
-        if nunchaku > 0 && kind == CardType::Attack && self.rs.attacks_total % 10 == 0 {
+        if nunchaku > 0 && kind == CardType::Attack && self.rs.attacks_total >= 10 {
+            self.rs.attacks_total = 0;
             self.energy += nunchaku;
             self.push_log(LogKind::Player, format!("Nunchaku: +{nunchaku} energy"));
         }
-        // 墨水瓶:每 10 张牌抽 1
-        let ink = self.relic_sum(|fx| fx.draw_per_10_cards);
-        if ink > 0 && self.rs.cards_total % 10 == 0 {
+        // 墨水瓶:每 10 张牌抽 1(数满 10 归零)
+        if ink > 0 && self.rs.cards_total >= 10 {
+            self.rs.cards_total = 0;
             self.draw_cards(ink as usize);
         }
         // 苦无/手里剑/折扇:每 3 张攻击
@@ -1199,7 +1280,7 @@ impl Combat {
         }
     }
 
-    /// 抽牌;抽牌堆空了就把弃牌堆洗回来
+    /// 抽牌;抽牌堆空了就把弃牌堆洗回来.顶牌在下标 0,从头取
     pub fn draw_cards(&mut self, n: usize) {
         for _ in 0..n {
             if self.hand.len() >= HAND_LIMIT {
@@ -1219,7 +1300,7 @@ impl Combat {
                 );
                 self.on_shuffle();
             }
-            let card = self.draw.pop().unwrap();
+            let card = self.draw.remove(0);
             self.hand.push(card);
             // 混乱:抽到的牌费用随机化
             if self.player.statuses.has(Status::Confused) {
@@ -1488,7 +1569,7 @@ impl Combat {
         self.bombs.retain(|b| b.0 > 0);
         for dmg in boom {
             for i in self.alive_enemies() {
-                let d = self.player_attack_damage(dmg, i);
+                let d = self.player_attack_damage(dmg, i, false);
                 self.damage_enemy_plain(i, d);
             }
             self.push_log(LogKind::Player, format!("The Bomb explodes for {dmg}"));
@@ -1562,8 +1643,6 @@ impl Combat {
                 self.discard.push(card);
             }
         }
-        // 玩家的减益在自己回合结束时递减
-        self.player.statuses.decay_debuffs();
         for mut card in eot {
             let label = card.label();
             let effects = card.on_end_turn();
@@ -1571,7 +1650,21 @@ impl Combat {
                 hand_size,
                 ..Default::default()
             };
+            let had: Vec<Status> = self
+                .player
+                .statuses
+                .iter()
+                .filter(|(s, _)| s.decays())
+                .map(|(s, _)| s)
+                .collect();
             self.resolve_effects(&mut card, effects, None, &mut ctx);
+            // 回合末诅咒(怀疑/羞耻)挂上的减益:参考实现把它当成"怪物挂的",
+            // 跳过本轮结束时的第一次递减,否则它当场就掉光、根本管不到下个回合
+            for (s, _) in self.player.statuses.iter() {
+                if s.decays() && !had.contains(&s) && !self.player.fresh_debuffs.contains(&s) {
+                    self.player.fresh_debuffs.push(s);
+                }
+            }
             self.push_log(LogKind::Player, format!("{label} triggers at end of turn"));
         }
         // 悔恨/腐烂可能把玩家打死,这时不能再把回合交给敌人
@@ -1597,6 +1690,14 @@ impl Combat {
     }
 
     fn enemy_turn(&mut self) {
+        // 参考实现(MonsterGroup::applyPreTurnLogic)在一轮怪物行动开始前,
+        // 先把每只怪的格挡统一清空(有壁垒的除外).盾卫在同一轮里发出的格挡
+        // 因此能留到玩家下一个回合,而不是轮到它自己时被掀掉.
+        for e in self.enemies.iter_mut() {
+            if e.up() && !e.statuses.has(Status::Barricade) {
+                e.block = 0;
+            }
+        }
         // 这一回合轮到谁,开局就定死(用出生序号认怪).召唤会把别人顶走,
         // 所以不能存下标;新召唤出来的也不在这一轮里,下一轮才动
         let actors: Vec<u64> = self.enemies.iter().filter(|e| e.up()).map(|e| e.uid).collect();
@@ -1615,12 +1716,27 @@ impl Combat {
         if self.phase != Phase::EnemyTurn {
             return;
         }
+        // 无形只护这一回合:怪物都动完就减一层(参考实现里 turnBased 的能力
+        // 在回合末 tick,玩家与怪物都算).薰香的"每 6 回合 1 层"因此只管当回合
+        self.player.statuses.add(Status::Intangible, -1);
+        for e in self.enemies.iter_mut() {
+            e.statuses.add(Status::Intangible, -1);
+        }
         self.check_win();
         if self.phase != Phase::EnemyTurn {
             return;
         }
+        // 一轮结束:玩家的持续减益在这儿递减(参考实现的 endRound 先 tick 玩家再 tick 怪物).
+        // 怪物这一轮刚挂上的第一次跳过(参考的 justApplied),否则易伤/虚弱会少管一个回合.
+        self.decay_player_debuffs_round_end();
         self.phase = Phase::PlayerTurn;
         self.start_turn(0);
+    }
+
+    /// 一轮结束时的玩家减益递减:本轮刚挂上的(怪物来源)跳过第一次
+    fn decay_player_debuffs_round_end(&mut self) {
+        let fresh = std::mem::take(&mut self.player.fresh_debuffs);
+        self.player.statuses.decay_debuffs_except(&fresh);
     }
 
     fn enemy_act(&mut self, idx: usize) {
@@ -1739,6 +1855,10 @@ impl Combat {
             EnemyFx::GainStatus { status, n, scope } => {
                 for t in self.scope_targets(idx, scope) {
                     self.enemies[t].statuses.add(status, n);
+                    // 自己在这回合的行动里刚挂上的回合末能力:当回合不触发(Ritual)
+                    if t == idx && status.ticks_at_owner_end() {
+                        self.enemies[t].fresh_powers.push(status);
+                    }
                 }
                 self.push_log(
                     LogKind::Enemy,
@@ -1824,6 +1944,17 @@ impl Combat {
                         format!("{name} puts a {label} in your deck"),
                     );
                 }
+            }
+            EnemyFx::ParityCoin { num, den, turn: at } => {
+                if turn == at {
+                    let _ = self
+                        .streams
+                        .floor(FloorStream::AiRng)
+                        .random_bool_chance(num as f32 / den.max(1) as f32);
+                }
+            }
+            EnemyFx::ParityRand { n } => {
+                let _ = self.streams.floor(FloorStream::AiRng).random(n);
             }
             EnemyFx::StealGold { n } => {
                 let got = n.min(self.player_gold.max(0));
@@ -1977,12 +2108,17 @@ impl Combat {
                 .filter(|i| *i != idx && self.enemies[*i].alive())
                 .collect(),
             Scope::RandomOne => {
-                let alive: Vec<usize> =
-                    (0..self.enemies.len()).filter(|i| self.enemies[*i].alive()).collect();
-                if alive.is_empty() {
-                    Vec::new()
+                // 参考实现/原版(盾卫 Protect):从"除自己外的存活同伴"里随机挑一个,
+                // 只有单挑时才落到自己头上;掷点走 aiRng,不是 cardRandomRng.
+                let others: Vec<usize> = (0..self.enemies.len())
+                    .filter(|i| *i != idx && self.enemies[*i].alive())
+                    .collect();
+                if others.is_empty() {
+                    vec![idx]
                 } else {
-                    vec![alive[self.streams.floor(FloorStream::CardRandomRng).below(alive.len() as u32) as usize]]
+                    let chosen =
+                        others[self.streams.floor(FloorStream::AiRng).below(others.len() as u32) as usize];
+                    vec![chosen]
                 }
             }
         }
@@ -2111,6 +2247,7 @@ impl Combat {
             next_move: 0,
             death_done: false,
             temp_strength: 0,
+            fresh_powers: Vec::new(),
             escaped: false,
             slot,
             uid: self.next_uid,
@@ -2191,6 +2328,9 @@ impl Combat {
     /// 敌人自己的回合结束:回合末生效的能力与倒计时
     fn enemy_end_of_turn(&mut self, idx: usize, name: &str) {
         let def = self.enemies[idx].def;
+        // 本回合行动里刚挂上的能力当回合不触发(参考实现里挂能力排在回合末钩子之后);
+        // 取走标记,下一回合它们就正常触发
+        let fresh = std::mem::take(&mut self.enemies[idx].fresh_powers);
         // 中毒:每回合掉等量生命(不吃格挡),再减一层
         let poison = self.enemies[idx].statuses.get(Status::Poison);
         if poison > 0 {
@@ -2207,15 +2347,22 @@ impl Combat {
         }
         let metallicize = self.enemies[idx].statuses.get(Status::Metallicize);
         let plated = self.enemies[idx].statuses.get(Status::PlatedArmor);
-        if metallicize + plated > 0 {
-            self.enemies[idx].block += metallicize + plated;
+        let mut plate_block = 0;
+        if !fresh.contains(&Status::Metallicize) {
+            plate_block += metallicize;
+        }
+        if !fresh.contains(&Status::PlatedArmor) {
+            plate_block += plated;
+        }
+        if plate_block > 0 {
+            self.enemies[idx].block += plate_block;
             self.push_log(
                 LogKind::Enemy,
-                format!("{name} gains {} Block", metallicize + plated),
+                format!("{name} gains {plate_block} Block"),
             );
         }
         let up = self.enemies[idx].statuses.get(Status::StrengthUp);
-        if up > 0 {
+        if up > 0 && !fresh.contains(&Status::StrengthUp) {
             self.enemies[idx].statuses.add(Status::Strength, up);
             self.push_log(
                 LogKind::Enemy,
@@ -2223,7 +2370,7 @@ impl Combat {
             );
         }
         let regen = self.enemies[idx].statuses.get(Status::Regenerate);
-        if regen > 0 {
+        if regen > 0 && !fresh.contains(&Status::Regenerate) {
             let healed = self.enemies[idx].max_hp.min(self.enemies[idx].hp + regen)
                 - self.enemies[idx].hp;
             self.enemies[idx].hp += healed;
@@ -2232,7 +2379,7 @@ impl Combat {
             }
         }
         let ritual = self.enemies[idx].statuses.get(Status::Ritual);
-        if ritual > 0 {
+        if ritual > 0 && !fresh.contains(&Status::Ritual) {
             self.enemies[idx].statuses.add(Status::Strength, ritual);
             self.push_log(
                 LogKind::Enemy,
@@ -2307,6 +2454,9 @@ impl Combat {
     /// 跑一遍某只怪的选招函数.状态是副本,跑完写回(选招里可以记账)
     fn run_script(&mut self, idx: usize, f: crate::core::enemy::PickFn) -> usize {
         let mut state = self.enemies[idx].state.clone();
+        // 参考实现的 rollMove 每次选招都先消耗一次 aiRng.random(99)(哪怕这一招用不到),
+        // 所以这里先掷出来交给选招函数,保证掷点流与参考逐步对齐
+        let first_roll = self.streams.floor(FloorStream::AiRng).random(99) as i32;
         let pick = {
             let Combat {
                 enemies,
@@ -2320,6 +2470,8 @@ impl Combat {
                 all: enemies,
                 player,
                 state: &mut state,
+                first_roll,
+                roll_consumed: false,
             };
             f(&mut ctx)
         };
@@ -2489,18 +2641,18 @@ impl Combat {
                 }
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
-                // 抽牌堆的"顶"是 Vec 末尾(draw_cards 从末尾 pop),所以 push 才是放顶上
+                // 抽牌堆的顶是下标 0(从头取,插入也要插到最前)
                 let mut card = self.hand.remove(idx);
                 self.top_seq += 1;
                 card.topped = self.top_seq;
-                self.draw.push(card);
+                self.draw.insert(0, card);
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawBottom) => {
-                // "底"就是抽牌堆的开头,没被放到顶上的牌都从末尾抽
+                // 抽牌堆的底是 Vec 末尾(顶在下标 0),放到末尾等轮到它才抽得到
                 let mut card = self.hand.remove(idx);
                 // 预谋:放到堆底之后一直 0 费,直到被打出(打出时才清掉)
                 card.free_combat = true;
-                self.draw.insert(0, card);
+                self.draw.push(card);
             }
             (ChoiceSource::Exhaust, ChoiceAction::ToHand) => {
                 if self.hand.len() < HAND_LIMIT {
@@ -2545,7 +2697,7 @@ impl Combat {
                 let mut card = self.discard.remove(idx);
                 self.top_seq += 1;
                 card.topped = self.top_seq;
-                self.draw.push(card);
+                self.draw.insert(0, card);
             }
             (ChoiceSource::Discard, ChoiceAction::ToHand) => {
                 if self.hand.len() < HAND_LIMIT {
@@ -2779,8 +2931,10 @@ impl Combat {
     }
 
     /// 玩家攻击一次的计算:力量、虚弱、目标易伤
-    fn player_attack_damage(&self, raw: i32, target: usize) -> i32 {
-        let mut d = raw + self.player.statuses.get(Status::Strength);
+    fn player_attack_damage(&self, raw: i32, target: usize, is_attack: bool) -> i32 {
+        // 活力(Akabeko 的 8 点):只加在攻击牌的伤害上,和原版的 atDamageGive 一致
+        let vigor = if is_attack { self.rs.vigor } else { 0 };
+        let mut d = raw + self.player.statuses.get(Status::Strength) + vigor;
         if self.player.statuses.has(Status::Weak) {
             // 纸风筝:虚弱只减 40% 伤害(默认 25%)
             let pct = self.relic_max(|fx| fx.weak_damage_pct);
@@ -3422,6 +3576,11 @@ impl Combat {
         }
         // 浮夸按"本回合打出的牌数"结算(被人替打出来的牌也算)
         self.note_card_played(card.kind());
+        // 活力(Akabeko):下一张攻击牌打出后立刻用掉(参考实现挂在 VIGOR 的
+        // onAfterCardPlayed 上;复读的那几下也算在里面,所以放在这里清)
+        if card.kind() == crate::core::card::CardType::Attack {
+            self.rs.vigor = 0;
+        }
         // 有选牌待定:牌和花的能量先存着,等选完(choose)或取消(cancel)再收尾
         if let Some(ch) = self.choice.as_mut() {
             ch.played = Some((card, cost));
@@ -3494,7 +3653,7 @@ impl Combat {
                             if pen_nib_double {
                                 raw *= 2;
                             }
-                            let d = self.player_attack_damage(raw, t);
+                            let d = self.player_attack_damage(raw, t, is_attack);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                     }
@@ -3506,7 +3665,7 @@ impl Combat {
                             if pen_nib_double {
                                 raw *= 2;
                             }
-                            let d = self.player_attack_damage(raw, t);
+                            let d = self.player_attack_damage(raw, t, is_attack);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                     }
@@ -3516,14 +3675,14 @@ impl Combat {
                         let Some(t) = self.pick_random_alive() else {
                             break;
                         };
-                        let d = self.player_attack_damage(amount, t);
+                        let d = self.player_attack_damage(amount, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                     }
                 }
                 Effect::DamageEqualBlock => {
                     if let Some(t) = target {
                         let raw = self.player.block;
-                        let d = self.player_attack_damage(raw, t);
+                        let d = self.player_attack_damage(raw, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                     }
                 }
@@ -3534,7 +3693,7 @@ impl Combat {
                             if self.enemies[t].dead() {
                                 break;
                             }
-                            let d = self.player_attack_damage(raw, t);
+                            let d = self.player_attack_damage(raw, t, is_attack);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                     }
@@ -3548,12 +3707,12 @@ impl Combat {
                         if is_strike {
                             n += 1;
                         }
-                        let d = self.player_attack_damage(base + per * n, t);
+                        let d = self.player_attack_damage(base + per * n, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                     }
                 }                Effect::DamagePerExhausted { per } => {
                     if let Some(t) = target {
-                        let d = self.player_attack_damage(per * ctx.exhausted, t);
+                        let d = self.player_attack_damage(per * ctx.exhausted, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                     }
                 }
@@ -3561,7 +3720,7 @@ impl Combat {
                     let raw = per * ctx.x;
                     if raw > 0 {
                         for t in self.alive_enemies() {
-                            let d = self.player_attack_damage(raw, t);
+                            let d = self.player_attack_damage(raw, t, is_attack);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                     }
@@ -3573,7 +3732,7 @@ impl Combat {
                 } => {
                     if let Some(t) = target {
                         let vuln = self.enemies[t].statuses.has(Status::Vulnerable);
-                        let d = self.player_attack_damage(amount, t);
+                        let d = self.player_attack_damage(amount, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                         if vuln && self.enemies[t].alive() {
                             self.energy += energy;
@@ -3592,7 +3751,7 @@ impl Combat {
                             if self.enemies[t].dead() {
                                 break;
                             }
-                            let d = self.player_attack_damage(amount, t);
+                            let d = self.player_attack_damage(amount, t, is_attack);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                         // 击杀随从不算数:只有非随从(含精英与首领)才给最大生命
@@ -3608,7 +3767,8 @@ impl Combat {
                 }
                 Effect::DamageStrengthMult { amount, mult } => {
                     if let Some(t) = target {
-                        let raw = amount + self.player.statuses.get(Status::Strength) * mult;
+                        let vigor = if is_attack { self.rs.vigor } else { 0 };
+                        let raw = amount + self.player.statuses.get(Status::Strength) * mult + vigor;
                         let mut d = raw;
                         if self.player.statuses.has(Status::Weak) {
                             d = (d as f32 * 0.75).floor() as i32;
@@ -3622,7 +3782,7 @@ impl Combat {
                 Effect::Reaper { amount } => {
                     let mut total = 0;
                     for t in self.alive_enemies() {
-                        let d = self.player_attack_damage(amount, t);
+                        let d = self.player_attack_damage(amount, t, is_attack);
                         total += self.damage_enemy(t, d);
                     }
                     ctx.unblocked += total;
@@ -3650,14 +3810,14 @@ impl Combat {
                     self.lose_hp_player(n, true);
                 }
                 Effect::CopySelfToDrawTop => {
-                    // 抽牌堆的"顶"是 Vec 末尾(draw_cards 从末尾 pop)
+                    // 抽牌堆的顶是下标 0
                     let mut copy = CardInstance::new(card.def);
                     copy.upgraded = card.upgraded;
                     copy.plus = card.plus;
                     self.top_seq += 1;
                     copy.topped = self.top_seq;
                     let label = copy.label();
-                    self.draw.push(copy);
+                    self.draw.insert(0, copy);
                     self.push_log(
                         LogKind::Player,
                         format!("a copy of {label} goes on top of your draw pile"),
@@ -3721,18 +3881,20 @@ impl Combat {
                     self.hand = kept;
                     ctx.exhausted += n;
                     if let Some(t) = target {
-                        let d = self.player_attack_damage(damage, t);
+                        let d = self.player_attack_damage(damage, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                     }
                 }
                 Effect::ExhaustSelf => {
                     // 去处由 play_card 统一处理
                 }                Effect::AddCardToDraw { id, n } => {
+                    // 卡面是"洗进抽牌堆":位置用 cardRandomRng 掷(参考实现 moveCard random)
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
-                        self.draw.push(inst);
+                        let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
+                        self.draw.insert(pos, inst);
                     }
                 }
                 Effect::ExhaustFromHand => {
@@ -3852,7 +4014,7 @@ impl Combat {
                 Effect::DamagePerDrawPile { per } => {
                     if let Some(t) = target {
                         let raw = per * self.draw.len() as i32;
-                        let d = self.player_attack_damage(raw, t);
+                        let d = self.player_attack_damage(raw, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                     }
                 }
@@ -3867,7 +4029,7 @@ impl Combat {
                             if self.enemies[t].dead() {
                                 break;
                             }
-                            let d = self.player_attack_damage(amount, t);
+                            let d = self.player_attack_damage(amount, t, is_attack);
                             ctx.unblocked += self.damage_enemy(t, d);
                         }
                         // 击杀随从不算数:只有非随从才掉金币
@@ -3883,7 +4045,7 @@ impl Combat {
                 Effect::DamageAndKillBonusSelf { amount, bonus } => {
                     if let Some(t) = target {
                         let before = self.enemies[t].hp;
-                        let d = self.player_attack_damage(amount + card_bonus, t);
+                        let d = self.player_attack_damage(amount + card_bonus, t, is_attack);
                         ctx.unblocked += self.damage_enemy(t, d);
                         // 击杀随从不算数:只有非随从(含精英与首领)才让这张牌成长
                         if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
@@ -4175,6 +4337,12 @@ impl Combat {
             );
             return;
         }
+        // 怪物给玩家挂上的持续状态:本轮结束时不递减(参考实现 applyPower 的 justApplied:
+        // 只要来源是怪物、目标玩家、且是持续型就打标,不管是出手还是亡语).
+        // 下一次递减才算第一次,否则易伤/虚弱会少管一个回合.
+        if n > 0 && status.decays() && !self.player.statuses.holds(status) {
+            self.player.fresh_debuffs.push(status);
+        }
         self.player.statuses.add(status, n);
     }
 
@@ -4432,6 +4600,7 @@ mod tests {
             relics: Vec::new(),
             gold: 0,
             lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
         }
     }
 
@@ -4553,7 +4722,7 @@ mod tests {
         let picked = c.hand[0].def.id;
         let before = c.draw.len();
         c.choose(0).unwrap();
-        assert_eq!(c.draw.last().unwrap().def.id, picked, "放到抽牌堆顶");
+        assert_eq!(c.draw.first().unwrap().def.id, picked, "放到抽牌堆顶");
         assert_eq!(c.draw.len(), before + 1);
         assert_eq!(c.exhaust.len(), 1, "战吼自己被消耗");
 
@@ -4590,8 +4759,8 @@ mod tests {
         assert_eq!(c.enemies[0].hp, e_hp - 9, "先打 9");
         assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Discard);
         c.choose(0).unwrap();
-        // 抽牌堆的顶是末尾,而且下一次抽牌就要抽到它
-        assert_eq!(c.draw.last().unwrap().def.id, "defend", "应该放在抽牌堆顶");
+        // 抽牌堆的顶是下标 0,而且下一次抽牌就要抽到它
+        assert_eq!(c.draw.first().unwrap().def.id, "defend", "应该放在抽牌堆顶");
         let hand_before = c.hand.len();
         c.draw_cards(1);
         assert_eq!(
@@ -4617,11 +4786,11 @@ mod tests {
     fn havoc_chain_records_every_card_it_plays() {
         let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
         c.hand = vec![crate::core::cards::card("havoc")];
-        // 抽牌堆的顶是末尾,所以这样排:先被抽到的是最后一个 havoc
+        // 抽牌堆的顶是下标 0,所以这样排:先被抽到的是最前面那个 havoc
         c.draw = vec![
+            crate::core::cards::card("havoc"),
+            crate::core::cards::card("havoc"),
             crate::core::cards::card("strike"),
-            crate::core::cards::card("havoc"),
-            crate::core::cards::card("havoc"),
         ];
         c.energy = 3;
         let e_hp = c.enemies[0].hp;
@@ -4656,7 +4825,7 @@ mod tests {
             let picked = c.hand[0].def.id;
             c.choose(0).unwrap();
             assert!(c.choice.is_none(), "选完就结束");
-            assert_eq!(c.draw.last().unwrap().def.id, picked, "放到抽牌堆顶");
+            assert_eq!(c.draw.first().unwrap().def.id, picked, "放到抽牌堆顶");
         }
 
         // 掘出(从消耗堆拿)也一样:选择来自消耗堆
@@ -5210,6 +5379,7 @@ mod tests {
                 relics: Vec::new(),
                 gold: 0,
                 lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
             };
             let mut c = Combat::new(enc(encounter), setup, RngRegistry::new(9));
             let rest: Vec<CardInstance> = c.draw.drain(..).collect();
@@ -5784,7 +5954,7 @@ mod tests {
         assert_eq!(prides, 2, "原牌 + 一张副本");
     }
 
-    /// 纠缠:Innate,开局就在手里
+    /// 纠缠:Innate,挪到抽牌堆顶,开局的五张里就有它
     #[test]
     fn writhe_is_innate_and_starts_in_hand() {
         let c = combat_with(
@@ -5792,8 +5962,9 @@ mod tests {
             &["strike", "strike", "strike", "strike", "strike", "writhe"],
         );
         assert!(c.hand.iter().any(|x| x.def.id == "writhe"), "开局在手");
-        assert_eq!(c.hand.len(), 6, "5 张起手 + 1 张 Innate");
+        assert_eq!(c.hand.len(), DRAW_PER_TURN, "起手就是五张");
         assert!(!c.draw.iter().any(|x| x.def.id == "writhe"));
+        assert_eq!(c.draw.len(), 1, "六张牌里抓到五张,还剩一张 strike");
     }
 
     /// 死灵诅咒:被消耗也逃不掉,补一张新的回手牌
@@ -5844,6 +6015,7 @@ mod monster_tests {
             relics: Vec::new(),
             gold: 0,
             lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
         };
         Combat::new(enc, setup, RngRegistry::new(seed))
     }
@@ -5869,8 +6041,20 @@ mod monster_tests {
         assert_eq!(intent(&c, 0), Intent::Buff, "开场先充能");
         c.end_turn();
         assert_eq!(c.enemies[0].statuses.get(Status::Ritual), 3);
-        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 3, "仪式当回合结算成力量");
+        assert_eq!(
+            c.enemies[0].statuses.get(Status::Strength),
+            0,
+            "刚挂上的仪式当回合不结算,下一回合起才涨力量"
+        );
         assert_eq!(intent(&c, 0), Intent::Attack { damage: 6, times: 1 });
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(c.player.hp, hp - 6, "黑暗打击 6,这时力量还没涨");
+        assert_eq!(
+            c.enemies[0].statuses.get(Status::Strength),
+            3,
+            "这一回合末才涨力量"
+        );
         let hp = c.player.hp;
         c.end_turn();
         assert_eq!(c.player.hp, hp - 9, "黑暗打击 6 + 3 力量");
@@ -6052,8 +6236,9 @@ mod monster_tests {
         c.end_turn();
         assert_eq!(c.enemies[0].statuses.get(Status::Enrage), 2);
         let strength = c.enemies[0].statuses.get(Status::Strength);
-        // 玩家打一张技能牌 → 狂怒 +2 力量
+        // 玩家打一张技能牌 → 狂怒 +2 力量(手牌是洗出来的,这里补一张技能牌,不挑种子)
         c.energy = 3;
+        c.hand.push(crate::core::cards::card("defend"));
         let defend = c.hand.iter().position(|x| x.def.id == "defend").unwrap();
         c.play_card(defend, None).unwrap();
         assert_eq!(c.enemies[0].statuses.get(Status::Strength), strength + 2);
@@ -6158,6 +6343,10 @@ mod monster_tests {
         c.end_turn();
         assert_eq!(c.player_gold, 85, "抢走 15");
         assert_eq!(c.enemies[0].state.stolen, 15);
+        assert!(
+            c.log.iter().any(|l| l.text.contains("steals 15 gold")),
+            "偷钱要在战斗日志里看得见"
+        );
         // 抢完两回合就霰雾弹跑路
         for _ in 0..6 {
             if c.enemies[0].escaped {
@@ -6167,6 +6356,10 @@ mod monster_tests {
         }
         assert!(c.enemies[0].escaped, "最后一定会逃");
         assert_eq!(c.phase, Phase::Won, "只剩它一只,逃跑就算赢");
+        // 逃跑就不退赃款:金币停在扣掉赃款的数上
+        let stolen = c.enemies[0].state.stolen;
+        assert!(stolen > 0, "逃跑前确实抢到过钱");
+        assert_eq!(c.player_gold, 100 - stolen, "逃跑不退赃款");
     }
 
     #[test]
@@ -6178,6 +6371,10 @@ mod monster_tests {
         c.damage_enemy(0, 999);
         c.settle_deaths();
         assert_eq!(c.player_gold, 100, "打死就把赃款吐出来");
+        assert!(
+            c.log.iter().any(|l| l.text.contains("drops the 15 gold")),
+            "退赃要在战斗日志里看得见"
+        );
     }
 
     #[test]
@@ -6268,6 +6465,7 @@ mod power_tests {
             relics: Vec::new(),
             gold: 0,
             lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
         };
         Combat::new(enc, setup, RngRegistry::new(11))
     }
@@ -6701,6 +6899,7 @@ mod summon_tests {
                 relics: Vec::new(),
                 gold: 0,
                 lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
             },
             RngRegistry::new(seed),
         )
@@ -6968,6 +7167,7 @@ mod relic_hook_tests {
             relics: relics.to_vec(),
             gold: 0,
             lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
         let mut c = Combat::new(enc, setup, RngRegistry::new(21));
@@ -7003,6 +7203,7 @@ mod relic_hook_tests {
             relics,
             gold: 0,
             lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
         let c = Combat::new(enc, setup, RngRegistry::new(5));
@@ -7048,8 +7249,12 @@ mod relic_hook_tests {
         assert!(c.choice.is_none());
         assert!(c.pending_end_turn == false, "选完接着走回合尾巴");
         assert!(
-            c.draw.iter().any(|k| k.def.id == picked),
-            "挑中的洗进抽牌堆"
+            c.draw.iter().chain(c.hand.iter()).any(|k| k.def.id == picked),
+            "挑中的洗进抽牌堆(洗完后被抽到手上也算)"
+        );
+        assert!(
+            !c.discard.iter().any(|k| k.def.id == picked),
+            "挑中的不该落到弃牌堆"
         );
         assert_eq!(c.turn, 2, "回合已经交给对面并回到自己");
     }

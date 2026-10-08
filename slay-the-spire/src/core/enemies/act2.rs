@@ -274,7 +274,7 @@ fn pick_shelled_parasite(ctx: &mut PickCtx) -> usize {
     const SUCK: usize = 2;
     const STUNNED: usize = 3;
     if ctx.first_turn() {
-        return if ctx.flip(1, 2) {
+        return if ctx.coin() {
             DOUBLE_STRIKE
         } else {
             SUCK
@@ -441,8 +441,14 @@ pub const MUGGER: EnemyDef = EnemyDef {
                 damage: 10,
                 times: 1,
             },
-            // 先抢钱再打人
+            // 先抢钱再打人;台词掷点按参考实现放在招式里(第 2 回合多一次)
             effects: &[
+                EnemyFx::ParityRand { n: 2 },
+                EnemyFx::ParityCoin {
+                    num: 3,
+                    den: 5,
+                    turn: 2,
+                },
                 EnemyFx::StealGold { n: 15 },
                 EnemyFx::Attack {
                     amount: 10,
@@ -457,6 +463,7 @@ pub const MUGGER: EnemyDef = EnemyDef {
                 times: 1,
             },
             effects: &[
+                EnemyFx::ParityRand { n: 2 },
                 EnemyFx::StealGold { n: 15 },
                 EnemyFx::Attack {
                     amount: 16,

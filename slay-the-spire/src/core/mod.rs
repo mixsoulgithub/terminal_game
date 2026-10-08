@@ -12,6 +12,7 @@ pub mod golden;
 pub mod map;
 pub mod potions;
 pub mod relics;
+pub mod replay;
 pub mod roster;
 pub mod run;
 pub mod save;

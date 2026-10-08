@@ -107,13 +107,11 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
         (Overlay::Exhaust, Some(c)) => &c.exhaust,
         _ => &run.player.deck,
     };
-    // 未抽堆:把"特意放到顶上"的牌单列一段,最近放的在最前(也就是接下来抽到的顺序)
+    // 未抽堆:顶牌在下标 0,照堆内顺序列出来就是"下一个抽到的排最前"
     if let (Overlay::Draw, Some(c)) = (ov, run.combat()) {
-        // 冰冻之眼:整堆都按"下一个抽到的排最前"的顺序显示
-        let in_order = run.player.relic_fx_sum(|r| i32::from(r.fx.draw_pile_in_order)) > 0;
-        let mut topped: Vec<&CardInstance> = c.draw.iter().filter(|x| x.topped > 0).collect();
+        // 特意放到顶上的牌(手牌/弃牌堆放上去的)单列一段,本来就在堆的最前面
+        let topped: Vec<&CardInstance> = c.draw.iter().filter(|x| x.topped > 0).collect();
         if !topped.is_empty() {
-            topped.sort_by(|a, b| b.topped.cmp(&a.topped));
             rows.push(CardRow::Header(format!(
                 "on top: {} card(s), next drawn first",
                 topped.len()
@@ -121,24 +119,13 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
             let list: Vec<CardInstance> = topped.iter().map(|c| (*c).clone()).collect();
             push(&mut rows, &list);
             rows.push(CardRow::Header("the rest of the draw pile".to_string()));
-            let mut rest: Vec<CardInstance> = c
+            let rest: Vec<CardInstance> = c
                 .draw
                 .iter()
                 .filter(|x| x.topped == 0)
                 .cloned()
                 .collect();
-            if in_order {
-                rest.reverse();
-            }
             push(&mut rows, &rest);
-            return rows;
-        }
-        if in_order {
-            rows.push(CardRow::Header(
-                "draw pile, next drawn first".to_string(),
-            ));
-            let list: Vec<CardInstance> = c.draw.iter().rev().cloned().collect();
-            push(&mut rows, &list);
             return rows;
         }
     }

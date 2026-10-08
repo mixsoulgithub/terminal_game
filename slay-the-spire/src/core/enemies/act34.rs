@@ -803,7 +803,7 @@ fn pick_nemesis(ctx: &mut PickCtx) -> usize {
         if !ctx.last_two_has(SCYTHE) {
             return SCYTHE;
         }
-        if ctx.flip(1, 2) {
+        if ctx.coin() {
             if ctx.last_two_is(ATTACK) {
                 DEBUFF
             } else {
@@ -818,7 +818,7 @@ fn pick_nemesis(ctx: &mut PickCtx) -> usize {
         if !ctx.last_two_is(ATTACK) {
             return ATTACK;
         }
-        let coin = ctx.flip(1, 2);
+        let coin = ctx.coin();
         if !coin || ctx.last_two_has(SCYTHE) {
             DEBUFF
         } else {
@@ -828,7 +828,7 @@ fn pick_nemesis(ctx: &mut PickCtx) -> usize {
         if !ctx.last_is(DEBUFF) {
             return DEBUFF;
         }
-        if ctx.flip(1, 2) && !ctx.last_two_has(SCYTHE) {
+        if ctx.coin() && !ctx.last_two_has(SCYTHE) {
             SCYTHE
         } else {
             ATTACK
@@ -1397,7 +1397,7 @@ fn pick_spire_shield(ctx: &mut PickCtx) -> usize {
     const SMASH: usize = 2;
     // 开局和上一招是重砸:掷一次五五开
     if ctx.first_turn() || ctx.last_is(SMASH) {
-        return if ctx.flip(1, 2) { FORTIFY } else { BASH };
+        return if ctx.coin() { FORTIFY } else { BASH };
     }
     // 撞/固守之后:前一步是重砸(或刚开始)就走"三回合一块"的另一招,否则接重砸
     let started_block = ctx.prev_is(SMASH) || ctx.prev().is_none();
@@ -1478,7 +1478,7 @@ fn pick_spire_spear(ctx: &mut PickCtx) -> usize {
         return BURN_STRIKE;
     }
     if ctx.last_is(SKEWER) {
-        return if ctx.flip(1, 2) { PIERCER } else { BURN_STRIKE };
+        return if ctx.coin() { PIERCER } else { BURN_STRIKE };
     }
     if ctx.last_is(BURN_STRIKE) {
         if ctx.prev_is(SKEWER) {
@@ -1591,7 +1591,7 @@ fn pick_corrupt_heart(ctx: &mut PickCtx) -> usize {
         return DEBILITATE;
     }
     if ctx.last_is(DEBILITATE) || ctx.last_is(BUFF) {
-        return if ctx.flip(1, 2) { BLOOD_SHOTS } else { ECHO };
+        return if ctx.coin() { BLOOD_SHOTS } else { ECHO };
     }
     if ctx.turn() % 3 == 0 {
         return BUFF;

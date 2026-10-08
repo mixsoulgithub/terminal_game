@@ -50,7 +50,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 s,
                 RewardSlot::Relic
                     | RewardSlot::RelicChoice(_)
-                    | RewardSlot::Potion
+                    | RewardSlot::Potion(_)
                     | RewardSlot::EmeraldKey
             )
         })
@@ -133,7 +133,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 ),
                 None => continue,
             },
-            RewardSlot::Potion => match r.potion {
+            RewardSlot::Potion(i) => match r.potions.get(i).copied() {
                 Some(d) => {
                     // 放得下就写全名,放不下才把 "Potion" 缩成 "~"
                     let full = format!("Potion  {}  ({})", d.name, d.desc);

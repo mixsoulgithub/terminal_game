@@ -150,7 +150,7 @@ fn first_card_reward_matches_reference() {
     let reward = run.reward.as_ref().expect("赢了就该有奖励");
     assert_eq!(reward.gold, REWARD_GOLD, "金币对不上");
     assert_eq!(
-        reward.potion.map(|p| p.id.to_string()),
+        reward.potions.first().map(|p| p.id.to_string()),
         REWARD_POTION.map(|s| s.to_string()),
         "药水对不上"
     );
@@ -219,7 +219,7 @@ fn multi_seed_golden_cases_match_reference() {
         assert_eq!(reward.gold, case.gold, "seed {} 的金币对不上", case.seed);
         // 药水:池子顺序与稀有度分档对齐后,连抽到的是哪一瓶都要一致
         assert_eq!(
-            reward.potion.map(|p| p.id.to_string()),
+            reward.potions.first().map(|p| p.id.to_string()),
             case.potion.map(lower),
             "seed {} 的药水身份对不上",
             case.seed

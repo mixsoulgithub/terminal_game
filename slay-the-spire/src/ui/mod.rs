@@ -1211,9 +1211,9 @@ mod tests {
         assert!(c.hand[0].free_this_turn, "本回合 0 费");
     }
 
-    /// 冰冻之眼:抽牌堆按"下一个抽到的排最前"列出
+    /// 未抽堆窗口:下一个抽到的排最前(顶牌在下标 0)
     #[test]
-    fn frozen_eye_shows_the_draw_pile_in_draw_order() {
+    fn draw_pile_window_lists_next_drawn_first() {
         let ids = |app: &App| -> Vec<&'static str> {
             crate::ui::overlay::deck_rows(app, Overlay::Draw)
                 .iter()
@@ -1228,18 +1228,28 @@ mod tests {
             let c = app.run.combat_mut().expect("战斗中");
             c.hand.clear();
             c.draw.clear();
-            // 抽牌堆的末尾是下一个抽到的
+            // 下标 0 就是下一个抽到的
             for id in ["bash", "defend", "strike"] {
                 c.draw.push(crate::core::cards::card(id));
             }
         }
-        assert_eq!(ids(&app), vec!["bash", "defend", "strike"], "本来按堆内顺序");
+        assert_eq!(ids(&app), vec!["bash", "defend", "strike"], "顶牌排最前");
         app.run.debug_add_relic("frozen_eye").unwrap();
         assert_eq!(
             ids(&app),
-            vec!["strike", "defend", "bash"],
-            "冰冻之眼:下一个抽到的排最前"
+            vec!["bash", "defend", "strike"],
+            "冰冻之眼看到的也是这个顺序(窗口本来就按抽牌顺序列)"
         );
+        // 窗口列的第一个就是真抽到的那张
+        {
+            let c = app.run.combat_mut().expect("战斗中");
+            c.draw_cards(1);
+            assert_eq!(
+                c.hand.last().unwrap().def.id,
+                "bash",
+                "真抽到的是窗口里排最前的那张"
+            );
+        }
     }
 
     #[test]

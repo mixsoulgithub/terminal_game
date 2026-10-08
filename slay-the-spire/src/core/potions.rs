@@ -738,7 +738,7 @@ mod tests {
 #[cfg(test)]
 mod effect_tests {
     use super::*;
-    use crate::core::combat::{ChoiceAction, ChoiceSource, Combat, CombatSetup};
+    use crate::core::combat::{ChoiceAction, ChoiceSource, Combat, CombatSetup, RunRelicCounters};
     use crate::core::enemy::Intent;
     use crate::rng::RngRegistry;
 
@@ -755,6 +755,7 @@ mod effect_tests {
             relics: Vec::new(),
             gold: 0,
             lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
         };
         Combat::new(enc(encounter), setup, RngRegistry::new(7))
     }

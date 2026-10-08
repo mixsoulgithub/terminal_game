@@ -2871,8 +2871,8 @@ mod tests {
             r.card_taken = false;
             r.relic = crate::core::relics::relic_def("vajra");
             r.relic_taken = false;
-            r.potion = None;
-            r.potion_taken = false;
+            r.potions = Vec::new();
+            r.potion_taken = Vec::new();
             r.index = 0;
         }
         // 槽位:0 金币,1..3 卡牌,4 遗物

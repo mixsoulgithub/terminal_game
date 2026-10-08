@@ -23,6 +23,9 @@ options:
                   a decimal number is used as-is; anything else is read as a
                   base-35 seed string (same form `:seed` prints)
   --dump <what>   print data and exit (cards|enemies|relics|potions|events)
+  --replay <seed> headless scripted run: walk act 1 to the boss, one JSON
+                  line per step on stdout (no terminal needed)
+  --script <file> path script for --replay (neow/reward/card/event/rest/shop)
   -h, --help      show this help
   -V, --version   show version
 
@@ -42,6 +45,10 @@ keys (vim style, keyboard only):
 struct Args {
     seed: Option<u64>,
     dump: Option<String>,
+    /// 无头脚本化运行:走完第一章,每步一行 JSON
+    replay: Option<u64>,
+    /// --replay 用的路径脚本文件
+    script: Option<String>,
     help: bool,
     version: bool,
 }
@@ -50,6 +57,8 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut args = Args {
         seed: None,
         dump: None,
+        replay: None,
+        script: None,
         help: false,
         version: false,
     };
@@ -66,6 +75,15 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
             "--dump" => {
                 let v = it.next().ok_or("--dump needs a value")?;
                 args.dump = Some(v);
+            }
+            "--replay" => {
+                let v = it.next().ok_or("--replay needs a seed")?;
+                args.replay =
+                    Some(crate::rng::seed_from_arg(&v).ok_or_else(|| format!("bad seed: {v}"))?);
+            }
+            "--script" => {
+                let v = it.next().ok_or("--script needs a path")?;
+                args.script = Some(v);
             }
             "-h" | "--help" => args.help = true,
             "-V" | "--version" => args.version = true,
@@ -98,6 +116,25 @@ fn main() -> ExitCode {
             Err(e) => {
                 eprintln!("spire: {e}");
                 ExitCode::from(2)
+            }
+        };
+    }
+    if let Some(seed) = args.replay {
+        let script = match args.script.as_deref() {
+            None => None,
+            Some(path) => match std::fs::read_to_string(path) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    eprintln!("spire: cannot read script {path}: {e}");
+                    return ExitCode::from(2);
+                }
+            },
+        };
+        return match replay(seed, script.as_deref()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("spire: {e}");
+                ExitCode::from(1)
             }
         };
     }
@@ -153,6 +190,14 @@ fn run(seed: u64) -> io::Result<()> {
     })();
     ratatui::restore();
     result
+}
+
+/// 无头脚本化运行:同 seed + 同路径脚本,每步一行 JSON 到 stdout.
+fn replay(seed: u64, script: Option<&str>) -> Result<(), String> {
+    let policy = core::replay::policy_from_script(script)?;
+    let text = core::replay::run_jsonl(seed, &policy)?;
+    print!("{text}");
+    Ok(())
 }
 
 /// 打印静态数据,便于查表与自检

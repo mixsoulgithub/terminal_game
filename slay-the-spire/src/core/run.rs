@@ -2,7 +2,7 @@
 // 所有状态都在这里,UI 只读这些字段并调用这里的方法改状态.
 use crate::core::card::{CardDef, CardInstance, CardType, Effect as CardEffect, Rarity};
 use crate::core::cards;
-use crate::core::combat::{Combat, CombatSetup, Phase};
+use crate::core::combat::{Combat, CombatSetup, Phase, RunRelicCounters};
 use crate::core::corpus;
 use crate::core::enemies;
 use crate::core::enemy::{EnemyKind, Encounter};
@@ -250,6 +250,8 @@ pub enum PickPurpose {
     Duplicate,
     /// 瓶装(瓶装火焰/闪电/龙卷风):把选中的牌标记成开局进手,牌留在牌组里
     Bottle,
+    /// 祭品(篝火精灵):把选中的牌烧掉,赏赐按它的稀有度算
+    Offer,
 }
 
 impl PickPurpose {
@@ -260,6 +262,7 @@ impl PickPurpose {
             PickPurpose::Transform => "choose a card to transform",
             PickPurpose::Duplicate => "choose a card to duplicate",
             PickPurpose::Bottle => "choose a card to bottle",
+            PickPurpose::Offer => "choose a card to offer",
         }
     }
 }
@@ -306,13 +309,35 @@ pub struct RewardState {
     /// Boss 的三件候选(普通奖励/精英/事件用 relic,这里放 Boss 三选一)
     pub relic_choices: Vec<&'static RelicDef>,
     pub relic_taken: bool,
-    pub potion: Option<&'static PotionDef>,
-    pub potion_taken: bool,
+    pub potions: Vec<&'static PotionDef>,
+    /// 和 potions 一一对应:哪几瓶已经被拿走(药水栏满时也算处理过)
+    pub potion_taken: Vec<bool>,
     /// 打通燃烧精英掉落的绿钥匙(还没拿就是 true)
     pub emerald_key: bool,
     pub index: usize,
     /// 拿完(或跳过)之后去哪个界面
     pub next: Screen,
+}
+
+impl RewardState {
+    /// 空奖励屏:金币/卡牌/遗物都按"已拿走"处理,只有调用方后来填进去的条目会显示
+    fn empty(next: Screen) -> RewardState {
+        RewardState {
+            gold: 0,
+            gold_taken: true,
+            cards: Vec::new(),
+            card_taken: true,
+            queued: Vec::new(),
+            relic: None,
+            relic_choices: Vec::new(),
+            relic_taken: true,
+            potions: Vec::new(),
+            potion_taken: Vec::new(),
+            emerald_key: false,
+            index: 0,
+            next,
+        }
+    }
 }
 
 /// 奖励行:UI 与选择都按这个顺序来
@@ -324,7 +349,8 @@ pub enum RewardSlot {
     Relic,
     /// Boss 三选一里的第 i 件
     RelicChoice(usize),
-    Potion,
+    /// 奖励屏里的第 i 瓶药水
+    Potion(usize),
     /// 燃烧精英的绿钥匙
     EmeraldKey,
 }
@@ -390,6 +416,21 @@ pub struct EventState {
     pub result: Option<String>,
     /// 翻牌小游戏(match_and_keep)的棋盘;其它事件是 None
     pub match_keep: Option<MatchKeep>,
+    /// 可反复尝试的事件(废料泥怪)已经试过几次;别的用不上
+    pub attempts: u32,
+    /// 事件当前在哪一屏(参考实现 room.screen):golden_idol 靠它切换陷阱屏的选项
+    pub screen: Option<&'static str>,
+    /// dead_adventurer 进房时掷出来的奖池与伏击遭遇;其它事件是 None
+    pub adv: Option<DeadAdventurerData>,
+}
+
+/// dead_adventurer 的事件状态(参考实现 room.data):
+/// 进房时洗一次的三格奖池、这次伏击用哪种精英、已经搜过几次.
+#[derive(Clone, Copy, Debug)]
+pub struct DeadAdventurerData {
+    pub rewards: [&'static str; 3],
+    pub encounter: &'static str,
+    pub phase: u32,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -535,6 +576,8 @@ pub struct Run {
     rested: bool,
     /// 吉利亚已经举过几次铁(上限由遗物的 rest_lift_max 给)
     relic_lifts: i32,
+    /// 整局持续的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶),随存档走
+    pub relic_counters: RunRelicCounters,
     /// 羽翼靴还能无视路径飞几次
     wing_boots_left: i32,
     /// 小箱子:已经进过几个 ? 房间
@@ -568,6 +611,8 @@ pub struct Run {
     last_encounter: &'static str,
     /// 打赢这一场事件战斗后要回到的事件那一屏
     pending_event: Option<&'static EventDef>,
+    /// dead_adventurer 的伏击:打赢之后按这份事件状态发奖励屏(参考实现 onCombatVictory)
+    pending_adv: Option<DeadAdventurerData>,
     /// 这一场事件战斗的奖励方案(打完即清空)
     combat_reward: Option<&'static CombatReward>,
 }
@@ -712,6 +757,7 @@ impl Run {
             maw_bank_spent: false,
             rested: false,
             relic_lifts: 0,
+            relic_counters: RunRelicCounters::default(),
             wing_boots_left: 0,
             unknown_rooms_seen: 0,
             potion_chance: 0,
@@ -734,6 +780,7 @@ impl Run {
             relic_pools,
             last_encounter: "",
             pending_event: None,
+            pending_adv: None,
             combat_reward: None,
         };
         // 起始遗物的拾取效果
@@ -775,6 +822,16 @@ impl Run {
         out.push_str(&format!("neow_lament={}\n", self.neow_lament));
         out.push_str(&format!("relic_lifts={}\n", self.relic_lifts));
         out.push_str(&format!("wing_boots={}\n", self.wing_boots_left));
+        // 跨战斗的遗物计数器.战斗现场存盘时以战斗里那份为准(Run 上的副本这时还没收回)
+        let rc = self
+            .combat
+            .as_ref()
+            .map(|c| c.rs.run_counters())
+            .unwrap_or(self.relic_counters);
+        out.push_str(&format!(
+            "relic_counters={},{},{},{},{},{}\n",
+            rc.pen_nib, rc.happy_flower, rc.incense, rc.sundial, rc.attacks_total, rc.cards_total
+        ));
         if let Some(chest) = self.chest {
             let size = match chest.size {
                 ChestSize::Small => "small",
@@ -824,6 +881,8 @@ impl Run {
         out.push_str(&format!("potions={}\n", potions.join(",")));
         // 战斗现场(测试存档用):老存档没这几行,读到没有就照旧重建地图
         if let Some(c) = self.combat.as_ref() {
+            // 抽牌堆序列化时"顶牌在下标 0";老存档是反的,靠这一行认出来并明确拒绝
+            out.push_str("combat_pile_order=top\n");
             out.push_str(&format!("combat_encounter={}\n", c.encounter_id));
             out.push_str(&format!("combat_turn={}\n", c.turn));
             out.push_str(&format!("combat_energy={}\n", c.energy));
@@ -941,6 +1000,22 @@ impl Run {
         run.neow_lament = int("neow_lament", 0).max(0) as u8;
         run.relic_lifts = int("relic_lifts", 0).max(0);
         run.wing_boots_left = int("wing_boots", 0).max(0);
+        // 跨战斗的遗物计数器.老存档没有这一行,那时这些计数器本来是每场清零的,
+        // 按 0 起就与旧行为一致(不会静默给出错的局面)
+        if let Some(v) = get("relic_counters") {
+            let parts: Vec<i32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            if parts.len() != 6 {
+                return Err("存档里的 relic_counters 字段坏了".to_string());
+            }
+            run.relic_counters = RunRelicCounters {
+                pen_nib: parts[0].max(0),
+                happy_flower: parts[1].max(0),
+                incense: parts[2].max(0),
+                sundial: parts[3].max(0),
+                attacks_total: parts[4].max(0),
+                cards_total: parts[5].max(0),
+            };
+        }
         if let Some(v) = get("chest") {
             let parts: Vec<&str> = v.split(':').collect();
             if parts.len() == 3 {
@@ -1022,6 +1097,14 @@ impl Run {
         }
         // 测试存档:带战斗现场就照原样恢复(不用从种子重放)
         if let Some(enc_id) = get("combat_encounter") {
+            // 旧存档的抽牌堆是"顶牌记在末尾",和现在的数组朝向正好反过来.
+            // 照旧读会把整堆读反,所以这里直接拒绝,让人重新存一份
+            if get("combat_pile_order") != Some("top") {
+                return Err(
+                    "这份存档的战斗现场是旧版抽牌堆朝向(顶牌记在末尾),直接读会读反:请重新存一份"
+                        .to_string(),
+                );
+            }
             if let Some(enc) = enemies::encounter_def(enc_id) {
                 let setup = CombatSetup {
                     rested: run.rested,
@@ -1031,8 +1114,12 @@ impl Run {
                     relics: run.player.relics.clone(),
                     gold: run.player.gold,
                     lift_strength: run.relic_lifts,
+                    relic_counters: run.relic_counters,
                 };
                 let mut c = Combat::new(enc, setup, run.streams.clone());
+                // 重建时的第一回合与开局的洗牌都会动这些计数器(还带一次日晷),
+                // 存档里的那份才是真的,覆盖回去
+                c.rs.set_run_counters(run.relic_counters);
                 c.turn = int("combat_turn", 1).max(1) as u32;
                 c.energy = int("combat_energy", c.energy);
                 c.max_energy = int("combat_max_energy", c.max_energy);
@@ -1112,6 +1199,9 @@ impl Run {
             index: 0,
             result: None,
             match_keep: None,
+            attempts: 0,
+            screen: None,
+            adv: None,
         });
         self.screen = Screen::Event;
     }
@@ -1285,6 +1375,8 @@ impl Run {
             gold: self.player.gold,
             // 吉利亚:营火举过几次铁,开局就给几层力量
             lift_strength: self.relic_lifts,
+            // 跨战斗的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)
+            relic_counters: self.relic_counters,
         };
         self.combat = Some(Combat::new(enc, setup, self.streams.clone()));
         // 仙女在瓶中:开局就把保命符挂上
@@ -1398,6 +1490,11 @@ impl Run {
     /// 每次战斗内操作之后调用:同步生命、处理胜负
     pub fn sync_combat(&mut self) {
         self.absorb_combat_log();
+        // 跨战斗的遗物计数器:随时收回一局上,存档/界面读到的才是最新的
+        let counters = self.combat.as_ref().map(|c| c.rs.run_counters());
+        if let Some(counters) = counters {
+            self.relic_counters = counters;
+        }
         // 战斗里的掷点是在自己的流副本上走的,这里把它收回来
         if let Some(c) = self.combat.as_ref() {
             self.streams = c.streams.clone();
@@ -1520,6 +1617,8 @@ impl Run {
         let Some(c) = self.combat.take() else {
             return;
         };
+        // 跨战斗的遗物计数器写回一局(下一场从这里接着数)
+        self.relic_counters = c.rs.run_counters();
         let kind = c.kind;
         let burning = c.burning;
         self.stats.damage_dealt += c.damage_dealt;
@@ -1533,6 +1632,12 @@ impl Run {
         // 事件打的那一场:奖励由事件指定,打完可能还要回到事件里接着选
         let plan = self.combat_reward.take();
         let back = self.pending_event.take();
+        let adv = self.pending_adv.take();
+        if let Some(d) = adv {
+            self.say(format!("victory over the {}", c.encounter_id));
+            self.open_dead_adventurer_rewards(d);
+            return;
+        }
         if let Some(def) = back {
             self.say(format!("victory over the {}", c.encounter_id));
             self.event = Some(EventState {
@@ -1541,6 +1646,9 @@ impl Run {
                 index: 0,
                 result: None,
                 match_keep: None,
+                attempts: 0,
+                screen: None,
+                adv: None,
             });
             self.screen = Screen::Event;
             return;
@@ -1631,6 +1739,7 @@ impl Run {
         } else {
             Vec::new()
         };
+        let potions: Vec<&'static PotionDef> = potion.into_iter().collect();
         self.reward = Some(RewardState {
             gold,
             gold_taken: false,
@@ -1640,8 +1749,8 @@ impl Run {
             relic,
             relic_choices,
             relic_taken: false,
-            potion,
-            potion_taken: false,
+            potion_taken: vec![false; potions.len()],
+            potions,
             // 燃烧精英掉绿钥匙:参考实现 burningElite && !keys.emerald 时加一份
             emerald_key: kind == EnemyKind::Elite && burning && !self.keys.emerald,
             index: 0,
@@ -1652,6 +1761,10 @@ impl Run {
 
     fn resolve_defeat(&mut self) {
         self.absorb_combat_log();
+        // 跨战斗的遗物计数器照样写回(死亡界面上的存档/统计要一致)
+        if let Some(c) = self.combat.as_ref() {
+            self.relic_counters = c.rs.run_counters();
+        }
         self.combat = None;
         self.say("you fell in battle");
         self.screen = Screen::Death;
@@ -1683,8 +1796,10 @@ impl Run {
         if r.emerald_key && !self.keys.emerald {
             v.push(RewardSlot::EmeraldKey);
         }
-        if r.potion.is_some() && !r.potion_taken {
-            v.push(RewardSlot::Potion);
+        for (i, _) in r.potions.iter().enumerate() {
+            if !r.potion_taken.get(i).copied().unwrap_or(true) {
+                v.push(RewardSlot::Potion(i));
+            }
         }
         v
     }
@@ -1741,14 +1856,18 @@ impl Run {
                 self.mark_reward(|r| r.relic_taken = true);
                 Ok(format!("relic gained: {}", def.name))
             }
-            RewardSlot::Potion => {
-                let Some(def) = self.reward.as_ref().and_then(|r| r.potion) else {
+            RewardSlot::Potion(i) => {
+                let Some(def) = self.reward.as_ref().and_then(|r| r.potions.get(i)).copied() else {
                     return Err("no potion here".to_string());
                 };
                 if !self.add_potion(def) {
                     return Err("no free potion slot: press p, then t+1-3 to toss one".to_string());
                 }
-                self.mark_reward(|r| r.potion_taken = true);
+                self.mark_reward(|r| {
+                    if let Some(t) = r.potion_taken.get_mut(i) {
+                        *t = true;
+                    }
+                });
                 Ok(format!("potion gained: {}", def.name))
             }
             RewardSlot::EmeraldKey => {
@@ -2376,10 +2495,16 @@ impl Run {
         }
     }
 
-    /// 打开指定事件;翻牌事件顺手把 12 格棋盘铺好
+    /// 打开指定事件;翻牌事件顺手把 12 格棋盘铺好,dead_adventurer 掷一次奖池与伏击遭遇
     fn open_event_def(&mut self, def: &'static EventDef) {
         let match_keep = if def.id == "match_and_keep" {
             Some(MatchKeep::new(&mut self.streams, self.character))
+        } else {
+            None
+        };
+        // 参考实现 dead_adventurer.onEnter:洗奖池,再挑这次的伏击精英
+        let adv = if def.id == "dead_adventurer" {
+            Some(self.roll_dead_adventurer())
         } else {
             None
         };
@@ -2389,8 +2514,25 @@ impl Run {
             index: 0,
             result: None,
             match_keep,
+            attempts: 0,
+            screen: None,
+            adv,
         });
         self.screen = Screen::Event;
+    }
+
+    /// dead_adventurer 进房时掷一次(参考实现 onEnter):奖池三格用 miscRng 洗一遍,
+    /// 再从三种精英里挑一个当伏击.
+    fn roll_dead_adventurer(&mut self) -> DeadAdventurerData {
+        let mut rewards = crate::core::events::DEAD_ADVENTURER_REWARDS;
+        let seed = self.streams.floor(FloorStream::MiscRng).random_long();
+        java_shuffle(&mut rewards, &mut JavaRandom::new(seed));
+        let idx = self.streams.floor(FloorStream::MiscRng).random(2) as usize;
+        DeadAdventurerData {
+            rewards,
+            encounter: crate::core::events::DEAD_ADVENTURER_ENCOUNTERS[idx],
+            phase: 0,
+        }
     }
 
     /// 选项当前是否可选(钱够、血够、该有的遗物/药水/牌都有);
@@ -2425,7 +2567,36 @@ impl Run {
         if c.req_non_basic && !self.has_non_basic_card() {
             return false;
         }
+        // 分期(多屏)事件的选项:只有事件停在这一屏时才可选
+        if c.only_screen != st.screen {
+            return false;
+        }
+        // 限次数的选项(dead_adventurer 的搜索最多三次)
+        if c.max_uses > 0 && st.attempts >= c.max_uses {
+            return false;
+        }
+        if c.req_removable && self.removable_cards().is_empty() {
+            return false;
+        }
+        if c.req_upgradeable && !self.player.deck.iter().any(|c| c.can_upgrade()) {
+            return false;
+        }
         true
+    }
+
+    /// 能当祭品/能删掉的牌的下标(参考实现 removableIndices:没瓶装、不是不可移除的)
+    fn removable_cards(&self) -> Vec<usize> {
+        // 牌组不能被清空,留最后一张
+        if self.player.deck.len() <= 1 {
+            return Vec::new();
+        }
+        self.player
+            .deck
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.def.unremovable && !c.bottled)
+            .map(|(i, _)| i)
+            .collect()
     }
 
     /// 事件当前有几个选项:翻牌事件按棋盘的 12 格算
@@ -2511,6 +2682,14 @@ impl Run {
         if !self.event_choice_available(i) {
             return Err("that choice is not available".to_string());
         }
+        // 废料泥怪:"把手伸进去"可反复尝试,自己掷点决定去留,不走"结算完写 result"的流程
+        if choice.outcome.ooze {
+            return self.ooze_attempt();
+        }
+        // dead_adventurer 的搜索:掷伏击/领奖池,也自己决定去留
+        if choice.outcome.adv_search {
+            return self.dead_adventurer_search();
+        }
         if choice.cost_gold > 0 {
             self.spend_gold(choice.cost_gold);
         }
@@ -2528,8 +2707,101 @@ impl Run {
             }
             return Ok(());
         }
+        // 换屏但选项表不变(golden_idol 的陷阱屏):留在事件屏,可用性按新屏算
+        if let Some(screen) = outcome.set_screen {
+            if let Some(st) = self.event.as_mut() {
+                st.screen = Some(screen);
+                st.index = 0;
+                st.result = None;
+            }
+            return Ok(());
+        }
         if let Some(st) = self.event.as_mut() {
             st.result = Some(text.to_string());
+        }
+        Ok(())
+    }
+
+    /// dead_adventurer 的搜索(参考实现 act1.ts 的 search 选项):
+    /// 先掷伏击(25% + 25% * 已经搜过的次数),中了就开一场精英战、打完再发奖;
+    /// 没中就领当前阶段的那格奖池(30 金币 / 空 / 随机遗物)并把阶段推进一格.
+    fn dead_adventurer_search(&mut self) -> Result<(), String> {
+        let Some(st) = self.event.as_ref() else {
+            return Err("no event here".to_string());
+        };
+        let Some(mut d) = st.adv else {
+            return Err("not the dead adventurer".to_string());
+        };
+        if d.phase >= crate::core::events::DEAD_ADVENTURER_MAX_SEARCHES {
+            return Err("already searched three times".to_string());
+        }
+        let chance = crate::core::events::DEAD_ADVENTURER_AMBUSH_BASE + 25 * d.phase as i32;
+        if self.streams.floor(FloorStream::MiscRng).random(99) < chance as u32 {
+            // 伏击:剩下的奖池在打完之后折成奖励屏(参考实现 onCombatVictory)
+            let enc = enemies::resolve(d.encounter);
+            self.pending_adv = Some(d);
+            self.start_combat(enc, false);
+            // 拉格文在事件战斗里是醒着的(参考实现 suppressPreBattle)
+            if d.encounter == "lagavulin_solo" {
+                self.wake_sleepers();
+            }
+            return Ok(());
+        }
+        let reward = d.rewards[d.phase as usize];
+        d.phase += 1;
+        if let Some(st) = self.event.as_mut() {
+            st.adv = Some(d);
+            st.attempts += 1;
+        }
+        match reward {
+            "GOLD" => {
+                self.gain_gold(crate::core::events::DEAD_ADVENTURER_GOLD);
+                self.say("you find a pouch of gold");
+            }
+            "RELIC" => {
+                if let Some(def) = self.take_relic_of_any() {
+                    self.gain_relic(def);
+                }
+            }
+            _ => self.say("you find nothing worth taking"),
+        }
+        Ok(())
+    }
+
+    /// 把敌人身上的"睡眠"去掉(事件战斗里拉格文是醒着的):
+    /// 参考实现的 suppressPreBattle 会把敌人的 preBattle 抹掉,这里抹掉开局的
+    /// 睡眠/金属化与那 8 点格挡.
+    fn wake_sleepers(&mut self) {
+        if let Some(c) = self.combat.as_mut() {
+            for e in c.enemies.iter_mut() {
+                if e.def.id == "lagavulin" {
+                    e.statuses.set(Status::Asleep, 0);
+                    e.statuses.set(Status::Metallicize, 0);
+                    e.block = 0;
+                }
+            }
+        }
+    }
+
+    /// 废料泥怪:"把手伸进去"可以反复尝试——先扣 3 点血,再掷一次
+    /// (25% 起步、每次失败涨 10%);中了给一件随机遗物并收尾,没中就留在这屏,
+    /// 下次还能再伸(掷点在扣血之后,和参考实现同序).
+    fn ooze_attempt(&mut self) -> Result<(), String> {
+        self.damage(3);
+        if self.player.hp <= 0 {
+            return Ok(());
+        }
+        let attempts = self.event.as_ref().map(|e| e.attempts).unwrap_or(0);
+        let chance = 25 + 10 * attempts as i32;
+        if self.streams.floor(FloorStream::MiscRng).random(99) >= (99 - chance) as u32 {
+            if let Some(def) = self.take_relic_of_any() {
+                self.gain_relic(def);
+            }
+            if let Some(st) = self.event.as_mut() {
+                st.result = Some("You pull a relic out of the muck.".to_string());
+            }
+        } else if let Some(st) = self.event.as_mut() {
+            st.attempts += 1;
         }
         Ok(())
     }
@@ -2599,10 +2871,18 @@ impl Run {
             self.player.max_hp = (self.player.max_hp - loss).max(1);
             self.player.hp = self.player.hp.min(self.player.max_hp);
         }
+        if o.max_hp_frac > 0.0 {
+            let loss = crate::core::events::frac_floor_of(max_hp0, o.max_hp_frac);
+            self.player.max_hp = (self.player.max_hp - loss).max(1);
+            self.player.hp = self.player.hp.min(self.player.max_hp);
+        }
         let mut delta = o.hp;
         if o.hp_pct > 0 {
             let pct = crate::core::events::pct_of(max_hp0, o.hp_pct).max(o.hp_pct_min.max(1));
             delta -= pct;
+        }
+        if o.hp_frac > 0.0 {
+            delta -= crate::core::events::frac_floor_of(max_hp0, o.hp_frac);
         }
         if delta < 0 {
             self.damage(-delta);
@@ -2611,6 +2891,9 @@ impl Run {
         }
         if o.heal_pct > 0 {
             self.heal(crate::core::events::pct_of(max_hp0, o.heal_pct));
+        }
+        if o.heal_frac > 0.0 {
+            self.heal(crate::core::events::frac_floor_of(max_hp0, o.heal_frac));
         }
         if o.full_heal {
             self.player.hp = self.player.max_hp;
@@ -2659,6 +2942,29 @@ impl Run {
             if let Some(def) = self.take_relic_of_any() {
                 self.gain_relic(def);
             }
+        }
+        // 从指定遗物表里挑一件自己没有的(脸商人的交易):洗一遍取第一件,都有就给 Circlet
+        if let Some(table) = o.pick_relic_from {
+            let mut cands: Vec<&'static RelicDef> = table
+                .iter()
+                .filter(|id| !self.player.relics.iter().any(|r| r.id == **id))
+                .map(|id| relic_def_any(id))
+                .collect();
+            let def = if cands.is_empty() {
+                relic_def_any("circlet")
+            } else {
+                let seed = self.streams.floor(FloorStream::MiscRng).random_long();
+                java_shuffle(&mut cands, &mut JavaRandom::new(seed));
+                cands[0]
+            };
+            self.gain_relic(def);
+        }
+        // 一件随机遗物开成奖励屏(转盘转到遗物那一格):拿不拿由玩家决定
+        if o.relic_reward {
+            let mut r = RewardState::empty(Screen::Map);
+            r.relic = self.take_relic_of_any();
+            r.relic_taken = false;
+            self.open_event_reward(r);
         }
         if let Some(id) = o.add_card {
             self.add_card_id(id, 1);
@@ -2710,6 +3016,24 @@ impl Run {
             }
             if n > 0 {
                 self.say(format!("{n} cards are upgraded"));
+            }
+        }
+        // 洗一遍可升级的牌再取前 n 张(参考实现 shining_light)
+        if o.upgrade_random_shuffle > 0 {
+            let mut cands: Vec<usize> = self
+                .player
+                .deck
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.can_upgrade())
+                .map(|(i, _)| i)
+                .collect();
+            if !cands.is_empty() {
+                let seed = self.streams.floor(FloorStream::MiscRng).random_long();
+                java_shuffle(&mut cands, &mut JavaRandom::new(seed));
+                for &i in cands.iter().take(o.upgrade_random_shuffle as usize) {
+                    self.player.deck[i].upgrade();
+                }
             }
         }
         for _ in 0..o.upgrade_random_n {
@@ -2819,6 +3143,10 @@ impl Run {
                 self.add_potion(def);
             }
         }
+        // 药水奖励屏(实验室/蓝衣女子):掷好 n 瓶摆进奖励屏,拿不拿由玩家决定
+        if o.potion_reward_n > 0 {
+            self.open_potion_reward(o.potion_reward_n);
+        }
         if let Some(table) = o.roll {
             let total: u32 = table.iter().map(|(w, _)| *w).sum();
             let weights: Vec<f32> =
@@ -2854,6 +3182,8 @@ impl Run {
             self.open_picker(PickPurpose::Transform, Screen::Event, 0, None);
         } else if o.duplicate_card {
             self.open_picker(PickPurpose::Duplicate, Screen::Event, 0, None);
+        } else if o.offer_card {
+            self.open_picker(PickPurpose::Offer, Screen::Event, 0, None);
         }
         if o.dead {
             self.player.hp = 0;
@@ -2948,7 +3278,10 @@ impl Run {
                 Ok(format!("+{} gold", crate::core::events::NEOW_TWO_FIFTY_GOLD))
             }
             "three_enemy_kill" => {
-                self.neow_lament = crate::core::events::NEOW_THREE_ENEMY_KILL;
+                // 原版/参考实现是把 Neow's Lament 当成一件遗物发下来(onEquip 置 3 次),
+                // 而不是只记一个裸计数器:遗物列表本身要对齐,拾取也走同一条路径.
+                let def = relics::relic_def_or_panic("neows_lament");
+                self.gain_relic(def);
                 Ok(format!(
                     "Neow's Lament: the next {} combats start with 1 HP enemies",
                     crate::core::events::NEOW_THREE_ENEMY_KILL
@@ -3075,8 +3408,8 @@ impl Run {
             relic: None,
             relic_choices: Vec::new(),
             relic_taken: true,
-            potion: None,
-            potion_taken: true,
+            potions: Vec::new(),
+            potion_taken: Vec::new(),
             emerald_key: false,
             index: 0,
             next: Screen::Map,
@@ -3393,6 +3726,8 @@ impl Run {
                         .collect()
                 }
             }
+            // 祭品:能烧掉的牌(不可移除的不行,参考实现 removableIndices 还排掉瓶装的)
+            PickPurpose::Offer => self.removable_cards(),
             PickPurpose::Duplicate => (0..self.player.deck.len()).collect(),
             // 瓶装:只列对应类型、还没被封进瓶子的牌
             PickPurpose::Bottle => {
@@ -3465,6 +3800,12 @@ impl Run {
                 let label = self.player.deck[deck_idx].label();
                 format!("{label} is bottled")
             }
+            PickPurpose::Offer => {
+                let card = self.player.deck.remove(deck_idx);
+                // 寄生这类"被抽出牌组要付代价"的牌
+                self.pay_deck_leave_cost(&card);
+                self.offer_card_bonus(&card)
+            }
         };
         if cost > 0 {
             self.spend_gold(cost);
@@ -3478,6 +3819,12 @@ impl Run {
         self.picker = None;
         self.say(msg.clone());
         self.screen = back;
+        // 祭品结算完事件就结束了(参考实现 onResume 里的 endEvent)
+        if purpose == PickPurpose::Offer {
+            if let Some(st) = self.event.as_mut() {
+                st.result = Some(msg.clone());
+            }
+        }
         // Neow 的"移除两张/变形两张":选完一张再开一次(免费的才这样重复)
         if remaining > 1 && cost == 0 && slot.is_none() {
             let left = remaining - 1;
@@ -3486,6 +3833,37 @@ impl Run {
             }
         }
         Ok(msg)
+    }
+
+    /// 篝火精灵的赏赐:按烧掉的牌的稀有度给(参考实现 bonfireSpirits.onResume).
+    /// 诅咒给"灵便便",基础牌什么也不给,普通/特殊回 5 点,罕见回 10 点,
+    /// 稀有给 10 点上限并回满.
+    fn offer_card_bonus(&mut self, card: &CardInstance) -> String {
+        let name = card.label();
+        if card.kind() == CardType::Curse {
+            let def = relics::relic_def_or_panic("spirit_poop");
+            self.gain_relic(def);
+            return format!("{name} is devoured; the spirits leave Spirit Poop");
+        }
+        match card.rarity() {
+            Rarity::Basic => format!("{name} is devoured; the spirits want more"),
+            Rarity::Common | Rarity::Special => {
+                self.heal(5);
+                format!("{name} is devoured; you heal 5 HP")
+            }
+            Rarity::Uncommon => {
+                self.heal(10);
+                format!("{name} is devoured; you heal 10 HP")
+            }
+            Rarity::Rare => {
+                // 加上限会顺带回等量的血,再照参考实现 healToFull 回满
+                self.player.max_hp += 10;
+                self.heal(10);
+                let full = self.player.max_hp;
+                self.heal(full);
+                format!("{name} is devoured; you gain 10 max HP and are healed to full")
+            }
+        }
     }
 
     /// 这个用途下还有没有可选的牌(重复开选牌界面前先看一眼)
@@ -3497,8 +3875,8 @@ impl Run {
                     || !self.player.deck.iter().any(|c| !c.def.unremovable)
             }
             PickPurpose::Duplicate => self.player.deck.is_empty(),
-            // 瓶装只选一次,不走"再开一次"的分支
-            PickPurpose::Bottle => true,
+            // 瓶装与祭品只选一次,不走"再开一次"的分支
+            PickPurpose::Bottle | PickPurpose::Offer => true,
         }
     }
 
@@ -3559,6 +3937,8 @@ impl Run {
             }
             if let Some(c) = self.combat.as_ref() {
                 self.streams = c.streams.clone();
+                // 脱身也算这场打完:跨战斗的遗物计数器写回一局
+                self.relic_counters = c.rs.run_counters();
             }
             self.absorb_combat_log();
             self.combat = None;
@@ -3880,6 +4260,58 @@ impl Run {
         }
     }
 
+    /// 事件自己开一个奖励屏(参考实现 openRewards):条目由调用方填好,
+    /// 事件本身在这一屏开始时就结束了.
+    fn open_event_reward(&mut self, r: RewardState) {
+        self.event = None;
+        self.reward = Some(r);
+        self.screen = Screen::Reward;
+        self.reward_clamp();
+    }
+
+    /// 空奖励屏:只有调用方填进去的条目会显示(金币/遗物/卡牌都按"已拿走"处理)
+    fn open_potion_reward(&mut self, n: u8) {
+        let mut r = RewardState::empty(Screen::Map);
+        for _ in 0..n {
+            let color = potions::class_color(self.character);
+            if let Some(p) = potions::random_potion(self.streams.run(RunStream::PotionRng), color) {
+                r.potions.push(p);
+                r.potion_taken.push(false);
+            }
+        }
+        self.open_event_reward(r);
+    }
+
+    /// dead_adventurer 的伏击打完后发的事件奖励(参考实现 onCombatVictory):
+    /// 金币 = miscRng 摇 25-35,奖池里每份没领到的金币奖再加 30;奖池里还剩遗物
+    /// 就摇一件;再照 eventCombatRewards 的顺序掷一次药水、发一组精英牌.
+    fn open_dead_adventurer_rewards(&mut self, d: DeadAdventurerData) {
+        let remaining = &d.rewards[d.phase.min(3) as usize..];
+        let parcels = remaining.iter().filter(|r| **r == "GOLD").count() as i32;
+        let (lo, hi) = crate::core::events::DEAD_ADVENTURER_AMBUSH_GOLD;
+        let gold = self.streams.floor(FloorStream::MiscRng).random_range(lo, hi)
+            + crate::core::events::DEAD_ADVENTURER_GOLD * parcels;
+        let relic = if remaining.contains(&"RELIC") {
+            self.take_relic_of_any()
+        } else {
+            None
+        };
+        let potion = self.roll_potion_reward(1 + usize::from(relic.is_some()));
+        let cards = self.create_card_reward(EnemyKind::Elite);
+        let mut r = RewardState::empty(Screen::Map);
+        r.gold = gold;
+        r.gold_taken = false;
+        r.relic = relic;
+        r.relic_taken = false;
+        if let Some(p) = potion {
+            r.potions.push(p);
+            r.potion_taken.push(false);
+        }
+        r.cards = cards;
+        r.card_taken = false;
+        self.open_event_reward(r);
+    }
+
     /// 排 n 组卡牌三选一(小房子的"获得一张牌"/浑天仪的五次/梦中情网的一次).
     /// 第一组直接放进当前(或新建的)奖励屏,其余排队,拿完一组再顶上来一组.
     fn add_card_choice(&mut self, n: usize) {
@@ -3912,8 +4344,8 @@ impl Run {
                 relic: None,
                 relic_choices: Vec::new(),
                 relic_taken: true,
-                potion: None,
-                potion_taken: true,
+                potions: Vec::new(),
+                potion_taken: Vec::new(),
                 emerald_key: false,
                 index: 0,
                 next: back,
@@ -4046,7 +4478,8 @@ impl Run {
                     }
                     c.hand.push(inst);
                 }
-                "draw" => c.draw.push(inst),
+                // 抽牌堆的顶是下标 0:塞进去的牌下一个就抽到(和以前 push 到末尾等效)
+                "draw" => c.draw.insert(0, inst),
                 "discard" => c.discard.push(inst),
                 "exhaust" => c.exhaust.push(inst),
                 other => return Err(format!("unknown pile {other}")),
@@ -4327,10 +4760,19 @@ impl Run {
         }
     }
 
-    /// 随机一件遗物:先滚档次(参考实现 returnRandomRelicTier)
+    /// 无界面随机遗物(事件用):先滚档次再从池子里抽.
+    /// 抽到"瓶装/磨刀石"这类还要再开一次选牌界面的遗物就接着再抽一件(参考实现同规则)
     fn take_relic_of_any(&mut self) -> Option<&'static RelicDef> {
         let tier = self.roll_combat_relic_tier();
-        Some(self.take_relic_of_tier(tier))
+        loop {
+            let def = self.take_relic_of_tier(tier);
+            if !matches!(
+                def.id,
+                "bottled_flame" | "bottled_lightning" | "bottled_tornado" | "whetstone"
+            ) {
+                return Some(def);
+            }
+        }
     }
 
     /// 战斗奖励的遗物档次:<50 普通,<83 罕见,其余稀有(都走 relicRng)
@@ -4632,6 +5074,103 @@ mod tests {
         );
     }
 
+    /// 跨战斗的遗物计数器:薰香的无形回合在整局里连着数,存档往返后接着数
+    #[test]
+    fn incense_burner_counter_carries_across_combats_and_saves() {
+        let mut r = run(36);
+        r.player.hp = 200;
+        r.player.max_hp = 200;
+        r.debug_add_relic("incense_burner").unwrap();
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").unwrap();
+        r.debug_start_combat(enc);
+        r.sync_combat();
+        assert_eq!(r.relic_counters.incense, 1, "开局第 1 回合数到 1");
+        for _ in 0..2 {
+            r.combat.as_mut().unwrap().end_turn();
+            r.sync_combat();
+        }
+        assert_eq!(r.relic_counters.incense, 3, "第 3 回合数到 3");
+
+        // 打到一半存档:计数器与战斗现场一起回来
+        let back_text = r.save_text();
+        let mut r2 = Run::from_save(&back_text).expect("读回存档");
+        assert_eq!(r2.relic_counters, r.relic_counters, "计数器随存档走");
+        assert_eq!(
+            r2.combat.as_ref().unwrap().rs.incense,
+            3,
+            "战斗现场里也还是 3"
+        );
+        // 读档重建时会走一遍开局的第 1 回合与洗牌,不能把存档里的数再带高一格
+        assert!(
+            r2.save_text().contains("relic_counters=0,0,3,0,0,0"),
+            "存-读-再存,计数器照旧:\n{}",
+            r2.save_text()
+        );
+
+        // 下一场从停下的 3 接着数:第 6 个回合触发无形,然后归零重数
+        r2.debug_start_combat(enc);
+        r2.sync_combat();
+        assert_eq!(r2.relic_counters.incense, 4, "新一场从上一场的 3 接着数");
+        for _ in 0..2 {
+            r2.combat.as_mut().unwrap().end_turn();
+            r2.sync_combat();
+        }
+        assert_eq!(
+            r2.combat
+                .as_ref()
+                .unwrap()
+                .player
+                .statuses
+                .get(Status::Intangible),
+            1,
+            "第 6 个回合给 1 层无形"
+        );
+        assert_eq!(r2.relic_counters.incense, 0, "触发后归零,下一轮重新数");
+        // 无形只护这一回合:怪物走完就减掉(参考实现里 turnBased 的能力在回合末 tick)
+        r2.combat.as_mut().unwrap().end_turn();
+        r2.sync_combat();
+        assert_eq!(
+            r2.combat
+                .as_ref()
+                .unwrap()
+                .player
+                .statuses
+                .get(Status::Intangible),
+            0,
+            "无形只管当回合"
+        );
+    }
+
+    /// 跨战斗的遗物计数器只在自己这件遗物在手时累加(参考实现挂在遗物上):
+    /// 没拿到之前打再多牌也不数,中途拿到就从 0 起
+    #[test]
+    fn relic_counters_only_advance_while_the_relic_is_held() {
+        let mut r = run(37);
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").unwrap();
+        r.debug_start_combat(enc);
+        let play_a_strike = |r: &mut Run| {
+            let c = r.combat.as_mut().unwrap();
+            let idx = c
+                .hand
+                .iter()
+                .position(|x| x.def.id == "strike")
+                .expect("起手该有打击");
+            c.play_card(idx, Some(0)).unwrap();
+            r.sync_combat();
+        };
+        play_a_strike(&mut r);
+        assert_eq!(r.relic_counters.pen_nib, 0, "没笔尖就不数");
+        assert_eq!(r.relic_counters.attacks_total, 0, "没双节棍就不数");
+        assert_eq!(r.relic_counters.cards_total, 0, "没墨水瓶就不数");
+
+        // 中途入手笔尖:计数器没被之前的攻击带偏,第一张攻击就从 1 起
+        r.debug_add_relic("pen_nib").unwrap();
+        r.debug_start_combat(enc);
+        assert_eq!(r.relic_counters.pen_nib, 0, "刚拿到手是 0");
+        play_a_strike(&mut r);
+        assert_eq!(r.relic_counters.pen_nib, 1, "拿到手后从 0 数起");
+    }
+
     /// 羽翼靴:可以无视路径飞三次,飞完只剩正常可达
     #[test]
     fn wing_boots_fly_anywhere_three_times() {
@@ -4819,6 +5358,42 @@ mod tests {
         assert!(
             back.player.deck[1..].iter().all(|c| !c.bottled),
             "别的牌没被顺带标记"
+        );
+    }
+
+    /// 战斗现场的存档要带"顶牌在下标 0"的标记;旧格式(没有这行)必须明确拒绝
+    #[test]
+    fn combat_save_marks_the_pile_order_and_rejects_the_old_format() {
+        let base = run(44).save_text();
+        let combat = "combat_encounter=jaw_worm_solo\n\
+                      combat_turn=1\n\
+                      combat_energy=3\n\
+                      combat_max_energy=3\n\
+                      combat_hp=80\n\
+                      combat_block=0\n\
+                      combat_hand=strike,defend\n\
+                      combat_draw=defend,strike\n\
+                      combat_discard=bash\n\
+                      combat_exhaust=\n\
+                      combat_enemies=40:0:0:1\n";
+        // 老格式的抽牌堆是"顶牌记在末尾":直接拒绝,不能静默读反
+        let err = match Run::from_save(&format!("{base}{combat}")) {
+            Ok(_) => panic!("旧格式的战斗存档应该被拒绝"),
+            Err(e) => e,
+        };
+        assert!(err.contains("旧版抽牌堆朝向"), "要说清楚为什么拒绝: {err}");
+        // 新格式读回来,牌堆顺序照原样
+        let back = Run::from_save(&format!("{base}combat_pile_order=top\n{combat}")).unwrap();
+        let c = back.combat.as_ref().expect("战斗现场要读回来");
+        let ids: Vec<&str> = c.draw.iter().map(|x| x.def.id).collect();
+        assert_eq!(ids, vec!["defend", "strike"], "顶牌在下标 0");
+        let ids: Vec<&str> = c.hand.iter().map(|x| x.def.id).collect();
+        assert_eq!(ids, vec!["strike", "defend"]);
+        let ids: Vec<&str> = c.discard.iter().map(|x| x.def.id).collect();
+        assert_eq!(ids, vec!["bash"]);
+        assert!(
+            back.save_text().contains("combat_pile_order=top"),
+            "存回去还带着标记"
         );
     }
 
@@ -5521,8 +6096,8 @@ mod tests {
         }
         settle(&mut r);
         let reward = r.reward.as_mut().unwrap();
-        reward.potion = Some(def);
-        reward.potion_taken = false;
+        reward.potions = vec![def];
+        reward.potion_taken = vec![false];
         for slot in r.player.potions.iter_mut() {
             *slot = Some(def);
         }
@@ -5531,11 +6106,14 @@ mod tests {
         let slots = r.reward_slots();
         let idx = slots
             .iter()
-            .position(|s| matches!(s, RewardSlot::Potion))
+            .position(|s| matches!(s, RewardSlot::Potion(_)))
             .unwrap();
         r.reward.as_mut().unwrap().index = idx;
         assert!(r.reward_take().is_err(), "满格时不该拿得下");
-        assert!(r.reward_slots().contains(&RewardSlot::Potion), "拿不下就该还在");
+        assert!(
+            r.reward_slots().iter().any(|s| matches!(s, RewardSlot::Potion(_))),
+            "拿不下就该还在"
+        );
         // 腾一格
         r.player.potions[0] = None;
         let msg = r.reward_take().unwrap();
