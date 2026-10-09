@@ -89,7 +89,7 @@ pub fn title(buf: &mut Buffer, area: Rect, app: &App) {
 
 pub fn char_select(buf: &mut Buffer, area: Rect, app: &App) {
     let chars = roster::all();
-    let box_h = chars.len() as u16 + 4;
+    let box_h = chars.len() as u16 + 5;
     let w = 62u16.min(area.width.saturating_sub(2));
     let h = box_h.min(area.height.saturating_sub(2));
     let rect = Rect::new(
@@ -141,7 +141,24 @@ pub fn char_select(buf: &mut Buffer, area: Rect, app: &App) {
             }),
         );
     }
-    // 底部一行:当前角色能不能玩
+    // 底部:飞升等级(可调) + 当前角色能不能玩
+    let asc_y = rect.y + rect.height - 3;
+    put(
+        buf,
+        rect.x + 2,
+        asc_y,
+        &truncate(
+            &format!(
+                "Ascension {}: {}   [a/A to change]",
+                app.ascension,
+                crate::core::ascension::label(app.ascension)
+            ),
+            rect.width as usize - 4,
+        ),
+        Style::default()
+            .fg(if app.ascension > 0 { theme::WARN } else { theme::FG })
+            .bg(theme::BG),
+    );
     let ch = roster::by_index(app.char_sel);
     let note = match roster::blocked_reason(ch) {
         None => format!("{} is ready", ch.name),

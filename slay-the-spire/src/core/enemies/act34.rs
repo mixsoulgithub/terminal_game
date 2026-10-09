@@ -70,7 +70,8 @@ pub const DARKLING: EnemyDef = EnemyDef {
 
 /// 开局掷一次撕咬伤害(三个暗灵各掷一次)
 fn darkling_spawn(ctx: &mut SpawnCtx) {
-    ctx.state.rolled = ctx.rng.range_inclusive(7, 11);
+    let (lo, hi, bonus) = crate::core::ascension::darkling_nip_roll(ctx.asc);
+    ctx.state.rolled = ctx.rng.range_inclusive(lo, hi) + bonus;
 }
 
 /// 半死时先摆 REGROW 再摆 REINCARNATE;活着时撕咬/硬化都有限制
@@ -1395,27 +1396,33 @@ pub const SPIRE_SHIELD: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 开局与重砸之后按 50/50 定先撞还是先固守;两块之间的下一招是重砸
+/// 每三回合一块:第 3/6/9… 回合重砸,块的头两回合是撞与固守各一次(先后五五开).
+/// 块内位置按"这一招落在第几回合"算,不只看上一招是什么:沙盒/回放给敌人预置首招
+/// 时(replay.rs 的 build_enemies 把 next_move 与 state.last 一起指到首招),只认历史
+/// 的写法会把"块的头一回合"读成"块内第二回合",重砸就提前一回合.
 fn pick_spire_shield(ctx: &mut PickCtx) -> usize {
     const BASH: usize = 0;
     const FORTIFY: usize = 1;
     const SMASH: usize = 2;
-    // 开局和上一招是重砸:掷一次五五开
+    // 开局第一掷与重砸之后:重新五五开(重砸之后无论预置历史如何都该重掷)
     if ctx.first_turn() || ctx.last_is(SMASH) {
         return if ctx.coin() { FORTIFY } else { BASH };
     }
-    // 撞/固守之后:前一步是重砸(或刚开始)就走"三回合一块"的另一招,否则接重砸
-    let started_block = ctx.prev_is(SMASH) || ctx.prev().is_none();
-    if ctx.last_is(BASH) {
-        if started_block {
-            FORTIFY
-        } else {
-            SMASH
-        }
-    } else if started_block {
-        BASH
+    // 这一招落在第几回合:开局(还没行动过)是 1,之后每行动一次加一
+    let turn = ctx.turn() + 1;
+    if turn % 3 == 2 {
+        // 块内第二招:与上一招凑成撞/固守各一次
+        return if ctx.last_is(BASH) { FORTIFY } else { BASH };
+    }
+    if turn % 3 == 0 {
+        // 块尾:重砸
+        return SMASH;
+    }
+    // 历史对不上块内位置时(例如首招是别人预置的)按块的头一招处理:五五开
+    if ctx.coin() {
+        FORTIFY
     } else {
-        SMASH
+        BASH
     }
 }
 

@@ -58,7 +58,12 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     // 药水区要画在它左边,所以先把这一组算出来(窄终端上三瓶长名字会压过来)
     let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
     let floor_text = format!("Act {}  Floor {}/{}", run.act, floor, run.map.total_floors());
-    let right = format!("{}   Deck {}", floor_text, p.deck.len());
+    let asc = if run.ascension > 0 {
+        format!("A{}   ", run.ascension)
+    } else {
+        String::new()
+    };
+    let right = format!("{asc}{}   Deck {}", floor_text, p.deck.len());
     let rx = (area.x + area.width).saturating_sub(display_width(&right) as u16 + 2);
 
     // 药水区:每个槽位一个 (),空的也写出来;选中那个铺底色

@@ -1,0 +1,527 @@
+遗物钩子审计报告
+种子 seed=12345
+命令: bun tools/sandbox_relics.ts
+
+覆盖统计:
+  已实现遗物 155 件,表行 168 条
+  - 沙盒实测(战斗内钩子):93 件(沙盒行 95 条,通过 95,不一致 0)
+  - 纯 run-level 断言测试(一局流程侧):61 件(再加上与沙盒互补的 8 件战斗内遗物的流程侧钩子)
+  - 不可测:1 件 [frozen_eye]
+  沙盒行通过 95/95
+
+每件遗物(沙盒 = 实测结论;run-test = 见对应 Rust 断言测试;untest = 不可测+理由):
+  [ok      ] ring_of_the_snake        hook=战斗开始(开局抽牌)
+             期望 开局多抽 2 张(手牌 5+2=7)
+             oracle ring_of_the_snake
+  [ok      ] bag_of_preparation       hook=战斗开始(开局抽牌)
+             期望 开局多抽 2 张(手牌 5+2=7)
+             oracle bag_of_preparation
+  [ok      ] akabeko                  hook=战斗开始(振奋 8)
+             期望 本场第一张攻击 +8:strike 6->14
+             oracle akabeko
+  [ok      ] anchor                   hook=战斗开始(格挡)
+             期望 开局 10 格挡
+             oracle anchor
+  [ok      ] vajra                    hook=战斗开始(力量)
+             期望 开局 1 力量
+             oracle vajra
+  [ok      ] oddly_smooth_stone       hook=战斗开始(敏捷)
+             期望 开局 1 敏捷
+             oracle oddly_smooth_stone
+  [ok      ] thread_and_needle        hook=战斗开始(镀甲)
+             期望 开局 4 镀甲
+             oracle thread_and_needle
+  [ok      ] bronze_scales            hook=战斗开始(荆棘)/被打
+             期望 开局 3 荆棘,被打时反伤 3
+             oracle bronze_scales
+  [ok      ] clockwork_souvenir       hook=战斗开始(人工制品)
+             期望 开局 1 人工制品
+             oracle clockwork_souvenir
+  [ok      ] lantern                  hook=战斗第一回合(能量)
+             期望 第一回合 +1 能量:3->4
+             oracle lantern
+  [ok      ] ancient_tea_set          hook=营火后第一场(能量)
+             期望 休息过则第一回合 +2 能量:3->5
+             oracle ancient_tea_set
+  [ok      ] blood_vial               hook=战斗开始(回血)
+             期望 开局回 2:40->42
+             oracle blood_vial
+  [ok      ] bag_of_marbles           hook=战斗开始(敌方易伤)
+             期望 所有敌人开局 1 易伤
+             oracle bag_of_marbles
+  [ok      ] red_mask                 hook=战斗开始(敌方虚弱)
+             期望 所有敌人开局 1 虚弱
+             oracle red_mask
+  [ok      ] gremlin_visage           hook=战斗开始(自身虚弱)
+             期望 开局自身 1 虚弱
+             oracle gremlin_visage
+  [ok      ] red_skull                hook=战斗开始(半血力量)
+             期望 血量 <=50% 时 3 力量
+             oracle red_skull
+  [ok      ] du_vu_doll               hook=战斗开始(每诅咒力量)
+             期望 牌组每张诅咒 +1 力量:2 诅咒->2
+             oracle du_vu_doll
+  [ok      ] philosophers_stone       hook=战斗开始(能量/敌力)
+             期望 每回合 +1 能量且敌人 +1 力量
+             oracle philosophers_stone
+  [ok      ] brimstone                hook=回合开始(力量)
+             期望 每回合自身 +2、敌人 +1 力量
+             oracle brimstone
+  [ok      ] mark_of_pain             hook=战斗开始(能量/伤口)
+             期望 每回合 +1 能量,开局洗 2 张伤口
+             oracle mark_of_pain
+  [ok      ] enchiridion              hook=战斗开始(随机能力牌)
+             期望 仅开局加 1 张能力牌(第 2 回合不再加)
+             oracle enchiridion
+  [ok      ] snecko_eye               hook=战斗开始(混乱/抽牌)
+             期望 每回合多抽 2,开局混乱
+             oracle snecko_eye
+  [ok      ] ring_of_the_serpent      hook=每回合开始(抽牌)
+             期望 每回合多抽 1:开局 6 张
+             oracle ring_of_the_serpent
+  [ok      ] runic_dome               hook=战斗开始(能量)
+             期望 每回合 +1 能量(4/4)
+             oracle runic_dome + runic_dome_energy  -> 真跑通;流程侧见 runic_dome_energy
+  [ok      ] busted_crown             hook=战斗开始(能量)/奖励
+             期望 每回合 +1 能量;奖励少 2 张
+             oracle busted_crown + busted_crown_card_reward_minus_two  -> 真跑通;流程侧见 busted_crown_card_reward_minus_two
+  [ok      ] cursed_key               hook=战斗开始(能量)/宝箱
+             期望 每回合 +1 能量;开箱得诅咒
+             oracle cursed_key + cursed_key_curse_on_chest  -> 真跑通;流程侧见 cursed_key_curse_on_chest
+  [ok      ] ectoplasm                hook=战斗开始(能量)/金币
+             期望 每回合 +1 能量;不能再获得金币
+             oracle ectoplasm + ectoplasm_blocks_gold  -> 真跑通;流程侧见 ectoplasm_blocks_gold
+  [ok      ] sozu                     hook=战斗开始(能量)/药水
+             期望 每回合 +1 能量;不能再获得药水
+             oracle sozu + sozu_blocks_potions  -> 真跑通;流程侧见 sozu_blocks_potions
+  [ok      ] coffee_dripper           hook=战斗开始(能量)/营火
+             期望 每回合 +1 能量;不能再休息
+             oracle coffee_dripper + coffee_dripper_blocks_rest  -> 真跑通;流程侧见 coffee_dripper_blocks_rest
+  [ok      ] fusion_hammer            hook=战斗开始(能量)/营火
+             期望 每回合 +1 能量;不能再锻造
+             oracle fusion_hammer + fusion_hammer_blocks_smith  -> 真跑通;流程侧见 fusion_hammer_blocks_smith
+  [ok      ] slavers_collar           hook=精英/首领战斗能量
+             期望 仅精英/首领开战 +1 能量
+             oracle slavers_collar
+  [ok      ] sling_of_courage         hook=精英战斗力量
+             期望 仅精英开战 +2 力量
+             oracle sling_of_courage
+  [ok      ] pantograph               hook=首领战斗回血
+             期望 首领战开局回 25:40->65
+             oracle pantograph
+  [ok      ] preserved_insect         hook=精英战斗减血
+             期望 精英敌人血量 -25%
+             oracle preserved_insect
+  [ok      ] art_of_war               hook=回合开始(无攻击补能量)
+             期望 上回合没打攻击则 +1 能量:3->4
+             oracle art_of_war
+  [ok      ] art_of_war               hook=回合开始(打过攻击则不补)
+             期望 上回合打过攻击就没有额外能量
+             oracle art_of_war
+  [ok      ] happy_flower             hook=每 3 回合(能量)
+             期望 第 3 回合 +1 能量
+             oracle happy_flower
+  [ok      ] mercury_hourglass        hook=回合开始(全体伤害)
+             期望 每回合开始对全体敌人 3 伤害
+             oracle mercury_hourglass
+  [ok      ] horn_cleat               hook=第 2 回合(格挡)
+             期望 第 2 回合开始 +14 格挡
+             oracle horn_cleat
+  [ok      ] captains_wheel           hook=第 3 回合(格挡)
+             期望 第 3 回合开始 +18 格挡
+             oracle captains_wheel
+  [ok      ] incense_burner           hook=每 6 回合(无形)
+             期望 第 6 回合开始 1 层无形
+             oracle incense_burner
+  [ok      ] stone_calendar           hook=第 7 回合末(全体伤害)
+             期望 第 7 回合结束对全体 52 伤害
+             oracle stone_calendar
+  [ok      ] orichalcum               hook=回合末(无格挡补)
+             期望 回合末无格挡 +6 格挡吃掉 6 点攻击
+             oracle orichalcum
+  [ok      ] cloak_clasp              hook=回合末(手牌格挡)
+             期望 手牌每张 +1 格挡,2 张挡下 2 点
+             oracle cloak_clasp
+  [ok      ] calipers                 hook=回合开始(格挡上限)
+             期望 回合开始只掉 15 格挡:40->25
+             oracle calipers
+  [ok      ] ice_cream                hook=回合开始(能量保留)
+             期望 未用完的能量留到下回合:3 打 1 剩 2 -> 下回合 5
+             oracle ice_cream
+  [ok      ] warped_tongs             hook=回合开始(升级手牌)
+             期望 回合开始随机升级手里一张牌
+             oracle warped_tongs
+  [ok      ] pocketwatch              hook=回合开始(少出牌补抽)
+             期望 出 <=3 张牌的下回合多抽 3:第 2 回合 5+3=8;第 1 回合不抽
+             oracle pocketwatch
+  [ok      ] pocketwatch              hook=回合开始(出牌多则不补)
+             期望 出 4 张牌的下回合不多抽
+             oracle pocketwatch
+  [ok      ] runic_pyramid            hook=回合末(留手牌)
+             期望 回合末不再弃手牌
+             oracle runic_pyramid
+  [ok      ] mutagenic_strength       hook=战斗开始/首回合末(力量)
+             期望 首回合 +3 力量,回合末收回
+             oracle mutagenic_strength
+  [ok      ] strike_dummy             hook=攻击牌结算(打击加伤)
+             期望 名字带 Strike 的牌 +3:strike 6->9
+             oracle strike_dummy
+  [ok      ] wrist_blade              hook=攻击牌结算(0 费加伤)
+             期望 0 费攻击 +4:swift_strike 7->11
+             oracle wrist_blade
+  [ok      ] the_boot                 hook=攻击结算(低伤抬到 5)
+             期望 4 点以下未格挡攻击抬到 5:虚弱 strike 4->5
+             oracle the_boot
+  [ok      ] pen_nib                  hook=每 10 张攻击(翻倍)
+             期望 第 10 张攻击伤害翻倍:10*6 中第 10 张 12,合计 66
+             oracle pen_nib
+  [ok      ] nunchaku                 hook=每 10 张攻击(能量)
+             期望 第 10 张攻击 +1 能量
+             oracle nunchaku
+  [ok      ] ink_bottle               hook=每 10 张牌(抽牌)
+             期望 第 10 张牌后抽 1 张
+             oracle ink_bottle
+  [ok      ] kunai                    hook=每 3 张攻击(敏捷)
+             期望 单回合 3 张攻击 +1 敏捷
+             oracle kunai
+  [ok      ] shuriken                 hook=每 3 张攻击(力量)
+             期望 单回合 3 张攻击 +1 力量
+             oracle shuriken
+  [ok      ] ornamental_fan           hook=每 3 张攻击(格挡)
+             期望 单回合 3 张攻击 +4 格挡
+             oracle ornamental_fan
+  [ok      ] letter_opener            hook=每 3 张技能(全体伤害)
+             期望 单回合 3 张技能对全体 5 伤害
+             oracle letter_opener
+  [ok      ] bird_faced_urn           hook=打出能力牌(回血)
+             期望 每张能力牌回 2:40->42
+             oracle bird_faced_urn
+  [ok      ] mummified_hand           hook=打出能力牌(手牌 0 费)
+             期望 能力牌后手里一张随机牌本回合 0 费
+             oracle mummified_hand
+  [ok      ] orange_pellets           hook=三种类型都打出(清减益)
+             期望 同回合打出能力/攻击/技能后清自身减益
+             oracle orange_pellets
+  [ok      ] chemical_x               hook=X 费牌结算(+2)
+             期望 X 费效果 +2:3 能量旋风斩 5*(3+2)=25
+             oracle chemical_x
+  [ok      ] sacred_bark              hook=药水结算(翻倍)
+             期望 药水数值翻倍:火焰药水 20->40
+             oracle sacred_bark
+  [ok      ] blue_candle              hook=打出诅咒
+             期望 可打诅咒,打出掉 1 血并消耗
+             oracle blue_candle
+  [ok      ] medical_kit              hook=打出状态牌
+             期望 可打状态牌并消耗
+             oracle medical_kit
+  [ok      ] necronomicon             hook=首张 >=2 费攻击(双打)
+             期望 第一张 2 费以上攻击再打一次:bludgeon 32->64
+             oracle necronomicon
+  [ok      ] champion_belt            hook=上易伤(附带虚弱)
+             期望 上易伤时附带 1 虚弱
+             oracle champion_belt
+  [ok      ] hand_drill               hook=击破格挡(上易伤)
+             期望 击破敌人格挡时上 2 易伤
+             oracle hand_drill
+  [ok      ] centennial_puzzle        hook=本场首次掉血(抽牌)
+             期望 首次掉血抽 3 张
+             oracle centennial_puzzle
+  [ok      ] runic_cube               hook=每次掉血(抽牌)
+             期望 每次掉血抽 1 张
+             oracle runic_cube
+  [ok      ] self_forming_clay        hook=掉血(下回合格挡)
+             期望 掉血后下回合 +3 格挡
+             oracle self_forming_clay
+  [ok      ] fossilized_helix         hook=本场首次掉血(免伤)
+             期望 首次掉血完全免掉
+             oracle fossilized_helix
+  [ok      ] tungsten_rod             hook=每次掉血(-1)
+             期望 每次掉血少掉 1:6->5
+             oracle tungsten_rod
+  [ok      ] torii                    hook=<=5 点攻击(减为 1)
+             期望 5 点以下未格挡攻击降为 1:5->1
+             oracle torii
+  [ok      ] lizard_tail              hook=致命伤(免死)
+             期望 致命伤改为回到最大生命 50%
+             oracle lizard_tail
+  [ok      ] odd_mushroom             hook=自身易伤(减伤)
+             期望 自身易伤只多受 25%:6->7
+             oracle odd_mushroom
+  [ok      ] ginger                   hook=免疫虚弱
+             期望 不会陷入虚弱(蓝奴隶贩子的 Rake 后仍无虚弱)
+             oracle ginger
+  [ok      ] turnip                   hook=免疫脆弱
+             期望 不会陷入脆弱(尖刺史莱姆 Lick 后仍无脆弱)
+             oracle turnip
+  [ok      ] magic_flower             hook=战斗中治疗(增幅)
+             期望 战斗内治疗 +50%:血瓶 2->3
+             oracle magic_flower
+  [ok      ] toy_ornithopter          hook=使用药水(回血)
+             期望 每瓶药水回 5:40->45
+             oracle toy_ornithopter
+  [ok      ] charons_ashes            hook=消耗牌(全体伤害)
+             期望 每消耗一张对全体 3 伤害
+             oracle charons_ashes
+  [ok      ] dead_branch              hook=消耗牌(加牌)
+             期望 每消耗一张向手里加一张随机牌
+             oracle dead_branch
+  [ok      ] tingsha                  hook=主动弃牌(随机伤害)
+             期望 每弃一张对随机敌人 3 伤害
+             oracle tingsha
+  [ok      ] tough_bandages           hook=主动弃牌(格挡)
+             期望 每弃一张 +3 格挡
+             oracle tough_bandages
+  [ok      ] hovering_kite            hook=每回合首次弃牌(能量)
+             期望 每回合首次弃牌 +1 能量:3->4
+             oracle hovering_kite
+  [ok      ] the_abacus               hook=洗牌(格挡)
+             期望 每次洗牌 +6 格挡(3 次 -> 18)
+             oracle the_abacus
+  [ok      ] sundial                  hook=每 3 次洗牌(能量)
+             期望 每 3 次洗牌 +2 能量:3 打 3 张后 +2 -> 2+2=4
+             oracle sundial
+  [ok      ] unceasing_top            hook=手牌空(抽牌)
+             期望 手里没牌时抽 1
+             oracle unceasing_top
+  [ok      ] gremlin_horn             hook=敌人死亡(能量+抽牌)
+             期望 每死一只 +1 能量并抽 1
+             oracle gremlin_horn
+  [ok      ] velvet_choker            hook=每回合出牌上限
+             期望 一回合最多 6 张,第 7 张报错
+             oracle velvet_choker
+  [ok      ] paper_phrog              hook=易伤增伤
+             期望 易伤多受 75%:strike 6->10
+             oracle paper_phrog
+  [ok      ] paper_krane              hook=虚弱减伤
+             期望 虚弱少受 40%:strike 6->3
+             oracle paper_krane
+  [run-test] burning_blood            hook=战斗结束(回血)
+             期望 战后回 6
+             oracle burning_blood_post_combat_heal  -> burning_blood_post_combat_heal
+  [run-test] black_blood              hook=战斗结束(回血)
+             期望 替换燃烧之血,战后回 12
+             oracle black_blood_replaces_blood_and_heals  -> black_blood_replaces_blood_and_heals
+  [run-test] meat_on_the_bone         hook=战斗结束(半血回血)
+             期望 战后血量 <=50% 时回 12
+             oracle meat_on_the_bone_heal_threshold  -> meat_on_the_bone_heal_threshold
+  [run-test] face_of_cleric           hook=战斗结束(最大生命)
+             期望 每次胜利最大生命 +1
+             oracle face_of_cleric_max_hp_on_victory  -> face_of_cleric_max_hp_on_victory
+  [run-test] ceramic_fish             hook=加入牌组(金币)
+             期望 每次加牌得 9 金币
+             oracle ceramic_fish_gold_on_card_add  -> ceramic_fish_gold_on_card_add
+  [run-test] dream_catcher            hook=营火休息(卡牌奖励)
+             期望 休息后可再挑一张牌
+             oracle dream_catcher_gives_a_card_pick_after_resting  -> dream_catcher_gives_a_card_pick_after_resting
+  [run-test] juzu_bracelet            hook=未知房间(不遇普通战)
+             期望 ? 房间不再出普通战斗
+             oracle juzu_bracelet_skips_normal_combats  -> juzu_bracelet_skips_normal_combats
+  [run-test] maw_bank                 hook=每上一层(金币)
+             期望 每层 +12 金币,花过钱后失效
+             oracle maw_bank_gold_per_floor_then_stops  -> maw_bank_gold_per_floor_then_stops
+  [run-test] meal_ticket              hook=进入商店(回血)
+             期望 进店回 15
+             oracle meal_ticket_heals_on_shop  -> meal_ticket_heals_on_shop
+  [run-test] omamori                  hook=获得诅咒(抵消)
+             期望 抵消接下来 2 张诅咒
+             oracle omamori_negates_two_curses  -> omamori_negates_two_curses
+  [run-test] potion_belt              hook=拾取(药水格)
+             期望 拾取 +2 药水格
+             oracle potion_belt_adds_two_slots  -> potion_belt_adds_two_slots
+  [run-test] regal_pillow             hook=营火休息(回血加成)
+             期望 休息多回 15
+             oracle regal_pillow_rest_heal_bonus  -> regal_pillow_rest_heal_bonus
+  [run-test] smiling_mask             hook=商店删牌(定价)
+             期望 删牌固定 50 金
+             oracle smiling_mask_fixes_removal_price  -> smiling_mask_fixes_removal_price
+  [run-test] strawberry               hook=拾取(最大生命)
+             期望 拾取 +7 最大生命
+             oracle strawberry_max_hp  -> strawberry_max_hp
+  [run-test] tiny_chest               hook=未知房间(宝箱)
+             期望 每第 4 个 ? 房间是宝箱
+             oracle tiny_chest_treasure_every_fourth_unknown  -> tiny_chest_treasure_every_fourth_unknown
+  [run-test] war_paint                hook=拾取(升级技能)
+             期望 随机升级 2 张技能
+             oracle war_paint_upgrades_two_skills  -> war_paint_upgrades_two_skills
+  [run-test] whetstone                hook=拾取(升级攻击)
+             期望 随机升级 2 张攻击
+             oracle whetstone_upgrades_two_attacks  -> whetstone_upgrades_two_attacks
+  [run-test] darkstone_periapt        hook=获得诅咒(最大生命)
+             期望 每张诅咒 +6 最大生命
+             oracle darkstone_periapt_max_hp_per_curse  -> darkstone_periapt_max_hp_per_curse
+  [run-test] bottled_flame            hook=拾取(封装攻击)/开局
+             期望 封装一张攻击,开局进手
+             oracle bottled_flame_pickup_bottles_an_attack  -> bottled_flame_pickup_bottles_an_attack
+  [run-test] bottled_lightning        hook=拾取(封装技能)/开局
+             期望 封装一张技能,开局进手
+             oracle bottled_lightning_pickup_bottles_a_skill  -> bottled_lightning_pickup_bottles_a_skill
+  [run-test] bottled_tornado          hook=拾取(封装能力)/开局
+             期望 封装一张能力,开局进手
+             oracle bottled_tornado_pickup_bottles_a_power  -> bottled_tornado_pickup_bottles_a_power
+  [run-test] eternal_feather          hook=营火休息(每 5 张回血)
+             期望 每 5 张牌回 3
+             oracle eternal_feather_rest_heal  -> eternal_feather_rest_heal
+  [run-test] frozen_egg               hook=加入能力牌(升级)
+             期望 加入的能力牌自动升级(加牌统一钩子,商店/奖励/事件都生效)
+             oracle frozen_egg_upgrades_powers  -> frozen_egg_upgrades_powers
+  [run-test] molten_egg               hook=加入攻击牌(升级)
+             期望 加入的攻击牌自动升级
+             oracle molten_egg_upgrades_attacks  -> molten_egg_upgrades_attacks
+  [run-test] molten_egg               hook=奖励/商店加牌(升级)
+             期望 统一加牌钩子覆盖奖励与商店
+             oracle molten_egg_and_ceramic_fish_apply_to_card_rewards  -> molten_egg_and_ceramic_fish_apply_to_card_rewards
+  [run-test] toxic_egg                hook=加入技能牌(升级)
+             期望 加入的技能牌自动升级
+             oracle toxic_egg_upgrades_skills  -> toxic_egg_upgrades_skills
+  [run-test] ceramic_fish             hook=奖励/商店加牌(金币)
+             期望 奖励/商店加牌也各给 9 金
+             oracle molten_egg_and_ceramic_fish_apply_to_card_rewards  -> molten_egg_and_ceramic_fish_apply_to_card_rewards
+  [run-test] matryoshka               hook=宝箱(额外遗物)
+             期望 接下来 2 个非 Boss 宝箱各 2 件遗物
+             oracle matryoshka_adds_an_extra_relic_to_two_chests  -> matryoshka_adds_an_extra_relic_to_two_chests
+  [run-test] pear                     hook=拾取(最大生命)
+             期望 拾取 +10 最大生命
+             oracle pear_max_hp  -> pear_max_hp
+  [run-test] question_card            hook=卡牌奖励(多一张)
+             期望 奖励多 1 张候选
+             oracle question_card_extra_card_reward  -> question_card_extra_card_reward
+  [run-test] singing_bowl             hook=跳过卡牌奖励(最大生命)
+             期望 跳过奖励可换 +2 最大生命
+             oracle singing_bowl_offers_max_hp_on_skip  -> singing_bowl_offers_max_hp_on_skip
+  [run-test] membership_card          hook=商店(折扣)
+             期望 所有商品降 50%
+             oracle membership_card_shop_discount  -> membership_card_shop_discount
+  [run-test] membership_card          hook=商店折扣(相乘)
+             期望 会员卡 -50% 与信使 -20% 相乘(共约 -60%)
+             oracle courier_and_membership_card_discounts_multiply  -> courier_and_membership_card_discounts_multiply
+  [run-test] white_beast_statue       hook=战斗奖励(药水)
+             期望 战斗奖励必出药水
+             oracle white_beast_statue_guarantees_potion  -> white_beast_statue_guarantees_potion
+  [run-test] golden_idol              hook=金币奖励(+25%)
+             期望 敌人掉落金币 +25%
+             oracle golden_idol_gold_reward_bonus  -> golden_idol_gold_reward_bonus
+  [run-test] bloody_idol              hook=获得金币(回血)
+             期望 每次获得金币回 5
+             oracle bloody_idol_heals_on_gold_gain  -> bloody_idol_heals_on_gold_gain
+  [run-test] neows_lament             hook=前 3 场战斗(敌人 1 血)
+             期望 前 3 场战斗敌人 1 血
+             oracle neows_lament_weakens_first_combats  -> neows_lament_weakens_first_combats
+  [run-test] nloths_gift              hook=卡牌奖励(稀有度)
+             期望 稀有牌概率 x3
+             oracle nloths_gift_triples_rare_chance  -> nloths_gift_triples_rare_chance
+  [run-test] nloths_hungry_face       hook=宝箱(空箱)
+             期望 下一个非 Boss 宝箱为空
+             oracle nloths_hungry_face_empties_a_chest  -> nloths_hungry_face_empties_a_chest
+  [run-test] ssserpent_head           hook=未知房间(金币)
+             期望 每进 ? 房间 +50 金币
+             oracle ssserpent_head_gold_on_unknown  -> ssserpent_head_gold_on_unknown
+  [run-test] mark_of_the_bloom        hook=全局(禁止治疗)
+             期望 不能再治疗
+             oracle mark_of_the_bloom_blocks_healing  -> mark_of_the_bloom_blocks_healing
+  [run-test] ectoplasm                hook=全局(禁止金币)
+             期望 不能再获得金币
+             oracle ectoplasm_blocks_gold  -> ectoplasm_blocks_gold
+  [run-test] sozu                     hook=全局(禁止药水)
+             期望 不能再获得药水
+             oracle sozu_blocks_potions  -> sozu_blocks_potions
+  [run-test] coffee_dripper           hook=全局(禁止休息)
+             期望 营火不能休息
+             oracle coffee_dripper_blocks_rest  -> coffee_dripper_blocks_rest
+  [run-test] fusion_hammer            hook=全局(禁止锻造)
+             期望 营火不能锻造
+             oracle fusion_hammer_blocks_smith  -> fusion_hammer_blocks_smith
+  [run-test] cursed_key               hook=非 Boss 宝箱(诅咒)
+             期望 开箱得一张诅咒
+             oracle cursed_key_curse_on_chest  -> cursed_key_curse_on_chest
+  [run-test] busted_crown             hook=卡牌奖励(-2 张)
+             期望 奖励候选少 2 张
+             oracle busted_crown_card_reward_minus_two  -> busted_crown_card_reward_minus_two
+  [run-test] black_star               hook=精英奖励(额外遗物)
+             期望 精英多掉一件遗物
+             oracle black_star_extra_elite_relic  -> black_star_extra_elite_relic
+  [run-test] lees_waffle              hook=拾取(最大生命/满血)
+             期望 拾取 +7 最大生命并回满
+             oracle lees_waffle_max_hp_and_full_heal  -> lees_waffle_max_hp_and_full_heal
+  [run-test] mango                    hook=拾取(最大生命)
+             期望 拾取 +14 最大生命
+             oracle mango_max_hp  -> mango_max_hp
+  [run-test] old_coin                 hook=拾取(金币)
+             期望 拾取 +300 金币
+             oracle old_coin_gold  -> old_coin_gold
+  [run-test] astrolabe                hook=拾取(转化 3 张并升级)
+             期望 转化 3 张牌并升级
+             oracle astrolabe_transforms_three  -> astrolabe_transforms_three
+  [run-test] calling_bell             hook=拾取(3 遗物 + 诅咒)
+             期望 拾取 3 件遗物和 1 张诅咒
+             oracle calling_bell_three_relics_and_curse  -> calling_bell_three_relics_and_curse
+  [run-test] cauldron                 hook=拾取(5 瓶药水)
+             期望 拾取时调出 5 瓶药水
+             oracle cauldron_five_potions  -> cauldron_five_potions
+  [run-test] dollys_mirror            hook=拾取(复制一张)
+             期望 复制牌组里一张牌
+             oracle dollys_mirror_duplicates_a_card  -> dollys_mirror_duplicates_a_card
+  [run-test] empty_cage               hook=拾取(删 2 张)
+             期望 删掉牌组里 2 张
+             oracle empty_cage_removes_two  -> empty_cage_removes_two
+  [run-test] pandoras_box             hook=拾取(转化)
+             期望 转化所有打击与防御
+             oracle pandoras_box_transforms_strikes_and_defends  -> pandoras_box_transforms_strikes_and_defends
+  [run-test] tiny_house               hook=拾取(综合)
+             期望 药水+50 金+5 最大生命+一张牌+升级一张
+             oracle tiny_house_pickup_bundle  -> tiny_house_pickup_bundle
+  [run-test] peace_pipe               hook=营火(删牌)
+             期望 营火可删牌
+             oracle peace_pipe_adds_a_rest_removal  -> peace_pipe_adds_a_rest_removal
+  [run-test] shovel                   hook=营火(挖遗物)
+             期望 营火可挖遗物
+             oracle shovel_digs_up_a_relic  -> shovel_digs_up_a_relic
+  [run-test] girya                    hook=营火(举铁)
+             期望 营火可举铁,上限 3 次
+             oracle girya_lifts_and_pays_out_in_combat  -> girya_lifts_and_pays_out_in_combat
+  [run-test] wing_boots               hook=地图(无视路径)
+             期望 可无视路径 3 次
+             oracle wing_boots_fly_anywhere_three_times  -> wing_boots_fly_anywhere_three_times
+  [run-test] orrery                   hook=拾取(5 次三选一)
+             期望 拾取时连开 5 次卡牌三选一
+             oracle orrery_offers_five_card_picks  -> orrery_offers_five_card_picks
+  [run-test] prayer_wheel             hook=普通战奖励(多一组)
+             期望 普通战多一组卡牌奖励
+             oracle prayer_wheel_adds_a_second_card_group  -> prayer_wheel_adds_a_second_card_group
+  [run-test] prismatic_shard          hook=卡牌奖励(混色)
+             期望 奖励混入无色与其它颜色
+             oracle prismatic_shard_mixes_colorless_into_rewards  -> prismatic_shard_mixes_colorless_into_rewards
+  [run-test] sacred_bark              hook=药水(翻倍)
+             期望 药水数值翻倍(局外)
+             oracle sacred_bark_doubles_out_of_combat_potions  -> sacred_bark_doubles_out_of_combat_potions
+  [run-test] the_courier              hook=商店(补货)
+             期望 商店补货
+             oracle courier_restocks_cards_relics_and_potions  -> courier_restocks_cards_relics_and_potions
+  [run-test] the_courier              hook=商店折扣(相乘)
+             期望 信使 -20% 与会员卡 -50% 相乘
+             oracle courier_and_membership_card_discounts_multiply  -> courier_and_membership_card_discounts_multiply
+  [run-test] gambling_chip            hook=战斗开始(弃牌重抽)
+             期望 开局可弃任意张再抽等量张(选牌窗口沙盒按不选收掉)
+             oracle gambling_chip_discards_then_draws  -> gambling_chip_discards_then_draws
+  [run-test] nilrys_codex             hook=回合末(洗牌选择)
+             期望 回合末亮 3 张挑一张洗进抽牌堆(选牌窗口沙盒按跳过收掉)
+             oracle nilrys_codex_shuffles_a_chosen_card_into_the_draw_pile  -> nilrys_codex_shuffles_a_chosen_card_into_the_draw_pile
+  [run-test] strange_spoon            hook=消耗牌(50% 改弃牌)
+             期望 该消耗的牌 50% 概率改弃牌(按概率测,沙盒不确定)
+             oracle strange_spoon_redirects_exhausting_cards  -> strange_spoon_redirects_exhausting_cards
+  [run-test] toolbox                  hook=战斗开始(无色三选一)
+             期望 开局亮 3 张无色牌挑一张进手(选牌窗口沙盒按不选收掉)
+             oracle toolbox_offers_three_colorless_cards  -> toolbox_offers_three_colorless_cards
+  [untest  ] frozen_eye               hook=抽牌堆显示(顺序)
+             期望 查看抽牌堆时按抽取顺序显示
+             oracle (无)  -> 仅影响 UI 里抽牌堆的显示顺序,战斗状态与沙盒输出里不可观测
+
+已知 (a) 类不一致(全部已修,均配断言):
+  pocketwatch(combat.rs): 第 1 回合不该多抽 3(cards_last_turn 初值 0 被当成"上回合没出牌");
+    修法 start_turn 里加 turn > 1 判断;断言 = 沙盒 pocketwatch 行(第 1 回合手牌 5,第 2 回合 8)。
+  enchiridion(combat.rs): 随机能力牌只在战斗开始加,不该每回合加;修法 turn == 1 才加;
+    断言 = 沙盒 enchiridion 行(开局手牌 6,第 2 回合 5)。
+  蛋/陶瓷鱼(run.rs,主 agent 修): 卡牌奖励与商店买牌绕过加牌钩子,蛋升级与陶瓷鱼金币不生效;
+    新增 push_card_to_deck 统一钩子,断言 = molten_egg_and_ceramic_fish_apply_to_card_rewards /
+    _shop_purchases,以及本表的 frozen_egg_upgrades_powers(商店买能力牌)。
+  商店折扣(run.rs,主 agent 修): 信使 -20% 与会员卡 -50% 由相加改相乘(约 -60%,wiki 口径);
+    断言 = courier_and_membership_card_discounts_multiply。

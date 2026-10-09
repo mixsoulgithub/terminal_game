@@ -27,6 +27,15 @@ pub fn frac_floor_of(max_hp: i32, frac: f32) -> i32 {
     (max_hp as f32 * frac) as i32
 }
 
+/// 按生命上限的比例取整,ceil 版(参考实现 fractionMaxHp(.., "ceil")).
+/// 例:71 点上限的 0.05 给 4 而不是 3.
+pub fn frac_ceil_of(max_hp: i32, frac: f32) -> i32 {
+    if frac <= 0.0 {
+        return 0;
+    }
+    (max_hp as f32 * frac).ceil() as i32
+}
+
 /// golden_idol 的陷阱屏名(参考实现 setScreen(c, "trap"))
 pub const GOLDEN_IDOL_TRAP: &str = "trap";
 
@@ -62,6 +71,9 @@ pub struct CombatReward {
     pub relic_id: Option<&'static str>,
     /// 随机遗物的稀有度
     pub relic_rarity: Option<Rarity>,
+    /// 再给一件该稀有度的随机遗物(斗兽场第二场:稀有 + 罕见各一件;
+    /// 奖励屏只能摆一件,第二件打赢时直接进背包)
+    pub relic_rarity2: Option<Rarity>,
     /// 不给遗物
     pub no_relic: bool,
     /// 不给卡牌奖励
@@ -84,10 +96,15 @@ pub struct Outcome {
     pub heal_pct: i32,
     /// 按生命上限比例扣血(参考实现 fractionMaxHp(.., "floor"),和 hp 叠加)
     pub hp_frac: f32,
+    /// 按生命上限比例扣血(参考实现 fractionMaxHp(.., "ceil"),和 hp 叠加;
+    /// 蓝衣女子 A15+ 的"离开"扣的是 5% 血,取 ceil)
+    pub hp_frac_ceil: f32,
     /// 按生命上限比例回血(同上,floor)
     pub heal_frac: f32,
     /// 按生命上限比例永久降低上限(同上,floor;至少留 1 点)
     pub max_hp_frac: f32,
+    /// 按生命上限比例永久降低上限(同上,ceil;吸血鬼扣除 30% 上限取 ceil)
+    pub max_hp_frac_ceil: f32,
     /// 生命上限变化(可负)
     pub max_hp: i32,
     /// 按生命上限千分比永久降低上限(至少留 1 点)
@@ -151,6 +168,8 @@ pub struct Outcome {
     pub transform_card: bool,
     /// 随机变形 n 张牌
     pub transform_random_n: u8,
+    /// 自选 n 张牌变形(增强器:选 2 张;和 Neow 的"变形两张"同一套选牌界面)
+    pub transform_choose_n: u8,
     /// 打开选牌界面:复制一张牌
     pub duplicate_card: bool,
     /// 随机丢掉一瓶药水
@@ -192,6 +211,9 @@ pub struct Outcome {
     /// Designer In-Spire 的服务(1 = Adjustments,2 = Clean up;0 不用):
     /// 具体走"自己选一张"还是"随机两张"按进房时掷的布尔(参考实现 onEnter)决定
     pub designer_service: u8,
+    /// 会说话的骷髅的购买(1 = 金币,2 = 无色牌,3 = 药水;0 不用):
+    /// 扣血价 = max(6, 10% 上限) + 这一项已买次数,按选项各自计数
+    pub skull_buy: u8,
     /// 直接跳到本层 Boss 房开打
     pub jump_to_boss: bool,
     /// 直接死亡
@@ -206,8 +228,10 @@ impl Outcome {
         hp_pct_min: 0,
         heal_pct: 0,
         hp_frac: 0.0,
+        hp_frac_ceil: 0.0,
         heal_frac: 0.0,
         max_hp_frac: 0.0,
+        max_hp_frac_ceil: 0.0,
         max_hp: 0,
         max_hp_pct: 0,
         gold: 0,
@@ -239,6 +263,7 @@ impl Outcome {
         remove_random: None,
         transform_card: false,
         transform_random_n: 0,
+        transform_choose_n: 0,
         duplicate_card: false,
         lose_random_potion: false,
         random_potion_n: 0,
@@ -258,6 +283,7 @@ impl Outcome {
         wma: 0,
         nloth_offer: 0,
         designer_service: 0,
+        skull_buy: 0,
         jump_to_boss: false,
         dead: false,
     };
@@ -284,6 +310,8 @@ pub enum RollKind {
     Coin { num: u32, den: u32, true_idx: u8 },
     /// 无参 miscRng.randomBoolean()(取最低位):掷中取第 0 条(陵墓的诅咒)
     HalfBit,
+    /// 必定取 true_idx 那条,不掷点(飞升 15+ 的"诅咒必中")
+    Always { idx: u8 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -317,10 +345,33 @@ pub struct EventChoice {
     pub req_card_type: Option<CardType>,
     /// 只有牌组里三类牌(技能/能力/攻击)都没有可移除时才可选;坠落的保底"Land"
     pub req_no_card_type: bool,
+    /// 只在全局层号 <= 这个值的房间出现(0 = 不限);mindbloom 的"I am Rich"是 40
+    pub req_floor_max: u32,
+    /// 只在全局层号 >= 这个值的房间出现(0 = 不限);mindbloom 的"I am Healthy"是 41
+    pub req_floor_min: u32,
     pub outcome: Outcome,
+    /// 飞升 15+ 时改用的效果(None = 不变)
+    pub outcome_a15: Option<Outcome>,
+    /// 飞升 15+ 时改用的金币花费(0 = 不变)
+    pub cost_gold_a15: i32,
 }
 
 impl EventChoice {
+    /// 按飞升等级取实际生效的选项:飞升 15+ 时套用 a15 覆盖
+    pub fn effective(&self, asc: u32) -> EventChoice {
+        if asc < 15 {
+            return *self;
+        }
+        let mut c = *self;
+        if c.cost_gold_a15 > 0 {
+            c.cost_gold = c.cost_gold_a15;
+        }
+        if let Some(o) = c.outcome_a15 {
+            c.outcome = o;
+        }
+        c
+    }
+
     pub const NONE: EventChoice = EventChoice {
         label: "",
         cost_gold: 0,
@@ -336,7 +387,11 @@ impl EventChoice {
         req_upgradeable: false,
         req_card_type: None,
         req_no_card_type: false,
+        req_floor_max: 0,
+        req_floor_min: 0,
         outcome: Outcome::NONE,
+        outcome_a15: None,
+        cost_gold_a15: 0,
     };
 }
 
@@ -432,7 +487,7 @@ impl MatchKeep {
     /// 铺棋盘:稀有/非普通/普通本职业牌、非普通无色牌、随机诅咒、本职业起始牌,
     /// 再用 [0..5] 各两张洗一遍,按参考实现的 (i%3)*4 + (i%4) 铺进 12 格.
     /// 三张本职业牌与诅咒走 cardRng,无色牌走 shuffleRng,棋盘洗牌走 miscRng.
-    pub fn new(streams: &mut RngRegistry, character: &str) -> MatchKeep {
+    pub fn new(streams: &mut RngRegistry, character: &str, asc: u32) -> MatchKeep {
         let mut slots: [Option<&'static str>; 6] = [None; 6];
         slots[0] = pick_id(
             streams.run(RunStream::CardRng),
@@ -446,7 +501,18 @@ impl MatchKeep {
             streams.run(RunStream::CardRng),
             cards::reward_pool(Rarity::Common),
         );
-        slots[3] = colorless_via_shuffle(streams, Rarity::Uncommon);
+        // 飞升 15+:这一格从"非普通无色牌"换成"又一张随机诅咒"(参考实现)
+        slots[3] = if asc >= 15 {
+            pick_id(
+                streams.run(RunStream::CardRng),
+                cards::curses()
+                    .into_iter()
+                    .filter(|c| cards::pool_of(c) == "curse")
+                    .collect(),
+            )
+        } else {
+            colorless_via_shuffle(streams, Rarity::Uncommon)
+        };
         slots[4] = pick_id(
             streams.run(RunStream::CardRng),
             cards::curses()
@@ -541,6 +607,7 @@ static REWARD_NOTHING: CombatReward = CombatReward {
     gold: None,
     relic_id: None,
     relic_rarity: None,
+    relic_rarity2: None,
     no_relic: true,
     no_cards: true,
     potion_pct: 0,
@@ -552,28 +619,31 @@ static REWARD_MUSHROOMS: CombatReward = CombatReward {
     gold: Some((20, 30)),
     relic_id: Some("odd_mushroom"),
     relic_rarity: None,
+    relic_rarity2: None,
     no_relic: false,
     no_cards: false,
     potion_pct: 40,
 };
 
-/// 土匪:25-35 金币 + 红面具
+/// 土匪:25-35 金币 + 红面具(原版这一场不掉药水)
 static REWARD_BANDITS: CombatReward = CombatReward {
     nothing: false,
     gold: Some((25, 35)),
     relic_id: Some("red_mask"),
     relic_rarity: None,
+    relic_rarity2: None,
     no_relic: false,
     no_cards: false,
-    potion_pct: 40,
+    potion_pct: 0,
 };
 
-/// 斗兽场第二场:100 金币 + 一个稀有遗物
+/// 斗兽场第二场:100 金币 + 稀有遗物 + 罕见遗物
 static REWARD_COLOSSEUM: CombatReward = CombatReward {
     nothing: false,
     gold: Some((100, 100)),
     relic_id: None,
     relic_rarity: Some(Rarity::Rare),
+    relic_rarity2: Some(Rarity::Uncommon),
     no_relic: false,
     no_cards: false,
     potion_pct: 40,
@@ -585,6 +655,7 @@ static REWARD_SPHERE: CombatReward = CombatReward {
     gold: Some((45, 55)),
     relic_id: None,
     relic_rarity: Some(Rarity::Rare),
+    relic_rarity2: None,
     no_relic: false,
     no_cards: false,
     potion_pct: 40,
@@ -596,12 +667,35 @@ static REWARD_PHANTOM: CombatReward = CombatReward {
     gold: Some((50, 50)),
     relic_id: None,
     relic_rarity: Some(Rarity::Rare),
+    relic_rarity2: None,
+    no_relic: false,
+    no_cards: false,
+    potion_pct: 40,
+};
+
+/// 心智绽放的战斗奖励(飞升 15+):金币从 50 降到 25
+static REWARD_PHANTOM_A15: CombatReward = CombatReward {
+    nothing: false,
+    gold: Some((25, 25)),
+    relic_id: None,
+    relic_rarity: Some(Rarity::Rare),
+    relic_rarity2: None,
     no_relic: false,
     no_cards: false,
     potion_pct: 40,
 };
 
 /// 变化之轮:六个结果等概率(参考实现 miscRng.random(5))
+/// 飞升 15+ 的变化之轮:受伤那一格从 10% 提到 15%(其余同 WHEEL)
+static WHEEL_A15: [Outcome; 6] = [
+    outcome!(gold: 100, text: "The wheel stops on a pile of gold."),
+    outcome!(relic_reward: true, text: "The wheel grants a relic."),
+    outcome!(full_heal: true, text: "The wheel pours warm light over you."),
+    outcome!(add_curse: Some("decay"), text: "The wheel leaves a curse in your deck."),
+    outcome!(remove_card: true, text: "The wheel takes one card away."),
+    outcome!(hp_frac: 0.15, text: "The wheel snaps back and hurts you."),
+];
+
 static WHEEL: [Outcome; 6] = [
     // 金币那一格是"本章 100 金币",本作只有第一幕,所以就是 100
     outcome!(gold: 100, text: "The wheel stops on a pile of gold."),
@@ -663,6 +757,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(heal_frac: 0.3333, text: "You eat well and feel restored."),
             },
             EventChoice {
@@ -680,6 +778,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(max_hp: 5, text: "Sturdy and sweet."),
             },
             EventChoice {
@@ -697,6 +799,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(
                     random_relic_any: true,
                     add_card: Some("regret"),
@@ -728,6 +834,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(heal_frac: 0.25, text: "Your wounds close under her touch."),
             },
             EventChoice {
@@ -741,10 +851,14 @@ pub static EVENTS: &[EventDef] = &[
                 req_non_basic: false,
                 only_screen: None,
                 max_uses: 0,
-                req_removable: false,
+                req_removable: true,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 75,
                 outcome: outcome!(remove_card: true, text: "She burns one card from your deck."),
             },
             EventChoice {
@@ -762,6 +876,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(text: "You walk away."),
             },
         ],
@@ -809,14 +927,16 @@ pub static EVENTS: &[EventDef] = &[
                 outcome: outcome!(add_card: Some("injury"), text: "You dive clear, but the idol draws blood.")
             ),
             choice!(
-                label: "Trap - Smash: take damage equal to 25% of max HP",
+                label: "Trap - Smash: take damage equal to 25% of max HP (35% at A15+)",
                 only_screen: Some(GOLDEN_IDOL_TRAP),
-                outcome: outcome!(hp_frac: 0.25, text: "The boulder trap crushes you as you snatch the idol.")
+                outcome: outcome!(hp_frac: 0.25, text: "The boulder trap crushes you as you snatch the idol."),
+                outcome_a15: Some(outcome!(hp_frac: 0.35, text: "The boulder trap crushes you as you snatch the idol."))
             ),
             choice!(
-                label: "Trap - Hide: lose 8% of max HP permanently",
+                label: "Trap - Hide: lose 8% of max HP permanently (10% at A15+)",
                 only_screen: Some(GOLDEN_IDOL_TRAP),
-                outcome: outcome!(max_hp_frac: 0.08, text: "You get clear, but a part of you stays behind.")
+                outcome: outcome!(max_hp_frac: 0.08, text: "You get clear, but a part of you stays behind."),
+                outcome_a15: Some(outcome!(max_hp_frac: 0.1, text: "You get clear, but a part of you stays behind."))
             ),
         ],
     },
@@ -843,6 +963,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(ooze: true, text: "You pull a relic out of the muck."),
             },
             EventChoice {
@@ -860,6 +984,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(text: "You step around it and keep moving."),
             },
         ],
@@ -900,12 +1028,17 @@ pub static EVENTS: &[EventDef] = &[
         // 参考实现只有两个选项:同意(175 金币 + 疑虑诅咒)/ 不同意
         choices: &[
             choice!(
-                label: "Agree: gain 175 gold and the Doubt curse",
+                label: "Agree: gain 175 gold (150 at A15+) and the Doubt curse",
                 outcome: outcome!(
                     gold: 175,
                     add_curse: Some("doubt"),
                     text: "Coins pour from its mouth, cold to the touch."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    gold: 150,
+                    add_curse: Some("doubt"),
+                    text: "Coins pour from its mouth, cold to the touch."
+                ))
             ),
             choice!(
                 label: "Disagree: no effect",
@@ -964,11 +1097,15 @@ pub static EVENTS: &[EventDef] = &[
                 outcome: outcome!(hp: -11, gold: 75, text: "You wade through the slime and come back richer.")
             ),
             choice!(
-                label: "Leave it: lose 20-50 gold (capped at current gold)",
+                label: "Leave it: lose 20-50 gold (35-75 at A15+; capped at current gold)",
                 outcome: outcome!(
                     gold_lose_range: Some((20, 50)),
                     text: "Some of your gold is lost to the slime."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    gold_lose_range: Some((35, 75)),
+                    text: "Some of your gold is lost to the slime."
+                ))
             ),
         ],
     },
@@ -990,7 +1127,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Eat: heal 25% of max HP, obtain the Parasite curse",
                 outcome: outcome!(
-                    heal_pct: 250,
+                    heal_frac: 0.25,
                     add_curse: Some("parasite"),
                     text: "The mushrooms fill you with warmth and something that squirms."
                 )
@@ -1005,13 +1142,19 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Enter: take damage equal to 20% of max HP; upgrade 2 random upgradeable cards (1 if only one exists)",
+                label: "Enter: take damage equal to 20% of max HP (30% at A15+); upgrade 2 random upgradeable cards (1 if only one exists)",
                 outcome: outcome!(
                     hp_pct: 200,
                     hp_pct_min: 1,
                     upgrade_random_shuffle: 2,
                     text: "The light burns through you and reshapes two of your cards."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    hp_pct: 300,
+                    hp_pct_min: 1,
+                    upgrade_random_shuffle: 2,
+                    text: "The light burns through you and reshapes two of your cards."
+                ))
             ),
             choice!(label: "Leave: no effect", outcome: outcome!(text: "You step away from the light.")),
         ],
@@ -1051,6 +1194,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Elegance: remove a card",
+                req_removable: true,
                 outcome: outcome!(remove_card: true, text: "The glyphs erase one card from your deck.")
             ),
             choice!(
@@ -1072,6 +1216,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Offer gold: pay 75 gold, remove a card",
                 cost_gold: 75,
+                req_removable: true,
                 outcome: outcome!(remove_card: true, text: "The beggar burns a card for his alms.")
             ),
             choice!(label: "Leave: no effect", outcome: outcome!(text: "You keep your coin.")),
@@ -1124,9 +1269,10 @@ pub static EVENTS: &[EventDef] = &[
                 outcome: outcome!(add_card: Some("jax"), text: "A syringe of raw strength is yours.")
             ),
             choice!(
-                label: "Become test subject: transform 2 cards",
+                label: "Become test subject: choose 2 cards to transform",
+                req_removable: true,
                 outcome: outcome!(
-                    transform_random_n: 2,
+                    transform_choose_n: 2,
                     text: "Two cards twist into something else."
                 )
             ),
@@ -1154,13 +1300,19 @@ pub static EVENTS: &[EventDef] = &[
                 )
             ),
             choice!(
-                label: "Sacrifice: gain 5 max HP, lose HP equal to 25% of max HP",
+                label: "Sacrifice: gain 5 max HP, lose HP equal to 25% of max HP (35% at A15+)",
                 outcome: outcome!(
                     max_hp: 5,
                     hp_pct: 250,
                     hp_pct_min: 1,
                     text: "The altar takes blood and gives back a sturdier body."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    max_hp: 5,
+                    hp_pct: 350,
+                    hp_pct_min: 1,
+                    text: "The altar takes blood and gives back a sturdier body."
+                ))
             ),
             choice!(
                 label: "Desecrate: obtain the Decay curse",
@@ -1180,12 +1332,17 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Accept: lose 50% of max HP permanently (capped at max HP - 1), obtain 5 Apparition cards",
+                label: "Accept: lose 50% of max HP permanently (capped at max HP - 1), obtain 5 Apparition cards (3 at A15+)",
                 outcome: outcome!(
                     max_hp_pct: 500,
                     add_cards: Some(("ghostly_armor", 5)),
                     text: "Your body thins; five ghostly guards join your deck."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    max_hp_pct: 500,
+                    add_cards: Some(("ghostly_armor", 3)),
+                    text: "Your body thins; three ghostly guards join your deck."
+                ))
             ),
             choice!(label: "Refuse: no effect", outcome: outcome!(text: "You refuse the bargain.")),
         ],
@@ -1221,8 +1378,9 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Smash and grab: gain 99 gold",
-                outcome: outcome!(gold: 99, text: "You grab the cult's coin and run.")
+                label: "Smash and grab: gain 99 gold (50 at A15+)",
+                outcome: outcome!(gold: 99, text: "You grab the cult's coin and run."),
+                outcome_a15: Some(outcome!(gold: 50, text: "You grab the cult's coin and run."))
             ),
             choice!(
                 label: "Stay in line: take 6 damage, obtain the Ritual Dagger card",
@@ -1250,8 +1408,9 @@ pub static EVENTS: &[EventDef] = &[
                 )
             ),
             choice!(
-                label: "Sleep: heal 33% of max HP",
-                outcome: outcome!(heal_pct: 330, text: "You nap between the shelves and wake refreshed.")
+                label: "Sleep: heal 33% of max HP (20% at A15+)",
+                outcome: outcome!(heal_pct: 330, text: "You nap between the shelves and wake refreshed."),
+                outcome_a15: Some(outcome!(heal_pct: 200, text: "You nap between the shelves and wake refreshed."))
             ),
         ],
     },
@@ -1263,12 +1422,17 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Open coffin: obtain a random relic; 50% chance to also obtain the Writhe curse",
+                label: "Open coffin: obtain a random relic; 50% chance to also obtain the Writhe curse (guaranteed at A15+)",
                 outcome: outcome!(
                     random_relic_any: true,
                     roll: Some((&MAUSOLEUM_CURSE, RollKind::HalfBit)),
                     text: "You pry the lid open."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    random_relic_any: true,
+                    roll: Some((&MAUSOLEUM_CURSE, RollKind::Always { idx: 0 })),
+                    text: "You pry the lid open."
+                ))
             ),
             choice!(label: "Leave: no effect", outcome: outcome!(text: "You leave the coffin shut.")),
         ],
@@ -1294,7 +1458,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Accept: lose 30% of max HP (capped at max HP - 1); remove all starter Strikes; obtain 5 Bite cards",
                 outcome: outcome!(
-                    max_hp_pct: 300,
+                    max_hp_frac_ceil: 0.3,
                     remove_base_strikes: true,
                     add_cards: Some(("bite", 5)),
                     text: "The cult drinks deep and hands you five Bites."
@@ -1361,7 +1525,16 @@ pub static EVENTS: &[EventDef] = &[
                     ]),
                     fight_reward: Some(&REWARD_PHANTOM),
                     text: "A phantom of a boss you have not met takes shape."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    fight_pool: Some(&[
+                        "event_phantom_guardian",
+                        "event_phantom_hexaghost",
+                        "event_phantom_slime_boss",
+                    ]),
+                    fight_reward: Some(&REWARD_PHANTOM_A15),
+                    text: "A phantom of a boss you have not met takes shape."
+                ))
             ),
             choice!(
                 label: "I am Awake: upgrade every upgradeable card; obtain Mark of the Bloom (can no longer heal)",
@@ -1373,6 +1546,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "I am Rich: gain 999 gold, obtain 2 Normality curses (floors 40 and below)",
+                req_floor_max: 40,
                 outcome: outcome!(
                     gold: 999,
                     add_cards: Some(("normality", 2)),
@@ -1380,7 +1554,8 @@ pub static EVENTS: &[EventDef] = &[
                 )
             ),
             choice!(
-                label: "I am Healthy: heal to full, obtain the Doubt curse (floors 41+, replaces I am Rich)",
+                label: "I am Healthy: heal to full, obtain the Doubt curse (floors 41+)",
+                req_floor_min: 41,
                 outcome: outcome!(
                     full_heal: true,
                     add_curse: Some("doubt"),
@@ -1398,12 +1573,17 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Jump inside: lose 12.5% of max HP permanently, then heal to full",
+                label: "Jump inside: lose 12.5% of max HP permanently (18% at A15+), then heal to full",
                 outcome: outcome!(
                     max_hp_pct: 125,
                     full_heal: true,
                     text: "The head swallows you and spits you out whole but smaller."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    max_hp_pct: 180,
+                    full_heal: true,
+                    text: "The head swallows you and spits you out whole but smaller."
+                ))
             ),
             choice!(
                 label: "Offer Golden Idol: lose the Golden Idol relic, gain 333 gold",
@@ -1502,21 +1682,32 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Embrace madness: lose 12.5% of max HP, obtain 2 Madness cards",
+                label: "Embrace madness: lose 12.5% of max HP (18% at A15+), obtain 2 Madness cards",
                 outcome: outcome!(
                     hp_pct: 125,
                     hp_pct_min: 1,
                     add_cards: Some(("madness", 2)),
                     text: "Your thoughts crack and two Madness cards slip in."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    hp_pct: 180,
+                    hp_pct_min: 1,
+                    add_cards: Some(("madness", 2)),
+                    text: "Your thoughts crack and two Madness cards slip in."
+                ))
             ),
             choice!(
-                label: "Press on: heal 25% of max HP, obtain the Writhe curse",
+                label: "Press on: heal 25% of max HP (20% at A15+), obtain the Writhe curse",
                 outcome: outcome!(
                     heal_pct: 250,
                     add_curse: Some("writhe"),
                     text: "You press on, healed but marked."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    heal_pct: 200,
+                    add_curse: Some("writhe"),
+                    text: "You press on, healed but marked."
+                ))
             ),
             choice!(
                 label: "Retrace your steps: lose 5% of max HP permanently",
@@ -1551,8 +1742,9 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Pray: gain 100 gold",
-                outcome: outcome!(gold: 100, text: "The shrine rewards your respect.")
+                label: "Pray: gain 100 gold (50 at A15+)",
+                outcome: outcome!(gold: 100, text: "The shrine rewards your respect."),
+                outcome_a15: Some(outcome!(gold: 50, text: "The shrine rewards your respect."))
             ),
             choice!(
                 label: "Desecrate: gain 275 gold, obtain the Regret curse",
@@ -1572,6 +1764,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Pray: transform a card",
+                req_removable: true,
                 outcome: outcome!(transform_card: true, text: "The shrine reshapes one card.")
             ),
             choice!(label: "Leave: no effect", outcome: outcome!(text: "You leave the shrine alone.")),
@@ -1584,6 +1777,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Pray: remove a card",
+                req_removable: true,
                 outcome: outcome!(remove_card: true, text: "The shrine burns one card away.")
             ),
             choice!(label: "Leave: no effect", outcome: outcome!(text: "You leave the shrine alone.")),
@@ -1596,6 +1790,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Pray: upgrade a card",
+                req_upgradeable: true,
                 outcome: outcome!(upgrade_card: true, text: "The shrine sharpens one card.")
             ),
             choice!(label: "Leave: no effect", outcome: outcome!(text: "You leave the shrine alone.")),
@@ -1611,7 +1806,8 @@ pub static EVENTS: &[EventDef] = &[
         // 参考实现只有转一次这一个选项,没有"离开"
         choices: &[choice!(
             label: "Spin: uniform roll over gold / relic / full heal / Decay curse / card removal / HP loss",
-            outcome: outcome!(roll: Some((&WHEEL, RollKind::Uniform)), text: "The gremlin spins the wheel.")
+            outcome: outcome!(roll: Some((&WHEEL, RollKind::Uniform)), text: "The gremlin spins the wheel."),
+            outcome_a15: Some(outcome!(roll: Some((&WHEEL_A15, RollKind::Uniform)), text: "The gremlin spins the wheel."))
         )],
     },
     // ---- 一次性事件 ----
@@ -1625,6 +1821,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Forge: upgrade a card",
+                req_upgradeable: true,
                 outcome: outcome!(upgrade_card: true, text: "The forge reshapes one of your cards.")
             ),
             choice!(
@@ -1647,8 +1844,9 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Adjustments: pay 40 gold; upgrade a chosen card",
+                label: "Adjustments: pay 40 gold (50 at A15+); upgrade a chosen card",
                 cost_gold: 40,
+                cost_gold_a15: 50,
                 req_upgradeable: true,
                 outcome: outcome!(
                     designer_service: 1,
@@ -1656,8 +1854,9 @@ pub static EVENTS: &[EventDef] = &[
                 )
             ),
             choice!(
-                label: "Clean up: pay 60 gold; remove a chosen card",
+                label: "Clean up: pay 60 gold (75 at A15+); remove a chosen card",
                 cost_gold: 60,
+                cost_gold_a15: 75,
                 req_removable: true,
                 outcome: outcome!(
                     designer_service: 2,
@@ -1665,8 +1864,9 @@ pub static EVENTS: &[EventDef] = &[
                 )
             ),
             choice!(
-                label: "Full service: pay 90 gold; remove a chosen card, then upgrade a random card",
+                label: "Full service: pay 90 gold (110 at A15+); remove a chosen card, then upgrade a random card",
                 cost_gold: 90,
+                cost_gold_a15: 110,
                 req_removable: true,
                 outcome: outcome!(
                     remove_card: true,
@@ -1675,8 +1875,9 @@ pub static EVENTS: &[EventDef] = &[
                 )
             ),
             choice!(
-                label: "Punch: lose 3 HP",
-                outcome: outcome!(hp: -3, text: "You punch the designer and walk out.")
+                label: "Punch: lose 3 HP (5 at A15+)",
+                outcome: outcome!(hp: -3, text: "You punch the designer and walk out."),
+                outcome_a15: Some(outcome!(hp: -5, text: "You punch the designer and walk out."))
             ),
         ],
     },
@@ -1701,14 +1902,21 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Touch: take damage equal to 10% of max HP (min 1), gain 75 gold",
+                label: "Touch: take damage equal to 10% of max HP (min 1), gain 75 gold (50 at A15+)",
                 outcome: outcome!(
                     hp_frac: 0.1,
                     hp_pct_min: 1,
                     gold: 75,
                     gold_first: true,
                     text: "The peddler's touch stings, but the gold is real."
-                )
+                ),
+                outcome_a15: Some(outcome!(
+                    hp_frac: 0.1,
+                    hp_pct_min: 1,
+                    gold: 50,
+                    gold_first: true,
+                    text: "The peddler's touch stings, but the gold is real."
+                ))
             ),
             choice!(
                 label: "Trade: obtain a random face relic you do not own",
@@ -1742,38 +1950,24 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Riches: lose X HP, gain 90 gold (repeatable; X rises 1 per purchase of this option)",
-                outcome: outcome!(
-                    hp_pct: 100,
-                    hp_pct_min: 6,
-                    gold: 90,
-                    next: Some(&SKULL_1),
-                    text: ""
-                )
+                outcome: outcome!(skull_buy: 1, gold: 90, text: "")
             ),
             choice!(
                 label: "Success: lose X HP, obtain a random uncommon colorless card (repeatable; X rises 1 per purchase)",
                 outcome: outcome!(
-                    hp_pct: 100,
-                    hp_pct_min: 6,
+                    skull_buy: 2,
                     add_random_colorless: Some((Some(Rarity::Uncommon), 1)),
-                    next: Some(&SKULL_1),
                     text: ""
                 )
             ),
             choice!(
                 label: "A pick me up: lose X HP, obtain a random potion (repeatable; X rises 1 per purchase; works even with full slots, potion lost)",
-                outcome: outcome!(
-                    hp_pct: 100,
-                    hp_pct_min: 6,
-                    random_potion_n: 1,
-                    next: Some(&SKULL_1),
-                    text: ""
-                )
+                outcome: outcome!(skull_buy: 3, random_potion_n: 1, text: "")
             ),
             choice!(
                 label: "How do I leave: lose base X HP (no increment), event ends",
                 outcome: outcome!(
-                    hp_pct: 100,
+                    hp_frac: 0.1,
                     hp_pct_min: 6,
                     text: "The skull lets you go, for its price in blood."
                 )
@@ -1786,8 +1980,9 @@ pub static EVENTS: &[EventDef] = &[
         body: &["An alchemy lab hands over free potions, no choice involved."],
         // 参考实现只有一个选项(搜完直接开奖励屏),没有"离开"
         choices: &[choice!(
-            label: "Search: receive 3 random potions via the reward screen",
-            outcome: outcome!(potion_reward_n: 3, text: "Three potions bubble up from the lab benches.")
+            label: "Search: receive 3 random potions via the reward screen (2 at A15+)",
+            outcome: outcome!(potion_reward_n: 3, text: "Three potions bubble up from the lab benches."),
+            outcome_a15: Some(outcome!(potion_reward_n: 2, text: "Two potions bubble up from the lab benches."))
         )],
     },
     EventDef {
@@ -1860,6 +2055,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Bet on the murderer: pay 50 gold; 70% chance to win 100 gold",
+                req_gold: 50,
                 outcome: outcome!(
                     gold: -50,
                     roll: Some((&JOUST_MURDERER, RollKind::Coin { num: 3, den: 10, true_idx: 1 })),
@@ -1868,6 +2064,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Bet on the owner: pay 50 gold; 30% chance to win 250 gold",
+                req_gold: 50,
                 outcome: outcome!(
                     gold: -50,
                     roll: Some((&JOUST_OWNER, RollKind::Coin { num: 3, den: 10, true_idx: 0 })),
@@ -1911,6 +2108,10 @@ pub static EVENTS: &[EventDef] = &[
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
+                req_floor_max: 0,
+                req_floor_min: 0,
+                outcome_a15: None,
+                cost_gold_a15: 0,
                 outcome: outcome!(
                     wma: 3,
                     random_relic_any: true,
@@ -1947,8 +2148,12 @@ pub static EVENTS: &[EventDef] = &[
                 outcome: outcome!(potion_reward_n: 3, text: "You buy three potions.")
             ),
             choice!(
-                label: "Leave: no effect (at A15+: lose 5% of max HP)",
-                outcome: outcome!(text: "You leave without buying anything.")
+                label: "Leave: no effect (at A15+: take damage equal to 5% of max HP)",
+                outcome: outcome!(text: "You leave without buying anything."),
+                outcome_a15: Some(outcome!(
+                    hp_frac_ceil: 0.05,
+                    text: "You leave without buying anything, and pay for it."
+                ))
             ),
         ],
     },
@@ -1987,11 +2192,31 @@ static TOME_PAGE_2: EventDef = EventDef {
     choices: &[
         choice!(
             label: "Continue: lose 2 HP",
-            outcome: outcome!(hp: -2, next: Some(&TOME_FINAL), text: "")
+            outcome: outcome!(hp: -2, next: Some(&TOME_PAGE_3), text: "")
         ),
         choice!(
             label: "Stop: put the book down",
             outcome: outcome!(text: "You shut the book on page two.")
+        ),
+    ],
+};
+
+/// 魔咒之书:第三页
+static TOME_PAGE_3: EventDef = EventDef {
+    id: "cursed_tome",
+    name: "Cursed Tome",
+    body: &[
+        "Page three drinks deepest.",
+        "Keep reading, or put the book down.",
+    ],
+    choices: &[
+        choice!(
+            label: "Continue: lose 3 HP",
+            outcome: outcome!(hp: -3, next: Some(&TOME_FINAL), text: "")
+        ),
+        choice!(
+            label: "Stop: put the book down",
+            outcome: outcome!(text: "You shut the book on page three.")
         ),
     ],
 };
@@ -2005,12 +2230,17 @@ static TOME_FINAL: EventDef = EventDef {
     ],
     choices: &[
         choice!(
-            label: "Take: lose 10 HP; obtain Necronomicon, Enchiridion, or Nilry's Codex (uniform)",
+            label: "Take: lose 10 HP (15 at A15+); obtain Necronomicon, Enchiridion, or Nilry's Codex (uniform)",
             outcome: outcome!(
                 hp: -10,
                 roll: Some((&TOME_RELICS, RollKind::Uniform)),
                 text: "You reach into the spine of the book."
-            )
+            ),
+            outcome_a15: Some(outcome!(
+                hp: -15,
+                roll: Some((&TOME_RELICS, RollKind::Uniform)),
+                text: "You reach into the spine of the book."
+            ))
         ),
         choice!(
             label: "Stop (instead of Take): lose 3 HP, no relic",
@@ -2049,74 +2279,15 @@ static COLOSSEUM_AFTER: EventDef = EventDef {
     ],
 };
 
-/// 会说话的骷髅:每买一次同一档涨价 1 点,分屏实现(第 n 屏的额外扣血写负数)
-macro_rules! skull_stage {
-    ($name:ident, $extra:expr, $next:expr) => {
-        static $name: EventDef = EventDef {
-            id: "knowing_skull",
-            name: "Knowing Skull",
-            body: &["The skull names its price in blood and waits."],
-            choices: &[
-                choice!(
-                    label: "Riches: lose X HP, gain 90 gold (repeatable; X rises 1 per purchase of this option)",
-                    outcome: outcome!(
-                        hp_pct: 100,
-                        hp_pct_min: 6,
-                        hp: $extra,
-                        gold: 90,
-                        next: $next,
-                        text: ""
-                    )
-                ),
-                choice!(
-                    label: "Success: lose X HP, obtain a random uncommon colorless card (repeatable; X rises 1 per purchase)",
-                    outcome: outcome!(
-                        hp_pct: 100,
-                        hp_pct_min: 6,
-                        hp: $extra,
-                        add_random_colorless: Some((Some(Rarity::Uncommon), 1)),
-                        next: $next,
-                        text: ""
-                    )
-                ),
-                choice!(
-                    label: "A pick me up: lose X HP, obtain a random potion (repeatable; X rises 1 per purchase; works even with full slots, potion lost)",
-                    outcome: outcome!(
-                        hp_pct: 100,
-                        hp_pct_min: 6,
-                        hp: $extra,
-                        random_potion_n: 1,
-                        next: $next,
-                        text: ""
-                    )
-                ),
-                choice!(
-                    label: "How do I leave: lose base X HP (no increment), event ends",
-                    outcome: outcome!(
-                        hp_pct: 100,
-                        hp_pct_min: 6,
-                        text: "The skull lets you go, for its price in blood."
-                    )
-                ),
-            ],
-        };
-    };
-}
-
-skull_stage!(SKULL_1, -1, Some(&SKULL_2));
-skull_stage!(SKULL_2, -2, Some(&SKULL_3));
-skull_stage!(SKULL_3, -3, Some(&SKULL_3));
 
 /// 多屏事件的后半段,自检用(不进事件池)
 #[cfg(test)]
 pub static STAGES: &[&EventDef] = &[
     &TOME_PAGE_1,
     &TOME_PAGE_2,
+    &TOME_PAGE_3,
     &TOME_FINAL,
     &COLOSSEUM_AFTER,
-    &SKULL_1,
-    &SKULL_2,
-    &SKULL_3,
 ];
 
 // ---- 事件专用遗物 ----
@@ -2484,7 +2655,7 @@ mod tests {
                 .map(|s| s.choices.len())
                 .sum();
             let board = if e.id == "match_and_keep" {
-                MatchKeep::new(&mut RngRegistry::new(1), "ironclad").board.len()
+                MatchKeep::new(&mut RngRegistry::new(1), "ironclad", 0).board.len()
             } else {
                 0
             };
@@ -2638,6 +2809,7 @@ mod tests {
             wma: None,
             nloth: None,
             designer: None,
+            skull: [0; 3],
         });
         r.screen = Screen::Event;
     }
@@ -3173,15 +3345,17 @@ mod tests {
         let hp0 = r.player.hp;
         r.choose_event(0).unwrap(); // 读第一页
         assert_eq!(r.player.hp, hp0, "翻到第一页还不掉血");
-        r.choose_event(0).unwrap(); // 翻第二页:1 点
+        r.choose_event(0).unwrap(); // 继续:第 1 页,1 点
         assert_eq!(r.player.hp, hp0 - 1);
-        r.choose_event(0).unwrap(); // 翻到读完:2 点
+        r.choose_event(0).unwrap(); // 继续:第 2 页,2 点
         assert_eq!(r.player.hp, hp0 - 3);
+        r.choose_event(0).unwrap(); // 继续:第 3 页,3 点,读到最后一屏
+        assert_eq!(r.player.hp, hp0 - 6);
         // 最后一屏:留下或拿走书里的遗物
         assert!(r.event.as_ref().unwrap().def.choices[0].label.starts_with("Take"));
         let relics = r.player.relics.len();
         r.choose_event(0).unwrap();
-        assert_eq!(r.player.hp, hp0 - 13, "拿走要再掉 10 点");
+        assert_eq!(r.player.hp, hp0 - 16, "拿走要再掉 10 点");
         assert_eq!(r.player.relics.len(), relics + 1, "书里掉出一件遗物");
     }
 
@@ -3864,5 +4038,233 @@ mod tests {
         let e = event_def("big_fish").expect("big_fish 应存在");
         assert_eq!(e.id, "big_fish");
         assert!(event_def("no_such_event").is_none());
+    }
+}
+
+#[cfg(test)]
+mod ascension_event_tests {
+    //! 飞升 15+ 的事件变体:有效选项会换成 a15 覆盖
+    use super::*;
+
+    fn find(event: &str, label_prefix: &str) -> EventChoice {
+        let ev = EVENTS.iter().find(|e| e.id == event).unwrap();
+        *ev.choices
+            .iter()
+            .find(|c| c.label.starts_with(label_prefix))
+            .unwrap_or_else(|| panic!("{event} 没有 {label_prefix}"))
+    }
+
+    #[test]
+    fn a15_overrides_take_effect_only_at_15() {
+        // 魔蛇:175 -> 150
+        let c = find("the_ssssserpent", "Agree:");
+        assert_eq!(c.effective(14).outcome.gold, 175);
+        assert_eq!(c.effective(15).outcome.gold, 150);
+
+        // 失落祭坛献血:25% -> 35%
+        let c = find("forgotten_altar", "Sacrifice:");
+        assert_eq!(c.effective(14).outcome.hp_pct, 250);
+        assert_eq!(c.effective(15).outcome.hp_pct, 350);
+
+        // 图书馆睡觉回血:33% -> 20%
+        let c = find("the_library", "Sleep:");
+        assert_eq!(c.effective(14).outcome.heal_pct, 330);
+        assert_eq!(c.effective(15).outcome.heal_pct, 200);
+
+        // 蛇教打劫:99 -> 50 金币
+        let c = find("the_nest", "Smash and grab:");
+        assert_eq!(c.effective(15).outcome.gold, 50);
+    }
+
+    #[test]
+    fn a15_can_raise_a_gold_cost() {
+        let c = find("the_cleric", "Purify:");
+        assert_eq!(c.effective(14).cost_gold, 50);
+        assert_eq!(c.effective(15).cost_gold, 75);
+    }
+
+    #[test]
+    fn a0_choices_are_untouched() {
+        for ev in EVENTS {
+            for c in ev.choices {
+                let e = c.effective(0);
+                assert_eq!(e.cost_gold, c.cost_gold);
+                assert_eq!(e.label, c.label);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod event_audit_fix_tests {
+    //! 事件效果审计修掉的 (a) 类问题的回归断言:
+    //! 层号门控、A15 变体、取整模式(floor/ceil)、资源条件禁用、
+    //! 多屏流程、事件战斗奖励、按选项计价、升级打击一并移除。
+    use super::*;
+    use crate::core::run::{Run, Screen};
+
+    fn open(r: &mut Run, def: &'static EventDef) {
+        r.event = Some(crate::core::run::EventState {
+            def,
+            neow_options: Vec::new(),
+            index: 0,
+            result: None,
+            match_keep: None,
+            attempts: 0,
+            screen: None,
+            adv: None,
+            wma: None,
+            nloth: None,
+            designer: None,
+            skull: [0; 3],
+        });
+        r.screen = Screen::Event;
+    }
+
+    fn open_id(id: &str, seed: u64) -> Run {
+        let mut r = Run::new(seed);
+        let def = event_def(id).expect("事件应存在");
+        open(&mut r, def);
+        r
+    }
+
+    fn finish_fight(r: &mut Run) {
+        r.debug_win_battle();
+        let mut guard = 0;
+        while r.screen == Screen::Combat && guard < 200 {
+            r.tick_win_hold();
+            guard += 1;
+        }
+    }
+
+    #[test]
+    fn mindbloom_options_are_floor_gated() {
+        let mut r = open_id("mindbloom", 1);
+        r.debug_set_floor(38);
+        assert!(r.event_choice_available(2), "floor 38 应有 I am Rich");
+        assert!(!r.event_choice_available(3), "floor 38 不该有 I am Healthy");
+        r.debug_set_floor(45);
+        assert!(!r.event_choice_available(2), "floor 45 不该有 I am Rich");
+        assert!(r.event_choice_available(3), "floor 45 应有 I am Healthy");
+    }
+
+    #[test]
+    fn a15_damage_variants_are_declared() {
+        let sl = event_def("shining_light").unwrap().choices[0];
+        assert_eq!(sl.effective(14).outcome.hp_pct, 200);
+        assert_eq!(sl.effective(15).outcome.hp_pct, 300, "A15 微光 30%");
+        let wh = event_def("winding_halls").unwrap().choices[0];
+        assert_eq!(wh.effective(15).outcome.hp_pct, 180, "A15 拥抱疯狂 18%");
+        let wb = event_def("the_woman_in_blue").unwrap().choices[3];
+        assert_eq!(wb.effective(15).outcome.hp_frac_ceil, 0.05, "A15 离开扣 5% 血");
+        assert_eq!(wb.effective(15).outcome.max_hp_frac, 0.0, "A15 离开是扣血,不是掉上限");
+    }
+
+    #[test]
+    fn heal_and_maxhp_fractions_use_the_right_rounding() {
+        // 蘑菇:floor(25% * 75) = 18(不是 round 的 19)
+        let mut r = open_id("hypnotizing_colored_mushrooms", 4);
+        r.player.max_hp = 75;
+        r.player.hp = 30;
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.hp, 48, "floor(0.25*75)=18");
+        // 吸血鬼:ceil(30% * 71) = 22(不是 round 的 21)
+        let mut r = open_id("vampires", 4);
+        r.player.max_hp = 71;
+        r.player.hp = 60;
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.max_hp, 49, "ceil(0.3*71)=22");
+    }
+
+    #[test]
+    fn colosseum_second_fight_grants_two_relics() {
+        let mut r = open_id("colosseum", 37);
+        r.choose_event(0).unwrap();
+        finish_fight(&mut r);
+        assert_eq!(r.screen, Screen::Event, "第一场打完回看台");
+        let before = r.player.relics.len();
+        r.choose_event(1).unwrap();
+        finish_fight(&mut r);
+        assert_eq!(r.screen, Screen::Reward);
+        assert!(r.reward.as_ref().unwrap().relic.is_some(), "奖励屏要有稀有遗物");
+        assert_eq!(r.player.relics.len(), before + 1, "第二件(low tier)遗物直接进包");
+    }
+
+    #[test]
+    fn masked_bandits_fight_drops_no_potion() {
+        let mut r = open_id("masked_bandits", 1);
+        r.choose_event(1).unwrap();
+        finish_fight(&mut r);
+        let rw = r.reward.as_ref().expect("要开奖励屏");
+        assert!(rw.relic.is_some(), "红面具");
+        assert_eq!(rw.potions.len(), 0, "土匪这场不掉药水");
+    }
+
+    #[test]
+    fn knowing_skull_prices_are_per_option() {
+        let mut r = open_id("knowing_skull", 2);
+        r.player.hp = 70;
+        r.player.max_hp = 80;
+        let hp0 = r.player.hp;
+        r.choose_event(0).unwrap(); // Riches 第一次:8
+        assert_eq!(hp0 - r.player.hp, 8);
+        r.choose_event(0).unwrap(); // Riches 第二次:9
+        assert_eq!(hp0 - r.player.hp, 17);
+        let hp1 = r.player.hp;
+        r.choose_event(1).unwrap(); // Success 第一次:基础 8,不受 Riches 计数影响
+        assert_eq!(hp1 - r.player.hp, 8, "每一项各自计价");
+    }
+
+    #[test]
+    fn remove_and_upgrade_options_need_a_target() {
+        let mut r = open_id("purifier", 3);
+        r.player.deck = vec![crate::core::cards::card("ascenders_bane"); 2];
+        assert!(!r.event_choice_available(0), "没有可移除牌 -> Purifier 禁用");
+
+        let mut r = open_id("upgrade_shrine", 3);
+        let mut up = crate::core::cards::card("strike");
+        up.upgrade();
+        r.player.deck = vec![up];
+        assert!(!r.event_choice_available(0), "没有可升级牌 -> Upgrade Shrine 禁用");
+
+        let mut r = open_id("ominous_forge", 3);
+        r.player.deck = vec![crate::core::cards::card("ascenders_bane"); 2];
+        assert!(!r.event_choice_available(0), "Ominous Forge 需要可升级牌");
+
+        let mut r = open_id("the_cleric", 3);
+        r.player.deck = vec![crate::core::cards::card("ascenders_bane"); 2];
+        assert!(!r.event_choice_available(1), "没有可移除牌 -> Purify 禁用");
+
+        let mut r = open_id("the_joust", 3);
+        r.player.gold = 40;
+        assert!(
+            !r.event_choice_available(0) && !r.event_choice_available(1),
+            "钱不到 50 -> 两个赌注都禁用"
+        );
+    }
+
+    #[test]
+    fn augmenter_transform_is_a_choice_of_two() {
+        let c = event_def("augmenter").unwrap().choices[1];
+        assert_eq!(c.outcome.transform_choose_n, 2);
+        assert_eq!(c.outcome.transform_random_n, 0);
+        assert!(c.req_removable, "需要至少一张可变形牌");
+        let mut r = open_id("augmenter", 5);
+        r.player.deck = vec![crate::core::cards::card("ascenders_bane"); 2];
+        assert!(!r.event_choice_available(1), "没有可变形牌 -> 禁用");
+    }
+
+    #[test]
+    fn vampires_removes_upgraded_strikes_too() {
+        let mut r = open_id("vampires", 6);
+        let mut s = crate::core::cards::card("strike");
+        s.upgrade();
+        r.player.deck = vec![s, crate::core::cards::card("defend")];
+        r.choose_event(1).unwrap();
+        assert!(
+            !r.player.deck.iter().any(|c| c.def.id == "strike"),
+            "升级过的起始打击也要删"
+        );
+        assert_eq!(r.player.deck.iter().filter(|c| c.def.id == "bite").count(), 5);
     }
 }

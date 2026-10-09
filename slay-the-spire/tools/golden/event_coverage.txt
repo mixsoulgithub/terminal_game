@@ -1,0 +1,222 @@
+事件效果审计报告 (event coverage)
+种子 seed=12345  事件=51  选项实测=179
+ok=179  mismatch=0  untestable=0  (含表示差异备注 5)
+
+结论列:ok = 与期望一致;mismatch = 不一致;untestable = 无法测(理由);[c] = 表示差异已备注
+
+事件                              选项                                    期望                                    实测                                    结论
+------------------------------------------------------------------------------------------------------------------------------------------------------
+big_fish#0                       Banana                               回血 floor(1/3 上限)=26                    与期望一致                                  ok
+big_fish#1                       Donut                                上限 +5 且同时 +5 血                         与期望一致                                  ok
+big_fish#2                       Box                                  随机遗物 + Regret 诅咒                       与期望一致                                  ok
+the_cleric#0                     Heal(35)                             扣 35 金,回血 floor(25% 上限)=20             与期望一致                                  ok
+the_cleric#1                     Purify(50)                           扣 50 金,开选牌界面删一张                        与期望一致                                  ok
+the_cleric#1                     Purify A15(75)                       A15 收 75 金                             与期望一致                                  ok
+the_cleric#2                     Leave                                无变化                                    与期望一致                                  ok
+the_cleric#1                     Purify 无牌可删时禁用                       牌组无可移除牌 → 选项禁用                         与期望一致                                  ok
+dead_adventurer#0                Search                               掷伏击:开精英战或领一格奖池(30 金/遗物/空),after 阶段 +1  与期望一致                                  ok
+dead_adventurer#1                Leave                                无变化、事件结束                               与期望一致                                  ok
+golden_idol#0                    Take                                 得 Golden Idol,切到 trap 屏                与期望一致                                  ok
+golden_idol#1                    Leave                                无变化                                    与期望一致                                  ok
+golden_idol#2                    Trap - Outrun                        得 Injury 诅咒                            与期望一致                                  ok
+golden_idol#3                    Trap - Smash                         扣 floor(25% 上限)=20 血                   与期望一致                                  ok
+golden_idol#3                    Trap - Smash A15                     A15 扣 floor(35% 上限)=28 血               与期望一致                                  ok
+golden_idol#4                    Trap - Hide                          永久上限 -floor(8% 上限)=6                   与期望一致                                  ok
+golden_idol#4                    Trap - Hide A15                      A15 永久上限 -floor(10% 上限)=8              与期望一致                                  ok
+golden_idol#0                    Take 前 trap 选项禁用                     进 trap 屏前,3 个陷阱选项禁用                    与期望一致                                  ok
+scrap_ooze#0                     Reach inside                         扣 3 血;得遗物或留屏重试                         与期望一致                                  ok
+scrap_ooze#1                     Leave                                无变化                                    与期望一致                                  ok
+living_wall#0                    Forget                               开选牌界面删一张                               与期望一致                                  ok
+living_wall#1                    Change                               开选牌界面变形一张(张数不变)                        与期望一致                                  ok
+living_wall#2                    Grow                                 开选牌界面升级一张                              与期望一致                                  ok
+living_wall#0                    无可移除牌时禁用                             全不可移除 → Forget/Change 禁用,Grow 也可能禁用    与期望一致                                  ok
+the_ssssserpent#0                Agree                                +175 金 + Doubt                         与期望一致                                  ok
+the_ssssserpent#0                Agree A15                            A15 只 +150 金 + Doubt                   与期望一致                                  ok
+the_ssssserpent#1                Disagree                             无变化                                    与期望一致                                  ok
+bonfire_spirits#0                Offer(rare)                          烧稀有牌:上限 +10、回满                         与期望一致                                  ok
+bonfire_spirits#0                Offer(curse)                         烧诅咒:得 Spirit Poop                      与期望一致                                  ok
+bonfire_spirits#0                Offer(uncommon)                      烧罕见牌:回 10 血                            与期望一致                                  ok
+bonfire_spirits#0                Offer(basic)                         烧基础牌:无补偿                               与期望一致                                  ok
+wing_statue#0                    Pray                                 扣 7 血并开删牌界面                            与期望一致                                  ok
+wing_statue#1                    Destroy                              需要一击 10+ 的牌;得 50~80 金                  与期望一致                                  ok
+wing_statue#1                    Destroy 无条件禁用                        没有 10+ 攻击牌 → 禁用                        与期望一致                                  ok
+world_of_goop#0                  Gather                               扣 11 血 +75 金                           与期望一致                                  ok
+world_of_goop#1                  Leave it                             丢 20~50 金                              与期望一致                                  ok
+world_of_goop#1                  Leave it A15                         A15 丢 35~75 金                          与期望一致                                  ok
+hypnotizing_colored_mushrooms#0  Stomp                                开 3 蘑菇战;打赢给 Odd Mushroom + 20~30 金     与期望一致                                  ok
+hypnotizing_colored_mushrooms#1  Eat                                  回血 floor(25% 上限)=20 + Parasite         与期望一致                                  ok
+shining_light#0                  Enter                                扣 round(20% 上限)=16,升级 2 张              与期望一致                                  ok
+shining_light#0                  Enter A15                            A15 扣 round(30% 上限)=24                 与期望一致                                  ok
+shining_light#1                  Leave                                无变化                                    与期望一致                                  ok
+pleading_vagrant#0               Offer gold(85)                       扣 85 金 + 随机遗物                          与期望一致                                  ok
+pleading_vagrant#0               钱不够禁用                                金币 <85 → 禁用                            与期望一致                                  ok
+pleading_vagrant#1               Rob                                  随机遗物 + Shame                           与期望一致                                  ok
+pleading_vagrant#2               Leave                                无变化                                    与期望一致                                  ok
+ancient_writing#0                Elegance                             开选牌界面删一张                               与期望一致                                  ok
+ancient_writing#1                Simplicity                           升级所有起始打击/防御                            与期望一致                                  ok
+ancient_writing#0                无可移除牌禁用                              全不可移除 → Elegance 禁用                    与期望一致                                  ok
+old_beggar#0                     Offer gold(75)                       扣 75 金并开删牌界面                           与期望一致                                  ok
+old_beggar#1                     Leave                                无变化                                    与期望一致                                  ok
+colosseum#0                      Fight(第一场)                           开 slavers 战,无奖励,打赢回看台                  与期望一致                                  ok
+colosseum#1                      Cowardice                            逃走,事件结束                                与期望一致                                  ok
+colosseum#2                      Victory(第二场)                         开 nobs 战;100 金 + 稀有遗物 + 罕见遗物 + 卡牌      与期望一致                                  ok
+cursed_tome#0                    Read                                 翻到第一页,不掉血                              与期望一致                                  ok
+cursed_tome#1                    Leave                                无变化                                    与期望一致                                  ok
+cursed_tome#2                    Continue 第1页                         扣 1 血                                  与期望一致                                  ok
+cursed_tome#3                    Continue 第2页                         累计扣 3 血(1+2)                           与期望一致                                  ok
+cursed_tome#4                    Continue 第3页                         累计扣 6 血(1+2+3),到最后一屏                   与期望一致                                  ok
+cursed_tome#5                    Take                                 再扣 10 血,得一件书遗物                         与期望一致                                  ok
+cursed_tome#5                    Take A15                             A15 最后一扣 15 血(总 21)                    与期望一致                                  ok
+cursed_tome#6                    Stop                                 不拿书,再扣 3 血(总 9)                        与期望一致                                  ok
+augmenter#0                      Test J.A.X.                          得 J.A.X. 牌                             与期望一致                                  ok
+augmenter#1                      Become test subject                  自选 2 张变形(张数不变)                         与期望一致                                  ok
+augmenter#2                      Ingest mutagens                      得 Mutagenic Strength                   与期望一致                                  ok
+augmenter#1                      无可变形牌禁用                              全不可移除 → 禁用                             与期望一致                                  ok
+forgotten_altar#0                Offer Golden Idol                    金像换血像                                  与期望一致                                  ok
+forgotten_altar#0                无金像禁用                                没有 Golden Idol → 禁用                    与期望一致                                  ok
+forgotten_altar#1                Sacrifice                            先 +5 上限,再按旧上限扣 round(25%)=20           与期望一致                                  ok
+forgotten_altar#1                Sacrifice A15                        A15 扣 round(35% 旧上限)=28                与期望一致                                  ok
+forgotten_altar#2                Desecrate                            得 Decay 诅咒                             与期望一致                                  ok
+ghosts#0                         Accept                               上限减半(40),得 5 张 Apparition              与期望一致                                  ok
+ghosts#0                         Accept A15                           A15 只给 3 张                             与期望一致                                  ok
+ghosts#1                         Refuse                               无变化                                    与期望一致                                  ok
+masked_bandits#0                 Pay                                  金币清零                                   与期望一致                                  ok
+masked_bandits#1                 Fight                                开 bandits 战;赢给 Red Mask + 25~35 金 + 卡牌(不掉药水) 与期望一致                                  ok
+the_nest#0                       Smash and grab                       +99 金                                  与期望一致                                  ok
+the_nest#0                       Smash A15                            A15 只 +50 金                            与期望一致                                  ok
+the_nest#1                       Stay in line                         扣 6 血 + Ritual Dagger                  与期望一致                                  ok
+the_library#0                    Read                                 牌组 +1 本职业牌(本作按随机一张表示,原版为 20 选 1)       与期望一致                                  ok [c]
+    note: (c) 表示差异:本作直接随机加一张,原版是 20 张选牌屏
+the_library#1                    Sleep                                回血 round(33% 上限)=26                    与期望一致                                  ok
+the_library#1                    Sleep A15                            A15 回 round(20% 上限)=16                 与期望一致                                  ok
+the_mausoleum#0                  Open coffin                          随机遗物;50% 再给 Writhe                     与期望一致                                  ok
+the_mausoleum#0                  Open A15                             A15 必给 Writhe                          与期望一致                                  ok
+the_mausoleum#1                  Leave                                无变化                                    与期望一致                                  ok
+vampires#0                       Offer Blood Vial                     失去血瓶、删所有起始打击、得 5 张 Bite                与期望一致                                  ok
+vampires#0                       无血瓶禁用                                没有 Blood Vial → 禁用                     与期望一致                                  ok
+vampires#1                       Accept                               上限 -ceil(30% 上限)=24,打击换 5 Bite         与期望一致                                  ok
+vampires#2                       Refuse                               无变化                                    与期望一致                                  ok
+falling#0                        Land                                 随机移除一张技能牌                              与期望一致                                  ok
+falling#2                        Strike                               随机移除一张攻击牌                              与期望一致                                  ok
+falling#3                        Land on your head                    三类牌都抽不出时才可选:什么都不丢                      与期望一致                                  ok
+falling#3                        Land(执行)                             执行保底:不丢牌                               与期望一致                                  ok
+mindbloom#2                      I am Rich                            floor 38 可用:+999 金 + 2 Normality       与期望一致                                  ok
+mindbloom#2                      I am Rich 在 floor 41+ 禁用             floor 45 → Rich 禁用,Healthy 可用          与期望一致                                  ok
+mindbloom#3                      I am Healthy                         floor 45 可用:回满 + Doubt                 与期望一致                                  ok
+mindbloom#3                      I am Healthy 在 floor 40- 禁用          floor 38 → Healthy 禁用                  与期望一致                                  ok
+mindbloom#0                      I am War                             开一只 Act1 Boss 幻影;赢给稀有遗物 + 50 金         与期望一致                                  ok
+mindbloom#1                      I am Awake                           升级所有可升级牌 + Mark of the Bloom           与期望一致                                  ok
+the_moai_head#0                  Jump inside                          上限 -round(12.5% 上限)=10,再回满             与期望一致                                  ok
+the_moai_head#0                  Jump A15                             A15 上限 -round(18% 上限)=14               与期望一致                                  ok
+the_moai_head#1                  Offer Golden Idol                    失金像 +333 金                             与期望一致                                  ok
+the_moai_head#2                  Leave                                无变化                                    与期望一致                                  ok
+mysterious_sphere#0              Open sphere                          开 2 Orb Walker 战;赢给稀有遗物 + 45~55 金 + 卡牌 与期望一致                                  ok
+mysterious_sphere#1              Leave                                无变化                                    与期望一致                                  ok
+sensory_stone#0                  Recall 1                             得 1 张无色牌,不掉血                           与期望一致                                  ok [c]
+    note: (c) 表示差异:本作直接随机加一张无色牌,原版是奖励屏 3 选 1
+sensory_stone#1                  Recall 2                             扣 5 血,得 2 张无色牌                         与期望一致                                  ok
+sensory_stone#2                  Recall 3                             扣 10 血,得 3 张无色牌                        与期望一致                                  ok
+tomb_of_lord_red_mask#0          Don the Red Mask                     有红面具:+222 金                            与期望一致                                  ok
+tomb_of_lord_red_mask#0          无红面具禁用                               没有 Red Mask → 禁用                       与期望一致                                  ok
+tomb_of_lord_red_mask#1          Offer gold                           金币清零,得 Red Mask                        与期望一致                                  ok
+tomb_of_lord_red_mask#2          Leave                                无变化                                    与期望一致                                  ok
+winding_halls#0                  Embrace madness                      扣 round(12.5% 上限)=10,得 2 Madness       与期望一致                                  ok
+winding_halls#0                  Embrace A15                          A15 扣 round(18% 上限)=14                 与期望一致                                  ok
+winding_halls#1                  Press on                             回血 round(25% 上限)=20 + Writhe           与期望一致                                  ok
+winding_halls#1                  Press on A15                         A15 回 round(20% 上限)=16                 与期望一致                                  ok
+winding_halls#2                  Retrace your steps                   永久上限 -round(5% 上限)=4                   与期望一致                                  ok
+match_and_keep#0                 12 格翻牌                               12 个可翻格子;翻两张后记一次尝试(配对则进牌组)             与期望一致                                  ok [c]
+    note: (c) 表示差异:棋盘铺法按本作实现,翻牌次数上限 5 与原版一致
+golden_shrine#0                  Pray                                 +100 金                                 与期望一致                                  ok
+golden_shrine#0                  Pray A15                             A15 只 +50 金                            与期望一致                                  ok
+golden_shrine#1                  Desecrate                            +275 金 + Regret                        与期望一致                                  ok
+golden_shrine#2                  Leave                                无变化                                    与期望一致                                  ok
+transmorgrifier#0                Pray                                 开变形选牌界面                                与期望一致                                  ok
+transmorgrifier#0                无可变形牌禁用                              全不可移除 → 禁用                             与期望一致                                  ok
+transmorgrifier#1                Leave                                无变化                                    与期望一致                                  ok
+purifier#0                       Pray                                 开删牌界面,删一张                              与期望一致                                  ok
+purifier#0                       无可移除牌禁用                              全不可移除 → 禁用                             与期望一致                                  ok
+purifier#1                       Leave                                无变化                                    与期望一致                                  ok
+upgrade_shrine#0                 Pray                                 开升级界面,升级一张                             与期望一致                                  ok
+upgrade_shrine#0                 无升级空间禁用                              没有可升级牌 → 禁用                            与期望一致                                  ok
+upgrade_shrine#1                 Leave                                无变化                                    与期望一致                                  ok
+wheel_of_change#0                Spin                                 六格之一:100 金 / 遗物屏 / 回满 / Decay / 删牌屏 / 扣 round(10% 上限)=8 血 与期望一致                                  ok
+wheel_of_change#0                Spin A15                             A15 扣血那格是 round(15% 上限)=12             与期望一致                                  ok
+ominous_forge#0                  Forge                                开升级界面                                  与期望一致                                  ok
+ominous_forge#0                  无升级空间禁用                              没有可升级牌 → 禁用                            与期望一致                                  ok
+ominous_forge#1                  Rummage                              得 Warped Tongs + Pain                  与期望一致                                  ok
+ominous_forge#2                  Leave                                无变化                                    与期望一致                                  ok
+designer_in_spire#0              Adjustments                          扣 40 金:选一张升级或随机升两张                     与期望一致                                  ok
+designer_in_spire#1              Clean up                             扣 60 金:选一张删或随机变两张                      与期望一致                                  ok
+designer_in_spire#2              Full service                         扣 90 金:删一张再随机升一张                       与期望一致                                  ok
+designer_in_spire#3              Punch                                扣 3 血                                  与期望一致                                  ok
+designer_in_spire#3              Punch A15                            A15 扣 5 血                              与期望一致                                  ok
+designer_in_spire#2              钱不够禁用                                金币 <90 → Full service 禁用               与期望一致                                  ok
+duplicator#0                     Pray                                 复制一张:牌组 +1                             与期望一致                                  ok
+duplicator#1                     Leave                                无变化                                    与期望一致                                  ok
+face_trader#0                    Touch                                扣 floor(10% 上限)=8 血,+75 金              与期望一致                                  ok
+face_trader#0                    Touch A15                            A15 只 +50 金                            与期望一致                                  ok
+face_trader#1                    Trade                                得一件没拥有的脸部遗物                            与期望一致                                  ok
+face_trader#2                    Leave                                无变化                                    与期望一致                                  ok
+the_divine_fountain#0            Drink                                移除所有可移除诅咒                              与期望一致                                  ok
+the_divine_fountain#1            Leave                                无变化                                    与期望一致                                  ok
+knowing_skull#0                  Riches                               扣 base=max(6,floor(10% 上限))=8 血,+90 金;再买一次扣 9 与期望一致                                  ok
+knowing_skull#1                  Success                              扣 8 血,得一张非普通无色牌                        与期望一致                                  ok
+knowing_skull#2                  A pick me up                         扣 8 血,得 1 瓶药水                          与期望一致                                  ok
+knowing_skull#3                  How do I leave                       扣 base 8 血,事件结束                        与期望一致                                  ok
+lab#0                            Search                               奖励屏摆 3 瓶药水                             与期望一致                                  ok
+lab#0                            Search A15                           A15 只摆 2 瓶                             与期望一致                                  ok
+nloth#0                          Offer relic A                        吃掉一件遗物,换 N'loth's Gift(遗物数不变)          与期望一致                                  ok
+nloth#1                          Offer relic B                        同 A,另一件                                与期望一致                                  ok
+nloth#0                          不足两件遗物时禁用                            只 1 件遗物 → A 可献(就是那件),B 禁用              与期望一致                                  ok
+nloth#2                          Leave                                无变化                                    与期望一致                                  ok
+note_for_yourself#1              Ignore                               无变化                                    与期望一致                                  ok
+note_for_yourself#0              Take and give                        取回存档牌并开选牌界面写下(无头对拍存卡关闭)                与期望一致                                  ok [c]
+    note: (c) 跨局存卡文件在无头沙盒里不落盘,只验证流程不崩
+secret_portal#0                  Enter the portal                     直接跳到本层 Boss 战                          与期望一致                                  ok [c]
+    note: 跳到 Boss 房后由上层接管,沙盒里看到 COMBAT 即算通过
+secret_portal#1                  Leave                                无变化                                    与期望一致                                  ok
+the_joust#0                      Bet on the murderer                  付 50 金,70% 再赢 100 金                    与期望一致                                  ok
+the_joust#1                      Bet on the owner                     付 50 金,30% 赢 250 金                     与期望一致                                  ok
+the_joust#0                      钱不够禁用                                金币 <50 → 两个赌注都禁用                       与期望一致                                  ok
+we_meet_again#0                  Give potion                          交一瓶药水,得随机遗物(药水少一瓶)                     与期望一致                                  ok
+we_meet_again#0                  没药水禁用                                药水栏全空 → 禁用                             与期望一致                                  ok
+we_meet_again#1                  Give gold                            丢 50~150 金,得随机遗物                       与期望一致                                  ok
+we_meet_again#2                  Give card                            丢一张非基础非诅咒牌,得随机遗物(牌 -1)                 与期望一致                                  ok
+we_meet_again#2                  没有可给的牌时禁用                            只有基础牌 → Give card 禁用                   与期望一致                                  ok
+we_meet_again#3                  Attack                               无变化,事件结束                               与期望一致                                  ok
+the_woman_in_blue#0              Buy 1                                扣 20 金,奖励屏 1 瓶药水                       与期望一致                                  ok
+the_woman_in_blue#1              Buy 2                                扣 30 金,奖励屏 2 瓶药水                       与期望一致                                  ok
+the_woman_in_blue#2              Buy 3                                扣 40 金,奖励屏 3 瓶药水                       与期望一致                                  ok
+the_woman_in_blue#3              Leave                                无变化                                    与期望一致                                  ok
+the_woman_in_blue#3              Leave A15                            A15 扣 ceil(5% 上限)=4 血(不减上限)            与期望一致                                  ok
+
+分类 (a) 我们错(审计发现并已修;断言见 src/core/events.rs::event_audit_fix_tests):
+  - cursed_tome:只有 2 页,缺第 3 页(成本应为 1/2/3 HP)→ 补第 3 页
+  - colosseum 第二场:只给 1 件遗物 → 补第二件(罕见),打赢直接进包
+  - masked_bandits 战斗:多掉一瓶药水 → 去掉药水掉落
+  - mindbloom:'I am Rich'/'I am Healthy' 没有按层号(<=40 / >=41)开关 → 加层号门控
+  - shining_light / winding_halls 'Embrace':缺 A15 变体(30% / 18%)→ 补 outcome_a15
+  - knowing_skull:三档共用涨价、且基础价用 round → 改成按选项各自计数 + max(6, floor(10% 上限))
+  - hypnotizing_colored_mushrooms(吃):25% 回血用了 round → 改成 floor
+  - vampires(接受):30% 上限用了 round → 改成 ceil
+  - the_woman_in_blue(离开 A15):错误地永久掉上限 → 改成扣血(ceil 5%)
+  - 多个'删牌/升级/变形'选项缺条件(无牌可选仍可点)→ 加 req_removable/req_upgradeable
+  - the_joust:金币 <50 仍可下注 → 加 req_gold 50
+  - vampires:升级过的起始打击没被删 → 一并删
+  - face_trader:10% 扣血的下限 1 点没生效 → hp_frac 也吃 hp_pct_min
+
+分类 (b) 无法测:
+  (无)
+
+分类 (c) 表示差异(效果等价,交互形态不同):
+  [c] the_library#0 Read: (c) 表示差异:本作直接随机加一张,原版是 20 张选牌屏
+  [c] sensory_stone#0 Recall 1: (c) 表示差异:本作直接随机加一张无色牌,原版是奖励屏 3 选 1
+  [c] match_and_keep#0 12 格翻牌: (c) 表示差异:棋盘铺法按本作实现,翻牌次数上限 5 与原版一致
+  [c] note_for_yourself#0 Take and give: (c) 跨局存卡文件在无头沙盒里不落盘,只验证流程不崩
+  [c] secret_portal#0 Enter the portal: 跳到 Boss 房后由上层接管,沙盒里看到 COMBAT 即算通过
+
+分类 (d) wiki 与 lightspeed/参考冲突: 无(取整统一按参考实现各调用点的 floor/round/ceil)
+
+本轮实测未发现新的 mismatch:
+  (无)

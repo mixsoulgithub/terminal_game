@@ -22,6 +22,7 @@ options:
   --seed <n|STR>  fixed seed, so a run can be reproduced
                   a decimal number is used as-is; anything else is read as a
                   base-35 seed string (same form `:seed` prints)
+  --ascension <n> ascension level 0-20 for a new game (default 0 = off)
   --dump <what>   print data and exit (cards|enemies|relics|potions|events|gated)
   --replay <seed> headless scripted run: walk act 1 to the boss, one JSON
                   line per step on stdout (no terminal needed)
@@ -50,6 +51,8 @@ keys (vim style, keyboard only):
 
 struct Args {
     seed: Option<u64>,
+    /// 新游戏的飞升等级(0..=20,默认 0)
+    ascension: u32,
     dump: Option<String>,
     /// 无头脚本化运行:走完第一章,每步一行 JSON
     replay: Option<u64>,
@@ -66,6 +69,7 @@ struct Args {
 fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut args = Args {
         seed: None,
+        ascension: 0,
         dump: None,
         replay: None,
         script: None,
@@ -83,6 +87,11 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
                     crate::rng::seed_from_arg(&v)
                         .ok_or_else(|| format!("bad seed: {v}"))?,
                 );
+            }
+            "--ascension" => {
+                let v = it.next().ok_or("--ascension needs a value")?;
+                let n: i64 = v.parse().map_err(|_| format!("bad ascension: {v}"))?;
+                args.ascension = crate::core::ascension::clamp(n);
             }
             "--dump" => {
                 let v = it.next().ok_or("--dump needs a value")?;
@@ -194,7 +203,7 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     let seed = args.seed.unwrap_or_else(crate::rng::random_seed);
-    match run(seed) {
+    match run(seed, args.ascension) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("spire: {e}");
@@ -203,9 +212,9 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(seed: u64) -> io::Result<()> {
+fn run(seed: u64, ascension: u32) -> io::Result<()> {
     let mut terminal = ratatui::try_init()?;
-    let mut app = App::start(seed);
+    let mut app = App::start_asc(seed, ascension);
     app.clamp();
     app.maybe_save();
     let result = (|| -> io::Result<()> {

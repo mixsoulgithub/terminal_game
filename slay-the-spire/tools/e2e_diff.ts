@@ -44,6 +44,10 @@ function normId(value: string): string {
     acid_slime_l: "acid_slime_large",
     strike_red: "strike",
     defend_red: "defend",
+    // 第二章三个 Boss:参考实现叫 automaton/champ/collector,本作带 the_/bronze_ 前缀
+    automaton: "bronze_automaton",
+    champ: "the_champ",
+    collector: "the_collector",
   };
   return (alias[lower] ?? lower) + tail;
 }

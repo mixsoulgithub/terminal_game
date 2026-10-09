@@ -2815,4 +2815,703 @@ mod tests {
             assert!(r.desc.is_ascii(), "non-ascii desc: {}", r.desc);
         }
     }
+
+    // ================= 一局流程侧遗物钩子(Run 级断言) =================
+    //
+    // 这些钩子在战斗沙盒里测不到(拾取/地图/商店/营火/事件/奖励/宝箱),
+    // tools/sandbox_relics.ts 的 run 行 oracle 填的就是下面这些测试名。
+
+    use crate::core::card::{CardInstance, CardType, Rarity};
+    use crate::core::enemies::encounter_def;
+    use crate::core::map::NodeKind;
+    use crate::core::potions::POTIONS;
+    use crate::core::run::{PickPurpose, RestOption, RewardSlot, Run, ShopItem};
+
+    /// 把胜利后的 2 秒停留一步走完
+    fn settle(r: &mut Run) {
+        r.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            r.tick_win_hold();
+        }
+    }
+
+    /// 直接打赢一场普通战斗并结算到奖励屏
+    fn win_plain(r: &mut Run) {
+        let enc = encounter_def("jaw_worm_solo").expect("大颚虫遭遇");
+        r.debug_start_combat(enc);
+        r.debug_win_battle();
+        settle(r);
+    }
+
+    /// 商店里删牌服务的报价
+    fn removal_price(r: &Run) -> i32 {
+        r.shop
+            .as_ref()
+            .expect("在商店里")
+            .items
+            .iter()
+            .find_map(|it| match it {
+                ShopItem::Remove(p) => Some(*p),
+                _ => None,
+            })
+            .expect("商店有删牌格")
+    }
+
+    /// 连赢 n 场普通战斗,数奖励里出了几张稀有牌(同一颗种子,开关礼物各跑一遍)
+    fn rare_rewards(seed: u64, gift: bool, n: usize) -> usize {
+        let mut r = Run::new(seed);
+        if gift {
+            r.debug_add_relic("nloths_gift").unwrap();
+        }
+        let mut rares = 0;
+        for _ in 0..n {
+            win_plain(&mut r);
+            if let Some(rw) = r.reward.as_ref() {
+                rares += rw.cards.iter().filter(|c| c.def.rarity == Rarity::Rare).count();
+            }
+            r.leave_reward();
+        }
+        rares
+    }
+
+    /// 燃烧之血:战后回 6
+    #[test]
+    fn burning_blood_post_combat_heal() {
+        let mut r = Run::new(5);
+        r.player.hp = 30;
+        win_plain(&mut r);
+        assert_eq!(r.player.hp, 36, "战后回 6");
+    }
+
+    /// 黑血:替换燃烧之血,战后回 12
+    #[test]
+    fn black_blood_replaces_blood_and_heals() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("black_blood").unwrap();
+        assert!(r.has_relic("black_blood"));
+        assert!(!r.has_relic("burning_blood"), "黑血替换燃烧之血");
+        r.player.hp = 30;
+        win_plain(&mut r);
+        assert_eq!(r.player.hp, 42, "战后回 12");
+    }
+
+    /// 肉骨头:战后血量 <=50% 才回 12
+    #[test]
+    fn meat_on_the_bone_heal_threshold() {
+        let mut low = Run::new(5);
+        low.debug_remove_relic("burning_blood").unwrap();
+        low.debug_add_relic("meat_on_the_bone").unwrap();
+        low.player.hp = 39; // 39*2=78 <= 80
+        win_plain(&mut low);
+        assert_eq!(low.player.hp, 51, "半血以下回 12");
+        let mut high = Run::new(5);
+        high.debug_remove_relic("burning_blood").unwrap();
+        high.debug_add_relic("meat_on_the_bone").unwrap();
+        high.player.hp = 70;
+        win_plain(&mut high);
+        assert_eq!(high.player.hp, 70, "半血以上不回");
+    }
+
+    /// 牧师之面:每场胜利最大生命 +1
+    #[test]
+    fn face_of_cleric_max_hp_on_victory() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("face_of_cleric").unwrap();
+        let (hp0, max0) = (r.player.hp, r.player.max_hp);
+        win_plain(&mut r);
+        assert_eq!(r.player.max_hp, max0 + 1);
+        assert_eq!(r.player.hp, hp0 + 1);
+    }
+
+    /// 陶瓷鱼:每加一张牌得 9 金币(vampires 事件加 5 张 bite -> +45)
+    #[test]
+    fn ceramic_fish_gold_on_card_add() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("ceramic_fish").unwrap();
+        r.player.hp = r.player.max_hp;
+        r.debug_open_event("vampires").unwrap();
+        let g0 = r.player.gold;
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.gold, g0 + 45, "5 张 bite 每张 9 金");
+    }
+
+    /// 十手镯:? 房间不再出普通战斗
+    #[test]
+    fn juzu_bracelet_skips_normal_combats() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("juzu_bracelet").unwrap();
+        let rooms = r.debug_unknown_rooms(60);
+        assert!(
+            rooms.iter().all(|n| *n != "Monster"),
+            "有十手镯时 ? 房不该出普通战斗:{rooms:?}"
+        );
+        // 对照组:总有一些种子的 ? 房能出普通战斗
+        let control = (0..20u64).any(|seed| {
+            let mut c = Run::new(seed);
+            c.debug_unknown_rooms(60).iter().any(|n| *n == "Monster")
+        });
+        assert!(control, "没有十手镯时 ? 房应该能出普通战斗");
+    }
+
+    /// 银行家之躯:每爬一层 +12 金;在商店花过钱后失效
+    #[test]
+    fn maw_bank_gold_per_floor_then_stops() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("maw_bank").unwrap();
+        let g0 = r.player.gold;
+        let first = r.reachable()[0];
+        r.enter_node(first).unwrap();
+        assert_eq!(r.player.gold, g0 + 12, "每层 +12");
+        // 在商店花一次钱,下一层就不再给
+        r.debug_room("shop").unwrap();
+        r.spend_gold(1);
+        r.leave_shop();
+        let g1 = r.player.gold;
+        let next = r.reachable()[0];
+        r.enter_node(next).unwrap();
+        assert_eq!(r.player.gold, g1, "花过钱就不再给");
+    }
+
+    /// 餐券:每次进商店回 15
+    #[test]
+    fn meal_ticket_heals_on_shop() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("meal_ticket").unwrap();
+        r.player.hp = 40;
+        r.debug_room("shop").unwrap();
+        assert_eq!(r.player.hp, 55, "进店回 15");
+    }
+
+    /// 御守:抵消接下来 2 张诅咒,第 3 张才进来
+    #[test]
+    fn omamori_negates_two_curses() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("omamori").unwrap();
+        r.debug_add_relic("cursed_key").unwrap();
+        let curses = |r: &Run| r.player.deck.iter().filter(|c| c.kind() == CardType::Curse).count();
+        let base = curses(&r);
+        for i in 0..2 {
+            r.debug_room("treasure").unwrap();
+            r.take_treasure();
+            assert_eq!(curses(&r), base, "第 {} 张诅咒被御守挡下", i + 1);
+        }
+        r.debug_room("treasure").unwrap();
+        r.take_treasure();
+        assert_eq!(curses(&r), base + 1, "第 3 张进来了");
+    }
+
+    /// 药水腰带:拾取 +2 药水格
+    #[test]
+    fn potion_belt_adds_two_slots() {
+        let mut r = Run::new(5);
+        let n0 = r.player.potions.len();
+        r.debug_add_relic("potion_belt").unwrap();
+        assert_eq!(r.player.potions.len(), n0 + 2);
+    }
+
+    /// 帝王枕:休息多回 15
+    #[test]
+    fn regal_pillow_rest_heal_bonus() {
+        let mut a = Run::new(5);
+        a.player.hp = 30;
+        a.rest_heal();
+        let plain = a.player.hp;
+        let mut b = Run::new(5);
+        b.debug_add_relic("regal_pillow").unwrap();
+        b.player.hp = 30;
+        b.rest_heal();
+        assert_eq!(b.player.hp - plain, 15, "休息多回 15");
+    }
+
+    /// 微笑面具:删牌服务固定 50 金
+    #[test]
+    fn smiling_mask_fixes_removal_price() {
+        let mut normal = Run::new(5);
+        normal.debug_room("shop").unwrap();
+        assert_ne!(removal_price(&normal), 50, "正常报价不是 50");
+        let mut masked = Run::new(5);
+        masked.debug_add_relic("smiling_mask").unwrap();
+        masked.debug_room("shop").unwrap();
+        assert_eq!(removal_price(&masked), 50);
+    }
+
+    /// 草莓:拾取 +7 最大生命
+    #[test]
+    fn strawberry_max_hp() {
+        let mut r = Run::new(5);
+        let m = r.player.max_hp;
+        r.debug_add_relic("strawberry").unwrap();
+        assert_eq!(r.player.max_hp, m + 7);
+    }
+
+    /// 小箱子:每第 4 个 ? 房间必出宝箱
+    #[test]
+    fn tiny_chest_treasure_every_fourth_unknown() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("tiny_chest").unwrap();
+        let rooms = r.debug_unknown_rooms(12);
+        for (i, name) in rooms.iter().enumerate() {
+            if (i + 1) % 4 == 0 {
+                assert_eq!(*name, "Treasure", "第 {} 个 ? 房该是宝箱", i + 1);
+            }
+        }
+    }
+
+    /// 战争涂装:拾取随机升级 2 张技能
+    #[test]
+    fn war_paint_upgrades_two_skills() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("war_paint").unwrap();
+        let up = r
+            .player
+            .deck
+            .iter()
+            .filter(|c| c.kind() == CardType::Skill && c.upgraded)
+            .count();
+        assert!(up >= 2, "升级了 {up} 张技能,期望 >=2");
+    }
+
+    /// 磨刀石:拾取随机升级 2 张攻击
+    #[test]
+    fn whetstone_upgrades_two_attacks() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("whetstone").unwrap();
+        let up = r
+            .player
+            .deck
+            .iter()
+            .filter(|c| c.kind() == CardType::Attack && c.upgraded)
+            .count();
+        assert!(up >= 2, "升级了 {up} 张攻击,期望 >=2");
+    }
+
+    /// 黑石护符:每拿一张诅咒 +6 最大生命
+    #[test]
+    fn darkstone_periapt_max_hp_per_curse() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("darkstone_periapt").unwrap();
+        r.debug_add_relic("cursed_key").unwrap();
+        let m0 = r.player.max_hp;
+        r.debug_room("treasure").unwrap();
+        r.take_treasure();
+        assert_eq!(r.player.max_hp, m0 + 6);
+    }
+
+    /// 熔火之蛋:事件加进来的攻击牌直接升级(vampires -> 5 张 bite)
+    #[test]
+    fn molten_egg_upgrades_attacks() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("molten_egg").unwrap();
+        r.player.hp = r.player.max_hp;
+        r.debug_open_event("vampires").unwrap();
+        r.choose_event(1).unwrap();
+        let bites: Vec<_> = r.player.deck.iter().filter(|c| c.def.id == "bite").collect();
+        assert_eq!(bites.len(), 5);
+        assert!(bites.iter().all(|c| c.upgraded), "熔火之蛋该升级 bite");
+    }
+
+    /// 剧毒之蛋:事件加进来的技能牌直接升级(ghosts -> 5 张 ghostly_armor)
+    #[test]
+    fn toxic_egg_upgrades_skills() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("toxic_egg").unwrap();
+        r.player.hp = r.player.max_hp;
+        r.debug_open_event("ghosts").unwrap();
+        r.choose_event(0).unwrap();
+        let cards: Vec<_> = r
+            .player
+            .deck
+            .iter()
+            .filter(|c| c.def.id == "ghostly_armor")
+            .collect();
+        assert_eq!(cards.len(), 5);
+        assert!(cards.iter().all(|c| c.upgraded), "剧毒之蛋该升级 ghostly_armor");
+    }
+
+    /// 冰冻之蛋:商店买进来的能力牌直接升级(加牌统一钩子在商店路径也生效)
+    #[test]
+    fn frozen_egg_upgrades_powers() {
+        use crate::core::run::ShopKind;
+        let mut r = Run::new(5);
+        r.debug_add_relic("frozen_egg").unwrap();
+        r.player.gold = 99_999;
+        r.open_shop();
+        let i = r
+            .shop
+            .as_ref()
+            .unwrap()
+            .kinds
+            .iter()
+            .position(|k| *k == ShopKind::ClassCard)
+            .expect("商店有职业牌格");
+        r.shop.as_mut().unwrap().items[i] = ShopItem::Card(
+            CardInstance::new(crate::core::cards::card_def_or_panic("inflame")),
+            50,
+        );
+        r.shop.as_mut().unwrap().index = i;
+        r.buy_selected().unwrap();
+        let got = r.player.deck.last().expect("牌组末尾是刚买的牌");
+        assert!(got.upgraded, "冰冻之蛋该升级买来的 inflame");
+    }
+
+    /// 永恒之羽:每进一次营火、每 5 张牌回 3(初始 10 张 -> 回 6)
+    #[test]
+    fn eternal_feather_rest_heal() {
+        let mut a = Run::new(5);
+        a.player.hp = 20;
+        a.debug_room("rest").unwrap();
+        let plain = a.player.hp;
+        let mut b = Run::new(5);
+        b.debug_add_relic("eternal_feather").unwrap();
+        b.player.hp = 20;
+        b.debug_room("rest").unwrap();
+        assert_eq!(b.player.hp - plain, 6, "10 张牌 / 5 * 3");
+    }
+
+    /// 梨:拾取 +10 最大生命
+    #[test]
+    fn pear_max_hp() {
+        let mut r = Run::new(5);
+        let m = r.player.max_hp;
+        r.debug_add_relic("pear").unwrap();
+        assert_eq!(r.player.max_hp, m + 10);
+    }
+
+    /// 芒果:拾取 +14 最大生命
+    #[test]
+    fn mango_max_hp() {
+        let mut r = Run::new(5);
+        let m = r.player.max_hp;
+        r.debug_add_relic("mango").unwrap();
+        assert_eq!(r.player.max_hp, m + 14);
+    }
+
+    /// 古钱币:拾取 +300 金币
+    #[test]
+    fn old_coin_gold() {
+        let mut r = Run::new(5);
+        let g = r.player.gold;
+        r.debug_add_relic("old_coin").unwrap();
+        assert_eq!(r.player.gold, g + 300);
+    }
+
+    /// 李的华夫饼:拾取 +7 最大生命并回满
+    #[test]
+    fn lees_waffle_max_hp_and_full_heal() {
+        let mut r = Run::new(5);
+        r.player.hp = 10;
+        let m = r.player.max_hp;
+        r.debug_add_relic("lees_waffle").unwrap();
+        assert_eq!(r.player.max_hp, m + 7);
+        assert_eq!(r.player.hp, r.player.max_hp, "回满");
+    }
+
+    /// 星盘:拾取时开"转化 3 张"的选牌窗口
+    #[test]
+    fn astrolabe_transforms_three() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("astrolabe").unwrap();
+        assert_eq!(r.picker.as_ref().unwrap().purpose, PickPurpose::Transform);
+        assert_eq!(r.picker.as_ref().unwrap().remaining, 3, "转化 3 张");
+    }
+
+    /// 空笼:拾取时开"删 2 张"的选牌窗口
+    #[test]
+    fn empty_cage_removes_two() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("empty_cage").unwrap();
+        assert_eq!(r.picker.as_ref().unwrap().purpose, PickPurpose::Remove);
+        assert_eq!(r.picker.as_ref().unwrap().remaining, 2, "删 2 张");
+    }
+
+    /// 达莉的镜子:拾取时开"复制一张"的选牌窗口
+    #[test]
+    fn dollys_mirror_duplicates_a_card() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("dollys_mirror").unwrap();
+        assert_eq!(r.picker.as_ref().unwrap().purpose, PickPurpose::Duplicate);
+    }
+
+    /// 呼叫铃:拾取 3 件遗物并塞一张诅咒
+    #[test]
+    fn calling_bell_three_relics_and_curse() {
+        let mut r = Run::new(5);
+        let n = r.player.relics.len();
+        let curses = r.player.deck.iter().filter(|c| c.kind() == CardType::Curse).count();
+        r.debug_add_relic("calling_bell").unwrap();
+        assert_eq!(r.player.relics.len(), n + 1 + 3, "铃铛本身 + 3 件");
+        assert_eq!(
+            r.player.deck.iter().filter(|c| c.kind() == CardType::Curse).count(),
+            curses + 1,
+            "附带一张诅咒"
+        );
+    }
+
+    /// 坩埚:拾取时调满药水格(先戴药水腰带凑 5 格)
+    #[test]
+    fn cauldron_five_potions() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("potion_belt").unwrap();
+        r.debug_add_relic("cauldron").unwrap();
+        let filled = r.player.potions.iter().filter(|p| p.is_some()).count();
+        assert_eq!(filled, 5, "5 瓶药水");
+    }
+
+    /// 潘多拉魔盒:所有打击与防御都变形,数量不变
+    #[test]
+    fn pandoras_box_transforms_strikes_and_defends() {
+        let mut r = Run::new(5);
+        let total = r.player.deck.len();
+        r.debug_add_relic("pandoras_box").unwrap();
+        let left = r
+            .player
+            .deck
+            .iter()
+            .filter(|c| matches!(c.def.id, "strike" | "defend"))
+            .count();
+        assert_eq!(left, 0, "打击与防御都该被转化");
+        assert_eq!(r.player.deck.len(), total, "牌数不变");
+    }
+
+    /// 小房子:最大生命 +5、金币 +50、开一组卡牌奖励
+    #[test]
+    fn tiny_house_pickup_bundle() {
+        let mut r = Run::new(5);
+        let (m, g) = (r.player.max_hp, r.player.gold);
+        r.debug_add_relic("tiny_house").unwrap();
+        assert_eq!(r.player.max_hp, m + 5);
+        assert_eq!(r.player.gold, g + 50);
+        assert!(r.reward.as_ref().is_some_and(|rw| !rw.cards.is_empty()), "开卡牌奖励");
+    }
+
+    /// 问号牌:卡牌奖励多 1 张
+    #[test]
+    fn question_card_extra_card_reward() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("question_card").unwrap();
+        win_plain(&mut r);
+        assert_eq!(r.reward.as_ref().unwrap().cards.len(), 4, "3 + 1");
+    }
+
+    /// Boss 王冠:卡牌奖励少 2 张
+    #[test]
+    fn busted_crown_card_reward_minus_two() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("busted_crown").unwrap();
+        win_plain(&mut r);
+        assert_eq!(r.reward.as_ref().unwrap().cards.len(), 1, "3 - 2");
+    }
+
+    /// 唱歌碗:跳过卡牌奖励换 +2 最大生命
+    #[test]
+    fn singing_bowl_offers_max_hp_on_skip() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("singing_bowl").unwrap();
+        win_plain(&mut r);
+        let m = r.player.max_hp;
+        let msg = r.reward_skip_cards();
+        assert!(msg.contains("+2"), "提示:{msg}");
+        assert_eq!(r.player.max_hp, m + 2);
+    }
+
+    /// 白色野兽雕像:战斗奖励必出药水
+    #[test]
+    fn white_beast_statue_guarantees_potion() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("white_beast_statue").unwrap();
+        let rolls = r.debug_potion_rewards(25);
+        assert!(rolls.iter().all(|p| p.is_some()), "雕像下每次必掉:{rolls:?}");
+    }
+
+    /// 金像:敌人掉的金币多 25%
+    #[test]
+    fn golden_idol_gold_reward_bonus() {
+        let mut base = Run::new(5);
+        win_plain(&mut base);
+        let plain = base.reward.as_ref().unwrap().gold;
+        let mut idol = Run::new(5);
+        idol.debug_add_relic("golden_idol").unwrap();
+        win_plain(&mut idol);
+        let boosted = idol.reward.as_ref().unwrap().gold;
+        assert!(plain > 0);
+        assert_eq!(boosted, plain + (plain * 25 + 50) / 100, "多 25%");
+    }
+
+    /// 血偶像:每次获得金币回 5
+    #[test]
+    fn bloody_idol_heals_on_gold_gain() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("bloody_idol").unwrap();
+        r.player.hp = 50;
+        r.gain_gold(10);
+        assert_eq!(r.player.hp, 55);
+    }
+
+    /// Neow 的哀悼:最前面 3 场战斗敌人只剩 1 血
+    #[test]
+    fn neows_lament_weakens_first_combats() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("neows_lament").unwrap();
+        let enc = encounter_def("jaw_worm_solo").unwrap();
+        r.debug_start_combat(enc);
+        assert!(
+            r.combat.as_ref().unwrap().enemies.iter().all(|e| e.hp == 1),
+            "开局敌人 1 血"
+        );
+    }
+
+    /// 恩洛斯的礼物:稀有牌概率翻三倍
+    #[test]
+    fn nloths_gift_triples_rare_chance() {
+        let plain = rare_rewards(9, false, 120);
+        let gift = rare_rewards(9, true, 120);
+        assert!(gift > plain, "礼物该提高稀有牌数:{gift} vs {plain}");
+    }
+
+    /// 饥肠辘辘之脸:下一个非 Boss 宝箱为空,之后恢复正常
+    #[test]
+    fn nloths_hungry_face_empties_a_chest() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("nloths_hungry_face").unwrap();
+        let n = r.player.relics.len();
+        r.debug_room("treasure").unwrap();
+        r.take_treasure();
+        assert_eq!(r.player.relics.len(), n, "第一个箱子是空的");
+        r.debug_room("treasure").unwrap();
+        r.take_treasure();
+        assert!(r.player.relics.len() > n, "之后的箱子恢复给遗物");
+    }
+
+    /// 蛇头:进 ? 房间 +50 金币
+    #[test]
+    fn ssserpent_head_gold_on_unknown() {
+        for seed in 0..30u64 {
+            let mut r = Run::new(seed);
+            r.debug_add_relic("ssserpent_head").unwrap();
+            // 第 1 层必是普通战斗:先打赢,回到地图
+            let first = r.reachable()[0];
+            r.enter_node(first).unwrap();
+            r.debug_win_battle();
+            settle(&mut r);
+            r.leave_reward();
+            if r.screen != crate::core::run::Screen::Map {
+                continue;
+            }
+            let Some(idx) = r
+                .reachable()
+                .into_iter()
+                .find(|i| r.map.node(*i).kind == NodeKind::Event)
+            else {
+                continue;
+            };
+            let g = r.player.gold;
+            r.enter_node(idx).unwrap();
+            assert_eq!(r.player.gold, g + 50, "seed {seed} 进 ? 房该 +50");
+            return;
+        }
+        panic!("30 个种子里第二层都没找到 ? 房");
+    }
+
+    /// 花开彼岸:再也回不了血
+    #[test]
+    fn mark_of_the_bloom_blocks_healing() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("mark_of_the_bloom").unwrap();
+        r.player.hp = 30;
+        assert_eq!(r.heal(10), 0);
+        assert_eq!(r.player.hp, 30);
+    }
+
+    /// 灵质:再也拿不到金币
+    #[test]
+    fn ectoplasm_blocks_gold() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("ectoplasm").unwrap();
+        let g = r.player.gold;
+        r.gain_gold(50);
+        assert_eq!(r.player.gold, g);
+    }
+
+    /// 苏族之魂:再也拿不到药水
+    #[test]
+    fn sozu_blocks_potions() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("sozu").unwrap();
+        assert!(!r.add_potion(&POTIONS[0]), "加不进药水");
+    }
+
+    /// 咖啡滤壶:营火不能休息
+    #[test]
+    fn coffee_dripper_blocks_rest() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("coffee_dripper").unwrap();
+        r.debug_room("rest").unwrap();
+        assert!(!r.rest_options().contains(&RestOption::Rest), "不能休息");
+    }
+
+    /// 融合锤:营火不能锻造
+    #[test]
+    fn fusion_hammer_blocks_smith() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("fusion_hammer").unwrap();
+        r.debug_room("rest").unwrap();
+        assert!(!r.rest_options().contains(&RestOption::Smith), "不能锻造");
+    }
+
+    /// 诅咒钥匙:非 Boss 宝箱附带一张诅咒
+    #[test]
+    fn cursed_key_curse_on_chest() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("cursed_key").unwrap();
+        let c0 = r.player.deck.iter().filter(|c| c.kind() == CardType::Curse).count();
+        r.debug_room("treasure").unwrap();
+        r.take_treasure();
+        assert_eq!(
+            r.player.deck.iter().filter(|c| c.kind() == CardType::Curse).count(),
+            c0 + 1
+        );
+    }
+
+    /// 黑星:精英多掉一件遗物
+    #[test]
+    fn black_star_extra_elite_relic() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("black_star").unwrap();
+        let n = r.player.relics.len();
+        let enc = encounter_def("gremlin_nob_solo").unwrap();
+        r.debug_start_combat(enc);
+        r.debug_win_battle();
+        settle(&mut r);
+        assert!(r.player.relics.len() > n, "精英多掉一件");
+    }
+
+    /// 会员卡:所有商品降 50%
+    #[test]
+    fn membership_card_shop_discount() {
+        let mut plain = Run::new(5);
+        plain.debug_room("shop").unwrap();
+        let base = removal_price(&plain);
+        let mut member = Run::new(5);
+        member.debug_add_relic("membership_card").unwrap();
+        member.debug_room("shop").unwrap();
+        let discounted = removal_price(&member);
+        assert_eq!(discounted, (base as f32 * 0.5).round() as i32, "五折");
+    }
+
+    /// 奖励屏取走一张牌要真的进牌组
+    #[test]
+    fn reward_card_take_adds_to_deck() {
+        let mut r = Run::new(5);
+        win_plain(&mut r);
+        let slots = r.reward_slots();
+        let idx = slots
+            .iter()
+            .position(|s| matches!(s, RewardSlot::Card(_)))
+            .expect("有卡牌奖励");
+        r.reward.as_mut().unwrap().index = idx;
+        let before = r.player.deck.len();
+        r.reward_take().unwrap();
+        assert_eq!(r.player.deck.len(), before + 1);
+    }
+
 }

@@ -44,8 +44,8 @@ type Policy = {
   keysAll: boolean;
   /** 调试钩子:开局把生命与上限设成这个值(hp n);null = 不改 */
   hp: number | null;
-  /** 调试钩子:把牌组整个换掉(deck strong);false = 不改 */
-  strongDeck: boolean;
+  /** 调试钩子:把牌组整个换掉(deck keep/strong/ramp/burst);"keep" = 不改 */
+  deck: "keep" | "strong" | "ramp" | "burst";
 };
 
 function defaultPolicy(): Policy {
@@ -64,7 +64,7 @@ function defaultPolicy(): Policy {
     floor: 0,
     keysAll: false,
     hp: null,
-    strongDeck: false,
+    deck: "keep",
   };
 }
 
@@ -83,7 +83,11 @@ function parsePolicy(text: string): Policy {
       case "act": p.act = Math.max(1, Number(val)); break;
       case "floor": p.floor = Number(val); break;
       case "hp": p.hp = Number(val); break;
-      case "deck": p.strongDeck = val === "strong"; break;
+      case "deck":
+        if (val !== "keep" && val !== "strong" && val !== "ramp" && val !== "burst")
+          throw new Error(`deck 只能是 strong/ramp/burst/keep,给的是 ${val}`);
+        p.deck = val;
+        break;
       case "keys":
         p.keys = val !== "off";
         if (val === "all") p.keysAll = true;
@@ -237,6 +241,8 @@ function autoPlay(state: GameState): GameState {
 }
 
 // ---- 智能打牌(smart on 才走;与 src/core/replay.rs 的 smart_play 同规则) ----
+// SPIRE_TRACE=1 时把每次出牌(手牌/敌人血/意图/选择)打到 stderr,与 Rust 侧同一套,
+// 便于把两边的分叉定位到具体回合.
 
 /** 血最少的活敌人(平手取下标小的);攻击与指向敌人的药水都用它当目标 */
 function lowestHpEnemy(c: CombatState): number {
@@ -249,7 +255,12 @@ function lowestHpEnemy(c: CombatState): number {
   return best;
 }
 
-/** 按优先级挑一张打得起的牌(与 Rust 的 pick_smart_card 同序) */
+/** 按优先级挑一张打得起的牌(与 Rust 的 pick_smart_card 同序):
+ *  1. 有敌人快死了(血量 <= 1,或掉到四分之一以下)且自己不会被打死时先补刀,攻击优先;
+ *  2. 即将被斩杀或意图总伤 > 格挡时,先用技能补防;
+ *  3. 能力牌尽早铺开;
+ *  4. 其余打攻击牌,费用从低到高;
+ *  5. 再不济打技能. */
 function pickSmartCard(c: CombatState, aboutToDie: boolean, threatened: boolean, canKill: boolean): number {
   const hand = c.player.piles.hand.map((iid) => c.cards[iid]!);
   const defAt = (i: number) => bundle.cards.get(hand[i]!.defId)!;
@@ -267,7 +278,7 @@ function pickSmartCard(c: CombatState, aboutToDie: boolean, threatened: boolean,
     }
     return best;
   };
-  if (canKill) {
+  if (canKill && !aboutToDie) {
     const a = group("attack");
     if (a !== -1) return a;
   }
@@ -393,13 +404,29 @@ function smartPlay(state: GameState): GameState {
     const maxHp = s.run.maxHp;
     const block = c.player.block;
     const aboutToDie = incoming >= hp + block;
+    // 来袭总伤已经够把血打空(还没算格挡)也算危险:该喝药水了
+    const dangerous = incoming >= hp;
     const threatened = incoming > block;
     const lowHp = hp * 2 <= maxHp;
-    const canKill = alive.some((i) => c.monsters[i]!.hp <= 1);
+    // 有敌人快死了:血量 <= 1 这刀必死;掉到四分之一以下也先补刀
+    const canKill = alive.some((i) => {
+      const m = c.monsters[i]!;
+      return m.hp <= 1 || m.hp * 4 <= m.maxHp;
+    });
     const turn = c.turn;
     const target = lowestHpEnemy(c);
     const pick = pickSmartCard(c, aboutToDie, threatened, canKill);
-    if ((aboutToDie || lowHp) && potionTurn !== turn) {
+    if (process.env.SPIRE_TRACE) {
+      const hand = c.player.piles.hand.map((iid) => {
+        const x = c.cards[iid]!;
+        return `${x.defId}(b${x.misc ?? 0})`;
+      });
+      const foes = c.monsters.map((m, i) => `${m.id}:${m.hp}/${m.maxHp}b${m.block}m${m.move}${m.halfDead ? "HALF" : ""}`);
+      console.error(
+        `TRACE t${turn} hp${hp} blk${block} in${incoming} atd${aboutToDie} danger${dangerous} cankill${canKill} pick${pick} tgt${target} hand[${hand.join(",")}] foes[${foes.join(",")}]`,
+      );
+    }
+    if ((aboutToDie || dangerous || lowHp) && potionTurn !== turn) {
       const next = tryDrinkOnce(s);
       if (next) {
         potionTurn = next.combat ? next.combat.turn : turn;
@@ -409,8 +436,15 @@ function smartPlay(state: GameState): GameState {
       potionTurn = turn;
     }
     if (pick !== -1 && target !== -1) {
+      // 只有指定敌人的牌才带目标:参考侧 SURROUNDED.onUseCard 会把传进来的 target
+      // 记成玩家朝向,给能力牌(火上浇油这种)乱传会把它的朝向掰过去,于是背袭 ×1.5
+      // 落错人.本作按牌面 target 判断,不指定敌人的牌一律不看 target(见 combat.rs 的
+      // play_card:只有 Target::Enemy 才认 chosen),两边要同规则.
+      const pdef = bundle.cards.get(s.combat!.cards[s.combat!.player.piles.hand[pick]!]!.defId);
+      const cardTarget =
+        pdef && (pdef.target === "enemy" || pdef.target === "selfandenemy") ? target : undefined;
       try {
-        s = advance(s, { cmd: "playCard", handIdx: pick, target }, bundle);
+        s = advance(s, { cmd: "playCard", handIdx: pick, target: cardTarget }, bundle);
       } catch {
         s = advance(s, { cmd: "endTurn" }, bundle);
       }
@@ -563,6 +597,10 @@ function normId(id: string): string {
     acid_slime_l: "acid_slime_large",
     strike_red: "strike",
     defend_red: "defend",
+    // 第二章三个 Boss:参考实现叫 automaton/champ/collector,本作带 the_/bronze_ 前缀
+    automaton: "bronze_automaton",
+    champ: "the_champ",
+    collector: "the_collector",
   };
   return (alias[head] ?? head) + tail;
 }
@@ -868,8 +906,20 @@ export function replayRefl(seedStr: string, policy: Policy): string {
     s.run.maxHp = policy.hp;
     s.run.hp = policy.hp;
   }
-  if (policy.strongDeck) {
+  if (policy.deck === "strong") {
     s.run.deck = Array.from({ length: 10 }, () => ({ defId: "BLUDGEON", upgrades: 1, misc: 0, bottled: false }));
+  } else if (policy.deck === "ramp") {
+    // 与 Rust 侧 set_replay_deck 一致:10 张强化狂暴,纯状态不掷点
+    s.run.deck = Array.from({ length: 10 }, () => ({ defId: "RAMPAGE", upgrades: 1, misc: 0, bottled: false }));
+  } else if (policy.deck === "burst") {
+    // 与 Rust 侧 set_burst_deck 一致:1 张强化重刃 + 24 张强化火上浇油
+    const card = (defId: string): { defId: string; upgrades: number; misc: number; bottled: boolean } => ({
+      defId,
+      upgrades: 1,
+      misc: 0,
+      bottled: false,
+    });
+    s.run.deck = [card("HEAVY_BLADE"), ...Array.from({ length: 24 }, () => card("INFLAME"))];
   }
   for (let i = 1; i < policy.act; i++) s = debugJumpAct(s);
   const out: string[] = [];

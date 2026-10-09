@@ -2,19 +2,22 @@
 # 每一步的语义见 src/core/replay.rs 的模块注释(参考侧同义实现见 tools/replay_ref.ts)
 # 与 act1.script 的区别:起手直接切到第三幕开头(`act 3`),并把生命抬到 9999(`hp 9999`),
 # 好让起手牌组也能在第三幕活着多走几层、碰到第三幕的事件池与 Boss.
-# keys on / smart on 与 acts.script 一致;acts 3 让它在第三幕 Boss 奖励屏停下.
-# hp 9999 让它活得到 Boss;deck strong(10 张强化重锤)让最笨的出牌策略也打得出 32/回合,
-# 才够破开第三幕那些血厚/会复生的遭遇,把整幕走完.
+# smart on 与 acts.script 一致;acts 3 让它在第三幕 Boss 奖励屏停下.
+# keys off:拿了三把钥匙会直接从 Boss 后面进门去第四幕,这条尺子就量不到
+# "第三幕 Boss 奖励屏"了;拿钥匙那条路走 acts.script 与 act4.script.
+# hp 9999 让它活得到 Boss;deck ramp(10 张强化狂暴)每打一次自己 +8,
+# 越打越重,才够破开第三幕那些血厚/会复生的遭遇(暗灵三连、颚虫三连、瞬变体),
+# 把整幕走完并碰到 BOSS(觉醒者/时间吞噬者/顿努与德卡).
 neow 1       # 第 2 个 Neow 祝福
 reward take  # 奖励全拿
 card 2
 event 0
-rest rest    # 营火一律睡觉(keys on 时会优先回忆拿红钥匙)
+rest rest    # 营火一律睡觉
 shop skip
-keys on
+keys off
 smart on
 acts 3
 steps 4000
 act 3
 hp 9999
-deck strong
+deck ramp

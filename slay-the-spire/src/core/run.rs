@@ -510,6 +510,8 @@ pub struct EventState {
     pub nloth: Option<NlothData>,
     /// Designer In-Spire 进房时掷好的服务变体(参考实现 onEnter);其它事件是 None
     pub designer: Option<DesignerData>,
+    /// 会说话的骷髅:三个购买项各自已经买过几次(涨价步数)
+    pub skull: [u32; 3],
 }
 
 /// dead_adventurer 的事件状态(参考实现 room.data):
@@ -644,6 +646,8 @@ pub struct Run {
     pub seed: u64,
     /// 开局选的角色的语料 id
     pub character: &'static str,
+    /// 飞升等级(0 = 关,1..=20).开局定下来,随存档走
+    pub ascension: u32,
     /// 第几场战斗(每次开打 +1),表现层用它判断要不要重新拍快照
     pub fight_seq: u64,
     /// 赢了之后还要在战场上多停几帧(>0 表示正在停,满了才进奖励)
@@ -660,6 +664,10 @@ pub struct Run {
     pub keys: Keys,
     /// 本局这条路的 Boss:开局定下来,地图上直接写名字
     pub boss_enc: &'static Encounter,
+    /// 本局的第二个 Boss(飞升 20 的第三章双 Boss 用;平时不用)
+    boss2_enc: &'static Encounter,
+    /// 飞升 20:第三章的第二个 Boss 是否已经打过(打过就不再触发)
+    a20_second_boss: bool,
     /// 这一章还没打的怪房间名单(monsterRng 一次生成,按顺序消耗)
     monster_list: Vec<&'static str>,
     /// 这一章还没打的精英名单
@@ -810,8 +818,27 @@ impl Run {
         Run::new_for(seed, ch).expect("铁甲战士的起始牌组必须是已实现的")
     }
 
-    /// 按角色开一局:起始牌组/血量/金币/遗物都来自语料
+    /// 按角色开一局(飞升 0):起始牌组/血量/金币/遗物都来自语料
     pub fn new_for(seed: u64, ch: &'static corpus::CharacterInfo) -> Result<Run, String> {
+        Run::new_for_asc(seed, ch, 0)
+    }
+
+    /// 角色在飞升 14 掉的生命上限(参考实现 a14HpLoss:铁甲 -5,其余 -4)
+    fn a14_hp_loss(ch: &'static corpus::CharacterInfo) -> i32 {
+        if ch.id == "ironclad" {
+            5
+        } else {
+            4
+        }
+    }
+
+    /// 按角色 + 飞升等级开一局:起始牌组/血量/金币/遗物都来自语料,
+    /// 飞升 6/10/11/14 的差异(开局受伤、初始诅咒、药水槽、上限)在这里落地
+    pub fn new_for_asc(
+        seed: u64,
+        ch: &'static corpus::CharacterInfo,
+        asc: u32,
+    ) -> Result<Run, String> {
         let missing = roster::missing_cards(ch);
         if !missing.is_empty() {
             return Err(format!("{} 还没实现: {}", ch.name, missing.join(" ")));
@@ -825,6 +852,10 @@ impl Run {
             for _ in 0..*n {
                 deck.push(cards::card(id));
             }
+        }
+        // 飞升 10:开局多一张"飞升者之灾"(不可移除的诅咒)
+        if asc >= 10 {
+            deck.push(cards::card("ascenders_bane"));
         }
         let starter = relics::relic_def_or_panic(ch.relic);
         // 遗物池开局按 普通/罕见/稀有/商店/Boss 五个档次各洗一遍,
@@ -842,28 +873,41 @@ impl Run {
         let lists = enemies::generate_encounters(1, streams.run(RunStream::MonsterRng));
         streams.reseed_map(1);
         // 第一章一定标一个燃烧精英
-        let map = ActMap::generate(streams.map_rng(), true);
-        // 本局的 Boss 是 monsterRng 洗出来的那一条
+        let map = ActMap::generate(streams.map_rng(), true, asc);
+        // 本局的 Boss 是 monsterRng 洗出来的那一条;第二条留给飞升 20 的双 Boss
         let boss_enc: &'static Encounter = enemies::resolve(lists.boss[0]);
+        let boss2_enc: &'static Encounter =
+            enemies::resolve(*lists.boss.get(1).unwrap_or(&lists.boss[0]));
+        // 飞升 14 先降上限,飞升 6 再按(降过的)上限扣 10%(参考实现顺序)
+        let max_hp = ch.max_hp - if asc >= 14 { Self::a14_hp_loss(ch) } else { 0 };
+        let hp = if asc >= 6 {
+            (max_hp as f32 * 0.9).round() as i32
+        } else {
+            max_hp
+        };
+        let potion_slots = if asc >= 11 { 2 } else { POTION_SLOTS };
         let mut run = Run {
             seed,
             character: ch.id,
+            ascension: asc,
             fight_seq: 0,
             win_hold: 0,
             streams,
             player: Player {
-                hp: ch.max_hp,
-                max_hp: ch.max_hp,
+                hp,
+                max_hp,
                 gold: ch.gold,
                 deck,
                 relics: vec![starter],
-                potions: vec![None; POTION_SLOTS],
+                potions: vec![None; potion_slots],
             },
             map,
             act: 1,
             floor_num: 0,
             keys: Keys::default(),
             boss_enc,
+            boss2_enc,
+            a20_second_boss: false,
             monster_list: lists.monster,
             elite_list: lists.elite,
             neow_options: Vec::new(),
@@ -923,11 +967,14 @@ impl Run {
         let mut out = String::new();
         out.push_str(&format!("seed={}\n", self.seed));
         out.push_str(&format!("char={}\n", self.character));
+        out.push_str(&format!("ascension={}\n", self.ascension));
+        out.push_str(&format!("a20_second={}\n", self.a20_second_boss));
         out.push_str(&format!("hp={}\n", self.player.hp));
         out.push_str(&format!("max_hp={}\n", self.player.max_hp));
         out.push_str(&format!("gold={}\n", self.player.gold));
         out.push_str(&format!("act={}\n", self.act));
         out.push_str(&format!("boss={}\n", self.boss_enc.id));
+        out.push_str(&format!("boss2={}\n", self.boss2_enc.id));
         out.push_str(&format!("floor_num={}\n", self.floor_num));
         out.push_str(&format!(
             "keys={}{}{}\n",
@@ -1056,6 +1103,7 @@ impl Run {
     pub fn from_save(text: &str) -> Result<Run, String> {
         let mut seed = 0u64;
         let mut char_id = "ironclad".to_string();
+        let mut ascension = 0u32;
         let mut num: Vec<(&str, &str)> = Vec::new();
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else {
@@ -1066,12 +1114,14 @@ impl Run {
                 seed = v.trim().parse().map_err(|_| "存档里的种子坏了".to_string())?;
             } else if k == "char" {
                 char_id = v.trim().to_string();
+            } else if k == "ascension" {
+                ascension = crate::core::ascension::clamp(v.trim().parse().unwrap_or(0));
             }
         }
         let get = |k: &str| -> Option<&str> { num.iter().find(|(a, _)| *a == k).map(|(_, b)| *b) };
         let int = |k: &str, d: i32| -> i32 { get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d) };
         let ch = roster::find(&char_id).ok_or_else(|| format!("存档里的角色 {char_id} 不认识"))?;
-        let mut run = Run::new_for(seed, ch)?;
+        let mut run = Run::new_for_asc(seed, ch, ascension)?;
         run.player.hp = int("hp", run.player.hp);
         run.player.max_hp = int("max_hp", run.player.max_hp);
         run.player.gold = int("gold", run.player.gold);
@@ -1091,13 +1141,18 @@ impl Run {
         if let Some(id) = get("boss") {
             run.boss_enc = enemies::resolve(id.trim());
         }
+        if let Some(id) = get("boss2") {
+            run.boss2_enc = enemies::resolve(id.trim());
+        }
+        run.a20_second_boss = get("a20_second").map(|v| v.trim() == "true").unwrap_or(false);
         // 地图按当前章的种子重生成(第一章 seed+1,第二章 seed+200,第三章 seed+600;
         // 第四章是定死的).这一步必须在读随机流之前做:读档会把 mapRng 的状态覆盖回来.
         if run.act == 4 {
             run.map = ActMap::act4();
         } else {
             run.streams.reseed_map(run.act);
-            run.map = ActMap::generate(run.streams.map_rng(), run.act == 1 || !run.keys.emerald);
+            run.map =
+                ActMap::generate(run.streams.map_rng(), run.act == 1 || !run.keys.emerald, run.ascension);
         }
         // 旧存档的随机状态是单条 xoshiro 流,和现在的具名流对不上:
         // 直接报错,别静默接着跑出一局错的游戏
@@ -1227,8 +1282,9 @@ impl Run {
             }
         }
         if let Some(v) = get("potions") {
-            let mut slots: Vec<Option<&'static PotionDef>> = vec![None; POTION_SLOTS];
-            for (i, id) in v.split(',').enumerate().take(POTION_SLOTS) {
+            let n = run.player.potions.len();
+            let mut slots: Vec<Option<&'static PotionDef>> = vec![None; n];
+            for (i, id) in v.split(',').enumerate().take(n) {
                 if id == "-" || id.is_empty() {
                     continue;
                 }
@@ -1272,6 +1328,7 @@ impl Run {
                     gold: run.player.gold,
                     lift_strength: run.relic_lifts,
                     relic_counters: run.relic_counters,
+                    asc: run.ascension,
                 };
                 let mut c = Combat::new(enc, setup, run.streams.clone());
                 // 重建时的第一回合与开局的洗牌都会动这些计数器(还带一次日晷),
@@ -1362,6 +1419,7 @@ impl Run {
             wma: None,
             nloth: None,
             designer: None,
+            skull: [0; 3],
         });
         self.screen = Screen::Event;
     }
@@ -1416,6 +1474,19 @@ impl Run {
     pub fn debug_set_hp(&mut self, hp: i32) {
         self.player.max_hp = hp;
         self.player.hp = hp;
+    }
+
+    /// 调试钩子(事件沙盒):把全局层号设到 floor 并重种该层的掷点流.
+    /// mindbloom 的 "I am Rich"/"I am Healthy" 按层号开关选项,需要它.
+    pub fn debug_set_floor(&mut self, floor: u32) {
+        self.floor_num = floor;
+        self.floor_reached = floor as usize;
+        self.streams.reseed_floor_streams(floor);
+    }
+
+    /// 当前全局层号(事件沙盒输出用)
+    pub fn debug_floor(&self) -> u32 {
+        self.floor_num
     }
 
     /// 调试钩子(--replay 的 `deck strong`):把牌组换成 10 张强化重锤.
@@ -1581,6 +1652,7 @@ impl Run {
             lift_strength: self.relic_lifts,
             // 跨战斗的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)
             relic_counters: self.relic_counters,
+            asc: self.ascension,
         };
         self.combat = Some(Combat::new(enc, setup, self.streams.clone()));
         // 古代茶具的能量只在紧接着的这场战斗里生效,开打就清掉
@@ -1813,6 +1885,17 @@ impl Run {
             self.player.hp += cleric;
         }
         if heal > 0 {
+            // 魔法花:战斗中的治疗多 50%;战后这一次回血算在战斗里(原版如此)
+            let pct = self
+                .player
+                .relics
+                .iter()
+                .map(|r| r.fx.combat_heal_pct)
+                .max()
+                .unwrap_or(0);
+            if pct > 100 {
+                heal = heal * pct / 100;
+            }
             self.heal(heal);
         }
         heal
@@ -1858,6 +1941,7 @@ impl Run {
                 wma: None,
                 nloth: None,
                 designer: None,
+                skull: [0; 3],
             });
             self.screen = Screen::Event;
             return;
@@ -1872,6 +1956,17 @@ impl Run {
         // 否则本局到此为止(第四章打倒心脏也是直接结束).
         if kind == EnemyKind::Boss && self.act >= 3 {
             self.say(format!("victory over the {}", c.encounter_id));
+            // 飞升 20:第三章的 Boss 要连打两个.第一个倒下后不结算,
+            // 直接推进一层、重种流,再开第二个 Boss 的战斗
+            if self.act == 3 && self.ascension >= 20 && !self.a20_second_boss {
+                self.a20_second_boss = true;
+                self.say("A20: a second boss rises to meet you");
+                self.floor_num += 1;
+                self.streams.reseed_floor_streams(self.floor_num);
+                let enc = self.boss2_enc;
+                self.start_combat(enc, false);
+                return;
+            }
             if self.act == 3 && self.keys.emerald && self.keys.ruby && self.keys.sapphire {
                 self.say("you hold all three keys: the door opens");
                 self.begin_act();
@@ -1903,8 +1998,15 @@ impl Run {
                     .streams
                     .run(RunStream::TreasureRng)
                     .random_range(25, 35),
-                // Boss 的金币走 miscRng:100 上下浮动 5
-                EnemyKind::Boss => 100 + self.streams.floor(FloorStream::MiscRng).random_range(-5, 5),
+                // Boss 的金币走 miscRng:100 上下浮动 5;飞升 13+ 掉 25%
+                EnemyKind::Boss => {
+                    let g = 100 + self.streams.floor(FloorStream::MiscRng).random_range(-5, 5);
+                    if self.ascension >= 13 {
+                        (g as f32 * 0.75).round() as i32
+                    } else {
+                        g
+                    }
+                }
             },
         };
         // 金像:敌人掉的金币多 25%
@@ -1928,6 +2030,13 @@ impl Run {
                 EnemyKind::Boss | EnemyKind::Normal => None,
             },
         };
+        // 斗兽场第二场的第二件遗物:奖励屏一次只摆一件,这件打赢就直接进背包
+        if let Some(rarity) = plan.and_then(|p| p.relic_rarity2) {
+            if let Some(def) = self.take_relic_of(rarity) {
+                self.gain_relic(def);
+                self.say(format!("{} is yours", def.name));
+            }
+        }
         // 药水:先掷一次 d100 看掉不掉(带保底),掉了再掷稀有度.
         // 事件战斗(plan)走的也是同一条:参考实现 eventCombatRewards → rollPotionReward(ctx, entries.length),
         // 保底累加与"已有奖励条目 ≥4 就不掉"都照旧,所以这里把已有条目数传进去.
@@ -2081,7 +2190,7 @@ impl Run {
                     return Err("no such card".to_string());
                 };
                 let label = card.label();
-                self.player.deck.push(card);
+                self.push_card_to_deck(card);
                 self.mark_reward(|r| r.card_taken = true);
                 self.next_card_group();
                 Ok(format!("{label} added to your deck"))
@@ -2179,8 +2288,14 @@ impl Run {
     /// 重新掷遭遇名单与事件池,再按新章的种子重生成地图.
     fn begin_act(&mut self) {
         self.act += 1;
-        // 切幕回满血(参考实现里 A5 以下就是回满)
-        self.player.hp = self.player.max_hp;
+        // 打完 Boss 切幕的回血:飞升 5 以下回满,飞升 5+ 只补缺血的 75%
+        if self.ascension >= 5 {
+            let missing = (self.player.max_hp - self.player.hp).max(0);
+            self.player.hp = (self.player.hp + (missing as f32 * 0.75).round() as i32)
+                .min(self.player.max_hp);
+        } else {
+            self.player.hp = self.player.max_hp;
+        }
         // 未知房的保底与药水保底都在切幕时复位
         self.potion_chance = 0;
         self.monster_chance = UNKNOWN_BASE.0;
@@ -2203,6 +2318,7 @@ impl Run {
             self.monster_list.clear();
             self.elite_list.clear();
             self.boss_enc = enemies::resolve("the_heart");
+            self.boss2_enc = self.boss_enc;
             self.event_pool.clear();
             self.shrine_pool.clear();
             self.map = ActMap::act4();
@@ -2210,13 +2326,15 @@ impl Run {
             // 新一章的遭遇名单接着 monsterRng 掷,事件池换成这一章的
             let lists = enemies::generate_encounters(self.act, self.streams.run(RunStream::MonsterRng));
             self.boss_enc = enemies::resolve(lists.boss[0]);
+            self.boss2_enc = enemies::resolve(*lists.boss.get(1).unwrap_or(&lists.boss[0]));
             self.monster_list = lists.monster;
             self.elite_list = lists.elite;
             self.event_pool = act_event_pool(self.act);
             self.shrine_pool = act_shrine_pool(self.act);
             // 地图按新章的种子重开;绿钥匙到手了就不再标燃烧精英
             self.streams.reseed_map(self.act);
-            self.map = ActMap::generate(self.streams.map_rng(), !self.keys.emerald);
+            self.map =
+                ActMap::generate(self.streams.map_rng(), !self.keys.emerald, self.ascension);
         }
         self.pos = None;
         self.path.clear();
@@ -2596,11 +2714,27 @@ impl Run {
     }
 
     fn discount(&self, price: i32) -> i32 {
-        let pct: i32 = self.player.relic_fx_sum(|r| r.fx.shop_discount_pct);
-        if pct <= 0 {
+        // 飞升 16:商店一律 +10%(wiki 口径),在遗物折扣之前先算
+        let price = if self.ascension >= 16 {
+            (price as f32 * 1.1).round() as i32
+        } else {
+            price
+        };
+        // 遗物折扣多件相乘:信使 -20% 与会员卡 -50% 叠起来是 -60%(wiki 口径),
+        // 不是把百分比相加。最后按最近的整数取整(会员卡的结果 `.5` 进位)
+        let mut factor = 1.0f32;
+        let mut discounted = false;
+        for r in &self.player.relics {
+            let pct = r.fx.shop_discount_pct.clamp(0, 100);
+            if pct > 0 {
+                factor *= (100 - pct) as f32 / 100.0;
+                discounted = true;
+            }
+        }
+        if !discounted {
             return price;
         }
-        ((price as f32) * (100 - pct.min(100)) as f32 / 100.0).round() as i32
+        ((price as f32) * factor).round() as i32
     }
 
     pub fn shop_clamp(&mut self) {
@@ -2630,7 +2764,7 @@ impl Run {
             ShopItem::Card(card, _) => {
                 let card = card.clone();
                 let label = card.label();
-                self.player.deck.push(card);
+                self.push_card_to_deck(card);
                 self.spend_gold(price);
                 self.shop.as_mut().unwrap().sold[i] = true;
                 self.restock_shop_slot(i);
@@ -2933,7 +3067,7 @@ impl Run {
     /// 打开指定事件;翻牌事件顺手把 12 格棋盘铺好,dead_adventurer 掷一次奖池与伏击遭遇
     fn open_event_def(&mut self, def: &'static EventDef) {
         let match_keep = if def.id == "match_and_keep" {
-            Some(MatchKeep::new(&mut self.streams, self.character))
+            Some(MatchKeep::new(&mut self.streams, self.character, self.ascension))
         } else {
             None
         };
@@ -2973,6 +3107,7 @@ impl Run {
             wma,
             nloth,
             designer,
+            skull: [0; 3],
         });
         self.screen = Screen::Event;
     }
@@ -3066,7 +3201,8 @@ impl Run {
         let Some(c) = st.def.choices.get(i) else {
             return false;
         };
-        if self.player.gold < c.cost_gold || self.player.hp <= c.cost_hp {
+        let eff = c.effective(self.ascension);
+        if self.player.gold < eff.cost_gold || self.player.hp <= eff.cost_hp {
             return false;
         }
         if self.player.gold < c.req_gold {
@@ -3108,6 +3244,13 @@ impl Run {
         }
         // 坠落的保底"Land":只有三类牌都抽不出时才可选
         if c.req_no_card_type && self.deck_has_any_falling_card() {
+            return false;
+        }
+        // 按全局层号开关的选项(mindbloom 的 "I am Rich" / "I am Healthy")
+        if c.req_floor_max > 0 && self.floor_num > c.req_floor_max {
+            return false;
+        }
+        if c.req_floor_min > 0 && self.floor_num < c.req_floor_min {
             return false;
         }
         // N'loth:洗到的那件供奉遗物不存在(身上不足两件)时,对应选项不可选
@@ -3201,20 +3344,26 @@ impl Run {
         }
         // Designer In-Spire:两个服务选项的标签按进房时掷到的变体现拼(参考实现 build)
         if let Some(d) = &st.designer {
+            let cost = st
+                .def
+                .choices
+                .get(i)
+                .map(|c| c.effective(self.ascension).cost_gold)
+                .unwrap_or(0);
             let label = match i {
-                0 if d.upgrade_choice => "Adjustments: pay 40 gold; upgrade a chosen card",
-                0 => "Adjustments: pay 40 gold; upgrade 2 random cards",
-                1 if d.cleanup_choice => "Clean up: pay 60 gold; remove a chosen card",
-                1 => "Clean up: pay 60 gold; transform 2 random cards",
-                _ => "",
+                0 if d.upgrade_choice => format!("Adjustments: pay {cost} gold; upgrade a chosen card"),
+                0 => format!("Adjustments: pay {cost} gold; upgrade 2 random cards"),
+                1 if d.cleanup_choice => format!("Clean up: pay {cost} gold; remove a chosen card"),
+                1 => format!("Clean up: pay {cost} gold; transform 2 random cards"),
+                _ => String::new(),
             };
             if !label.is_empty() {
-                let cost = st.def.choices.get(i).map(|c| c.cost_gold).unwrap_or(0);
-                return Some((label.to_string(), cost, 0));
+                return Some((label, cost, 0));
             }
         }
         let c = st.def.choices.get(i)?;
-        Some((c.label.to_string(), c.cost_gold, c.cost_hp))
+        let eff = c.effective(self.ascension);
+        Some((eff.label.to_string(), eff.cost_gold, eff.cost_hp))
     }
 
     /// 牌组里有没有单次伤害 10 以上的攻击牌(Wing Statue 砸雕像的条件)
@@ -3268,6 +3417,8 @@ impl Run {
         if !self.event_choice_available(i) {
             return Err("that choice is not available".to_string());
         }
+        // 飞升 15+ 的选项覆盖(代价/效果)
+        let choice = choice.effective(self.ascension);
         // 废料泥怪:"把手伸进去"可反复尝试,自己掷点决定去留,不走"结算完写 result"的流程
         if choice.outcome.ooze {
             return self.ooze_attempt();
@@ -3275,6 +3426,16 @@ impl Run {
         // dead_adventurer 的搜索:掷伏击/领奖池,也自己决定去留
         if choice.outcome.adv_search {
             return self.dead_adventurer_search();
+        }
+        // 会说话的骷髅:先按这一项当前的价格扣血,死了就到这为止;
+        // 买完留在本屏(可以接着买),所以这里结算完直接返回,不写 result
+        if choice.outcome.skull_buy > 0 {
+            self.skull_buy(choice.outcome.skull_buy as usize);
+            if self.player.hp <= 0 {
+                return Ok(());
+            }
+            let _ = self.apply_outcome(&choice.outcome);
+            return Ok(());
         }
         if choice.cost_gold > 0 {
             self.spend_gold(choice.cost_gold);
@@ -3321,7 +3482,8 @@ impl Run {
         if d.phase >= crate::core::events::DEAD_ADVENTURER_MAX_SEARCHES {
             return Err("already searched three times".to_string());
         }
-        let chance = crate::core::events::DEAD_ADVENTURER_AMBUSH_BASE + 25 * d.phase as i32;
+        let base = if self.ascension >= 15 { 35 } else { crate::core::events::DEAD_ADVENTURER_AMBUSH_BASE };
+        let chance = base + 25 * d.phase as i32;
         if self.streams.floor(FloorStream::MiscRng).random(99) < chance as u32 {
             // 伏击:剩下的奖池在打完之后折成奖励屏(参考实现 onCombatVictory)
             let enc = enemies::resolve(d.encounter);
@@ -3373,7 +3535,8 @@ impl Run {
     /// (25% 起步、每次失败涨 10%);中了给一件随机遗物并收尾,没中就留在这屏,
     /// 下次还能再伸(掷点在扣血之后,和参考实现同序).
     fn ooze_attempt(&mut self) -> Result<(), String> {
-        self.damage(3);
+        // 飞升 15+:伸手的代价从 3 点血涨到 5 点
+        self.damage(if self.ascension >= 15 { 5 } else { 3 });
         if self.player.hp <= 0 {
             return Ok(());
         }
@@ -3390,6 +3553,23 @@ impl Run {
             st.attempts += 1;
         }
         Ok(())
+    }
+
+    /// 会说话的骷髅:扣血价 = max(6, 10% 生命上限的 floor) + 这一项已经买过的次数
+    /// (参考实现 skullBase + 各选项自己的计数器);扣完再把这一个计数加一.
+    fn skull_buy(&mut self, key: usize) {
+        let idx = (key - 1).min(2);
+        let base = crate::core::events::frac_floor_of(self.player.max_hp, 0.1).max(6);
+        let extra = self
+            .event
+            .as_ref()
+            .and_then(|s| s.skull.get(idx).copied())
+            .unwrap_or(0);
+        let price = base + extra as i32;
+        if let Some(st) = self.event.as_mut() {
+            st.skull[idx] += 1;
+        }
+        self.damage(price);
     }
 
     /// 翻牌小游戏(match_and_keep):翻第 i 格.
@@ -3471,13 +3651,23 @@ impl Run {
             self.player.max_hp = (self.player.max_hp - loss).max(1);
             self.player.hp = self.player.hp.min(self.player.max_hp);
         }
+        if o.max_hp_frac_ceil > 0.0 {
+            let loss = crate::core::events::frac_ceil_of(max_hp0, o.max_hp_frac_ceil);
+            self.player.max_hp = (self.player.max_hp - loss).max(1);
+            self.player.hp = self.player.hp.min(self.player.max_hp);
+        }
         let mut delta = o.hp;
         if o.hp_pct > 0 {
             let pct = crate::core::events::pct_of(max_hp0, o.hp_pct).max(o.hp_pct_min.max(1));
             delta -= pct;
         }
         if o.hp_frac > 0.0 {
-            delta -= crate::core::events::frac_floor_of(max_hp0, o.hp_frac);
+            let loss = crate::core::events::frac_floor_of(max_hp0, o.hp_frac);
+            // 有的调用点给 frac 也带下限(脸商人的"至少 1 点");下限为 0 就不设
+            delta -= if o.hp_pct_min > 0 { loss.max(o.hp_pct_min) } else { loss };
+        }
+        if o.hp_frac_ceil > 0.0 {
+            delta -= crate::core::events::frac_ceil_of(max_hp0, o.hp_frac_ceil);
         }
         if delta < 0 {
             self.damage(-delta);
@@ -3579,25 +3769,25 @@ impl Run {
             let pool = cards::curses();
             if !pool.is_empty() {
                 let def = *self.streams.floor(FloorStream::MiscRng).pick(&pool);
-                self.player.deck.push(CardInstance::new(def));
+                self.push_card_to_deck(CardInstance::new(def));
             }
         }
         if let Some((rarity, n)) = o.add_random_class {
             for _ in 0..n {
                 if let Some(def) = self.random_class_card(Some(rarity)) {
-                    self.player.deck.push(CardInstance::new(def));
+                    self.push_card_to_deck(CardInstance::new(def));
                 }
             }
         }
         for _ in 0..o.add_random_class_any {
             if let Some(def) = self.random_class_card(None) {
-                self.player.deck.push(CardInstance::new(def));
+                self.push_card_to_deck(CardInstance::new(def));
             }
         }
         if let Some((rarity, n)) = o.add_random_colorless {
             for _ in 0..n {
                 if let Some(def) = self.random_colorless_card(rarity) {
-                    self.player.deck.push(CardInstance::new(def));
+                    self.push_card_to_deck(CardInstance::new(def));
                 }
             }
         }
@@ -3656,7 +3846,8 @@ impl Run {
         if o.remove_base_strikes {
             let mut i = 0;
             while i < self.player.deck.len() {
-                let hit = self.player.deck[i].def.id == "strike" && !self.player.deck[i].upgraded;
+                // 原版按稀有度吃掉所有起始打击(升级过的也算),这里按 id 认
+                let hit = self.player.deck[i].def.id == "strike";
                 if hit {
                     let card = self.player.deck.remove(i);
                     self.pay_deck_leave_cost(&card);
@@ -3797,6 +3988,7 @@ impl Run {
                     let hit = self.streams.floor(FloorStream::MiscRng).random_boolean();
                     if hit { 0 } else { 1 }
                 }
+                RollKind::Always { idx } => idx as usize,
             };
             let sub = table[i];
             self.apply_outcome(&sub);
@@ -3834,15 +4026,30 @@ impl Run {
                 p.store_note = true;
             }
         } else if o.remove_card {
-            self.open_picker(PickPurpose::Remove, Screen::Event, 0, None);
+            if !self.picker_would_be_empty(PickPurpose::Remove) {
+                self.open_picker(PickPurpose::Remove, Screen::Event, 0, None);
+            }
         } else if o.upgrade_card {
-            self.open_picker(PickPurpose::Upgrade, Screen::Event, 0, None);
+            if !self.picker_would_be_empty(PickPurpose::Upgrade) {
+                self.open_picker(PickPurpose::Upgrade, Screen::Event, 0, None);
+            }
+        } else if o.transform_choose_n > 0 {
+            // 增强器的"选 2 张变形":和 Neow 的变形两张走同一套选牌界面
+            if !self.picker_would_be_empty(PickPurpose::Transform) {
+                self.open_picker_n(PickPurpose::Transform, Screen::Event, 0, None, o.transform_choose_n);
+            }
         } else if o.transform_card {
-            self.open_picker(PickPurpose::Transform, Screen::Event, 0, None);
+            if !self.picker_would_be_empty(PickPurpose::Transform) {
+                self.open_picker(PickPurpose::Transform, Screen::Event, 0, None);
+            }
         } else if o.duplicate_card {
-            self.open_picker(PickPurpose::Duplicate, Screen::Event, 0, None);
+            if !self.picker_would_be_empty(PickPurpose::Duplicate) {
+                self.open_picker(PickPurpose::Duplicate, Screen::Event, 0, None);
+            }
         } else if o.offer_card {
-            self.open_picker(PickPurpose::Offer, Screen::Event, 0, None);
+            if !self.picker_would_be_empty(PickPurpose::Offer) {
+                self.open_picker(PickPurpose::Offer, Screen::Event, 0, None);
+            }
         }
         // Designer In-Spire:进房时掷好的变体决定这一项服务怎么结算(参考实现 build/onResume)
         if o.designer_service > 0 {
@@ -4102,37 +4309,43 @@ impl Run {
     fn add_card_id(&mut self, id: &str, n: u8) {
         for _ in 0..n.max(1) {
             let def = card_def_any(id);
-            // 御守:挡掉接下来的诅咒
-            if def.kind == CardType::Curse && self.omamori_charges > 0 {
-                self.omamori_charges -= 1;
-                self.say(format!("Omamori negates {}", def.name));
-                continue;
+            self.push_card_to_deck(CardInstance::new(def));
+        }
+    }
+
+    /// 把一张造好的牌加进牌组:御守挡诅咒、黑石护符加生命上限、蛋强制升级、
+    /// 陶瓷鱼给金币都在这里.奖励/商店/事件三条加牌路径共用同一条钩子
+    /// (原版里这些遗物对所有"把牌加进牌组"的来源都生效).
+    fn push_card_to_deck(&mut self, mut inst: CardInstance) {
+        // 御守:挡掉接下来的诅咒
+        if inst.kind() == CardType::Curse && self.omamori_charges > 0 {
+            self.omamori_charges -= 1;
+            self.say(format!("Omamori negates {}", inst.def.name));
+            return;
+        }
+        // 黑石护符:拿到诅咒就提升生命上限
+        if inst.kind() == CardType::Curse {
+            let bonus = self.player.relic_fx_sum(|r| r.fx.max_hp_on_curse);
+            if bonus > 0 {
+                self.player.max_hp += bonus;
+                self.player.hp += bonus;
             }
-            // 黑石护符:拿到诅咒就提升生命上限
-            if def.kind == CardType::Curse {
-                let bonus = self.player.relic_fx_sum(|r| r.fx.max_hp_on_curse);
-                if bonus > 0 {
-                    self.player.max_hp += bonus;
-                    self.player.hp += bonus;
-                }
-            }
-            // 蛋:拿到对应类型的牌直接升级
-            let egg = match def.kind {
-                CardType::Attack => self.has_relic_fx(|fx| fx.egg_attack_upgrade),
-                CardType::Skill => self.has_relic_fx(|fx| fx.egg_skill_upgrade),
-                CardType::Power => self.has_relic_fx(|fx| fx.egg_power_upgrade),
-                _ => false,
-            };
-            let mut inst = CardInstance::new(def);
-            if egg && inst.upgrade() {
-                self.say(format!("{} arrives upgraded", def.name));
-            }
-            self.player.deck.push(inst);
-            // 陶瓷鱼:每加一张牌给 9 金币
-            let fish = self.player.relic_fx_sum(|r| r.fx.gold_on_card_add);
-            if fish > 0 {
-                self.gain_gold(fish);
-            }
+        }
+        // 蛋:拿到对应类型的牌直接升级
+        let egg = match inst.kind() {
+            CardType::Attack => self.has_relic_fx(|fx| fx.egg_attack_upgrade),
+            CardType::Skill => self.has_relic_fx(|fx| fx.egg_skill_upgrade),
+            CardType::Power => self.has_relic_fx(|fx| fx.egg_power_upgrade),
+            _ => false,
+        };
+        if egg && inst.upgrade() {
+            self.say(format!("{} arrives upgraded", inst.def.name));
+        }
+        self.player.deck.push(inst);
+        // 陶瓷鱼:每加一张牌给 9 金币
+        let fish = self.player.relic_fx_sum(|r| r.fx.gold_on_card_add);
+        if fish > 0 {
+            self.gain_gold(fish);
         }
     }
 
@@ -4580,7 +4793,7 @@ impl Run {
             PickPurpose::Duplicate => {
                 let copy = self.player.deck[deck_idx].clone();
                 let label = copy.label();
-                self.player.deck.push(copy);
+                self.push_card_to_deck(copy);
                 format!("{label} duplicated")
             }
             PickPurpose::Bottle => {
@@ -4652,6 +4865,19 @@ impl Run {
                 self.heal(full);
                 format!("{name} is devoured; you gain 10 max HP and are healed to full")
             }
+        }
+    }
+
+    /// 打开选牌界面之前先看一眼:这个用途下一张可选牌都没有,就别开空的界面
+    /// (转盘抽到"删一张"但牌组全是不可移除时,参考实现也是直接收尾).
+    fn picker_would_be_empty(&self, purpose: PickPurpose) -> bool {
+        match purpose {
+            PickPurpose::Upgrade => !self.player.deck.iter().any(|c| c.can_upgrade()),
+            PickPurpose::Remove | PickPurpose::Transform | PickPurpose::Offer => {
+                self.removable_cards().is_empty()
+            }
+            PickPurpose::Duplicate => self.player.deck.is_empty(),
+            PickPurpose::Bottle => false,
         }
     }
 
@@ -5793,7 +6019,7 @@ impl Run {
             out.push(CardInstance::new(cards::card_def_or_panic(id)));
             // 非稀有牌按幕数掷一次升级(第一幕 0%,第二幕 25%,第三幕起 50%);
             // 这一掷无论成败都要消耗(只有概率为 0 或稀有牌才不掷)
-            let chance = reward_upgrade_chance(self.act);
+            let chance = reward_upgrade_chance(self.act, self.ascension);
             if rarity != Rarity::Rare && chance > 0.0 {
                 let roll = self
                     .streams
@@ -5835,13 +6061,18 @@ impl Run {
 
 }
 
-/// 卡牌奖励的升级概率:第一幕不给(0),第二幕 25%,第三幕及以后 50%.
-/// 这里不做飞升缩放(本作不支持飞升,飞升 12+ 会减半).
-fn reward_upgrade_chance(act: u32) -> f32 {
-    match act {
+/// 卡牌奖励的升级概率:第一幕不给(0),第二幕 25%,第三幕及以后 50%;
+/// 飞升 12+ 减半(参考实现 UPGRADE_CHANCES)
+fn reward_upgrade_chance(act: u32, asc: u32) -> f32 {
+    let base = match act {
         0 | 1 => 0.0,
         2 => 0.25,
         _ => 0.5,
+    };
+    if asc >= 12 {
+        base / 2.0
+    } else {
+        base
     }
 }
 
@@ -6798,6 +7029,91 @@ mod tests {
         assert!(r.buy_selected().is_err());
     }
 
+    /// 蛋与陶瓷鱼对"卡牌奖励"也生效:奖励的加牌要过同一条加牌钩子
+    /// (以前只有事件那条路走钩子,奖励/商店直接 push 牌组)
+    #[test]
+    fn molten_egg_and_ceramic_fish_apply_to_card_rewards() {
+        let mut r = run(71);
+        r.debug_add_relic("molten_egg").unwrap();
+        r.debug_add_relic("ceramic_fish").unwrap();
+        r.player.gold = 0;
+        r.reward = Some(RewardState::empty(Screen::Map));
+        {
+            let rw = r.reward.as_mut().unwrap();
+            rw.cards = vec![CardInstance::new(cards::card_def_or_panic("clothesline"))];
+            rw.card_taken = false;
+        }
+        let idx = r
+            .reward_slots()
+            .iter()
+            .position(|s| matches!(s, RewardSlot::Card(_)))
+            .expect("奖励里应有卡牌格");
+        r.reward.as_mut().unwrap().index = idx;
+        r.reward_take().unwrap();
+        let got = r.player.deck.last().expect("牌组末尾是刚拿的牌");
+        assert!(got.upgraded, "熔火之蛋要把奖励里的攻击牌升级");
+        assert_eq!(r.player.gold, 9, "陶瓷鱼每加一张牌给 9 金币");
+    }
+
+    /// 蛋与陶瓷鱼对"商店买牌"也生效(同一条加牌钩子)
+    #[test]
+    fn molten_egg_and_ceramic_fish_apply_to_shop_purchases() {
+        let mut r = run(72);
+        r.debug_add_relic("molten_egg").unwrap();
+        r.debug_add_relic("ceramic_fish").unwrap();
+        r.player.gold = 99_999;
+        r.open_shop();
+        let i = r
+            .shop
+            .as_ref()
+            .unwrap()
+            .kinds
+            .iter()
+            .position(|k| *k == ShopKind::ClassCard)
+            .expect("商店有职业牌格");
+        r.shop.as_mut().unwrap().items[i] =
+            ShopItem::Card(CardInstance::new(cards::card_def_or_panic("clothesline")), 50);
+        r.shop.as_mut().unwrap().index = i;
+        let gold_before = r.player.gold;
+        r.buy_selected().unwrap();
+        let got = r.player.deck.last().expect("牌组末尾是刚买的牌");
+        assert!(got.upgraded, "熔火之蛋要把买来的攻击牌升级");
+        assert_eq!(r.player.gold, gold_before - 50 + 9, "付 50,陶瓷鱼再补 9");
+    }
+
+    /// 信使 -20% 与会员卡 -50% 相乘(-60%),不是相加(-70%)(wiki 口径);
+    /// 会员卡的 `.5` 进位
+    #[test]
+    fn courier_and_membership_card_discounts_multiply() {
+        let mut both = run(73);
+        both.debug_add_relic("the_courier").unwrap();
+        both.debug_add_relic("membership_card").unwrap();
+        assert_eq!(both.discount(100), 40, "0.8 × 0.5 = 四折");
+        let mut card = run(73);
+        card.debug_add_relic("membership_card").unwrap();
+        assert_eq!(card.discount(101), 51, "101 折半的 50.5 进位到 51");
+        let mut courier = run(73);
+        courier.debug_add_relic("the_courier").unwrap();
+        assert_eq!(courier.discount(100), 80, "单信使打八折");
+    }
+
+    /// 魔法花把战后回血也抬 50%(原版:Burning Blood 6 -> 9,肉骨头 12 -> 18)
+    #[test]
+    fn magic_flower_boosts_post_combat_heal() {
+        let mut plain = run(74);
+        plain.debug_remove_relic("burning_blood").unwrap();
+        plain.debug_add_relic("meat_on_the_bone").unwrap();
+        plain.player.hp = 40;
+        assert_eq!(plain.post_combat_heal(), 12, "半血以下肉骨头回 12");
+        let mut flower = run(74);
+        flower.debug_remove_relic("burning_blood").unwrap();
+        flower.debug_add_relic("meat_on_the_bone").unwrap();
+        flower.debug_add_relic("magic_flower").unwrap();
+        flower.player.hp = 40;
+        assert_eq!(flower.post_combat_heal(), 18, "魔法花 12 × 1.5 = 18");
+        assert_eq!(flower.player.hp, 58);
+    }
+
     /// 信使(The Courier):买走卡/遗物/药水后该格按同种类补货,且不再标已售
     #[test]
     fn courier_restocks_cards_relics_and_potions() {
@@ -7694,3 +8010,167 @@ mod tests {
 
 
 
+
+#[cfg(test)]
+mod ascension_tests {
+    //! 飞升难度:等级表各条在 run 层的落地断言(硬约束:A0 逐字节不变)
+    use super::*;
+
+    fn run_asc(asc: u32) -> Run {
+        let ch = roster::find("ironclad").unwrap();
+        Run::new_for_asc(7, ch, asc).unwrap()
+    }
+
+    /// A0 与老行为一致:满血满槽、无诅咒、等级记 0
+    #[test]
+    fn a0_run_matches_the_old_baseline() {
+        let r = Run::new(7);
+        assert_eq!(r.ascension, 0);
+        assert_eq!(r.player.hp, 80);
+        assert_eq!(r.player.max_hp, 80);
+        assert_eq!(r.player.gold, 99);
+        assert_eq!(r.player.deck.len(), 10);
+        assert_eq!(r.player.potions.len(), POTION_SLOTS);
+        assert!(r.save_text().contains("ascension=0\n"));
+    }
+
+    /// A14 先降上限,再按降过的上限做 A6 的 10% 扣血
+    #[test]
+    fn a14_lowers_max_hp_then_a6_damages() {
+        // 飞升 5 仍满血
+        let r = run_asc(5);
+        assert_eq!((r.player.hp, r.player.max_hp), (80, 80));
+        // 飞升 6:80 的 90% = 72
+        let r = run_asc(6);
+        assert_eq!((r.player.hp, r.player.max_hp), (72, 80));
+        // 飞升 14:先 -5 到 75,再 90% 四舍五入 = 68(75*0.9=67.5 -> 68)
+        let r = run_asc(14);
+        assert_eq!((r.player.hp, r.player.max_hp), (68, 75));
+        // 13 只降血不降上限
+        let r = run_asc(13);
+        assert_eq!((r.player.hp, r.player.max_hp), (72, 80));
+    }
+
+    /// A10 开局带一张飞升者之灾
+    #[test]
+    fn a10_starts_with_ascenders_bane() {
+        assert_eq!(run_asc(9).player.deck.len(), 10);
+        let r = run_asc(10);
+        assert_eq!(r.player.deck.len(), 11);
+        assert!(r.player.deck.iter().any(|c| c.def.id == "ascenders_bane"));
+    }
+
+    /// A11 少一个药水槽
+    #[test]
+    fn a11_fewer_potion_slots() {
+        assert_eq!(run_asc(10).player.potions.len(), 3);
+        assert_eq!(run_asc(11).player.potions.len(), 2);
+        assert_eq!(run_asc(20).player.potions.len(), 2);
+    }
+
+    /// A5 打完 Boss 切幕:飞升 5 以下回满,5+ 只补缺血的 75%
+    #[test]
+    fn a5_boss_transition_heals_less() {
+        let mut r = run_asc(4);
+        r.player.hp = 40;
+        r.begin_act();
+        assert_eq!(r.player.hp, r.player.max_hp, "A4 回满");
+
+        let mut r = run_asc(5);
+        r.player.hp = 40; // 缺血 40,补 75% = 30
+        r.begin_act();
+        assert_eq!(r.player.hp, 70);
+    }
+
+    /// A12 卡牌奖励升级率在第二/三幕减半
+    #[test]
+    fn a12_halves_card_upgrade_chance() {
+        assert_eq!(reward_upgrade_chance(2, 11), 0.25);
+        assert_eq!(reward_upgrade_chance(2, 12), 0.125);
+        assert_eq!(reward_upgrade_chance(3, 12), 0.25);
+        // 第一幕本来就不升级,减半后仍是 0
+        assert_eq!(reward_upgrade_chance(1, 20), 0.0);
+    }
+
+    /// A16 商店一律 +10%(在遗物折扣之前)
+    #[test]
+    fn a16_shop_prices_are_higher() {
+        assert_eq!(run_asc(15).discount(100), 100);
+        assert_eq!(run_asc(16).discount(100), 110);
+    }
+
+    /// 存档带飞升等级,读回来还是同一级
+    #[test]
+    fn save_roundtrips_the_ascension_level() {
+        let r = run_asc(17);
+        let text = r.save_text();
+        assert!(text.contains("ascension=17\n"));
+        let back = Run::from_save(&text).unwrap();
+        assert_eq!(back.ascension, 17);
+        assert_eq!(back.player.deck.len(), r.player.deck.len());
+    }
+
+    /// A20 第三章要连打两个 Boss:第一个倒下后接着第二个,不给奖励屏
+    #[test]
+    fn a20_act3_has_two_bosses() {
+        let mut r = run_asc(20);
+        r.act = 3;
+        r.boss_enc = enemies::resolve("time_eater");
+        r.boss2_enc = enemies::resolve("donu_and_deca");
+        r.player.hp = 200;
+        r.player.max_hp = 200;
+        r.debug_start_combat(r.boss_enc);
+        assert_eq!(r.screen, Screen::Combat);
+        // 第一个 Boss 倒下
+        {
+            let c = r.combat.as_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = Phase::Won;
+        }
+        r.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            r.tick_win_hold();
+        }
+        assert_eq!(r.screen, Screen::Combat, "要接着打第二个 Boss");
+        assert_eq!(r.combat().unwrap().encounter_id, "donu_and_deca");
+        // 第二个也倒下:这时没有钥匙,本局胜利
+        {
+            let c = r.combat.as_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = Phase::Won;
+        }
+        r.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            r.tick_win_hold();
+        }
+        assert_eq!(r.screen, Screen::Victory);
+    }
+
+    /// A0 的第三章 Boss 只有一场
+    #[test]
+    fn a0_act3_has_one_boss() {
+        let mut r = run_asc(0);
+        r.act = 3;
+        r.boss_enc = enemies::resolve("time_eater");
+        r.boss2_enc = enemies::resolve("donu_and_deca");
+        r.player.hp = 200;
+        r.player.max_hp = 200;
+        r.debug_start_combat(r.boss_enc);
+        {
+            let c = r.combat.as_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = Phase::Won;
+        }
+        r.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            r.tick_win_hold();
+        }
+        assert_eq!(r.screen, Screen::Victory, "A0 打完一个 Boss 就收尾");
+    }
+}

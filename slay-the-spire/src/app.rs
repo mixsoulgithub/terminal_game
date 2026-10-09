@@ -109,6 +109,8 @@ pub struct App {
     pub lib_tab: usize,
     /// 图鉴光标(当前页里的条目下标)
     pub lib_sel: usize,
+    /// 新游戏的飞升等级(0..=20),建 run 时传给 Run
+    pub ascension: u32,
 }
 
 impl App {
@@ -152,16 +154,25 @@ impl App {
             library: Library::Cards,
             lib_tab: 0,
             lib_sel: 0,
+            ascension: 0,
         }
     }
 
-    /// 真正的入口:从开始界面进(开始界面/角色选择/图鉴)
-    pub fn start(seed: u64) -> App {
+    /// 真正的入口:从开始界面进(开始界面/角色选择/图鉴),带开局飞升等级
+    /// (CLI --ascension;默认 0)
+    pub fn start_asc(seed: u64, ascension: u32) -> App {
         let mut app = App::new(seed);
+        app.ascension = crate::core::ascension::clamp(ascension as i64);
         app.run.screen = Screen::Title;
         // 底栏一直显示按键提示,这里不再塞一遍
         app.msg = String::new();
         app
+    }
+
+    /// 测试用:飞升 0 的开局
+    #[cfg(test)]
+    pub fn start(seed: u64) -> App {
+        App::start_asc(seed, 0)
     }
 
     /// 开始界面的键位:不碰 run 的其它状态
@@ -227,6 +238,23 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.char_sel = (self.char_sel + n - 1) % n,
             KeyCode::Char('g') => self.char_sel = 0,
             KeyCode::Char('G') => self.char_sel = n - 1,
+            // a/A 调飞升等级(0..=20)
+            KeyCode::Char('a') => {
+                self.ascension = crate::core::ascension::clamp(self.ascension as i64 + 1);
+                self.msg = format!(
+                    "Ascension {}: {}",
+                    self.ascension,
+                    crate::core::ascension::label(self.ascension)
+                );
+            }
+            KeyCode::Char('A') => {
+                self.ascension = crate::core::ascension::clamp(self.ascension as i64 - 1);
+                self.msg = format!(
+                    "Ascension {}: {}",
+                    self.ascension,
+                    crate::core::ascension::label(self.ascension)
+                );
+            }
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.run.screen = Screen::Title;
                 self.msg = String::new();
@@ -245,7 +273,8 @@ impl App {
     /// 开一局新游戏:建 run,然后进 Neow 的祝福
     pub fn start_run(&mut self, ch: &'static CharacterInfo) {
         let seed = self.run.seed;
-        match Run::new_for(seed, ch) {
+        let asc = self.ascension;
+        match Run::new_for_asc(seed, ch, asc) {
             Ok(mut run) => {
                 run.open_neow();
                 self.run = run;

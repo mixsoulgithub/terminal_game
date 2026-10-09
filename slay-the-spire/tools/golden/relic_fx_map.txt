@@ -1,0 +1,185 @@
+# 155 件已实现遗物的 fx 字段表(由 relics.rs 静态解析生成,只作审计参考)
+# 格式: id<TAB>tier<TAB>field=value ...
+burning_blood	Starter	post_combat_heal=6
+ring_of_the_snake	Starter	combat_start_draw=2
+akabeko	Common	combat_start_vigor=8
+art_of_war	Common	energy_if_no_attack_last_turn=1
+anchor	Common	combat_start_block=10
+ancient_tea_set	Common	energy_turn1_if_rested=2
+bag_of_marbles	Common	combat_start_enemy_vulnerable=1
+bag_of_preparation	Common	combat_start_draw=2
+blood_vial	Common	combat_start_heal=2
+bronze_scales	Common	thorns=3
+centennial_puzzle	Common	draw_on_first_hp_loss=3
+ceramic_fish	Common	gold_on_card_add=9
+dream_catcher	Common	rest_card_reward=true
+happy_flower	Common	energy_every_3_turns=1
+juzu_bracelet	Common	no_normal_combat_in_unknown=true
+lantern	Common	combat_start_energy=1
+maw_bank	Common	gold_per_floor=12
+meal_ticket	Common	heal_on_shop_enter=15
+nunchaku	Common	energy_per_10_attacks=1
+oddly_smooth_stone	Common	combat_start_dexterity=1
+omamori	Common	curse_negate=2
+orichalcum	Common	block_if_no_block_at_end=6
+pen_nib	Common	double_damage_per_10_attacks=true
+preserved_insect	Common	elite_hp_reduction_pct=25
+potion_belt	Common	potion_slots=2
+regal_pillow	Common	rest_heal_bonus=15
+red_skull	Common	strength_when_bloodied=3
+smiling_mask	Common	removal_cost_fixed=50
+strawberry	Common	max_hp=7
+the_boot	Common	small_attack_boost_to=5
+tiny_chest	Common	treasure_every_4_unknown=true
+toy_ornithopter	Common	heal_on_potion_use=5
+vajra	Common	combat_start_strength=1
+war_paint	Common	upgrade_random_skills=2
+whetstone	Common	upgrade_random_attacks=2
+blue_candle	Uncommon	playable_curses_hp=1
+bottled_flame	Uncommon	bottle_attack=true
+bottled_lightning	Uncommon	bottle_skill=true
+bottled_tornado	Uncommon	bottle_power=true
+darkstone_periapt	Uncommon	max_hp_on_curse=6
+gremlin_horn	Uncommon	energy_on_kill=1 draw_on_kill=1
+horn_cleat	Uncommon	block_turn2=14
+ink_bottle	Uncommon	draw_per_10_cards=1
+kunai	Uncommon	dexterity_per_3_attacks=1
+letter_opener	Uncommon	damage_all_per_3_skills=5
+meat_on_the_bone	Uncommon	post_combat_heal_if_below_half=12
+mercury_hourglass	Uncommon	damage_all_turn_start=3
+mummified_hand	Uncommon	zero_hand_card_on_power=true
+ornamental_fan	Uncommon	block_per_3_attacks=4
+paper_krane	Uncommon	weak_damage_pct=60
+paper_phrog	Uncommon	vulnerable_damage_pct=175
+pantograph	Uncommon	boss_combat_heal=25
+self_forming_clay	Uncommon	block_next_turn_on_hp_loss=3
+shuriken	Uncommon	strength_per_3_attacks=1
+strike_dummy	Uncommon	strike_damage_bonus=3
+sundial	Uncommon	energy_per_3_shuffles=2
+eternal_feather	Uncommon	rest_heal_per_5_deck=3
+frozen_egg	Uncommon	egg_power_upgrade=true
+matryoshka	Uncommon	extra_chest_relic_charges=2
+molten_egg	Uncommon	egg_attack_upgrade=true
+pear	Uncommon	max_hp=10
+question_card	Uncommon	card_reward_bonus=1
+singing_bowl	Uncommon	max_hp_on_card_skip=2
+the_courier	Uncommon	shop_discount_pct=20
+toxic_egg	Uncommon	egg_skill_upgrade=true
+white_beast_statue	Uncommon	potions_always=true
+bird_faced_urn	Rare	heal_on_power_card=2
+calipers	Rare	block_loss_cap=15
+captains_wheel	Rare	block_turn3=18
+champion_belt	Rare	weak_on_vulnerable=1
+charons_ashes	Rare	damage_all_on_exhaust=3
+cloak_clasp	Rare	block_per_card_in_hand_at_end=1
+dead_branch	Rare	card_on_exhaust=1
+du_vu_doll	Rare	combat_start_strength_per_curse=1
+fossilized_helix	Rare	combat_start_buffer=1
+gambling_chip	Rare	gambling_chip=true
+ginger	Rare	immune_weak=true
+ice_cream	Rare	conserve_energy=true
+incense_burner	Rare	intangible_every_6_turns=1
+lizard_tail	Rare	death_save_pct=50
+magic_flower	Rare	combat_heal_pct=150
+mango	Rare	max_hp=14
+old_coin	Rare	gold=300
+peace_pipe	Rare	rest_toke=true
+pocketwatch	Rare	draw_next_turn_if_low_play=3
+prayer_wheel	Rare	extra_card_reward_group=1
+shovel	Rare	rest_dig=true
+stone_calendar	Rare	damage_all_turn7=52
+thread_and_needle	Rare	combat_start_plated_armor=4
+tingsha	Rare	damage_random_on_discard=3
+torii	Rare	small_attack_reduce_to=1
+tough_bandages	Rare	block_on_discard=3
+tungsten_rod	Rare	hp_loss_reduction=1
+turnip	Rare	immune_frail=true
+unceasing_top	Rare	draw_on_empty_hand=true
+girya	Rare	rest_lift_max=3
+wing_boots	Rare	map_wing_charges=3
+black_blood	Boss	removes_starter_relic=true post_combat_heal=12
+busted_crown	Boss	combat_start_energy_per_turn=1 card_reward_bonus=-2
+coffee_dripper	Boss	combat_start_energy_per_turn=1 no_rest=true
+cursed_key	Boss	combat_start_energy_per_turn=1 curse_on_chest=true
+ectoplasm	Boss	combat_start_energy_per_turn=1 no_gold=true
+fusion_hammer	Boss	combat_start_energy_per_turn=1 no_smith=true
+hovering_kite	Boss	gain_energy_first_discard_per_turn=1
+mark_of_pain	Boss	combat_start_energy_per_turn=1 combat_start_wounds=2
+philosophers_stone	Boss	combat_start_energy_per_turn=1 combat_start_enemy_strength=1
+ring_of_the_serpent	Boss	draw_per_turn=1
+runic_dome	Boss	combat_start_energy_per_turn=1
+runic_cube	Boss	draw_on_hp_loss=1
+runic_pyramid	Boss	retain_hand=true
+sacred_bark	Boss	potion_potency_pct=100
+slavers_collar	Boss	combat_start_energy_elite_only=1
+snecko_eye	Boss	combat_start_confused=true draw_per_turn=2
+sozu	Boss	combat_start_energy_per_turn=1 no_potions=true
+velvet_choker	Boss	combat_start_energy_per_turn=1 card_play_cap=6
+wrist_blade	Boss	zero_cost_attack_bonus=4
+astrolabe	Boss	transform_cards=3
+black_star	Boss	extra_elite_relic=1
+calling_bell	Boss	add_relics=3 add_curse=true
+empty_cage	Boss	remove_cards=2
+pandoras_box	Boss	transform_strikes_defends=true
+tiny_house	Boss	pickup_tiny_house=true
+brimstone	Shop	brimstone_self=2 brimstone_enemy=1
+chemical_x	Shop	x_cost_bonus=2
+clockwork_souvenir	Shop	combat_start_artifact=1
+frozen_eye	Shop	draw_pile_in_order=true
+hand_drill	Shop	vulnerable_on_block_break=2
+medical_kit	Shop	playable_statuses=true
+membership_card	Shop	shop_discount_pct=50
+orange_pellets	Shop	clear_debuffs_on_all_types=true
+sling_of_courage	Shop	combat_start_strength_elite=2
+strange_spoon	Shop	exhaust_to_discard_pct=50
+the_abacus	Shop	block_on_shuffle=6
+toolbox	Shop	combat_start_colorless_pick=3
+cauldron	Shop	add_potions=5
+dollys_mirror	Shop	duplicate_cards=1
+lees_waffle	Shop	max_hp=7 full_heal=true
+orrery	Shop	pickup_card_picks=5
+prismatic_shard	Shop	prismatic_rewards=true
+bloody_idol	Event	heal_on_gold_gain=5
+enchiridion	Event	add_random_power_card=true
+face_of_cleric	Event	max_hp_on_victory=1
+golden_idol	Event	gold_reward_pct=25
+gremlin_visage	Event	combat_start_self_weak=1
+mark_of_the_bloom	Event	no_heal=true
+mutagenic_strength	Event	combat_start_strength_turn1=3
+necronomicon	Event	double_first_big_attack=true
+nilrys_codex	Event	end_turn_shuffle_pick=3
+neows_lament	Event	neow_lament_combats=3
+nloths_gift	Event	rare_card_chance_x3=true
+nloths_hungry_face	Event	chest_empty_charges=1
+odd_mushroom	Event	vulnerable_taken_pct=125
+red_mask	Event	combat_start_enemy_weak=1
+ssserpent_head	Event	gold_on_unknown_room=50
+warped_tongs	Event	upgrade_random_hand_at_turn_start=true
+
+# 26 件未实现(noop/gated)
+cracked_core	Starter	(gated)
+pure_water	Starter	(gated)
+damaru	Common	(gated)
+data_disk	Common	(gated)
+snecko_skull	Common	(gated)
+duality	Uncommon	(gated)
+gold_plated_cables	Uncommon	(gated)
+ninja_scroll	Uncommon	(gated)
+symbiotic_virus	Uncommon	(gated)
+teardrop_locket	Uncommon	(gated)
+discerning_monocle	Uncommon	(gated)
+emotion_chip	Rare	(gated)
+golden_eye	Rare	(gated)
+the_specimen	Rare	(gated)
+frozen_core	Boss	(gated)
+holy_water	Boss	(gated)
+inserter	Boss	(gated)
+nuclear_battery	Boss	(gated)
+violet_lotus	Boss	(gated)
+melange	Shop	(gated)
+runic_capacitor	Shop	(gated)
+twisted_funnel	Shop	(gated)
+cultist_headpiece	Event	(gated)
+spirit_poop	Event	(gated)
+circlet	Special	(gated)
+red_circlet	Special	(gated)

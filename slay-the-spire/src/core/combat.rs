@@ -66,6 +66,8 @@ pub struct Enemy {
     pub slot: usize,
     /// 出生序号.召唤会把队里其它怪的下标顶走,回合内靠它认住"正在行动的那只"
     pub uid: u64,
+    /// 这一局的飞升等级(0 = 关),意图与招式数值按它换档
+    pub asc: u32,
     /// 跨回合的怪物状态(回合数、招式历史、各种计数)
     pub state: EnemyState,
 }
@@ -94,7 +96,8 @@ impl Enemy {
         if self.state.half_dead {
             return Intent::Unknown;
         }
-        self.def.moves[self.next_move].intent
+        let m = &self.def.moves[self.next_move];
+        crate::core::ascension::intent(self.def.id, m.name, m.intent, self.asc)
     }
 }
 
@@ -123,6 +126,8 @@ pub struct CombatSetup {
     pub lift_strength: i32,
     /// 整局持续的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)
     pub relic_counters: RunRelicCounters,
+    /// 这一局的飞升等级(0 = 关):怪物血量/招式/开局状态按它换档
+    pub asc: u32,
 }
 
 /// 抖动:谁在抖、往哪边(负 = 左,正 = 右)。表现层取走后自己清空。
@@ -352,6 +357,8 @@ pub struct Combat {
     pub streams: RngRegistry,
     pub encounter_id: &'static str,
     pub kind: EnemyKind,
+    /// 这一局的飞升等级(0 = 关)
+    pub asc: u32,
     /// 这一场是不是"燃烧精英"的战斗(打通给绿钥匙)
     pub burning: bool,
     /// 本场对敌人造成的总伤害,结算界面用
@@ -422,18 +429,18 @@ impl Combat {
         // 阵容:带抽签规则的遭遇(原版开战才定阵容)按原版规则抽,其余用固定名单.
         // 抽签函数连候选的血都掷在里面(原版构造怪物组时就是这样烧 monsterHpRng 的);
         // 固定名单的血在这里按槽位顺序补掷,顺序与抽签函数内的掷法一致.
+        let asc = setup.asc;
         let lineup: Vec<Spawned> = match enc.lineup {
-            Some(roll) => roll(&mut streams),
+            Some(roll) => roll(&mut streams, asc),
             None => enc
                 .enemies
                 .iter()
                 .map(|&id| {
                     let def = crate::core::enemies::enemy_def_or_panic(id);
+                    let (lo, hi) = crate::core::ascension::hp_range(def, asc);
                     Spawned {
                         id,
-                        hp: streams
-                            .floor(FloorStream::MonsterHpRng)
-                            .range_inclusive(def.hp.0, def.hp.1),
+                        hp: streams.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi),
                         rolled: None,
                     }
                 })
@@ -454,11 +461,15 @@ impl Combat {
             let hp = sp.hp;
             let mut statuses = Statuses::new();
             for (s, n) in def.innate {
-                if *n == 0 {
+                let n = crate::core::ascension::innate_amount(def.id, *s, *n, asc);
+                if n == 0 {
                     statuses.mark(*s);
                 } else {
-                    statuses.add(*s, *n);
+                    statuses.add(*s, n);
                 }
+            }
+            for (s, n) in crate::core::ascension::bonus_innate(def.id, asc) {
+                statuses.add(*s, *n);
             }
             let mut state = EnemyState::default();
             // 抽签时就把咬伤掷好的怪:记下来,spawn 钩子不再重掷
@@ -500,6 +511,7 @@ impl Combat {
                 // 站位按遭遇表给的槽位,不一定是 0,1,2...(自动机的铜球要排在它前面)
                 slot: crate::core::enemies::initial_slot(enc, i),
                 uid: i as u64,
+                asc,
                 state,
             });
         }
@@ -556,6 +568,7 @@ impl Combat {
             streams,
             encounter_id: enc.id,
             kind: enc.kind,
+            asc,
             burning: false,
             damage_dealt: 0,
             log_seq: 0,
@@ -598,6 +611,7 @@ impl Combat {
                     rng: streams.floor(FloorStream::MonsterHpRng),
                     statuses: &mut e.statuses,
                     state: &mut e.state,
+                    asc,
                 };
                 (e.def.spawn)(&mut spawn);
             }
@@ -937,8 +951,9 @@ impl Combat {
             // 战争艺术:上一回合没打攻击就给能量
             self.energy += self.relic_sum(|fx| fx.energy_if_no_attack_last_turn);
         }
-        // 怀表:上一回合打出的牌少就多抽
-        if self.rs.cards_last_turn <= 3 {
+        // 怀表:上一回合打出的牌少就多抽.第 1 回合没有"上一回合",
+        // cards_last_turn 的初值 0 不能当成"这回合一张没出"(参考实现挂在回合末)
+        if self.turn > 1 && self.rs.cards_last_turn <= 3 {
             self.rs.next_turn_draw += self.relic_sum(|fx| fx.draw_next_turn_if_low_play);
         }
         // 硫磺:每回合自己 +2 力量,敌人 +1
@@ -1014,8 +1029,8 @@ impl Combat {
                 self.push_log(LogKind::Player, format!("Warped Tongs upgrades {label}"));
             }
         }
-        // 魔法书:开局往手里塞一张随机能力牌,本回合 0 费
-        if self.relic_any(|fx| fx.add_random_power_card) {
+        // 魔法书:战斗开始时往手里塞一张随机能力牌,本回合 0 费(只在开局,不是每回合)
+        if self.turn == 1 && self.relic_any(|fx| fx.add_random_power_card) {
             self.add_random_power_to_hand();
         }
         // 赌徒筹码:开局弃任意张再抽等量张
@@ -1853,7 +1868,9 @@ impl Combat {
         if self.enemies[idx].statuses.holds(Status::Asleep) {
             self.push_log(LogKind::Enemy, format!("{name} is asleep"));
         }
-        for fx in def.moves[move_idx].effects {
+        let fx_list =
+            crate::core::ascension::effects(def.id, mname, def.moves[move_idx].effects, self.asc);
+        for fx in fx_list.iter() {
             // 招式里可能召唤/分裂,会把队里的下标挪走,所以每次按出生序号重新认
             let Some(cur) = self.enemies.iter().position(|e| e.uid == uid) else {
                 return;
@@ -2035,6 +2052,8 @@ impl Combat {
                             let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
                             self.draw.insert(pos, inst);
                         }
+                        // 抽牌堆顶:不掷点,直接插到最前面
+                        CardSpot::DrawTop => self.draw.insert(0, inst),
                         CardSpot::Deck => self.deck_cards.push(inst),
                     }
                     self.push_log(
@@ -2066,6 +2085,8 @@ impl Combat {
                             let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
                             self.draw.insert(pos, inst);
                         }
+                        // 抽牌堆顶:不掷点,直接插到最前面
+                        CardSpot::DrawTop => self.draw.insert(0, inst),
                         CardSpot::Deck => self.deck_cards.push(inst),
                     }
                     self.push_log(
@@ -2373,14 +2394,22 @@ impl Combat {
         } else {
             def.name.to_string()
         };
-        let hp = hp.unwrap_or_else(|| self.streams.floor(FloorStream::MonsterHpRng).range_inclusive(def.hp.0, def.hp.1));
+        let asc = self.asc;
+        let hp = hp.unwrap_or_else(|| {
+            let (lo, hi) = crate::core::ascension::hp_range(def, asc);
+            self.streams.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi)
+        });
         let mut statuses = Statuses::new();
         for (s, n) in def.innate {
-            if *n == 0 {
+            let n = crate::core::ascension::innate_amount(def.id, *s, *n, asc);
+            if n == 0 {
                 statuses.mark(*s);
             } else {
-                statuses.add(*s, *n);
+                statuses.add(*s, n);
             }
+        }
+        for (s, n) in crate::core::ascension::bonus_innate(def.id, asc) {
+            statuses.add(*s, *n);
         }
         let mut state = EnemyState::default();
         let block = def.start_block;
@@ -2389,6 +2418,7 @@ impl Combat {
                 rng: self.streams.floor(FloorStream::MonsterHpRng),
                 statuses: &mut statuses,
                 state: &mut state,
+                asc,
             };
             (def.spawn)(&mut ctx);
         }
@@ -2407,6 +2437,7 @@ impl Combat {
             escaped: false,
             slot,
             uid: self.next_uid,
+            asc,
             state,
         }
     }
@@ -2550,7 +2581,7 @@ impl Combat {
             if s == Status::Flight && self.enemies[idx].statuses.get(s) == 0 {
                 continue;
             }
-            let base = Self::innate_amount_of(def, s);
+            let base = Self::innate_amount_of(def, s, self.enemies[idx].asc);
             self.enemies[idx].statuses.set(s, base);
         }
         // 暗灵的复活倒计时:半死的那一只每个自己回合扣一格,扣到 0 就半血站起来.
@@ -3222,13 +3253,15 @@ impl Combat {
         d.max(0)
     }
 
-    /// 开局写死的层数(每回合重置的延展/慢速/飞行要看它)
-    fn innate_amount_of(def: &'static EnemyDef, s: Status) -> i32 {
-        def.innate
+    /// 开局写死的层数(每回合重置的延展/慢速/飞行要看它).飞升会换档(如鸟的飞行)
+    fn innate_amount_of(def: &'static EnemyDef, s: Status, asc: u32) -> i32 {
+        let base = def
+            .innate
             .iter()
             .find(|(k, _)| *k == s)
             .map(|(_, n)| *n)
-            .unwrap_or(0)
+            .unwrap_or(0);
+        crate::core::ascension::innate_amount(def.id, s, base, asc)
     }
 
     /// 下一招的基础伤害与命中次数(还没算力量/虚弱/易伤),按当前回合数动态算
@@ -3238,7 +3271,8 @@ impl Combat {
         let turn = e.state.turns + 1;
         let mut damage = 0;
         let mut times = 0u8;
-        for fx in mv.effects {
+        let fx_list = crate::core::ascension::effects(e.def.id, mv.name, mv.effects, e.asc);
+        for fx in fx_list.iter() {
             let (d, t) = match *fx {
                 EnemyFx::Attack { amount, times } => (amount, times),
                 EnemyFx::AttackScaling {
@@ -3272,8 +3306,9 @@ impl Combat {
     /// UI 用:敌人下一招的格挡量
     pub fn intent_block(&self, idx: usize) -> i32 {
         let e = &self.enemies[idx];
+        let mv = &e.def.moves[e.next_move];
         let mut total = 0;
-        for fx in e.def.moves[e.next_move].effects {
+        for fx in crate::core::ascension::effects(e.def.id, mv.name, mv.effects, e.asc).iter() {
             if let EnemyFx::Block { amount, .. } = fx {
                 total += *amount;
             }
@@ -3595,6 +3630,8 @@ impl Combat {
         // 觉醒者:第一阶段"死"掉只是半死,躺着等复活
         if def.special == Special::Rebirth && !self.enemies[i].state.phase2 {
             self.enemies[i].state.half_dead = true;
+            // 飞升 9+ 二阶段血量 320(参考实现 REBIRTH 把 maxHp 设成 320/300)
+            self.enemies[i].max_hp = crate::core::ascension::awakened_phase2_hp(self.asc);
             self.enemies[i].statuses.clear_debuffs();
             self.enemies[i].statuses.add(Status::Curiosity, -999);
             let strength = self.enemies[i].statuses.get(Status::Strength);
@@ -4983,6 +5020,7 @@ mod tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+        asc: 0,
         }
     }
 
@@ -5807,6 +5845,7 @@ mod tests {
                 gold: 0,
                 lift_strength: 0,
                 relic_counters: RunRelicCounters::default(),
+            asc: 0,
             };
             let mut c = Combat::new(enc(encounter), setup, RngRegistry::new(9));
             let rest: Vec<CardInstance> = c.draw.drain(..).collect();
@@ -6486,6 +6525,7 @@ mod monster_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+        asc: 0,
         };
         Combat::new(enc, setup, RngRegistry::new(seed))
     }
@@ -6718,6 +6758,101 @@ mod monster_tests {
         // 初始朝向是右边的长矛(slot 1):盾从背后打,吃 1.5 倍
         assert_eq!(c.enemy_attack_damage(0, 12), 18);
         assert_eq!(c.enemy_attack_damage(1, 12), 12);
+    }
+
+    #[test]
+    fn back_attack_follows_the_faced_enemy_not_the_last_card() {
+        // 原版语义(wiki Surrounded:"Receive 50% more damage if attacked from
+        // behind. Use targeting cards or potions to change your orientation."):
+        // 谁吃 1.5 只由"玩家现在朝着哪只"决定,而朝向只被指向敌人的牌改写;
+        // 不指向敌人的牌(能力/技能)不改朝向,背后的那只从头到尾照旧吃满.
+        let mut c = lock("shield_and_spear");
+        assert_eq!(c.facing, 1, "开局朝向右边的长矛(slot 1)");
+        // 一张牌都不打:背后的盾吃 1.5,正面的矛原样
+        assert_eq!(c.enemy_attack_damage(0, 12), 18, "背后的盾 12 * 1.5");
+        assert_eq!(c.enemy_attack_damage(1, 12), 12, "正面的矛不打折也不加成");
+        // 打一张不指向敌人的能力牌:朝向不动,谁吃 1.5 也不动
+        c.energy = 3;
+        c.hand.push(card("inflame"));
+        let inflame = c.hand.iter().position(|x| x.def.id == "inflame").unwrap();
+        c.play_card(inflame, None).unwrap();
+        assert_eq!(c.facing, 1, "不指向敌人的牌不改朝向");
+        assert_eq!(c.enemy_attack_damage(0, 12), 18, "盾还在背后");
+        assert_eq!(c.enemy_attack_damage(1, 12), 12, "矛还在正面");
+        // 打一张指向盾的牌:朝向翻到盾,改由矛吃 1.5
+        c.hand.push(card("strike"));
+        let strike = c.hand.iter().position(|x| x.def.id == "strike").unwrap();
+        c.play_card(strike, Some(0)).unwrap();
+        assert_eq!(c.facing, 0, "指向谁就朝向谁");
+        assert_eq!(c.enemy_attack_damage(0, 12), 12, "正面的盾不再加成");
+        assert_eq!(c.enemy_attack_damage(1, 12), 18, "背后的矛改成 1.5");
+        // 朝着的那只倒下也算(语料:朝向保持"最后指向的那只",不因它倒下而换边)
+        c.damage_enemy(0, 9999);
+        assert_eq!(c.enemy_attack_damage(1, 12), 18, "盾倒下后矛依旧算背后");
+    }
+
+    #[test]
+    fn spire_shield_rolls_its_opener_and_smashes_on_turns_three_six_nine() {
+        // 语料 SPIRE_SHIELD.ai:开局 aiRng.randomBoolean() 五五开定先撞还是先固守;
+        // 之后每三回合一块,块的头两回合是撞与固守各一次(先后五五开),第 3/6/9… 回合重砸.
+        let mut saw_bash = false;
+        let mut saw_fortify = false;
+        for seed in 1..=32u64 {
+            let mut c = lock_seed("shield_and_spear", seed);
+            c.player.hp = 9999;
+            c.player.max_hp = 9999;
+            let mut seq = Vec::new();
+            for _ in 0..9 {
+                seq.push(move_name(&c, 0).to_string());
+                c.end_turn();
+            }
+            assert!(
+                seq[0] == "Bash" || seq[0] == "Fortify",
+                "首招只能是撞或固守(五五开): {seq:?}"
+            );
+            saw_bash |= seq[0] == "Bash";
+            saw_fortify |= seq[0] == "Fortify";
+            for block in 0..3 {
+                let a = seq[block * 3].as_str();
+                let b = seq[block * 3 + 1].as_str();
+                assert!(
+                    matches!((a, b), ("Bash", "Fortify") | ("Fortify", "Bash")),
+                    "第 {}、{} 回合是撞与固守各一次: {seq:?}",
+                    block * 3 + 1,
+                    block * 3 + 2
+                );
+                assert_eq!(
+                    seq[block * 3 + 2],
+                    "Smash",
+                    "第 {} 回合重砸: {seq:?}",
+                    block * 3 + 3
+                );
+            }
+        }
+        assert!(saw_bash && saw_fortify, "开局五五开:两种首招都要出现过");
+    }
+
+    #[test]
+    fn spire_shield_cadence_survives_a_pre_seeded_opener() {
+        // 沙盒/回放给敌人预置首招时(replay.rs 的 build_enemies 把 next_move 与
+        // state.last 一起指到首招),块的头一回合不能被读成"块内第二回合":
+        // 重砸仍要落在第 3/6/9 回合.
+        let mut c = lock_seed("shield_and_spear", 3);
+        c.player.hp = 9999;
+        c.player.max_hp = 9999;
+        c.enemies[0].next_move = 0;
+        c.enemies[0].state.last = Some(0);
+        c.enemies[0].state.move_rolled = true;
+        let mut seq = Vec::new();
+        for _ in 0..9 {
+            seq.push(move_name(&c, 0).to_string());
+            c.end_turn();
+        }
+        assert_eq!(seq[0], "Bash", "预置的首招照用: {seq:?}");
+        assert_eq!(seq[1], "Fortify", "撞之后是本块的另一招: {seq:?}");
+        assert_eq!(seq[2], "Smash", "第 3 回合重砸: {seq:?}");
+        assert_eq!(seq[5], "Smash", "第 6 回合重砸: {seq:?}");
+        assert_eq!(seq[8], "Smash", "第 9 回合重砸: {seq:?}");
     }
 
     #[test]
@@ -6988,6 +7123,7 @@ mod power_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+        asc: 0,
         };
         Combat::new(enc, setup, RngRegistry::new(11))
     }
@@ -7274,6 +7410,7 @@ mod power_tests {
                 gold: 0,
                 lift_strength: 0,
                 relic_counters: RunRelicCounters::default(),
+            asc: 0,
             };
             let c = Combat::new(enc, setup, RngRegistry::new(seed));
             let name = c.enemies[0].def.moves[c.enemies[0].next_move].name;
@@ -7531,6 +7668,7 @@ mod summon_tests {
                 gold: 0,
                 lift_strength: 0,
                 relic_counters: RunRelicCounters::default(),
+            asc: 0,
             },
             RngRegistry::new(seed),
         )
@@ -7809,6 +7947,7 @@ mod relic_hook_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+        asc: 0,
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
         let mut c = Combat::new(enc, setup, RngRegistry::new(21));
@@ -7845,6 +7984,7 @@ mod relic_hook_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+        asc: 0,
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
         let c = Combat::new(enc, setup, RngRegistry::new(5));
@@ -7873,6 +8013,34 @@ mod relic_hook_tests {
         c.choose(0).unwrap();
         assert!(c.choice.is_none());
         assert!(c.hand.iter().any(|k| k.def.id == picked), "挑中的进手");
+    }
+
+    /// 赌徒筹码:开局亮一个"弃任意张再抽等量张"的选择,弃一张补一张
+    #[test]
+    fn gambling_chip_discards_then_draws() {
+        let relics = vec![relic_def_or_panic("gambling_chip")];
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: (0..10).map(|_| cards::card("strike")).collect(),
+            relics,
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            asc: 0,
+        };
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
+        let mut c = Combat::new(enc, setup, RngRegistry::new(21));
+        let ch = c.choice.as_ref().expect("赌徒筹码开局亮牌");
+        assert_eq!(ch.source, ChoiceSource::Hand);
+        assert_eq!(ch.action, ChoiceAction::Discard);
+        assert!(ch.draw_after, "弃完要补抽");
+        let hand_before = c.hand.len();
+        let idx = c.choice_candidates()[0].0;
+        c.choose(idx).unwrap();
+        c.finish_choice();
+        assert_eq!(c.hand.len(), hand_before, "弃一张补一张");
     }
 
     /// 尼尔瑞的抄本:回合结束亮三张,挑中的洗进抽牌堆,选完才轮到对面
