@@ -112,14 +112,19 @@ const bundle = buildBaseContentBundle();
 // ---- 参考侧缺口的驱动补偿:燃烧精英的"再生" ----
 //
 // 参考实现 applyBurningEliteBuff(runFlow.ts:352)照原版把 REGEN 挂到了怪身上,
-// 但它的战斗解释器里没有 REGEN 这个能力定义(hooks 是空的,monsterTurn 里
-// fireHook(...,"atStartOfTurn") 找不到钩子就什么都不做),于是燃烧精英抽到 3 号
-// 增益时怪物一点血都不回.原版 Monster::applyStartOfTurnPowers 会按层数回血
+// 但它的战斗解释器里对"怪身上的 REGEN"没有 atStartOfTurn 钩子 —— 参考自己的
+// REGEN 能力(src/content/relics/supportPowers.ts:93)是玩家侧"回合末回血、每回合
+// 递减"(Regen Potion 用的),钩子里 owner.kind === "player" 才回血,于是燃烧精英
+// 抽到 3 号增益时怪物一点血都不回.
+// 原版 Monster::applyStartOfTurnPowers 会按层数回血、且**不递减**
 // (反编译 src/combat/Monster.cpp:59-60;挂载见 MonsterGroup.cpp:622),本作引擎
-// 照原版实现,不动.这里在驱动侧补一枚 REGEN 能力,让两边的规则一致.
-// 另:本作 apply_burning_elite_buff 的 act*2+1 与原版一致(runFlow.ts:370 同).
-const REGEN_POWER = {
-  id: "REGEN",
+// 照原版实现(combat.rs 敌人回合开始按 Regenerate 回血、不减层),不动.
+// 注意:不能直接 bundle.powers.set("REGEN", ...) —— 那会把玩家侧的 Regen Potion
+// 能力一起换掉(misc: 喝过 Regen Potion 的种子在参考侧反向给怪回血,acts 77->161).
+// 做法 = 另立一枚怪专用的 BURNING_REGEN(回合开始按层数回血、不递减),并在每次
+// advance 之后把怪身上的 "REGEN"(参考侧燃烧精英挂的那枚)改名过去.
+const BURNING_REGEN_POWER = {
+  id: "BURNING_REGEN",
   name: "Regen",
   kind: "buff" as const,
   stacking: "intensity" as const,
@@ -136,7 +141,18 @@ const REGEN_POWER = {
     },
   },
 };
-bundle.powers.set("REGEN" as never, REGEN_POWER as never);
+bundle.powers.set("BURNING_REGEN" as never, BURNING_REGEN_POWER as never);
+
+/** 参考侧燃烧精英把怪身上的再生记成 "REGEN"(与玩家 Regen Potion 同名),
+ *  改名到怪专用的 BURNING_REGEN,别让它落进玩家侧那条会递减的实现. */
+function renameBurningRegen(s: GameState): void {
+  if (!s.combat) return;
+  for (const m of s.combat.monsters) {
+    for (const p of m.powers) {
+      if (p.id === "REGEN") p.id = "BURNING_REGEN";
+    }
+  }
+}
 
 // ---- 参考侧缺口的驱动补偿:蛋类遗物 ----
 //
@@ -214,7 +230,10 @@ function advanceWithEggs(s: GameState, cmd: Command): GameState {
   const n = s.run.deck.length;
   const out = advance(s, cmd, bundle);
   applyEggUpgrades(out, n);
-  if (COMPENSATE) refundStolenGold(s, out);
+  if (COMPENSATE) {
+    refundStolenGold(s, out);
+    renameBurningRegen(out);
+  }
   return out;
 }
 

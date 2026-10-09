@@ -1735,6 +1735,13 @@ mod e2e {
     ///   92 -> 77 处(seed 8/1815 归零)、act1 全体 279 -> 104 处(SWEEP 254 -> 104)、
     ///   a20a2 1157 -> 249 处(seed 15/18 从 566/381 降到 26/26 处,各自露出新分叉见 ASC2).
     ///
+    /// 本轮补燃烧精英"再生"补偿时踩过一个坑:直接 bundle.powers.set("REGEN", ...) 把参考
+    ///   自己那枚玩家侧 REGEN(Regen Potion)一起换掉了,喝过这瓶药的种子在参考侧反向给怪
+    ///   回血 —— acts 从 77 涨到 161(变差的是 seed 3605/7140/20703/23808/24873/25365,
+    ///   全是含 Regen Potion 的那几颗),act3 也从 11 涨到 19(seed 29/30/494).改成另立
+    ///   BURNING_REGEN + 把怪身上的 REGEN 改名过去之后 acts 回到 77、act3 回到 11
+    ///   (见 ASC2 上方 (b)1);act2/a20a2 的数字不受影响.
+    ///
     /// (b) 参考缺口(参考侧没实现,本作按原版,不改本作):这张表目前为空 —— 原先唯一一条
     ///   退赃已改由参考驱动侧补偿折掉(见上),不再算差异.
     ///
@@ -1881,12 +1888,25 @@ mod e2e {
     ///       直接 newCost 写进 cost/costForTurn.修在 on_card_drawn + randomize_hand_costs,
     ///       断言 = confused_sets_the_rolled_cost_even_when_the_upgrade_discounts_it
     ///       (seed 16 的蛇怪战 9 处差异的头 3 步).
+    ///   (a)3 笔尖(Pen Nib)的"每第 10 张攻击翻倍"只写在 Effect::Damage / DamageAll
+    ///       两处 —— 狂暴(DamageWithBonus)、回旋镖(DamageRandom)、重击(DamageEqualBlock)、
+    ///       完美打击(DamagePerStrike)这些同样打伤害的攻击效果全漏了.原版/参考把翻倍
+    ///       挂在 relics 的 atDamageGive 上(参考 damageCalc.ts:base → relic atDamageGive
+    ///       → power atDamageGive),只要是攻击牌就吃得到.修法 = 把翻倍收进
+    ///       player_attack_damage(所有走它的攻击伤害效果共用),断言 = combat.rs
+    ///       pen_nib_doubles_every_attack_damage_effect.登记表上它只动了 ACT2 的 seed 16
+    ///       (那一行的指纹变了;差异步集合没缩,因为同一场还压着 (b)3 的 hp 级联).
     ///   (b)1 参考侧燃烧精英的"再生"没生效:它 runFlow.ts:352 照原版挂了 REGEN 能力,
-    ///       但战斗解释器里没有 REGEN 定义(monsterTurn 的 atStartOfTurn 钩子落空),
+    ///       但它的战斗解释器里怪身上的 REGEN 没有 atStartOfTurn 钩子 —— 参考自己的
+    ///       REGEN 定义(src/content/relics/supportPowers.ts:93)是玩家侧 Regen Potion
+    ///       那条(回合末回血、每回合递减,且钩子里 owner.kind==="player" 才生效),
     ///       于是抽到 3 号增益的精英怪一点血都不回.原版见反编译 Monster.cpp:59-60
-    ///       (按层数回血)与 MonsterGroup.cpp:622(act*2+1).驱动侧补一枚能力定义
-    ///       (tools/replay_ref.ts 的 REGEN_POWER),本作引擎不动 —— seed 17/25/33 的
-    ///       燃烧精英战、以及它们后面的级联一共 40 处由此消失.
+    ///       (按层数回血、不递减)与 MonsterGroup.cpp:622(act*2+1).驱动侧另立一枚怪专用
+    ///       的 BURNING_REGEN(回合开始按层数回血、不递减),每次 advance 之后把怪身上的
+    ///       "REGEN" 改名过去 —— 上一轮误写成直接 bundle.powers.set("REGEN", ...),
+    ///       把玩家侧 Regen Potion 一起换掉了(喝过这瓶药的种子在参考侧反向给怪回血,
+    ///       acts 77->161),已改;本作引擎不动 —— seed 17/25/33 的燃烧精英战、以及
+    ///       它们后面的级联一共 40 处由此消失.
     ///   (b)2 参考侧导出用 GAP 占位符铺原版的定长怪物槽,进 Boss 房那一行会多两格
     ///       (收集者 Boss 在 2 号槽、0/1 留给火炬头).参考自己的 CLI 也过滤 GAP
     ///       (slay-the-cli/src/cli/state/view.ts:851),驱动侧导出时同样折掉(seed 4/11/16).
@@ -1906,10 +1926,12 @@ mod e2e {
     ///            进了抽牌堆,于是 t2 起手牌多一张 true_grit.17 处是该分叉的级联.
     ///   seed 13: 33 步 / 步 33(精英奖励 hp 差 2)/ (b)5 参考侧小鬼头目 Rally 的召唤槽位与
     ///            顺序和反编译不同(Actions.cpp:459 SummonGremlins:固定补 2 只、按 1,2,0
-    ///            找空槽;MonsterGroup.cpp:244 头目在 3 号槽、0 号槽空着).4 处.
-    ///   seed 16: 36 步 / 步 36 百夫长+神秘者 / (b)3 同 seed 3;另有 1 处未定:
-    ///            同一场里 havoc 打出的顶牌伤害两侧 8 vs 16(trace E8 第 1 回合,
-    ///            手上牌与抽牌堆都一致,只剩这张顶牌的伤害不同),留待下一轮.
+    ///            找空槽;MonsterGroup.cpp:248-255 起始随从在槽 1/2、头目在 3 号槽、0 号槽
+    ///            空着).4 处.判 (c):参考不是"缺一块",而是把首领摆到槽 2 去了.
+    ///   seed 16: 36 步 / 步 36 百夫长+神秘者 / (b)3 同 seed 3.原先记的那"1 处未定"
+    ///            (havoc 打出的顶牌伤害 8 vs 16)本轮结掉 = 笔尖 (a)3:浩劫打出的顶牌
+    ///            是狂暴,本作漏了它的翻倍,只打一半.修完后这一场前 3 回合逐字段对齐,
+    ///            余下 6 处全是 (b)3 的 hp 级联.
     ///   seed 25: 35 步 / 步 35 百夫长+神秘者 / (b)3 同 seed 3.5 处.
     ///   seed 33: 32 步 / 步 32 燃烧精英小鬼头目 / (b)5 同族:参考侧 Rally 只补 1 只小鬼
     ///            (3 个怪),本作补 2 只(4 个怪,与反编译的定长槽一致).9 处.
@@ -1920,7 +1942,7 @@ mod e2e {
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47], diff_digest: 0x1e373abd1d72e271 },
     Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 41, 42, 43], diff_digest: 0xec4d2485f4448232 },
     Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 36, diff_steps: &[36, 37, 38, 41, 42, 43], diff_digest: 0x3047f57b1d3c8787 },
+    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 36, diff_steps: &[36, 37, 38, 41, 42, 43], diff_digest: 0x902c516ea08fe94c },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2530,16 +2552,16 @@ mod e2e {
     /// dream_catcher 那条上一轮已补(见 (b)4).
     const ASC2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0x2378b9ac22ab3b13 },
-    Expected { seed: 4, lines: 50, ref_lines: 50, aligned: 46, diff_steps: &[46, 47, 48, 49], diff_digest: 0xebf1b5926687d802 },
+    Expected { seed: 4, lines: 50, ref_lines: 50, aligned: 47, diff_steps: &[47, 48, 49], diff_digest: 0x701c37bace05e1a2 },
     Expected { seed: 6, lines: 53, ref_lines: 53, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52], diff_digest: 0x552379055326753a },
-    Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 44], diff_digest: 0xed3fe8ca5ade3f53 },
+    Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x13beabca2efda5bd },
     Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25], diff_digest: 0xbcaf9803b4db43af },
-    Expected { seed: 15, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 32, 41], diff_digest: 0x95b19ae2a3b32800 },
-    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x393a225bb620c109 },
+    Expected { seed: 15, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 32], diff_digest: 0x69ffe31c897953ad },
+    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 41, 42, 43], diff_digest: 0xf5dca7770e705a38 },
     Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x92af2c2162864ac4 },
-    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x6835cb622831038b },
-    Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x536fd949b8fd5146 },
+    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xf4a5a1b182530a53 },
+    Expected { seed: 25, lines: 47, ref_lines: 47, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0xe8d3452f64299577 },
     Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0x70b10e426e8964fa },
 ];
 

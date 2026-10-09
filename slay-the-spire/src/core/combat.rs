@@ -3393,6 +3393,16 @@ impl Combat {
     /// float 链上,末尾(连同目标侧的飞行/慢速)只向下取整一次,所以这里不取整,
     /// 把 float 交给 damage_enemy_f32(卡牌路径).
     fn player_attack_damage(&self, raw: i32, target: usize, is_attack: bool) -> f32 {
+        // 笔尖:每第 10 张攻击牌的伤害翻倍.原版把它挂在 relics 的 atDamageGive 上,
+        // 排在玩家侧的力量/虚弱**之前**(参考 damageCalc.ts:base → relic atDamageGive →
+        // power atDamageGive),所以这里在加活力/力量之前就把基数翻倍.
+        // 集中在这一处,所有走本函数的攻击伤害效果(含狂暴 DamageWithBonus、回旋镖
+        // DamageRandom、重击 DamageEqualBlock、完美打击 DamagePerStrike 等)才会一致.
+        let raw = if is_attack && self.rs.pen_nib == 9 && self.relic_any(|fx| fx.double_damage_per_10_attacks) {
+            raw * 2
+        } else {
+            raw
+        };
         // 活力(Akabeko 的 8 点):只加在攻击牌的伤害上,和原版的 atDamageGive 一致
         let vigor = if is_attack { self.rs.vigor } else { 0 };
         // 原版把加伤与乘伤一起按 float 连乘,末尾只向下取整一次,所以中间不能各自 floor
@@ -4190,9 +4200,7 @@ impl Combat {
                 relic_add += self.relic_sum(|fx| fx.zero_cost_attack_bonus);
             }
         }
-        // 笔尖:第 10 张攻击翻倍
-        let pen_nib_double = is_attack && self.rs.pen_nib == 9 && self.relic_any(|fx| fx.double_damage_per_10_attacks);
-        let _ = pen_nib_double;
+        // 笔尖的翻倍已收进 player_attack_damage(所有攻击伤害效果共用)
         for (i, e) in effects.iter().enumerate() {
             // 上一条效果挂起了选牌(消耗/放顶那类):后面的效果先原样存起来,等选完
             // 由 close_choice 接着跑.参考实现把动作队列的尾巴快照进 resumeArgs.__tail
@@ -4211,20 +4219,14 @@ impl Combat {
             match *e {
                 Effect::Damage { amount, times } => {
                     if let Some(t) = target {
-                        let mut raw = amount + relic_add;
-                        if pen_nib_double {
-                            raw *= 2;
-                        }
+                        let raw = amount + relic_add;
                         ctx.unblocked += self.damage_enemy_times(t, raw, is_attack, times.max(1) as i32);
                     }
                 }
                 Effect::DamageAll { amount, times } => {
                     for _ in 0..times.max(1) {
                         for t in self.alive_enemies() {
-                            let mut raw = amount + relic_add;
-                            if pen_nib_double {
-                                raw *= 2;
-                            }
+                            let raw = amount + relic_add;
                             let d = self.player_attack_damage(raw, t, is_attack);
                             ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
@@ -5865,6 +5867,34 @@ mod tests {
         c.enemy_act(0);
         assert!(c.enemies[0].hp < before, "荆棘应反伤");
         assert_eq!(before - c.enemies[0].hp, 3);
+    }
+
+    /// 笔尖的第 10 张攻击翻倍要覆盖**所有**攻击伤害效果,不只普通打击.
+    /// 原版/参考把翻倍挂在 relics 的 atDamageGive 上(参考 damageCalc.ts:
+    /// base → relic atDamageGive → power atDamageGive),任何攻击牌的伤害都吃得到;
+    /// 本作曾只在 Effect::Damage / DamageAll 里翻倍,狂暴(Effect::DamageWithBonus)
+    /// 这类就漏了 —— seed16 里浩劫打出抽牌堆顶那张狂暴,伤害只有一半(8 vs 16).
+    /// 断言里两种效果各打一张第 10 次攻击:打击(Damage)与狂暴(DamageWithBonus).
+    #[test]
+    fn pen_nib_doubles_every_attack_damage_effect() {
+        let pen = relic_def_or_panic("pen_nib");
+        for (card_id, base) in [("strike", 6), ("rampage", 8)] {
+            let mut c = Combat::new(
+                enc("jaw_worm_solo"),
+                setup(80, &[card_id; 5], &[pen]),
+                RngRegistry::new(1),
+            );
+            c.enemies[0].block = 0;
+            c.energy = 9;
+            c.rs.pen_nib = 9; // 这一张就是第 10 张攻击
+            let before = c.enemies[0].hp;
+            c.play_card(0, Some(0)).unwrap();
+            assert_eq!(
+                c.enemies[0].hp,
+                before - base * 2,
+                "{card_id} 的第 10 张攻击应翻倍(笔尖挂在 relics 的 atDamageGive 上)"
+            );
+        }
     }
 
     #[test]
