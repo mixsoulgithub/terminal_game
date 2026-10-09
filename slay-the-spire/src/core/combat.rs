@@ -2017,8 +2017,11 @@ impl Combat {
             EnemyFx::GainStatus { status, n, scope } => {
                 for t in self.scope_targets(idx, scope) {
                     self.enemies[t].statuses.add(status, n);
-                    // 自己在这回合的行动里刚挂上的回合末能力:当回合不触发(Ritual)
-                    if t == idx && status.ticks_at_owner_end() {
+                    // 原版只有 RitualPower 带 skipFirst(= 刚挂上时第一次回合末触发不生效):
+                    // 祭礼是唯一"当回合挂上、当回合不结算"的回合末能力.
+                    // Metallicize / Plated Armor / Regenerate / StrengthUp 都是每个自己回合
+                    // 末按当前层数无条件结算(灯怪 Defensive Stance 当回合就给 5 格挡).
+                    if t == idx && status == Status::Ritual {
                         self.enemies[t].fresh_powers.push(status);
                     }
                 }
@@ -2588,8 +2591,8 @@ impl Combat {
     /// 敌人自己的回合结束:回合末生效的能力与倒计时
     fn enemy_end_of_turn(&mut self, idx: usize, name: &str) {
         let def = self.enemies[idx].def;
-        // 本回合行动里刚挂上的能力当回合不触发(参考实现里挂能力排在回合末钩子之后);
-        // 取走标记,下一回合它们就正常触发
+        // 只有祭礼带"刚挂上当回合不结算"(原版 RitualPower 的 skipFirst);其余回合末
+        // 能力(金属化/板甲/再生/力量渐增)都在自己回合末按当前层数无条件结算.
         let fresh = std::mem::take(&mut self.enemies[idx].fresh_powers);
         // 中毒:每回合掉等量生命(不吃格挡),再减一层
         let poison = self.enemies[idx].statuses.get(Status::Poison);
@@ -2605,15 +2608,8 @@ impl Combat {
             }
             self.settle_deaths();
         }
-        let metallicize = self.enemies[idx].statuses.get(Status::Metallicize);
-        let plated = self.enemies[idx].statuses.get(Status::PlatedArmor);
-        let mut plate_block = 0;
-        if !fresh.contains(&Status::Metallicize) {
-            plate_block += metallicize;
-        }
-        if !fresh.contains(&Status::PlatedArmor) {
-            plate_block += plated;
-        }
+        let plate_block = self.enemies[idx].statuses.get(Status::Metallicize)
+            + self.enemies[idx].statuses.get(Status::PlatedArmor);
         if plate_block > 0 {
             self.enemies[idx].block += plate_block;
             self.push_log(
@@ -2622,7 +2618,7 @@ impl Combat {
             );
         }
         let up = self.enemies[idx].statuses.get(Status::StrengthUp);
-        if up > 0 && !fresh.contains(&Status::StrengthUp) {
+        if up > 0 {
             self.enemies[idx].statuses.add(Status::Strength, up);
             self.push_log(
                 LogKind::Enemy,
@@ -2630,7 +2626,7 @@ impl Combat {
             );
         }
         let regen = self.enemies[idx].statuses.get(Status::Regenerate);
-        if regen > 0 && !fresh.contains(&Status::Regenerate) {
+        if regen > 0 {
             let healed = self.enemies[idx].max_hp.min(self.enemies[idx].hp + regen)
                 - self.enemies[idx].hp;
             self.enemies[idx].hp += healed;
@@ -7803,6 +7799,72 @@ mod power_tests {
         assert_eq!(move_of(&c, donu), "Circle of Power");
         assert_eq!(move_of(&c, deca), "Beam");
         assert!(c.enemies[deca].block > 0, "迪卡的团队护盾给自己(和全队)格挡");
+    }
+
+    /// 灯怪的"防御姿态"当回合就给 5 点金属化格挡:原版 MetallicizePower 的
+    /// atEndOfTurn 没有 skipFirst,怪物回合末按当前层数无条件结算(参考实现的
+    /// 测试也这么要求:stance block + end-of-turn metallicize).
+    #[test]
+    fn champ_defensive_stance_metallicize_pays_out_the_same_turn() {
+        let mut c = lock("the_champ");
+        let champ = idx_of(&c, "the_champ");
+        let stance = c.enemies[champ]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.name == "Defensive Stance")
+            .unwrap();
+        c.enemies[champ].next_move = stance;
+        c.end_turn();
+        assert_eq!(c.enemies[champ].statuses.get(Status::Metallicize), 5);
+        assert_eq!(c.enemies[champ].block, 20, "15 格挡 + 当回合挂上的 5 点金属化");
+    }
+
+    /// 迪卡 A19 的团队护盾:除了 16 格挡还挂 3 点板甲,当回合就按板甲结算;
+    /// 第二次用时板甲涨到 6,当回合照样按 6 结算(触发器读的是当前层数).
+    #[test]
+    fn deca_square_of_protection_plated_armor_pays_out_the_same_turn() {
+        let mut c = lock("donu_and_deca");
+        c.asc = 19;
+        let deca = idx_of(&c, "deca");
+        let square = c.enemies[deca]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.name == "Square of Protection")
+            .unwrap();
+        c.enemies[deca].next_move = square;
+        c.end_turn();
+        assert_eq!(c.enemies[deca].statuses.get(Status::PlatedArmor), 3);
+        assert_eq!(c.enemies[deca].block, 19, "16 团队格挡 + 当回合挂上的 3 点板甲");
+        c.enemies[deca].next_move = square;
+        c.end_turn();
+        assert_eq!(c.enemies[deca].statuses.get(Status::PlatedArmor), 6);
+        assert_eq!(c.enemies[deca].block, 22, "板甲是 6 层,当回合按 6 结算");
+    }
+
+    /// 祭礼是唯一的例外:原版 RitualPower 带 skipFirst,刚挂上的那一次回合末不结算.
+    #[test]
+    fn cultist_ritual_skips_its_first_end_of_turn() {
+        let mut c = lock("cultist_solo");
+        let cultist = idx_of(&c, "cultist");
+        c.end_turn();
+        assert_eq!(
+            c.enemies[cultist].statuses.get(Status::Ritual),
+            3,
+            "开场咒语挂上 3 层祭礼"
+        );
+        assert_eq!(
+            c.enemies[cultist].statuses.get(Status::Strength),
+            0,
+            "挂上祭礼的那个自己回合末不结算"
+        );
+        c.end_turn();
+        assert_eq!(
+            c.enemies[cultist].statuses.get(Status::Strength),
+            3,
+            "下一次自己回合末才给力量"
+        );
     }
 }
 

@@ -2069,12 +2069,25 @@ mod e2e {
     // A20 第一幕现已逐字节全对齐(11/11):修掉了飞升 17 的敌人选招分支(史莱姆/虱子/
     // 奴隶主/小鬼巫师)、飞升 15 的一次性事件池(去掉 note_for_yourself)、飞升 2+ 的虱子
     // 咬伤区间,以及"自己回合内死掉的怪也要照常掷下一招"(参考实现里自爆的死亡是排队生效的).
-    // 第三幕还有分叉(42 → 31 处):seed 30 已全对齐(尖刺外壳在击杀那一击也照常反伤,
-    // 依据反编译源码:BattleContext 里 SHARP_HIDE 的伤害排在牌之后,而胜利清空动作队列
-    // 只清 clearOnCombatVictory=true 的动作,DamagePlayer 恰好是 false).剩下三颗:
-    //   seed 237(3 处)顿努与德卡的"团队护盾"在 A20 下的格挡记账;
-    //   seed 284(14 处)爬虫法师+匕首一战的 1 点伤害差;
-    //   seed 510(14 处)暗灵复活后的选招掷点;
+    // 第三幕还有分叉(42 → 31 → 33 处).先修掉一条:怪物回合末能力里,只有祭礼(Ritual)
+    // 是"刚挂上当回合不结算"(原版 RitualPower 的 skipFirst);金属化/板甲/再生/力量渐增
+    // 都在自己回合末按当前层数无条件结算 —— 依据反编译:Monster::applyEndOfTurnTriggers
+    // 在 afterMonsterTurns 里跑(排在移动效果之后),PLATED_ARMOR/METALLICIZE 没有
+    // justApplied 检查,而 RITUAL 有;参考实现自己给灯怪写的测试也要求
+    // "stance block + end-of-turn metallicize"(15+5=20)。于是 seed 237 的顿努与德卡
+    // 一战对齐了(迪卡 A19 团队护盾当回合就吃 3 点板甲),seed 30 反而多出 3 处:
+    // 参考实现把"团队护盾给板甲"排在回合末钩子之后(迪卡当回合只有 16 格挡),按上面的
+    // 反编译依据那是参考的错,不是本作的。
+    // 剩下三颗的差异全部是参考侧的已知缺口,本作按原版:
+    //   seed 30(3 处)/ seed 237(2 处):参考把团队护盾的板甲排在回合末钩子之后(见上);
+    //   seed 284(14 处):本作实现了靴子 The Boot(4 点以下未格挡的攻击伤害提到 5),
+    //     参考 relics/common.ts 的 THE_BOOT 是 ENGINE-GAP(空实现),爬虫法师+匕首那一战
+    //     两次雷霆一击因此 4/5 分叉,整场随之错开;
+    //   seed 510(14 处):半死暗灵"照常占自己那一回合"(原版 MonsterGroup::doMonsterTurn
+    //     条件里 isHalfDead 也要出招,REGROW/REINCARNATE 的处理器各消耗一次 aiRng),
+    //     掷点在槽位顺序里发生;参考 powers/monstersAct34.ts 的 REGROW 自己注明
+    //     "ENGINE-GAP: those rolls happen at end of round instead of in slot order",
+    //     于是尸体在活怪前面时掷点先后不同,回合 6 起分叉。
     // 表里把当前的对齐前缀、差异步与内容指纹登记下来,修好一条就重跑
     // `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
     // 第四幕(A20)16 个种子逐字节全对齐(飞升 18/19/20 的盾矛与心脏数值都过了).
@@ -2094,9 +2107,9 @@ mod e2e {
 
     const ASC3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 42, diff_steps: &[42, 43, 44], diff_digest: 0x67ba70f354005651 },
     Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 40, diff_steps: &[40, 41, 42], diff_digest: 0xaa19366d72d4fbbb },
+    Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 41, diff_steps: &[41, 42], diff_digest: 0xa407897b9324d3c },
     Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0x6c96de07441f5089 },
     Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xf382ade1687f98c5 },

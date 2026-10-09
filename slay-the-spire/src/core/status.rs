@@ -290,17 +290,6 @@ impl Status {
         )
     }
 
-    /// 持有者自己的回合结束时触发的能力(参考实现里 powers 的 atEndOfTurn 钩子).
-    /// 挂在敌人身上时,若在它本回合行动中刚挂上,当回合不触发(参考实现里挂能力的
-    /// 动作排在回合末钩子之后,等价于 skipFirst).
-    pub fn ticks_at_owner_end(self) -> bool {
-        use Status::*;
-        matches!(
-            self,
-            Ritual | StrengthUp | Metallicize | PlatedArmor | Regenerate
-        )
-    }
-
     /// 回合结束时层数减一(持续整场战斗的减益不算)
     pub fn decays(self) -> bool {
         use Status::*;
