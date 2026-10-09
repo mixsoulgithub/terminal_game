@@ -1,0 +1,20 @@
+# 飞升 20 的第二幕对拍脚本:spire --replay <seed> --script tools/golden/e2e/a20a2.script
+# 与 act2.script 完全同路径(切到第二幕开头、hp 9999、deck ramp、smart on、keys on、
+# acts 2),只把飞升抬到 20。这样 A0 与 A20 的"对齐前缀"可以直接对比,
+# 差出来的部分就是飞升引起的。A20 量的是:A3/A4 精英伤害档、A8/A9 精英/Boss 血量、
+# A17 的第二幕怪选招分支(被选中者/壳鹦鹉螺/神秘者/蛇形植物等)、A20 的 Boss 规则,
+# 以及召唤/分裂在飞升档的血量。
+neow 1
+reward take
+card 2
+event 0
+rest rest
+shop skip
+keys on
+smart on
+acts 2
+steps 4000
+act 2
+hp 9999
+deck ramp
+asc 20

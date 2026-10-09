@@ -855,7 +855,9 @@ pub const BOOK_OF_STABBING: EnemyDef = EnemyDef {
     spawn: book_spawn,
 };
 
-/// 15% 单刺(不许连二),其余多段刺击(不许连三),刺击数在选招时自增
+/// 15% 单刺(不许连二),其余多段刺击(不许连三),刺击数在选招时自增.
+/// A18 起单刺也一样自增(原版/wiki;反编译把这两句 `if (asc18) ++stabCount` 写在
+/// return 之后成了死代码,按它的意图补上).
 fn pick_book_of_stabbing(ctx: &mut PickCtx) -> usize {
     const MULTI_STAB: usize = 0;
     const SINGLE_STAB: usize = 1;
@@ -865,9 +867,15 @@ fn pick_book_of_stabbing(ctx: &mut PickCtx) -> usize {
             ctx.state.stab += 1;
             return MULTI_STAB;
         }
+        if ctx.asc >= 18 {
+            ctx.state.stab += 1;
+        }
         return SINGLE_STAB;
     }
     if ctx.last_two_is(MULTI_STAB) {
+        if ctx.asc >= 18 {
+            ctx.state.stab += 1;
+        }
         return SINGLE_STAB;
     }
     ctx.state.stab += 1;

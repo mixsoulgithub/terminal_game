@@ -292,8 +292,8 @@
   [ok      ] paper_phrog              hook=易伤增伤
              期望 易伤多受 75%:strike 6->10
              oracle paper_phrog
-  [ok      ] paper_krane              hook=虚弱减伤
-             期望 虚弱少受 40%:strike 6->3
+  [ok      ] paper_krane              hook=虚弱减伤(怪物侧)
+             期望 虚弱的怪少打 40%(默认 25%):Dark Strike 6->3
              oracle paper_krane
   [run-test] burning_blood            hook=战斗结束(回血)
              期望 战后回 6

@@ -245,9 +245,10 @@ add(
 add("relics/paper_phrog_vuln_75", board({ relics: ["paper_phrog"], hand: ["strike"], enemies: [{ ...CULTIST, powers: { vulnerable: 10 } }], actions: playFirst }), (r) =>
   dmgTo(r, 0) === 10 ? null : `paper_phrog 下易伤 strike 打了 ${dmgTo(r, 0)},期望 10(6×1.75)`,
 );
-add("relics/paper_krane_weak_40", relicBoard("paper_krane", ["strike"], [CULTIST], playFirst, { powers: { weak: 10 } }), (r) =>
-  dmgTo(r, 0) === 3 ? null : `paper_krane 下虚弱 strike 打了 ${dmgTo(r, 0)},期望 3(6×0.6)`,
-);
+add("relics/paper_krane_enemy_weak_40", board({ relics: ["paper_krane"], enemies: [{ ...CULTIST, move: "Dark Strike", powers: { weak: 10 } }], actions: [{ op: "noop" }, { op: "end_turn" }] }), (r) => {
+  const lost = r[0]!.st!.player.hp - lastSt(r).player.hp;
+  return lost === 3 ? null : `paper_krane 下虚弱怪物打了 ${lost},期望 3(6×0.6)`;
+});
 add(
   "relics/sacred_bark_doubles_potion",
   board({ relics: ["sacred_bark"], hand: ["defend"], potions: ["fire_potion", null, null], enemies: [CULTIST], actions: [{ op: "potion", slot: 0, target: 0 }] }),

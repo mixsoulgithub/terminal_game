@@ -1869,9 +1869,14 @@ mod e2e {
     /// 瞬变体这些血厚或会复生的遭遇:下面 7 个种子全都从第 0 层走到第 15 行、把 Boss 打掉
     /// (此前那套 10 张强化重锤没有一张防守牌,走 0..4 层就阵亡,只量到开局那几层).
     ///
-    /// 这 7 个种子是从 1..1200 里挑出来**两边逐字节一致**的(从 init 到本局结束一行不差,
-    /// 每一步的 hp/金币/牌堆/遗物/药水都对得上),三个 Boss 都有.剩下的种子会在下面这些
-    /// 分叉上分道扬镳(分类与最小修法见 report):
+    /// 这 7 个种子里的 6 个两边逐字节一致(从 init 到本局结束一行不差,
+    /// 每一步的 hp/金币/牌堆/遗物/药水都对得上),三个 Boss 都有;seed 284 从第 29 步起
+    /// 出现 11 处差异,全部来自 The Boot:本作按反编译
+    /// (sts_lightspeed src/combat/Monster.cpp 的 attackedUnblockedHelper)把"未被格挡的
+    /// 攻击伤害 1..4 抬到 5"放在格挡与目标侧飞行/慢速/无形之后,所以打 writhing_mass
+    /// (延展越打格挡越多)时挡剩的 1..4 会被本作抬到 5;参考实现 relics/common.ts 的
+    /// THE_BOOT 是 ENGINE-GAP(空实现),不抬 —— 属 (b) 参考未实现,不是本作的错.
+    /// 剩下的种子会在下面这些分叉上分道扬镳(分类与最小修法见 report):
     ///   (b) 参考未实现:颚虫部落那只怪的预置状态(力量 3/格挡 5/已行动一回合),参考侧
     ///       既没有这套预置、也不按"已行动过"重掷第一招;
     ///   (b) 参考未实现:第三幕事件 Mind Bloom 的"打一个 Boss"选项,参考侧开战时抛
@@ -1883,7 +1888,7 @@ mod e2e {
     Expected { seed: 30, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 121, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 237, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 284, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 284, lines: 44, ref_lines: 44, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39], diff_digest: 0x6d06df7ccc4c7f06 },
     Expected { seed: 494, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 510, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
@@ -2080,9 +2085,12 @@ mod e2e {
     // 反编译依据那是参考的错,不是本作的。
     // 剩下三颗的差异全部是参考侧的已知缺口,本作按原版:
     //   seed 30(3 处)/ seed 237(2 处):参考把团队护盾的板甲排在回合末钩子之后(见上);
-    //   seed 284(14 处):本作实现了靴子 The Boot(4 点以下未格挡的攻击伤害提到 5),
-    //     参考 relics/common.ts 的 THE_BOOT 是 ENGINE-GAP(空实现),爬虫法师+匕首那一战
-    //     两次雷霆一击因此 4/5 分叉,整场随之错开;
+    //   seed 284(14 处):本作按反编译实现了靴子 The Boot(sts_lightspeed
+    //     src/combat/Monster.cpp 的 attackedUnblockedHelper:把"挡后未格挡的攻击伤害"
+    //     1..4 抬到 5,这一步排在格挡与目标侧飞行/慢速/无形之后),参考 relics/common.ts
+    //     的 THE_BOOT 是 ENGINE-GAP(空实现),爬虫法师+匕首与 writhing_mass 两战里
+    //     低伤那一击因此 4/5 分叉,整场随之错开(改成 post-block 之后步集合仍是这 14 步,
+    //     只有 hp 轨迹的内容指纹变了);
     //   seed 510(14 处):半死暗灵"照常占自己那一回合"(原版 MonsterGroup::doMonsterTurn
     //     条件里 isHalfDead 也要出招,REGROW/REINCARNATE 的处理器各消耗一次 aiRng),
     //     掷点在槽位顺序里发生;参考 powers/monstersAct34.ts 的 REGROW 自己注明
@@ -2110,9 +2118,38 @@ mod e2e {
     Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 42, diff_steps: &[42, 43, 44], diff_digest: 0x67ba70f354005651 },
     Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 41, diff_steps: &[41, 42], diff_digest: 0xa407897b9324d3c },
-    Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0x6c96de07441f5089 },
+    Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0xb463229127031499 },
     Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xf382ade1687f98c5 },
+];
+
+    /// 飞升 20 第二幕:a20a2.script = act2.script + `asc 20`(路径/策略同第一幕那张
+    /// act2 表,只把飞升抬到 20),量 A20 的第二幕:精英/Boss 血量与伤害档(A3/A4/A8/A9)、
+    /// A17 的第二幕怪选招分支(被选中者/壳鹦鹉螺/神秘者/蛇形植物等)、A20 的 Boss 规则,
+    /// 以及召唤/分裂在飞升档的血量.
+    ///
+    /// 差异分类:
+    ///   (a) 已修:Book of Stabbing 的 A18 规则(单刺也自增刺击数).反编译 MonsterSpecific.cpp
+    ///       把两句 `if (asc18) ++stabCount` 写在 return 之后成了死代码,但意图明确,参考实现
+    ///       按 wiki/原版算进去 —— 修掉后 seed 6/25/33/16 的对齐前缀大幅前移(见下表).
+    ///   (b) 参考未实现/表示差异:劫匪偷金币(seed 15/18;与 A0 act2 同点)与事件 cursed_tome
+    ///       的选项数(seed 11;A0 也 5 vs 2).
+    ///   (d) 未定论:被选中者+神秘者(3/19/17)与头目小鬼(13/4)的战斗起点逐字段相同、终点 hp
+    ///       不同;已核对 A2/A17/A18 数值与参考一致,根因未定位(疑为对局内掷点流在 A20 档的
+    ///       某处多/少一次).
+    const ASC2_CASES: &[Expected] = &[
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xd6f6514046f14c0 },
+    Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 39, 40, 41], diff_digest: 0xbbea817f9888376d },
+    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x3cf5d6cb108e7e3d },
+    Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xdf6ab5b159df8dbc },
+    Expected { seed: 6, lines: 52, ref_lines: 53, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52], diff_digest: 0x98f743945c957f29 },
+    Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 41, 42, 43], diff_digest: 0xf5dca7770e705a38 },
+    Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x92dde8248532a178 },
+    Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x4fb240ce3fd98222 },
+    Expected { seed: 4, lines: 50, ref_lines: 49, aligned: 22, diff_steps: &[22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49], diff_digest: 0x5500cbee5b6b33a5 },
+    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0xd44adbf85aaf8f04 },
+    Expected { seed: 15, lines: 45, ref_lines: 44, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xe5b4ac9e9f9c5fc8 },
+    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40, 41, 42, 43], diff_digest: 0x2f88599cc8de562f },
 ];
 
     const ASC4_CASES: &[Expected] = &[
@@ -2187,6 +2224,12 @@ mod e2e {
     #[test]
     fn asc20_act1_matches_reference() {
         check_asc_table("a20.script", "a20", ASC_CASES, "A20 第一幕");
+    }
+
+    /// 飞升 20 第二幕:a20a2.script 与第二幕那张 act2 表同路径,只加飞升.
+    #[test]
+    fn asc20_act2_matches_reference() {
+        check_asc_table("a20a2.script", "a20a2", ASC2_CASES, "A20 第二幕");
     }
 
     /// 飞升 20 第三幕:第三幕规则与 A20 的双 Boss(第一个 Boss 倒下后不结算,直接开第二个).

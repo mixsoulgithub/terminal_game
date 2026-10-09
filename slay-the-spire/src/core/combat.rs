@@ -3270,21 +3270,14 @@ impl Combat {
         let vigor = if is_attack { self.rs.vigor } else { 0 };
         // 原版把加伤与乘伤一起按 float 连乘,末尾只向下取整一次,所以中间不能各自 floor
         let mut d = (raw + vigor) as f32;
-        // 纸风筝:虚弱只减 40% 伤害(默认 25%)
-        let weak_pct = {
-            let pct = self.relic_max(|fx| fx.weak_damage_pct);
-            if pct > 0 {
-                pct as f32 / 100.0
-            } else {
-                0.75
-            }
-        };
         // 身上这些加成在原版都是 atDamageGive,按挂载顺序依次折叠:
-        // 力量加一次、虚弱乘一次,谁先挂谁先算(先虚弱后力量会比反过来少 1 点)
+        // 力量加一次、虚弱乘一次,谁先挂谁先算(先虚弱后力量会比反过来少 1 点).
+        // 玩家自己的虚弱固定 -25%(原版 calculateCardDamage 写死 .75);纸鹤只作用于
+        // 怪物侧的虚弱,见 enemy_attack_damage.
         for (s, n) in self.player.statuses.entries() {
             match s {
                 Status::Strength => d += *n as f32,
-                Status::Weak => d *= weak_pct,
+                Status::Weak => d *= 0.75,
                 _ => {}
             }
         }
@@ -3300,11 +3293,20 @@ impl Combat {
     fn enemy_attack_damage(&self, idx: usize, raw: i32) -> i32 {
         // 同样按 float 连乘,末尾只 floor 一次
         let mut d = raw as f32;
+        // 纸鹤:虚弱的怪物只打出 60% 伤害(默认 75%).依据反编译 calculateDamageToPlayer
+        let weak_pct = {
+            let pct = self.relic_max(|fx| fx.weak_damage_pct);
+            if pct > 0 {
+                pct as f32 / 100.0
+            } else {
+                0.75
+            }
+        };
         // 怪物自己身上的力量/虚弱照挂载顺序折叠
         for (s, n) in self.enemies[idx].statuses.entries() {
             match s {
                 Status::Strength => d += *n as f32,
-                Status::Weak => d *= 0.75,
+                Status::Weak => d *= weak_pct,
                 _ => {}
             }
         }
@@ -3424,14 +3426,6 @@ impl Combat {
     /// 打敌人:damage 是玩家侧算完的 float(还没过目标侧的飞行/慢速),末尾只取整一次.
     /// 卡牌打出来的是"攻击伤害",会走飞行/慢速/无形/无敌这一整套.
     fn damage_enemy_f32(&mut self, idx: usize, damage: f32) -> i32 {
-        // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5(判断用取整后的值,与原实现一致)
-        let boost = self.relic_max(|fx| fx.small_attack_boost_to);
-        let face = damage.floor() as i32;
-        let damage = if boost > 0 && face > 0 && face <= 4 && self.enemies[idx].block == 0 {
-            boost as f32
-        } else {
-            damage
-        };
         self.hit_enemy(idx, damage, true)
     }
 
@@ -3447,15 +3441,7 @@ impl Combat {
         if idx >= self.enemies.len() || !self.enemies[idx].alive() {
             return 0;
         }
-        // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5
-        let boost = self.relic_max(|fx| fx.small_attack_boost_to);
         let raw = self.player_attack_damage(damage, idx, is_attack);
-        let face = raw.floor() as i32;
-        let raw = if is_attack && boost > 0 && face > 0 && face <= 4 && self.enemies[idx].block == 0 {
-            boost as f32
-        } else {
-            raw
-        };
         let dmg = self.reduce_incoming(idx, raw, is_attack);
         let mut total = 0;
         for _ in 0..times.max(1) {
@@ -3504,6 +3490,15 @@ impl Combat {
         // 手钻:这一击把格挡打碎(打到 0)时给易伤
         let broke_block = had_block && blocked > 0 && self.enemies[idx].block == 0;
         let mut taken = dmg - blocked;
+        // 靴子 The Boot:未被格挡的攻击伤害只剩 1..4 点时提到 5.依据反编译
+        // (sts_lightspeed Monster::attackedUnblockedHelper),这一步排在格挡与目标侧的
+        // 飞行/慢速/无形之后、掉血之前,所以 4 点打在无形怪身上也被抬到 5.
+        if is_attack && taken > 0 {
+            let boost = self.relic_max(|fx| fx.small_attack_boost_to);
+            if taken < boost {
+                taken = boost;
+            }
+        }
         // 无敌:一回合之内最多再掉这么多
         let inv = self.enemies[idx].statuses.get(Status::Invincible);
         if inv > 0 {
@@ -7158,6 +7153,40 @@ mod monster_tests {
         assert_eq!(c.player.hp, hp - 7 * 6, "分裂打 6 下,每下 7");
     }
 
+    /// 书呆子(Book of Stabbing)A18:单刺也会让刺击数自增,所以多段刺击来得更快.
+    /// 依据:反编译 MonsterSpecific.cpp 的两句 `if (asc18) ++stabCount` 写在 return 之后
+    /// (死代码),但它明确表达了 A18 的意图;参考实现按 wiki/原版把它算进去.
+    #[test]
+    fn book_of_stabbing_a18_single_stab_also_grows_the_count() {
+        use crate::core::cards::card;
+        let seq = |asc: u32| -> Vec<u32> {
+            let enc = crate::core::enemies::encounter_def("book_of_stabbing_solo").unwrap();
+            let setup = CombatSetup {
+                rested: false,
+                hp: 999,
+                max_hp: 999,
+                deck: vec![card("defend"); 10],
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
+                asc,
+            };
+            let mut c = Combat::new(enc, setup, RngRegistry::new(11));
+            let mut v = Vec::new();
+            for _ in 0..6 {
+                c.end_turn();
+                v.push(c.enemies[0].state.stab);
+            }
+            v
+        };
+        let a0 = seq(0);
+        let a18 = seq(18);
+        assert_eq!(a0, vec![3, 3, 4, 5, 5, 6], "A0 的段数序列变了: {a0:?}");
+        assert_eq!(a18, vec![3, 4, 5, 6, 7, 8], "A18 单刺也自增: {a18:?}");
+    }
+
     #[test]
     fn thief_steals_gold_and_flees() {
         let mut enc = lock("looter_solo");
@@ -7358,6 +7387,59 @@ mod power_tests {
         c.enemies[0].max_hp = 50;
         c.damage_enemy(0, 11);
         assert_eq!(c.enemies[0].hp, 50 - 11);
+    }
+
+    /// 靴子 The Boot:未被格挡的攻击伤害只剩 1..4 点时提到 5.依据反编译
+    /// (sts_lightspeed Monster::attackedUnblockedHelper)这一步排在格挡与目标侧的
+    /// 飞行/慢速/无形之后,所以 4 点打在无形怪身上也是 5,不是 1.
+    #[test]
+    fn boot_boosts_unblocked_damage_after_reductions() {
+        let boot = crate::core::relics::relic_def_or_panic("the_boot");
+        let booted = |id: &'static str| {
+            let mut c = lock(id);
+            c.relics.push(boot);
+            c
+        };
+
+        // 无形:4 点先被压到 1,靴子再抬到 5
+        let mut c = booted("jaw_worm_solo");
+        c.add_enemy_status(0, Status::Intangible, 2);
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "无形之下的 4 点被靴子抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+
+        // 飞行:4 点先减半到 2,靴子再抬到 5
+        let mut c = booted("three_byrds");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "飞行之下 4 点减半到 2 也被靴子抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+
+        // 无减伤无格挡:4 -> 5
+        let mut c = booted("jaw_worm_solo");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5);
+        assert_eq!(c.enemies[0].hp, hp - 5);
+
+        // 被格挡的部分不算:6 点打在 5 格挡上,剩 1 也抬到 5
+        let mut c = booted("jaw_worm_solo");
+        c.enemies[0].block = 5;
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 6), 5, "6 打 5 格挡,剩 1 被靴子抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+        assert_eq!(c.enemies[0].block, 0, "5 点格挡照扣");
+
+        // 全挡住就不抬:4 点打在 4 格挡上
+        let mut c = booted("jaw_worm_solo");
+        c.enemies[0].block = 4;
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 0, "全挡住不掉血也不抬");
+        assert_eq!(c.enemies[0].hp, hp);
+
+        // 没有靴子时 4 点还是 4
+        let mut c = lock("jaw_worm_solo");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 4);
+        assert_eq!(c.enemies[0].hp, hp - 4);
     }
 
     #[test]

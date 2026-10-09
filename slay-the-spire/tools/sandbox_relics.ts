@@ -415,8 +415,8 @@ S("velvet_choker", "每回合出牌上限", "一回合最多 6 张,第 7 张报�
   });
 S("paper_phrog", "易伤增伤", "易伤多受 75%:strike 6->10", board({ relics: ["paper_phrog"], enemies: [ENEMY({ powers: { vulnerable: 10 } })], hand: ["strike"], actions: playFirst }),
   (r) => (dealt(r) === 10 ? null : `易伤打击 ${dealt(r)},期望 10(6*1.75)`));
-S("paper_krane", "虚弱减伤", "虚弱少受 40%:strike 6->3", board({ relics: ["paper_krane"], player: { hp: 80, max_hp: 80, powers: { weak: 10 } }, hand: ["strike"], actions: playFirst }),
-  (r) => (dealt(r) === 3 ? null : `虚弱打击 ${dealt(r)},期望 3(6*0.6)`));
+S("paper_krane", "虚弱减伤(怪物侧)", "虚弱的怪少打 40%(默认 25%):Dark Strike 6->3", board({ relics: ["paper_krane"], enemies: [ENEMY({ move: "Dark Strike", powers: { weak: 10 } })], actions: [{ op: "noop" }, { op: "end_turn" }] }),
+  (r) => (hurt(r) === 3 ? null : `纸鹤下虚弱怪物造成 ${hurt(r)},期望 3(6*0.6 向下取整)`));
 
 // ================= 一局流程侧(在 relics.rs 的 Run 级测试里断言) =================
 R("burning_blood", "战斗结束(回血)", "战后回 6", "burning_blood_post_combat_heal");
