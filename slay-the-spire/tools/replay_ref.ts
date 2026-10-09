@@ -117,7 +117,7 @@ const bundle = buildBaseContentBundle();
 // 递减"(Regen Potion 用的),钩子里 owner.kind === "player" 才回血,于是燃烧精英
 // 抽到 3 号增益时怪物一点血都不回.
 // 原版 Monster::applyStartOfTurnPowers 会按层数回血、且**不递减**
-// (反编译 src/combat/Monster.cpp:59-60;挂载见 MonsterGroup.cpp:622),本作引擎
+// (反编译 refs/sts_lightspeed/src/combat/Monster.cpp:59-60;挂载见 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:622),本作引擎
 // 照原版实现(combat.rs 敌人回合开始按 Regenerate 回血、不减层),不动.
 // 注意:不能直接 bundle.powers.set("REGEN", ...) —— 那会把玩家侧的 Regen Potion
 // 能力一起换掉(misc: 喝过 Regen Potion 的种子在参考侧反向给怪回血,acts 77->161).
@@ -243,7 +243,7 @@ function advanceWithEggs(s: GameState, cmd: Command): GameState {
 // 参考实现把 FAIRY_POTION 写成了 ENGINE-GAP(src/content/potions/index.ts:315-324
 // "non-drinkable death-save; playerDeath has no hook yet"),onUse 是空函数,它的
 // playerDeath(interpreter.ts:335-339)只把 combatOver 置成 defeat —— 玩家一到 0 血
-// 就判负,瓶子还攥在手里.原版是死亡拦截:Player::wouldDie(反编译 Player.cpp:320-345)
+// 就判负,瓶子还攥在手里.原版是死亡拦截:Player::wouldDie(反编译 refs/sts_lightspeed/src/combat/Player.cpp:320-345)
 // 先扫药水栏,有 FAIRY_POTION 就丢掉瓶子、按 max HP 的 30%(神圣树皮 60%,至少 1)
 // 回血并**继续战斗**;战斗外同一规则在 GameContext::playerOnDie(GameContext.cpp:
 // 2132-2151,花开彼岸除外).本作 combat.rs 的 resolve_player_death 照原版实现(见

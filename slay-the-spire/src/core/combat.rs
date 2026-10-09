@@ -2330,7 +2330,7 @@ impl Combat {
                 }
             }
             EnemyFx::RearmModeShift { first } => {
-                // 反编译 MonsterSpecific.cpp:1344-1351(双拳合击)先把 miscInfo 抬 10,
+                // 反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:1344-1351(双拳合击)先把 miscInfo 抬 10,
                 // 再以它重装 MODE_SHIFT;miscInfo 开局是 Special::ModeShift 的 d(随飞升
                 // 变 30/35/40),所以第 n 次装回去的额度是 d + 10n.
                 let def = self.enemies[idx].def;
@@ -4297,7 +4297,7 @@ impl Combat {
                     draw,
                 } => {
                     if let Some(t) = target {
-                        // 易伤看的是"出牌这一刻"(反编译 Actions.cpp:1036-1045 的
+                        // 易伤看的是"出牌这一刻"(反编译 refs/sts_lightspeed/src/combat/Actions.cpp:1036-1045 的
                         // DropkickAction:先按当前状态决定要不要给能量/抽牌,再把这一击
                         // 压进动作队列),所以这一刀把敌人打死也照样回能量、抽牌.
                         let vuln = self.enemies[t].statuses.has(Status::Vulnerable);
@@ -5675,7 +5675,7 @@ mod tests {
 
     #[test]
     fn dropkick_pays_out_even_when_it_kills_the_vulnerable_enemy() {
-        // 易伤是"出牌这一刻"看的:反编译 Actions.cpp:1036-1045 的 DropkickAction 先按当前
+        // 易伤是"出牌这一刻"看的:反编译 refs/sts_lightspeed/src/combat/Actions.cpp:1036-1045 的 DropkickAction 先按当前
         // 状态决定要不要回能量/抽牌(addToTop),再把这 5 点伤害压进队列 —— 先判后打,
         // 所以这一刀把敌人打死也照样回 1 能量、抽 1 张.
         let mut c = combat_with(
@@ -7457,7 +7457,7 @@ mod monster_tests {
 
     #[test]
     fn guardian_twin_slam_arms_the_next_shift_ten_higher() {
-        // 反编译 MonsterSpecific.cpp:1344-1351(双拳合击):miscInfo += 10 之后才以它重装
+        // 反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:1344-1351(双拳合击):miscInfo += 10 之后才以它重装
         // MODE_SHIFT,而 miscInfo 开局就是 30,所以额度按 40/50/60 一路长.此前本作把它钉死
         // 成 40:守护者第二次以后都提前切换,act1 的守护者战(acts seed 22882/26951)整条
         // hp 轨迹跟着偏.
@@ -8278,7 +8278,7 @@ mod power_tests {
     }
 
     /// 冠军的怒吼先把自己的负力量归零,再加 6 点:原版 Monster::removeDebuffs
-    /// (反编译 src/combat/Monster.cpp:538-543)在清减益前把负力量抬回 0,所以被缴械
+    /// (反编译 refs/sts_lightspeed/src/combat/Monster.cpp:538-543)在清减益前把负力量抬回 0,所以被缴械
     /// 削到 -3 的冠军怒吼之后是 6 点力量而不是 3 点.本作原先的 clear_debuffs 只 retain
     /// 非减益状态(力量算增益,负力量也跟着留下),于是比原版少一截力量.
     #[test]

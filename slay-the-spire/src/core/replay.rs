@@ -39,6 +39,9 @@
 //!
 //! 牌堆记号与存档一致:`strike`、`strike+`、`strike+2`.
 //! 参考实现的 id 是大写,对拍器(不在这里)负责大小写与少数别名归一.
+//!
+//! 各张表的登记注释里引的反编译依据都落在仓库内 `refs/sts_lightspeed/`(来源与
+//! commit 见该目录的 README-ORIGIN.md);只有 `refs/slay-the-cli/...` 是参考实现.
 
 use crate::core::card::{CardInstance, CardType, Cost};
 use crate::core::combat::Phase;
@@ -1312,29 +1315,29 @@ mod e2e {
     /// 第一章登记表(CASES = 42 颗;SWEEP = 其中 seed 1..40 的扫荡).本轮把噪声最大的
     /// "击杀盗贼/强盗退还赃款"在**参考驱动侧**折掉了(tools/replay_ref.ts 的 refundStolenGold:
     /// 每次 advance 之后按参考引擎自己的 monsterDeath 事件,把已死 LOOTER/MUGGER 的
-    /// data.stolenGold 加回 run.gold —— 原版 BattleContext.cpp:494-506 的 updateMonstersOnExit
+    /// data.stolenGold 加回 run.gold —— 原版 refs/sts_lightspeed/src/combat/BattleContext.cpp:494-506 的 updateMonstersOnExit
     /// 汇总 stolenGold、奖励层第一件事就是 addGold;本作 combat.rs 击杀时也退,逃跑不退).
     /// 折掉后第一章差异 279 -> 104 处(SWEEP 40 颗 254 -> 104 处),12 颗含盗贼的种子
     /// (3/11/12/15/20/22/27/29/31/35/42/54)全部归零.
     ///
     /// (a) 本轮修:事件/商店的"移除 / 变形"屏不该列瓶装的牌 —— 就是折掉退赃后 seed 12
     ///   露出来的那一条(步 48 候选 18 vs 17,本作多算了被封进瓶子的那张 defend).反编译
-    ///   GameContext.cpp:3799-3808 的 REMOVE / TRANSFORM / BONFIRE_SPIRITS 走同一个分支
-    ///   `c.canTransform() && !deck.isCardBottled(i)`(Deck.h:34 的 transformableCount 也
+    ///   refs/sts_lightspeed/src/game/GameContext.cpp:3799-3808 的 REMOVE / TRANSFORM / BONFIRE_SPIRITS 走同一个分支
+    ///   `c.canTransform() && !deck.isCardBottled(i)`(refs/sts_lightspeed/include/game/Deck.h:34 的 transformableCount 也
     ///   注明不含瓶装),本作原先只排"不可移除"的牌.修完 seed 12 逐字节全对齐;断言 =
     ///   run.rs bottled_cards_are_not_offered_for_removal_but_astrolabe_sees_them.
-    ///   星盘的"变形升级"屏是另一回事(反编译 GameContext.cpp:1305-1316 自己拼 canTransform()
+    ///   星盘的"变形升级"屏是另一回事(反编译 refs/sts_lightspeed/src/game/GameContext.cpp:1305-1316 自己拼 canTransform()
     ///   候选、不排瓶装;参考 relics/pickup.ts:56-59 同),用 Picker::include_bottled 区分.
     ///
     /// 上一轮登记的 4 颗(9/10/24 仙女瓶、40 套娃)本轮已收尾:
     ///   seed 9 / 10 / 24:仙女在瓶中的保命 —— 参考把它写成 ENGINE-GAP
     ///     (content/potions/index.ts:315-324 "non-drinkable death-save";playerDeath
     ///     interpreter.ts:335-339 只置 combatOver,没有保命钩子),本作按原版
-    ///     Player::wouldDie(反编译 Player.cpp:320-345:丢瓶、按 max HP 30%/60% 回血、
+    ///     Player::wouldDie(反编译 refs/sts_lightspeed/src/combat/Player.cpp:320-345:丢瓶、按 max HP 30%/60% 回血、
     ///     继续战斗)实现。属**参考缺口 (c)**,本轮在参考驱动侧借它自己的 onLoseHp
     ///     折叠折掉(tools/replay_ref.ts 的 FAIRY_SAVE 能力),三颗逐字节全对齐。
     ///   seed 40:套娃 —— 本轮查出是**本作 (a) bug**,不是登记里的 (b):原版
-    ///     openTreasureRoomChest(GameContext.cpp:1888-1892)的套娃结算排在金币与箱子
+    ///     openTreasureRoomChest(refs/sts_lightspeed/src/game/GameContext.cpp:1888-1892)的套娃结算排在金币与箱子
     ///     遗物**之前**,开箱本身开出来的套娃不算这一次的次数(拿到手时 charges 还是 0);
     ///     本作原先在主遗物之后才结算,于是同一箱被开成两件(第 23 步 relics 多一件
     ///     orichalcum),并顺带错位了后面的血量。修 = run.rs open_chest 把套娃块提到主
@@ -1719,7 +1722,7 @@ mod e2e {
     ///               Boss 战 hp 轨迹偏 3/6 点.已修(见 (a)1),这两行现在 0 处.
     ///
     /// (a) 本作真 bug(本轮修,断言见括号):
-    ///   1) 守护者的双拳合击:反编译 MonsterSpecific.cpp:315-327 把开局额度记进 miscInfo,
+    ///   1) 守护者的双拳合击:反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:315-327 把开局额度记进 miscInfo,
     ///      1344-1351 的 Twin Slam 先 miscInfo += 10 再以此重装 MODE_SHIFT,所以额度是
     ///      40/50/60 一路长(随飞升的开场值 30/35/40 各 +10).本作此前把这一段写成固定的
     ///      "MODE_SHIFT 40",第二次起的切换都早一步.修法 = 新效果 EnemyFx::RearmModeShift
@@ -1727,7 +1730,7 @@ mod e2e {
     ///      (enemies/act1.rs);断言 = combat.rs
     ///      guardian_twin_slam_arms_the_next_shift_ten_higher.这条差异先前只登记成"差异步"
     ///      (22882 的 41-42、26951 的 43-44),没归过因 —— 已登记不等于没问题.
-    ///   2) 猛踢(Dropkick)的易伤判定时点:反编译 Actions.cpp:1036-1045 的 DropkickAction
+    ///   2) 猛踢(Dropkick)的易伤判定时点:反编译 refs/sts_lightspeed/src/combat/Actions.cpp:1036-1045 的 DropkickAction
     ///      先看目标当前有没有易伤、决定回不回 1 能量/抽 1 张,再把这 5 点伤害压进动作队列
     ///      (先判后打),所以这一脚把目标踢死也照样给.本作此前多一个 `alive()` 守卫,踢死
     ///      时就不给,战斗里的手牌/能量从此错开.断言 = combat.rs
@@ -1744,7 +1747,7 @@ mod e2e {
     ///   的 149 处降到 59 处(128 处 deck 级联消失),act1 seed 38 的 10 处降到 0 处.
     ///
     /// 驱动侧补偿之二:击杀盗贼/强盗的退赃(本轮,本作引擎不动).原版战斗结束时
-    ///   (BattleContext.cpp:494-506 的 updateMonstersOnExit)把没逃跑的 LOOTER/MUGGER 的
+    ///   (refs/sts_lightspeed/src/combat/BattleContext.cpp:494-506 的 updateMonstersOnExit)把没逃跑的 LOOTER/MUGGER 的
     ///   miscInfo 汇总成 info.stolenGold,奖励层第一件事就是 reward.addGold(它)还回去;
     ///   本作照此在敌死时还钱(combat.rs "drops the N gold it stole",逃跑则不还).参考
     ///   looters.ts/mugger.ts 只把 goldStolen 记在自己的 data 上、奖励层从不加回,于是金币
@@ -1772,13 +1775,13 @@ mod e2e {
     ///      (灯光速与参考都省了;参考 theHexaghost.ts 头部也自己注明 omitted).本作照原版实现
     ///      (enemies/act1.rs 的 HEXAGHOST INFERNO:PlayerCardUpgraded{burn,3} + UpgradePlayerBurns),
     ///      抽牌堆因此整体错开、hp 轨迹差几个点(seed 2474/23808/4327).
-    ///   2) 仙女在瓶中(FAIRY_POTION):反编译 BattleContext.cpp:2430-2434 的 drinkPotion 走到
+    ///   2) 仙女在瓶中(FAIRY_POTION):反编译 refs/sts_lightspeed/src/combat/BattleContext.cpp:2430-2434 的 drinkPotion 走到
     ///      FAIRY_POTION 直接 assert(它喝不得,原版是"要死时自动顶掉一瓶、回到 30% 血").
     ///      参考 potions/index.ts:317-325 的 FAIRY_POTION 是 `onUse: () => {}` 的空壳、
     ///      也没有保命钩子,对拍驱动每回合按格子次序试喝(见 try_drink_once)就把仙女当空药
     ///      喝掉了,本作跳过它留着保命.种子 12691/4327 的 potions 错位与"参考先死"都由它来.
     ///   附带(不影响任何登记表,只在对 trace 时看得见):sentries 战里参考的 Liquid Memories
-    ///      选择屏是 min 0(驱动按"可选"选 0 张),本作按反编译 Actions.cpp:663-676 的
+    ///      选择屏是 min 0(驱动按"可选"选 0 张),本作按反编译 refs/sts_lightspeed/src/combat/Actions.cpp:663-676 的
     ///      BetterDiscardPileToHandAction 是"必须拿 1 张",于是一局战斗内手牌流向短暂不同;
     ///      战斗收尾两边局面又合回来,fixture 与各张表都没被它影响到(seed 4327 的 trace 里
     ///      能看到),本作不改.
@@ -1883,7 +1886,7 @@ mod e2e {
     /// 外加导出器把事件选项折成屏粒度)之后,seed 6 的前缀 32->33、seed 11 的 18->29,
     /// 全表合计差异 412->198 处;剩下的仍是参考缺口/参考反向那几类(见 ASC2_CASES (b)/(c)).
     ///
-    /// 本轮再降:冠军"怒吼"前先把负力量归零(真 bug,依据反编译 Monster.cpp:538 的
+    /// 本轮再降:冠军"怒吼"前先把负力量归零(真 bug,依据反编译 refs/sts_lightspeed/src/combat/Monster.cpp:538 的
     /// Monster::removeDebuffs,断言 = combat.rs
     /// champ_anger_floors_negative_strength_before_buffing)修掉后,seed 18 被缴械过的
     /// 冠军少了一截力量、Boss 战 40/41/42 三步差异消失(前缀仍是 2 步,只余退赃金币);
@@ -1897,13 +1900,13 @@ mod e2e {
     ///
     /// 本轮把 153 处逐颗反查了一遍(逐 seed 跑 + SPIRE_TRACE=1 两侧对 trace 逐回合定分叉).
     /// 四条根因,两条是本作真 bug(已修 + 断言),两条是参考侧缺口(驱动侧补偿):
-    ///   (a)1 吐火只认状态牌、不认诅咒.反编译 CardManager.cpp:420-440 里 STATUS 与 CURSE
+    ///   (a)1 吐火只认状态牌、不认诅咒.反编译 refs/sts_lightspeed/src/combat/CardManager.cpp:420-440 里 STATUS 与 CURSE
     ///       两个分支各挂一次 DamageAllEnemy.修在 combat.rs 的 on_card_drawn,断言 =
     ///       fire_breathing_punishes_drawing_curses(seed 6 的斗兽场第一场、旧日记里
     ///       那条"被归成 (c) 的灼伤"其实混着这一条).卡面文案同步补上 "or Curse"
     ///       (corpus.rs 的 FIRE_BREATHING 本来就是对的).
     ///   (a)2 混乱(蛇眼/蛇油)把费用写成"掷出的值减去牌面基础费用",升级降费的牌会少一档
-    ///       (havoc+ 基础 1、升级后 0,掷出 2 只给 1 费).反编译 CardManager.cpp:398-410 是
+    ///       (havoc+ 基础 1、升级后 0,掷出 2 只给 1 费).反编译 refs/sts_lightspeed/src/combat/CardManager.cpp:398-410 是
     ///       直接 newCost 写进 cost/costForTurn.修在 on_card_drawn + randomize_hand_costs,
     ///       断言 = confused_sets_the_rolled_cost_even_when_the_upgrade_discounts_it
     ///       (seed 16 的蛇怪战 9 处差异的头 3 步).
@@ -1919,8 +1922,8 @@ mod e2e {
     ///       但它的战斗解释器里怪身上的 REGEN 没有 atStartOfTurn 钩子 —— 参考自己的
     ///       REGEN 定义(src/content/relics/supportPowers.ts:93)是玩家侧 Regen Potion
     ///       那条(回合末回血、每回合递减,且钩子里 owner.kind==="player" 才生效),
-    ///       于是抽到 3 号增益的精英怪一点血都不回.原版见反编译 Monster.cpp:59-60
-    ///       (按层数回血、不递减)与 MonsterGroup.cpp:622(act*2+1).驱动侧另立一枚怪专用
+    ///       于是抽到 3 号增益的精英怪一点血都不回.原版见反编译 refs/sts_lightspeed/src/combat/Monster.cpp:59-60
+    ///       (按层数回血、不递减)与 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:622(act*2+1).驱动侧另立一枚怪专用
     ///       的 BURNING_REGEN(回合开始按层数回血、不递减),每次 advance 之后把怪身上的
     ///       "REGEN" 改名过去 —— 上一轮误写成直接 bundle.powers.set("REGEN", ...),
     ///       把玩家侧 Regen Potion 一起换掉了(喝过这瓶药的种子在参考侧反向给怪回血,
@@ -1935,18 +1938,28 @@ mod e2e {
     /// 反查后逐颗口径(对齐前缀 / 首分叉步 / 成因 / 归类),全表合计差异 153->71 处:
     ///   全对齐(0 处):4 6 15 17 18 19
     ///   seed 3 : 14 步 / 步 14 百夫长+神秘者 / (b)3 参考侧怪物的"下一招掷点"早于它自己
-    ///            排队的回血结算 —— 反编译 Monster.cpp/Actions 里回血先落地、RollMove 排在
-    ///            回血动作之后;参考 executeMonsterMove 是先 rollMove 再让队列里的回血跑,
-    ///            于是同一个 t3 两侧意图分叉(heal vs attack-debuff,血量逐字段相同).
-    ///            30 处全是这一处的 hp 级联.
+    ///            排队的回血结算 —— 反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607
+    ///            的 MYSTIC_HEAL 先把 heal 落地(refs/sts_lightspeed/src/combat/Monster.cpp:269-272
+    ///            的 Monster::heal 直接改 curHp)再 rollMove,所以那一掷看到的是治完的血;参考
+    ///            refs/slay-the-cli/src/engine/combat/interpreter.ts:748-768 的
+    ///            executeMonsterMove 是 execute 里把治疗 addToBottom、接着就 rollMove,
+    ///            掷点看到的是治疗前的血,于是同一个 t3 两侧意图分叉(heal vs
+    ///            attack-debuff,血量逐字段相同).本作按反编译(combat.rs 的 enemy_act 先
+    ///            落效果再 pick_next_move).30 处全是这一处的 hp 级联.
     ///   seed 11: 29 步 / 步 29 百夫长+神秘者 / (b)4 参考侧没实现 Nilry 宝典
     ///            (refs/slay-the-cli/src/content/relics/event.ts:149 是 hooks: {}
     ///            的空壳并自带 ENGINE-GAP 注释).本作每回合末真的会开三选一,抽到的那张
     ///            进了抽牌堆,于是 t2 起手牌多一张 true_grit.17 处是该分叉的级联.
-    ///   seed 13: 33 步 / 步 33(精英奖励 hp 差 2)/ (b)5 参考侧小鬼头目 Rally 的召唤槽位与
-    ///            顺序和反编译不同(Actions.cpp:459 SummonGremlins:固定补 2 只、按 1,2,0
-    ///            找空槽;MonsterGroup.cpp:248-255 起始随从在槽 1/2、头目在 3 号槽、0 号槽
-    ///            空着).4 处.判 (c):参考不是"缺一块",而是把首领摆到槽 2 去了.
+    ///   seed 13: 33 步 / 步 33(精英奖励 hp 差 2)/ (b)5 参考侧小鬼头目 Rally 的摆位与反编译
+    ///            不同:反编译 refs/sts_lightspeed/src/combat/Actions.cpp:459-498 的
+    ///            SummonGremlins 固定补 2 只、按 1,2,0 找空槽(先掷的那只进槽 1),类型掷点
+    ///            走 aiRng;refs/sts_lightspeed/src/combat/MonsterGroup.cpp:248-257 起始随从
+    ///            在槽 1/2(类型走 miscRng)、头目在 3 号槽、0 号槽空着.本作照此
+    ///            (enemies/act2.rs 的 GREMLIN_LEADER Rally = SummonRandom{slots:[1,2,0]},
+    ///            combat.rs 的 open_slots/summon_one);参考侧模型相同
+    ///            (refs/slay-the-cli/src/content/monsters/act2/gremlinLeader.ts:63-78),
+    ///            但对拍导出后两只新小鬼落在互换的槽位(同一对 24/24 疯狂 + 14/14 潜行,
+    ///            只是顺序反了).4 处.判 (c):参考不是"缺一块",而是摆位不同.
     ///   seed 16: 36 步 / 步 36 百夫长+神秘者 / (b)3 同 seed 3.原先记的那"1 处未定"
     ///            (havoc 打出的顶牌伤害 8 vs 16)本轮结掉 = 笔尖 (a)3:浩劫打出的顶牌
     ///            是狂暴,本作漏了它的翻倍,只打一半.修完后这一场前 3 回合逐字段对齐,
@@ -2473,11 +2486,11 @@ mod e2e {
     ///      (见 combat.rs 的 take_top_card_for_play / drain_pending_top_plays);断言 =
     ///      combat.rs havoc_enters_the_discard_pile_before_the_autoplayed_card_resolves.
     ///   5) colosseum 第一场摆错阵容(本轮修).本作照地图上的 SLAVERS 遭遇摆了蓝奴隶主 +
-    ///      巡回官 + 红奴隶主三只;反编译 MonsterGroup.cpp:208-211 的 COLOSSEUM_EVENT_SLAVERS
+    ///      巡回官 + 红奴隶主三只;反编译 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211 的 COLOSSEUM_EVENT_SLAVERS
     ///      只有蓝奴隶主 + 红奴隶主两只(带巡回官的那组三只只出现在第二场的
     ///      Taskmaster + Gremlin Nob 里).seed 4/6 的第一场多挨一百多点血,整段级联;
     ///      断言 = events.rs::colosseum_first_fight_returns_to_the_event.
-    ///   6) cursed_tome 的三处(本轮修,反编译 GameContext.cpp:2558-2598 / GameAction.cpp:727-731):
+    ///   6) cursed_tome 的三处(本轮修,反编译 refs/sts_lightspeed/src/game/GameContext.cpp:2558-2598 / refs/sts_lightspeed/src/sim/search/GameAction.cpp:727-731):
     ///      a. 三页的中间屏多了一个 0 血代价的 Stop.原版的位掩码在 phase 1/2/3 只有
     ///         Continue 一项,Stop(-3 血)只出现在读完三页后的那一屏,已删掉中间屏第二项;
     ///      b. Take 之后没开奖励屏.原版走 openCombatRewardScreen(Rewards + addRelic),
@@ -2492,7 +2505,7 @@ mod e2e {
     ///      5x2 的双击不算 10 点;本作原先用 times * amount 累加.断言 =
     ///      events.rs::wing_statue_destroy_counts_single_hit_not_total.
     ///   8) 冠军"怒吼"前的负力量没归零(本轮修).反编译 Monster::removeDebuffs
-    ///      (src/combat/Monster.cpp:538-543)清减益前先把负的力量抬回 0,本作的
+    ///      (refs/sts_lightspeed/src/combat/Monster.cpp:538-543)清减益前先把负的力量抬回 0,本作的
     ///      clear_debuffs 只 retain 非减益状态(力量算增益),于是被缴械削到负数的冠军
     ///      怒吼后比原版少一截力量、时间吞噬者的加速同理.act2 seed 18(与 A20 同 seed)
     ///      的冠军战因此从步 40 起差 25 hp.修法 = Statuses::clear_debuffs 先归零负力量
@@ -2532,7 +2545,7 @@ mod e2e {
     ///      这是折掉退赃之后 seed 15 新露出来的一条(步 32).
     ///
     /// (c) 参照实现自己反着来、本作按反编译的(不改本作):
-    ///   1) 神秘者 MYSTIC_HEAL 的结算时点:反编译 MonsterSpecific.cpp:600-607 的 MYSTIC_HEAL
+    ///   1) 神秘者 MYSTIC_HEAL 的结算时点:反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607 的 MYSTIC_HEAL
     ///      先 heal(骑士与自己)再 rollMove,于是下一招读到的是补过血的血量;
     ///      参考把 heal 塞进动作队列,getMove 读的是改状态之前的血(参考在自己残血时选 HEAL、
     ///      本作选 ATTACK_DEBUFF).seed 3/6/11/17/19 的"百夫长+神秘者"战因此终点 hp 不同
@@ -2541,9 +2554,9 @@ mod e2e {
     ///      出 ATTACK_DEBUFF(本作 hp 9694),参考按补前 14/54 判"要治"出 HEAL(hp 9706),
     ///      其后 hp 整段差 12~21 点.
     ///   2) 小鬼头目的开战摆位:参考把首领排在槽 2、随从只剩槽 0/1;原版是首领槽 3、
-    ///      起始随从槽 1/2、槽 0 空(反编译 MonsterGroup.cpp:255 把 GREMLIN_LEADER
+    ///      起始随从槽 1/2、槽 0 空(反编译 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:255 把 GREMLIN_LEADER
     ///      construct 在槽 3,起始随从在 arr[1]/arr[2]).摆位差的直接后果落在 Rally 找空槽:
-    ///      反编译 Actions.cpp:459 SummonGremlins 按 1,2,0 的顺序找"死的/空的"槽塞两只,
+    ///      反编译 refs/sts_lightspeed/src/combat/Actions.cpp:459 SummonGremlins 按 1,2,0 的顺序找"死的/空的"槽塞两只,
     ///      参考把首领摆在槽 2 后候选就少了槽 2.本作与反编译一致;seed 13 只差 5 hp
     ///      (纯朝向/格挡口径),seed 33 那场槽 1 的盾牌小鬼已死、槽 0 空,参考只找到 1 个
     ///      空槽、少召唤一只胖小鬼,整场因此差 117 hp —— 两颗是同一处参考缺口的级联.
@@ -2555,7 +2568,7 @@ mod e2e {
     ///      到 Boss 结束差 64 hp(本作 t4 起抽牌堆/手牌差一张).反编译里 NO_DRAW 是
     ///      DrawCardAction 的前置检查,参考漏了这一层 —— 本作不改.
     ///   4) 参考 PRESERVED_INSECT 的判定口径(折掉退赃后 seed 18 步 32 新露出的一条):
-    ///      原版只在**精英房**减 25%(反编译 BattleContext.cpp:315-322 的
+    ///      原版只在**精英房**减 25%(反编译 refs/sts_lightspeed/src/combat/BattleContext.cpp:315-322 的
     ///      `if (room == Room::ELITE) m.curHp = maxHp * .75`),本作 relics.rs 的
     ///      elite_hp_reduction_pct 也按房间判;参考 relics/common.ts:321-330 却写成
     ///      "战斗里只要有 category === 'elite' 的怪就减",于是普通房里的"哨卫+球形守卫"

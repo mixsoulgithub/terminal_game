@@ -349,10 +349,10 @@ pub struct Picker {
     /// 便条事件:选中的牌要写回存卡文件留给下一局
     pub store_note: bool,
     /// 候选里要不要带上瓶装的牌.只有星盘的"变形升级"屏为真(反编译
-    /// GameContext.cpp:1305-1316 自己拼 canTransform() 的候选,不走 REMOVE/TRANSFORM
+    /// refs/sts_lightspeed/src/game/GameContext.cpp:1305-1316 自己拼 canTransform() 的候选,不走 REMOVE/TRANSFORM
     /// 那层的瓶装过滤;参考 pickup.ts:56-59 同);事件与商店的移除/变形屏都排掉瓶装牌
     /// (Deck 的 transformableCount 注释"does not include cards which are bottled",
-    /// GameContext.cpp:3799-3808 的 REMOVE/TRANSFORM/BONFIRE_SPIRITS 分支带 !isCardBottled).
+    /// refs/sts_lightspeed/src/game/GameContext.cpp:3799-3808 的 REMOVE/TRANSFORM/BONFIRE_SPIRITS 分支带 !isCardBottled).
     pub include_bottled: bool,
 }
 
@@ -4579,7 +4579,7 @@ impl Run {
     /// 随机一张无色牌
     fn random_colorless_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
         // 原版 returnColorlessCard:整池用 shuffleRng 的 java 洗牌洗一遍,再取第一张
-        // 该稀有度(反编译 GameContext.cpp:1682-1687;不是"在子池里 pick")
+        // 该稀有度(反编译 refs/sts_lightspeed/src/game/GameContext.cpp:1682-1687;不是"在子池里 pick")
         let mut pool = cards::colorless_pool();
         if pool.is_empty() {
             return None;
@@ -4749,7 +4749,7 @@ impl Run {
             return;
         }
         // 俄罗斯套娃:还带次数就先给一件,再算箱子自己的那件.原版
-        // GameContext.cpp:1888-1892 的这套娃结算排在金币与箱子遗物**之前**,所以这一次
+        // refs/sts_lightspeed/src/game/GameContext.cpp:1888-1892 的这套娃结算排在金币与箱子遗物**之前**,所以这一次
         // 开箱本身开出的套娃不算次数(拿到手时 charges 还是 0),要等下一个箱子才生效;
         // 额外那件的档次固定 75% 普通 / 25% 罕见,与箱子大小无关(getMatryoshkaRelicTier),
         // 饥肠辘辘之脸吃空的箱子也照给.玩家 relic 列表里套娃那件排在箱子遗物之前
@@ -6685,9 +6685,9 @@ mod tests {
     }
 
     /// 事件/商店的移除(或变形)屏不列瓶装的牌;星盘的"变形升级"屏列.
-    /// 依据:反编译 GameContext.cpp:3799-3808 的 REMOVE/TRANSFORM/BONFIRE_SPIRITS 走同一个
-    /// 分支 `canTransform() && !deck.isCardBottled(i)`(Deck.h:34 的 transformableCount
-    /// 也注明不含瓶装),而星盘(GameContext.cpp:1305-1316)自己拼 `canTransform()` 的候选、
+    /// 依据:反编译 refs/sts_lightspeed/src/game/GameContext.cpp:3799-3808 的 REMOVE/TRANSFORM/BONFIRE_SPIRITS 走同一个
+    /// 分支 `canTransform() && !deck.isCardBottled(i)`(refs/sts_lightspeed/include/game/Deck.h:34 的 transformableCount
+    /// 也注明不含瓶装),而星盘(refs/sts_lightspeed/src/game/GameContext.cpp:1305-1316)自己拼 `canTransform()` 的候选、
     /// 不过这层;参考实现 events/lib.ts:193 的 removableIndices 排瓶装、relics/pickup.ts:56
     /// 的 transformableIndices 不排.act1 seed 12 的 living_wall 移除屏候选数差 1 就是这条.
     #[test]
@@ -8239,7 +8239,7 @@ mod tests {
         assert_eq!(r.player.relics.len(), base + 5, "第三个箱子只给一件");
     }
 
-    /// 开箱本身开出的套娃不算这一次的次数:原版 GameContext.cpp:1888-1892 的套娃结算
+    /// 开箱本身开出的套娃不算这一次的次数:原版 refs/sts_lightspeed/src/game/GameContext.cpp:1888-1892 的套娃结算
     /// 排在箱子遗物**之前**,此时玩家还没拿到套娃(charges 为 0),这一次只给一件;
     /// 拿到手后(charges=2)接下来两个箱子才各多给一件.
     #[test]

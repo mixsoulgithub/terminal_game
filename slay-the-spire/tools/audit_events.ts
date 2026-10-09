@@ -516,7 +516,7 @@ add({
   scenario: base({ actions: [{ op: "choose", i: 0 }, { op: "choose", i: 0 }, { op: "choose", i: 0 }, { op: "choose", i: 0 }, { op: "choose", i: 0 }] }),
   check: (r) => {
     const st = lastSt(r);
-    // 原版 Take 之后走 openCombatRewardScreen(反编译 GameContext.cpp:2558-2598),
+    // 原版 Take 之后走 openCombatRewardScreen(反编译 refs/sts_lightspeed/src/game/GameContext.cpp:2558-2598),
     // 遗物摆在奖励屏上、要点一下才到手
     const id = st.reward?.relic ?? null;
     return seq(
@@ -1413,11 +1413,11 @@ push("  - 多个'删牌/升级/变形'选项缺条件(无牌可选仍可点)→ 
 push("  - the_joust:金币 <50 仍可下注 → 加 req_gold 50");
 push("  - vampires:升级过的起始打击没被删 → 一并删");
 push("  - face_trader:10% 扣血的下限 1 点没生效 → hp_frac 也吃 hp_pct_min");
-push("  - cursed_tome 的 Take:遗物直接进包 → 改成摆进奖励屏(反编译 GameContext.cpp:2558-2598 走 openCombatRewardScreen);");
+push("  - cursed_tome 的 Take:遗物直接进包 → 改成摆进奖励屏(反编译 refs/sts_lightspeed/src/game/GameContext.cpp:2558-2598 走 openCombatRewardScreen);");
 push("    同轮补上死灵之书拾取时的死灵诅咒(Necronomicon.onEquip);三页中间屏去掉多余的第 2 项 Stop");
-push("    (反编译 GameAction.cpp:727-731 中间三屏的位掩码只有 Continue)");
+push("    (反编译 refs/sts_lightspeed/src/sim/search/GameAction.cpp:727-731 中间三屏的位掩码只有 Continue)");
 push("  - colosseum 第一场:按地图上的 SLAVERS 遭遇摆了三只(多一只巡回官)→ 改成蓝/红奴隶主两只");
-push("    (反编译 MonsterGroup.cpp:208-211 的 COLOSSEUM_EVENT_SLAVERS);");
+push("    (反编译 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211 的 COLOSSEUM_EVENT_SLAVERS);");
 push("  - wing_statue 的 Destroy:按'总伤'判定 → 改成按单次伤害(语料 deckHasAttackWithSingleHitDamageAtLeast)");
 push("");
 push("分类 (b) 无法测:");
@@ -1446,8 +1446,8 @@ push("  cursed_tome / colosseum / n'loth: 选项层与 corpus 一致;本轮按�
 push("    与死灵之书拾取诅咒、colosseum 第一场的阵容(见上 (a) 分类)。");
 push("  secret_portal: 一致(跳 Boss 房,800 秒门槛抽象为 speedrunPace)。");
 push("登记(本轮不改,附理由):");
-push("  [d] colosseum 整体在反编译里是 stub(GameContext.cpp:2554-2556, spawn 被 disableColosseum 关掉),");
-push("      只有第一场阵容(MonsterGroup.cpp:208-211)与第二场奖励(MonsterGroup/Events)有反编译依据;");
+push("  [d] colosseum 整体在反编译里是 stub(refs/sts_lightspeed/src/game/GameContext.cpp:2554-2556, spawn 被 disableColosseum 关掉),");
+push("      只有第一场阵容(refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211)与第二场奖励(MonsterGroup/Events)有反编译依据;");
 push("      其余流程按 wiki/corpus;");
 push("  [d] joust 赔率与掷点细节按 corpus(wiki)实现,反编译该事件的掷点语义未逐行核。");
 push("  [b] falling 的掷点时机:反编译在 onEnter 预选,本作在选项结算时删牌(牌与时机不同,结果集合一致)。");

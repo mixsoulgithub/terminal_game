@@ -1682,7 +1682,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Offer gold: lose ALL gold, obtain the Red Mask relic",
-                // 与 "Don the Red Mask" 互斥(反编译 GameAction.cpp:856-859:
+                // 与 "Don the Red Mask" 互斥(反编译 refs/sts_lightspeed/src/sim/search/GameAction.cpp:856-859:
                 // 有面具给 0b101,没有给 0b110)
                 req_no_relic: Some("red_mask"),
                 outcome: outcome!(
@@ -3387,7 +3387,7 @@ mod tests {
         r.choose_event(0).unwrap();
         assert_eq!(r.screen, Screen::Combat);
         let ids: Vec<&str> = r.combat().unwrap().enemies.iter().map(|e| e.def.id).collect();
-        assert_eq!(ids, ["blue_slaver", "red_slaver"], "第一场只有两只奴隶主(反编译 MonsterGroup.cpp:208-211)");
+        assert_eq!(ids, ["blue_slaver", "red_slaver"], "第一场只有两只奴隶主(反编译 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211)");
         r.debug_win_battle();
         // 胜利后要停留几帧才结算,这里直接把定格走完
         let mut guard = 0;
