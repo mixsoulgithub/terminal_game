@@ -11,10 +11,10 @@
 
 import { createRun, advance, type GameState, type Command } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/game.ts";
 import { buildBaseContentBundle } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/content/index.ts";
-import { seedToString } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rng.ts";
+import { Rng, seedToString, type RngState } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rng.ts";
 import { MAP_HEIGHT, MAP_WIDTH } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/mapGen.ts";
 import { buildEventScreen } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/eventRuntime.ts";
-import { restOptionAvailable } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/runFlow.ts";
+import { restOptionAvailable, resolveUnknownRoom } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/runFlow.ts";
 import { canSmith } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/rest.ts";
 import { readFileSync } from "node:fs";
 import { ActionQueue } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/queue.ts";
@@ -36,6 +36,16 @@ type Policy = {
   keys: boolean;
   /** 智能打牌(默认关).开了才走 smartPlay,不开还是 autoPlay */
   smart: boolean;
+  /** 调试钩子:开局直接切到第几幕(默认 1) */
+  act: number;
+  /** 调试钩子:切幕后先静默走到本章第几行(默认 0) */
+  floor: number;
+  /** 调试钩子:三把钥匙直接到手(keys all) */
+  keysAll: boolean;
+  /** 调试钩子:开局把生命与上限设成这个值(hp n);null = 不改 */
+  hp: number | null;
+  /** 调试钩子:把牌组整个换掉(deck strong);false = 不改 */
+  strongDeck: boolean;
 };
 
 function defaultPolicy(): Policy {
@@ -50,6 +60,11 @@ function defaultPolicy(): Policy {
     acts: 1,
     keys: false,
     smart: false,
+    act: 1,
+    floor: 0,
+    keysAll: false,
+    hp: null,
+    strongDeck: false,
   };
 }
 
@@ -65,7 +80,14 @@ function parsePolicy(text: string): Policy {
       case "event": p.event = Number(val); break;
       case "steps": p.maxSteps = Number(val); break;
       case "acts": p.acts = Math.max(1, Number(val)); break;
-      case "keys": p.keys = val === "on"; break;
+      case "act": p.act = Math.max(1, Number(val)); break;
+      case "floor": p.floor = Number(val); break;
+      case "hp": p.hp = Number(val); break;
+      case "deck": p.strongDeck = val === "strong"; break;
+      case "keys":
+        p.keys = val !== "off";
+        if (val === "all") p.keysAll = true;
+        break;
       case "smart": p.smart = val === "on"; break;
       case "reward": p.rewardTake = val === "take"; break;
       case "rest": p.rest = val === "smith" ? "smith" : "rest"; break;
@@ -77,6 +99,38 @@ function parsePolicy(text: string): Policy {
 }
 
 const bundle = buildBaseContentBundle();
+
+/** 调试钩子 `act n`:从当前幕切到第 n 幕开头.
+ *  借参考实现自己的幕切换 —— 先把房间换成"Boss 奖励屏",再 skipRewards,
+ *  runFlow 的 leaveRewards 就会调用它自己的 actTransition(与 Rust 侧 begin_act
+ *  是同一套掷点),这样两边的流位置一致. */
+function debugJumpAct(s: GameState): GameState {
+  const st = structuredClone(s);
+  st.run.room = { kind: "rewards", entries: [], source: "boss" };
+  return advance(st, { cmd: "skipRewards" }, bundle);
+}
+
+/** 调试钩子 `floor n`:丢掉 init 之后直到第一次走到第 n 行为止的输出,
+ *  再从头编号 step(init 仍是 0);最后一行 end 永远保留. */
+function trimToRow(lines: string[], row: number): string[] {
+  const last = lines.length - 1;
+  const kept = lines.filter((l, i) => {
+    if (i === 0 || i === last) return true;
+    const m = /"row":(\d+)/.exec(l);
+    return m ? Number(m[1]) >= row : false;
+  });
+  return kept.map((l, step) => {
+    if (!l.startsWith('{"step":')) return l;
+    return `{"step":${step}${l.slice(l.indexOf(","))}`;
+  });
+}
+
+/** 收尾:按 floor 裁剪后归一化名字,再拼成最终 JSONL. */
+function finish(out: string[], policy: Policy): string {
+  const trimmed = policy.floor > 0 ? trimToRow(out, policy.floor) : out;
+  return normalizeNames(trimmed.join("\n") + "\n");
+}
+
 
 // 只给 buildEventScreen 读用,不行使任何效果
 function scratchCtx(state: GameState): EffectCtx {
@@ -114,12 +168,16 @@ function stateJson(state: GameState): string {
 // 地图每格:{k,b,e};edges 按列号升序(两边一致)
 function mapJson(state: GameState): string {
   const map = state.run.map!;
+  // 第一到三幕的地图只有 0..14 行,Boss 是第 15 行上补出来的那一格;
+  // 第四幕的地图本来就把 Boss 摆在 rows 里(第 3 行),这时不再补行 15
+  // (本作 src/core/replay.rs 的 map_json 就是照 rows 原样印的).
+  const hasBossRow = map.rows.some((r) => r?.some((n) => n && n.kind === "boss"));
   const rows: string[] = [];
   for (let y = 0; y <= MAP_HEIGHT; y++) {
     const cells: string[] = [];
     for (let x = 0; x < MAP_WIDTH; x++) {
       if (y === MAP_HEIGHT) {
-        cells.push(x === 3 ? `{"k":"boss","b":0,"e":[]}` : "null");
+        cells.push(!hasBossRow && x === 3 ? `{"k":"boss","b":0,"e":[]}` : "null");
         continue;
       }
       const n = map.rows[y]![x];
@@ -420,10 +478,13 @@ function takeRewards(state: GameState, policy: Policy): { state: GameState; take
       }
     }
   }
-  const rank = (t: string): number =>
-    t === "gold" ? 0 : t === "relic" ? 1 : t === "boss_relic" ? 2 : t === "potion" ? 3 : t.startsWith("card") ? 4 : 5;
-  taken.sort((a, b) => rank(a) - rank(b));
+  taken.sort((a, b) => rewardRank(a) - rewardRank(b));
   return { state: s, taken };
+}
+
+/** 奖励条目的固定顺序:金币 → 遗物 → Boss 三选一 → 药水 → 卡牌 → 绿钥匙 */
+function rewardRank(t: string): number {
+  return t === "gold" ? 0 : t === "relic" ? 1 : t === "boss_relic" ? 2 : t === "potion" ? 3 : t.startsWith("card") ? 4 : 5;
 }
 
 function shopItems(state: GameState): string[] {
@@ -506,8 +567,311 @@ function normId(id: string): string {
   return (alias[head] ?? head) + tail;
 }
 
+// ---- 参考侧补掷:原版开战才定阵容的那些遭遇 ----
+//
+// 原版开战时才把阵容拼出来(MonsterGroup::createMonsters):先按 miscRng 抽签/掷变体
+// 挑怪,再逐只构造(构造从 monsterHpRng 掷血,虱子还顺带掷咬伤),连没被选上的候选
+// 也要构造、也要掷.参考实现把这些遭遇的阵容写成了固定名单
+// (refs/slay-the-cli/src/content/acts.ts 的 TODO(randomized lineups)),于是一个掷点
+// 都没消耗 —— 它的流位置从这里开始就跟原版错开,后面所有掷点全错.
+//
+// 这里照着原版的规则与顺序,用参考实现自己的 miscRng / monsterHpRng 把这些掷点补上,
+// 并且把补掷算出来的阵容连同血量/咬伤/卷曲交给参考侧去开战:参考侧的战斗引擎
+// (AI 选招、开局钩子、招式数值)照旧跑它自己的代码,我们只补它没做的那部分掷点.
+// 不补的话,参考侧就只是一把没有刻度的尺子.`--raw-ref` 关掉补偿,直接比原样的参考.
+//
+// 原版顺序(sts_lightspeed MonsterGroup.cpp):抽签/变体(全是 miscRng)→ 逐只构造
+// (monsterHpRng:先血,虱子再咬伤)→ 开战时 preBattle(虱子卷曲格挡).本作 Rust 侧的
+// 同一条顺序写在 src/core/enemies.rs 的 lineup 函数里,两边正好互相验证.
+
+/** 参考侧(大写)与本作(小写)叫法不同的那几只 */
+const REF_IDS: Record<string, string> = {
+  acid_slime_small: "ACID_SLIME_S",
+  acid_slime_medium: "ACID_SLIME_M",
+  acid_slime_large: "ACID_SLIME_L",
+  spike_slime_small: "SPIKE_SLIME_S",
+  spike_slime_medium: "SPIKE_SLIME_M",
+  spike_slime_large: "SPIKE_SLIME_L",
+};
+
+/** 参考侧的怪 id:除了上面那几只史莱姆的别名,其余就是本作 id 的大写 */
+function refId(ours: string): string {
+  const id = REF_IDS[ours] ?? ours.toUpperCase();
+  if (!bundle.monsters.has(id as never)) throw new Error(`参考实现里没有这只怪: ${ours}`);
+  return id;
+}
+
+/** 8 只小鬼(带重复),与小鬼团伙/头目抽签一致 */
+const GREMLIN_POOL = [
+  "mad_gremlin", "mad_gremlin",
+  "sneaky_gremlin", "sneaky_gremlin",
+  "fat_gremlin", "fat_gremlin",
+  "shield_gremlin", "gremlin_wizard",
+];
+/** 三种"形状"的 6 只池,每只两份 */
+const SHAPE_POOL = ["repulsor", "repulsor", "exploder", "exploder", "spiker", "spiker"];
+/** 球体守卫那场里两只形状的 3 选 1 池(放回) */
+const SHAPE3_POOL = ["spiker", "repulsor", "exploder"];
+/** 一堆史莱姆:3 尖刺小 + 2 酸小,抽完为止 */
+const LOTS_OF_SLIMES_POOL = [
+  "spike_slime_small", "spike_slime_small", "spike_slime_small",
+  "acid_slime_small", "acid_slime_small",
+];
+
+type Rolled = { ours: string; hp: number; bite: number | null };
+
+/** 补掷出来的阵容,以及补掷完的各流状态 */
+type LineupPlan = {
+  /** 参考侧 id(大写),顺序与原版一致 */
+  ids: string[];
+  hp: number[];
+  /** 虱子的咬伤(构造时掷),其余 null */
+  bite: (number | null)[];
+  /** 虱子开局的卷曲格挡(preBattle 掷),其余 null */
+  curl: (number | null)[];
+  /** 补掷完阵容抽签后的 miscRng */
+  miscAfter: RngState;
+  /** 补掷完阵容抽签与卷曲后的 monsterHpRng */
+  hpAfter: RngState;
+};
+
+function isLouse(id: string): boolean {
+  return id === "red_louse" || id === "green_louse";
+}
+
+/**
+ * 按原版规则把一场遭遇的阵容掷出来,顺带把补掷完的流状态交出来.
+ * encounterId 用参考侧的叫法(大写,见 refs/.../content/acts.ts;与本作的遭遇 id
+ * 有几处不同,例如参考的 THREE_LOUSE 对应本作的 three_louses、GREMLIN_LEADER
+ * 对应本作的 gremlin_leader_gang).不在补偿名单里的遭遇返回 null.
+ */
+function planLineup(encounterId: string, seed: bigint, floor: number, asc: number): LineupPlan | null {
+  // 开战这一刻 floor 流刚按 seed+floorNum 重新定种(原版与本作都一样),
+  // 所以补掷从计数器 0 开始 —— 这里拿两条定种后的流,而不是当前状态
+  const misc = new Rng(seed + BigInt(floor));
+  const hpRng = new Rng(seed + BigInt(floor));
+
+  // 构造一只:掷血;虱子再掷咬伤(原版构造时就连着掷).区间退化时不掷点(与本作的
+  // range_inclusive 一致,例如球体守卫 20/20)
+  const construct = (ours: string): Rolled => {
+    const def = bundle.monsters.get(refId(ours) as never);
+    if (!def) throw new Error(`参考实现里没有这只怪: ${ours}`);
+    const [lo, hi] = def.hp(asc);
+    const hp = hi <= lo ? lo : hpRng.randomRange(lo, hi);
+    const bite = isLouse(ours) ? hpRng.randomRange(5, 7) : null;
+    return { ours, hp, bite };
+  };
+
+  // 不放回地抽 n 个:misc.random(len-1),抽中的从池子里删掉
+  const draw = (pool: string[], n: number): string[] => {
+    const p = pool.slice();
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) out.push(p.splice(misc.random(p.length - 1), 1)[0]!);
+    return out;
+  };
+  const louse = (): string => (misc.randomBoolean() ? "red_louse" : "green_louse");
+  /** 先构造全部候选(候选的血也掷),再 miscRng 从 0..max 里选一只 */
+  const choose = (cands: Rolled[], max: number): Rolled => cands[misc.random(max)]!;
+
+  // Exordium 的"弱野生动物":虱子 / 尖刺中史莱姆 / 酸液中史莱姆
+  const weakWildlife = (): Rolled =>
+    choose([construct(louse()), construct("spike_slime_medium"), construct("acid_slime_medium")], 2);
+  // Exordium 的"强人形":邪教徒 / 奴贩(红蓝随机) / 劫掠者
+  const strongHumanoid = (): Rolled => {
+    const slaver = misc.randomBoolean() ? "red_slaver" : "blue_slaver";
+    return choose([construct("cultist"), construct(slaver), construct("looter")], 2);
+  };
+  // Exordium 的"强野生动物":真菌兽 / 颚虫
+  const strongWildlife = (): Rolled => choose([construct("fungi_beast"), construct("jaw_worm")], 1);
+
+  let rolled: Rolled[];
+  switch (encounterId) {
+    case "GREMLIN_GANG":
+      rolled = draw(GREMLIN_POOL, 4).map(construct);
+      break;
+    case "LOTS_OF_SLIMES":
+      rolled = draw(LOTS_OF_SLIMES_POOL, 5).map(construct);
+      break;
+    case "SMALL_SLIMES":
+      rolled = (misc.randomBoolean()
+        ? ["spike_slime_small", "acid_slime_medium"]
+        : ["acid_slime_small", "spike_slime_medium"]
+      ).map(construct);
+      break;
+    case "LARGE_SLIME":
+      rolled = [construct(misc.randomBoolean() ? "acid_slime_large" : "spike_slime_large")];
+      break;
+    case "TWO_LOUSE":
+      rolled = [construct(louse()), construct(louse())];
+      break;
+    case "THREE_LOUSE":
+      rolled = [construct(louse()), construct(louse()), construct(louse())];
+      break;
+    case "EXORDIUM_THUGS":
+      rolled = [weakWildlife(), strongHumanoid()];
+      break;
+    case "EXORDIUM_WILDLIFE":
+      rolled = [strongWildlife(), weakWildlife()];
+      break;
+    case "GREMLIN_LEADER":
+      // 两只小鬼各抽一只(有放回,允许重复),头目自己排在最后
+      rolled = [
+        construct(GREMLIN_POOL[misc.random(7)]!),
+        construct(GREMLIN_POOL[misc.random(7)]!),
+        construct("gremlin_leader"),
+      ];
+      break;
+    case "THREE_SHAPES":
+      rolled = draw(SHAPE_POOL, 3).map(construct);
+      break;
+    case "FOUR_SHAPES":
+      rolled = draw(SHAPE_POOL, 4).map(construct);
+      break;
+    case "SPHERE_AND_TWO_SHAPES":
+      // 两只形状放回地抽,球体守卫固定排最后
+      rolled = [
+        construct(SHAPE3_POOL[misc.random(2)]!),
+        construct(SHAPE3_POOL[misc.random(2)]!),
+        construct("spheric_guardian"),
+      ];
+      break;
+    default:
+      return null;
+  }
+  const ids = rolled.map((r) => refId(r.ours));
+
+  const miscAfter = misc.saveState();
+  // 开局卷曲:每只虱子一次(原版 preBattle,槽位顺序)
+  const curl: (number | null)[] = rolled.map((r) => (isLouse(r.ours) ? hpRng.randomRange(3, 7) : null));
+  const hpAfter = hpRng.saveState();
+
+  return { ids, hp: rolled.map((r) => r.hp), bite: rolled.map((r) => r.bite), curl, miscAfter, hpAfter };
+}
+
+/** 补偿开关(--raw-ref 关掉) */
+let COMPENSATE = true;
+
+/** 把补掷出来的阵容写进参考侧的遭遇表,好让它按这个阵容开战 */
+function injectLineup(act: number, encounterId: string, ids: string[]): void {
+  const actDef = bundle.acts.find((a) => a.act === act);
+  if (!actDef) throw new Error(`参考实现没有第 ${act} 幕`);
+  const table = [
+    ...actDef.weakEncounters,
+    ...actDef.strongEncounters,
+    ...actDef.elites,
+    ...(actDef.bossEncounters ?? []),
+  ] as unknown as { id: string; monsters: string[] }[];
+  let hit = false;
+  for (const e of table) {
+    if (e.id === encounterId) {
+      e.monsters = ids.slice();
+      hit = true;
+    }
+  }
+  if (!hit) throw new Error(`参考实现的第 ${act} 幕里没有遭遇 ${encounterId}`);
+}
+
+/** 猜这一格要打哪一场:未知房要按参考实现自己的未知房规则先解析 */
+function encounterAt(state: GameState, x: number, y: number): string | null {
+  const run = state.run;
+  if (run.act === 4) return null; // 第四幕固定阵容
+  let kind: string = y === MAP_HEIGHT ? "boss" : run.map!.rows[y]![x]!.kind;
+  if (kind === "unknown") {
+    // 只借掷点、不动真状态:run 深拷一份,eventRng 用一份新的注册表
+    const runClone = structuredClone(run);
+    const ctx: EffectCtx = {
+      run: runClone,
+      combat: null,
+      queue: new ActionQueue(),
+      bundle,
+      rt: { pending: null, currentItem: null, combatOver: null },
+      rng: (s) => RngRegistry.fromState(state.rng).get(s),
+      asc: run.ascension,
+      emit: () => {},
+      requestChoice: () => {},
+    };
+    kind = resolveUnknownRoom(ctx);
+  }
+  if (kind === "monster") return run.pools.monsterList[0] ?? null;
+  if (kind === "elite") return run.pools.eliteList[0] ?? null;
+  if (kind === "boss") return run.map!.bossId;
+  return null;
+}
+
+/**
+ * 补掷出来的血量/咬伤/卷曲,按 id 排成队列,开战期间顶替参考侧自己的那几次掷点.
+ *
+ * 参考侧开战时会按槽位顺序自己掷点(hp 一只一次;虱子的 preBattle 再掷咬伤+卷曲),
+ * 掷出来的值跟原版不是一回事(原版是在构造候选时就掷的).这里把 def 的 hp()/preBattle()
+ * 临时接过来,让它们按槽位顺序吐出补掷出来的值:于是参考侧的战斗引擎(开局钩子、
+ * 水银沙漏那类开局掉血、燃烧精英的加成)全都照旧作用在"正确的那份血"上,
+ * 不用我们事后去猜它被改成了多少.同一个 id 出现多只时队列按槽位先后对上.
+ *
+ * 返回还原函数:开战一结束就还原(召唤出来的同类怪要掷自己的血).
+ */
+function stagePlan(plan: LineupPlan): () => void {
+  const hpQueue: Record<string, number[]> = {};
+  const biteQueue: Record<string, number[]> = {};
+  const curlQueue: Record<string, number[]> = {};
+  plan.ids.forEach((id, i) => {
+    (hpQueue[id] ??= []).push(plan.hp[i]!);
+    if (plan.bite[i] !== null) (biteQueue[id] ??= []).push(plan.bite[i]!);
+    if (plan.curl[i] !== null) (curlQueue[id] ??= []).push(plan.curl[i]!);
+  });
+  const restore: (() => void)[] = [];
+  for (const id of Object.keys(hpQueue)) {
+    const def = bundle.monsters.get(id as never) as unknown as {
+      hp: (asc: number) => [number, number];
+      preBattle?: (ctx: EffectCtx, self: MonsterState) => void;
+    };
+    const hp = def.hp;
+    const queue = hpQueue[id]!;
+    // 退化区间:randomRange(v, v) 照样记一次掷点,但一定吐 v
+    def.hp = (): [number, number] => {
+      const v = queue.shift();
+      if (v === undefined) throw new Error(`${id} 的血量队列空了`);
+      return [v, v];
+    };
+    restore.push(() => {
+      def.hp = hp;
+    });
+    const bites = biteQueue[id];
+    if (!bites) continue;
+    const curls = curlQueue[id]!;
+    const preBattle = def.preBattle;
+    def.preBattle = (ctx, self): void => {
+      preBattle?.(ctx, self);
+      self.data.biteDamage = bites.shift();
+      const curl = self.powers.find((x) => x.id === "CURL_UP");
+      if (curl) curl.amount = curls.shift()!;
+    };
+    restore.push(() => {
+      def.preBattle = preBattle;
+    });
+  }
+  return (): void => {
+    for (const f of restore) f();
+  };
+}
+
+/** 补掷完开战:把两条流推到原版该在的位置(参考侧自己消耗的那些不再算数) */
+function fixStreams(state: GameState, plan: LineupPlan): void {
+  state.rng.floor.miscRng = plan.miscAfter;
+  state.rng.floor.monsterHpRng = plan.hpAfter;
+}
+
 export function replayRefl(seedStr: string, policy: Policy): string {
   let s: GameState = createRun({ seed: seedStr, bundle, character: "IRONCLAD" });
+  // 调试钩子:先给钥匙(会影响切幕时地图标不标燃烧精英),再切幕(与 Rust 侧同序)
+  if (policy.keysAll) s.run.keys = { emerald: true, ruby: true, sapphire: true };
+  if (policy.hp !== null) {
+    s.run.maxHp = policy.hp;
+    s.run.hp = policy.hp;
+  }
+  if (policy.strongDeck) {
+    s.run.deck = Array.from({ length: 10 }, () => ({ defId: "BLUDGEON", upgrades: 1, misc: 0, bottled: false }));
+  }
+  for (let i = 1; i < policy.act; i++) s = debugJumpAct(s);
   const out: string[] = [];
   let step = 0;
   let combatKind = "monster";
@@ -545,10 +909,20 @@ export function replayRefl(seedStr: string, policy: Policy): string {
       case "map": {
         const target = nextNode(s);
         const from = s.run.position === null ? "null" : `[${s.run.position[0]},${s.run.position[1]}]`;
-        const node = s.run.position !== null && target.y !== MAP_HEIGHT
-          ? s.run.map!.rows[target.y]![target.x]!.kind
-          : (target.y === MAP_HEIGHT ? "boss" : "monster");
+        const node = target.y === MAP_HEIGHT
+          ? "boss"
+          : s.run.map!.rows[target.y]![target.x]!.kind;
+        // 开战前先把原版该掷的阵容掷出来:补上参考实现漏掉的掷点,并把阵容交给它
+        const encId = COMPENSATE ? encounterAt(s, target.x, target.y) : null;
+        const plan = encId ? planLineup(encId, BigInt(s.rng.seed), s.run.floor + 1, s.run.ascension) : null;
+        let unstaged: (() => void) | null = null;
+        if (plan && encId) {
+          injectLineup(s.run.act, encId, plan.ids);
+          unstaged = stagePlan(plan);
+        }
         s = advance(s, { cmd: "mapPick", x: target.x, y: target.y }, bundle);
+        unstaged?.();
+        if (plan) fixStreams(s, plan);
         const resolved = roomKindAfter(s);
         if (s.run.room?.kind === "combat") combatKind = resolved;
         let payload =
@@ -576,9 +950,23 @@ export function replayRefl(seedStr: string, policy: Policy): string {
         const entries = rewardEntries(s);
         let taken: string[] = [];
         if (policy.rewardTake) {
-          const res = takeRewards(s, policy);
-          s = res.state;
-          taken = res.taken;
+          // 拿遗物会挂起一个选牌(瓶装/浑天仪那类):先出 pick 行选完,
+          // 再回来接着拿剩下的奖励(本作 src/core/replay.rs 的奖励分支同序)
+          for (let guard = 0; guard < 8; guard++) {
+            const res = takeRewards(s, policy);
+            s = res.state;
+            taken.push(...res.taken);
+            if (!s.pending) break;
+            while (s.pending) {
+              const req = s.pending.request;
+              const n = req.kind === "cards" ? req.iids.length : 0;
+              const sel = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
+              s = advance(s, { cmd: "choose", indices: sel }, bundle);
+              out.push(line(step, "pick", `"candidates":${n},"pick":0`, stateJson(s)));
+              step += 1;
+            }
+          }
+          taken.sort((a, b) => rewardRank(a) - rewardRank(b));
         }
         const payload = `"source":${JSON.stringify(source)},"entries":[${entries.join(",")}],"taken":[${taken.map((v) => JSON.stringify(v)).join(",")}]`;
         if (isBoss) {
@@ -587,7 +975,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
           // 到了策略允许的最后一幕就在这里收尾;否则离开奖励屏去下一幕
           if (s.run.act >= policy.acts) {
             out.push(line(step, "end", `"result":"boss"`, stateJson(s)));
-            return normalizeNames(out.join("\n") + "\n");
+            return finish(out, policy);
           }
           s = advance(s, { cmd: "skipRewards" }, bundle);
           break;
@@ -667,22 +1055,25 @@ export function replayRefl(seedStr: string, policy: Policy): string {
       }
       case "gameOver":
         out.push(line(step, "end", `"result":${JSON.stringify(room.victory ? "victory" : "death")}`, stateJson(s)));
-        return normalizeNames(out.join("\n") + "\n");
+        return finish(out, policy);
     }
     if (s.outcome) {
       out.push(line(step, "end", `"result":${JSON.stringify(s.outcome.kind)}`, stateJson(s)));
-      return normalizeNames(out.join("\n") + "\n");
+      return finish(out, policy);
     }
   }
   throw new Error(`走了 ${policy.maxSteps} 步还没到 Boss 奖励`);
 }
 
 if (import.meta.main) {
-  // 用法与 spire --replay 对齐:`--script <file>` 可选,也可以直接给位置参数
-  const args = process.argv.slice(2).filter((a) => a !== "--script");
+  // 用法与 spire --replay 对齐:`--script <file>` 可选,也可以直接给位置参数.
+  // 默认按原版补掷(`--raw-ref` 关掉,直接比原样的参考实现)
+  const raw = process.argv.includes("--raw-ref");
+  COMPENSATE = !raw;
+  const args = process.argv.slice(2).filter((a) => a !== "--script" && a !== "--raw-ref");
   const seedArg = args[0];
   if (!seedArg) {
-    console.error("usage: bun tools/replay_ref.ts <seed> [script]");
+    console.error("usage: bun tools/replay_ref.ts <seed> [script] [--raw-ref]");
     process.exit(2);
   }
   const scriptPath = args[1];

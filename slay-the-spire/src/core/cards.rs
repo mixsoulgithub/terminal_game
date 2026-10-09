@@ -19,6 +19,22 @@ macro_rules! up {
     };
 }
 
+/// 升级后变为 Innate 的写法(暴戾).
+macro_rules! up_innate {
+    ($cost:expr, $text:expr, [$($e:expr),* $(,)?]) => {
+        Some(CardUpgrade {
+            cost: $cost,
+            text: $text,
+            effects: Some(&[$($e),*]),
+            exhaust: None,
+            retain: None,
+            ethereal: None,
+            innate: Some(true),
+            on_end_turn: None,
+        })
+    };
+}
+
 /// 升级后不再 Exhaust 的写法(秘密技巧/秘密武器/先想后做).
 macro_rules! up_no_exhaust {
     ($cost:expr, $text:expr, [$($e:expr),* $(,)?]) => {
@@ -524,14 +540,14 @@ pub static CARDS: &[CardDef] = &[
         in_hand: &[],
         effects: &[
             Effect::Damage { amount: 6, times: 1 },
-            Effect::AddCardToDiscard { id: "anger", n: 1 },
+            Effect::AddSelfToDiscard { n: 1 },
         ],
         upgrade: up!(
             None,
             "Deal 8 damage. Add a copy of this card into your discard pile.",
             [
                 Effect::Damage { amount: 8, times: 1 },
-                Effect::AddCardToDiscard { id: "anger", n: 1 }
+                Effect::AddSelfToDiscard { n: 1 }
             ]
         ),
     },
@@ -996,10 +1012,10 @@ pub static CARDS: &[CardDef] = &[
         }],
         upgrade: up!(
             None,
-            "Deal 18 damage. Strength affects this card 3 times.",
+            "Deal 14 damage. Strength affects this card 5 times.",
             [Effect::DamageStrengthMult {
-                amount: 18,
-                mult: 3
+                amount: 14,
+                mult: 5
             }]
         ),
     },
@@ -1736,9 +1752,9 @@ pub static CARDS: &[CardDef] = &[
         on_end_turn: &[],
         in_hand: &[],
         effects: &[Effect::DoubleSelfStatus(Status::Strength)],
-        upgrade: up!(
-            Some(Cost::Fixed(0)),
-            "Exhaust. Double your Strength. Costs 0.",
+        upgrade: up_no_exhaust!(
+            None,
+            "Double your Strength. No longer Exhausts.",
             [Effect::DoubleSelfStatus(Status::Strength)]
         ),
     },
@@ -1766,11 +1782,11 @@ pub static CARDS: &[CardDef] = &[
         ],
         upgrade: up!(
             None,
-            "Exhaust. Lose 5 HP. Gain (2). Draw 3 cards.",
+            "Exhaust. Lose 6 HP. Gain (2). Draw 5 cards.",
             [
-                Effect::LoseHp { amount: 5 },
+                Effect::LoseHp { amount: 6 },
                 Effect::GainEnergy { n: 2 },
-                Effect::Draw { n: 3 }
+                Effect::Draw { n: 5 }
             ]
         ),
     },
@@ -1819,12 +1835,12 @@ pub static CARDS: &[CardDef] = &[
             status: Status::Brutality,
             n: 1,
         }],
-        upgrade: up!(
+        upgrade: up_innate!(
             None,
-            "At the start of your turn, lose 1 HP and draw 2 cards.",
+            "Innate. At the start of your turn, lose 1 HP and draw 1 card.",
             [Effect::AddSelfStatus {
                 status: Status::Brutality,
-                n: 2
+                n: 1
             }]
         ),
     },
@@ -2313,8 +2329,9 @@ pub static CARDS: &[CardDef] = &[
         on_draw: &[],
         on_end_turn: &[],
         in_hand: &[],
-        effects: &[Effect::Draw { n: 2 }, Effect::ExhaustFromHand],
-        upgrade: up!(None, "Exhaust a card. Draw 3 cards.", [Effect::Draw { n: 3 }, Effect::ExhaustFromHand]),
+        // 卡面顺序就是结算顺序:先消耗一张,再抽(选完牌才轮得到抽)
+        effects: &[Effect::ExhaustFromHand, Effect::Draw { n: 2 }],
+        upgrade: up!(None, "Exhaust a card. Draw 3 cards.", [Effect::ExhaustFromHand, Effect::Draw { n: 3 }]),
     },
     CardDef {
         id: "warcry",
@@ -3849,8 +3866,14 @@ mod tests {
             let on_end_turn_changed = u
                 .on_end_turn
                 .map_or(false, |e| !std::ptr::eq(e, c.on_end_turn));
+            // 只改 Innate 的(暴戾+:效果数值不变,升级只是变成 Innate)
+            let innate_changed = u.innate.map_or(false, |i| i != c.innate);
             assert!(
-                up_effects != c.effects || cost_changed || exhaust_changed || on_end_turn_changed,
+                up_effects != c.effects
+                    || cost_changed
+                    || exhaust_changed
+                    || on_end_turn_changed
+                    || innate_changed,
                 "{} 的升级没有任何变化",
                 c.id
             );
@@ -3910,17 +3933,15 @@ mod tests {
                         e,
                         Effect::AddCardToDraw { .. }
                             | Effect::AddCardToDiscard { .. }
+                            | Effect::AddSelfToDiscard { .. }
                     )
                 })
             })
             .count();
         assert!(adders >= 2, "只有 {adders} 张牌会往牌堆塞牌");
-        // Anger 的复制目标必须是它自己.
+        // Anger 的复制目标必须是它自己(而且副本要照抄升级数).
         let anger = card_def("anger").unwrap();
-        assert!(anger.effects.contains(&Effect::AddCardToDiscard {
-            id: "anger",
-            n: 1
-        }));
+        assert!(anger.effects.contains(&Effect::AddSelfToDiscard { n: 1 }));
     }
 
     /// 一张牌基础 + 升级用到的所有效果

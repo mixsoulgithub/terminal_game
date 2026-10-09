@@ -199,6 +199,8 @@ pub enum Effect {
     LoseHpPerHandCard,
     /// 在抽牌堆顶放一张自己的副本(傲慢)
     CopySelfToDrawTop,
+    /// 往弃牌堆塞 n 张自己的副本(愤怒;副本照抄升级数)
+    AddSelfToDiscard { n: u8 },
     /// 被消耗时回到手牌(死灵诅咒)
     SelfToHandOnExhaust,
     /// 手里有这张牌时,别的牌被打出就掉 amount 点生命(痛苦)

@@ -3208,6 +3208,28 @@ mod tests {
     }
 
     #[test]
+    fn falling_never_takes_a_bottled_card() {
+        let mut r = Run::new(44);
+        // 把牌组里的技能牌全封进瓶子:原版"坠落"不夺瓶装牌(参考实现没做这条)
+        for c in r.player.deck.iter_mut() {
+            if c.kind() == CardType::Skill {
+                c.bottled = true;
+            }
+        }
+        let def = event_def("falling").unwrap();
+        open(&mut r, def);
+        let before = r.player.deck.len();
+        r.choose_event(0).unwrap();
+        assert_eq!(r.player.deck.len(), before, "瓶装技能牌不该被夺走");
+        assert!(
+            r.player.deck
+                .iter()
+                .all(|c| c.kind() != CardType::Skill || c.bottled),
+            "技能牌一张都不该少"
+        );
+    }
+
+    #[test]
     fn we_meet_again_needs_a_potion_for_the_potion_trade() {
         // 药水格在进房时(参考实现 onEnter)就定好了,所以要先带着药水进事件
         let mut r = Run::new(43);

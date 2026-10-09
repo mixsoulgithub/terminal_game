@@ -4,9 +4,9 @@ pub mod act1;
 pub mod act2;
 pub mod act34;
 
-use crate::core::enemy::{Encounter, EnemyDef, EnemyKind, EnemyPreset};
+use crate::core::enemy::{Encounter, EnemyDef, EnemyKind, EnemyPreset, Spawned};
 use crate::core::status::Status;
-use crate::rng::Rng;
+use crate::rng::{FloorStream, Rng, RngRegistry};
 
 /// 本作实现的全部怪物(按 act1 / act2 / act3+4 的顺序)
 pub static ENEMIES: &[EnemyDef] = &[
@@ -77,6 +77,175 @@ pub static ENEMIES: &[EnemyDef] = &[
     act34::CORRUPT_HEART,
 ];
 
+// ---- 开战阵容抽签(原版 sts_lightspeed MonsterGroup.cpp) ----
+// 原版在开战时才把阵容拼出来:先按 miscRng 抽签挑怪,再构造怪物(构造会从
+// monsterHpRng 掷血,连没被选上的候选也掷).所以这里的抽签函数要自己把血掷好,
+// 顺便把候选的流都烧掉,引擎不再按槽位补掷.
+
+/// 虱子的咬伤(构造时就和血量一起掷,5..7)
+fn construct(rng: &mut RngRegistry, id: &'static str) -> Spawned {
+    let def = enemy_def_or_panic(id);
+    let hp = rng
+        .floor(FloorStream::MonsterHpRng)
+        .range_inclusive(def.hp.0, def.hp.1);
+    let rolled = match id {
+        "red_louse" | "green_louse" => {
+            Some(rng.floor(FloorStream::MonsterHpRng).range_inclusive(5, 7))
+        }
+        _ => None,
+    };
+    Spawned { id, hp, rolled }
+}
+
+/// 从池子里不放回地抽 n 个 id:每抽一只就把它从池子里删掉.
+/// 原版就是 miscRng.random(lastIdx),lastIdx 依次是 len-1、len-2……
+fn draw_without_replacement(
+    rng: &mut Rng,
+    pool: &[&'static str],
+    n: usize,
+) -> Vec<&'static str> {
+    let mut pool = pool.to_vec();
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let i = rng.random(pool.len() as u32 - 1) as usize;
+        out.push(pool.remove(i));
+    }
+    out
+}
+
+/// 抽签后按原版构造顺序掷血(池子里的每一只,含没被选上的候选)
+fn construct_all(rng: &mut RngRegistry, ids: Vec<&'static str>) -> Vec<Spawned> {
+    ids.into_iter().map(|id| construct(rng, id)).collect()
+}
+
+/// 虱子颜色:红绿五五开(原版 getLouse)
+fn get_louse(rng: &mut RngRegistry) -> &'static str {
+    if rng.floor(FloorStream::MiscRng).random_boolean() {
+        "red_louse"
+    } else {
+        "green_louse"
+    }
+}
+
+/// 奴贩颜色:红蓝五五开(原版 getSlaver)
+fn get_slaver(rng: &mut RngRegistry) -> &'static str {
+    if rng.floor(FloorStream::MiscRng).random_boolean() {
+        "red_slaver"
+    } else {
+        "blue_slaver"
+    }
+}
+
+/// 小鬼团伙(GREMLIN_GANG):从 8 只池里不放回抽 4 只(原版 createMonsters)
+fn gremlin_gang_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    let ids = draw_without_replacement(rng.floor(FloorStream::MiscRng), act2::GREMLIN_POOL, 4);
+    construct_all(rng, ids)
+}
+
+/// 小史莱姆(SMALL_SLIMES):五五开两种组合,都是 2 只
+fn small_slimes_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    let ids: Vec<&'static str> = if rng.floor(FloorStream::MiscRng).random_boolean() {
+        vec!["spike_slime_small", "acid_slime_medium"]
+    } else {
+        vec!["acid_slime_small", "spike_slime_medium"]
+    };
+    construct_all(rng, ids)
+}
+
+/// 一堆史莱姆(LOTS_OF_SLIMES):5 只的池(3 尖刺小 + 2 酸小)全不放回抽完
+fn lots_of_slimes_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    const POOL: [&str; 5] = [
+        "spike_slime_small",
+        "spike_slime_small",
+        "spike_slime_small",
+        "acid_slime_small",
+        "acid_slime_small",
+    ];
+    let ids = draw_without_replacement(rng.floor(FloorStream::MiscRng), &POOL, 5);
+    construct_all(rng, ids)
+}
+
+/// 大史莱姆(LARGE_SLIME):酸/尖刺五五开.分裂产物跟着这个选择走(见 act1 的 special)
+fn large_slime_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    let id = if rng.floor(FloorStream::MiscRng).random_boolean() {
+        "acid_slime_large"
+    } else {
+        "spike_slime_large"
+    };
+    vec![construct(rng, id)]
+}
+
+/// 两只/三只虱子:每只独立掷红绿
+fn louses_lineup(rng: &mut RngRegistry, n: usize) -> Vec<Spawned> {
+    (0..n)
+        .map(|_| {
+            let id = get_louse(rng);
+            construct(rng, id)
+        })
+        .collect()
+}
+
+fn two_louses_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    louses_lineup(rng, 2)
+}
+
+fn three_louses_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    louses_lineup(rng, 3)
+}
+
+/// Exordium 的"弱野生动物":虱子 / 尖刺中史莱姆 / 酸液中史莱姆,三选一.
+/// 原版先把三只都构造出来(血和咬伤都掷了)再抽签
+fn weak_wildlife(rng: &mut RngRegistry) -> Spawned {
+    let louse = get_louse(rng);
+    let cands = [
+        construct(rng, louse),
+        construct(rng, "spike_slime_medium"),
+        construct(rng, "acid_slime_medium"),
+    ];
+    let i = rng.floor(FloorStream::MiscRng).random(2) as usize;
+    cands[i]
+}
+
+/// Exordium 的"强人形":邪教徒 / 奴贩(红蓝随机) / 劫掠者,三选一(原版也是先构造后抽)
+fn strong_humanoid(rng: &mut RngRegistry) -> Spawned {
+    let slaver = get_slaver(rng);
+    let cands = [
+        construct(rng, "cultist"),
+        construct(rng, slaver),
+        construct(rng, "looter"),
+    ];
+    let i = rng.floor(FloorStream::MiscRng).random(2) as usize;
+    cands[i]
+}
+
+/// Exordium 的"强野生动物":真菌兽 / 颚虫,二选一
+fn strong_wildlife(rng: &mut RngRegistry) -> Spawned {
+    let cands = [construct(rng, "fungi_beast"), construct(rng, "jaw_worm")];
+    let i = rng.floor(FloorStream::MiscRng).random(1) as usize;
+    cands[i]
+}
+
+/// Exordium Thugs:先弱野生动物,再强人形
+fn exordium_thugs_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    vec![weak_wildlife(rng), strong_humanoid(rng)]
+}
+
+/// Exordium Wildlife:先强野生动物,再弱野生动物
+fn exordium_wildlife_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    vec![strong_wildlife(rng), weak_wildlife(rng)]
+}
+
+/// 小鬼头目的开战小鬼:从 8 只池里各抽一只(有放回,允许两只一样),头目自己排在最后
+fn gremlin_leader_gang_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    let mut out = Vec::with_capacity(3);
+    for _ in 0..2 {
+        let i = rng.floor(FloorStream::MiscRng).random(7) as usize;
+        out.push(construct(rng, act2::GREMLIN_POOL[i]));
+    }
+    out.push(construct(rng, "gremlin_leader"));
+    out
+}
+
 /// 前三层用的弱遭遇
 pub static ENCOUNTERS_WEAK: &[Encounter] = &[
     Encounter {
@@ -94,13 +263,17 @@ pub static ENCOUNTERS_WEAK: &[Encounter] = &[
     Encounter {
         id: "two_louses",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局按 two_louses_lineup 掷红绿
         enemies: &["red_louse", "green_louse"],
+        lineup: Some(two_louses_lineup),
         ..Encounter::PLAIN
     },
     Encounter {
         id: "small_slimes",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局按 small_slimes_lineup 掷大小/酸刺组合
         enemies: &["spike_slime_small", "acid_slime_medium"],
+        lineup: Some(small_slimes_lineup),
         ..Encounter::PLAIN
     },
 ];
@@ -109,12 +282,14 @@ pub static ENCOUNTERS: &[Encounter] = &[
     Encounter {
         id: "gremlin_gang",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局从 8 只池里不放回抽 4 只
         enemies: &[
             "mad_gremlin",
             "sneaky_gremlin",
             "fat_gremlin",
             "shield_gremlin",
         ],
+        lineup: Some(gremlin_gang_lineup),
         weight: 2,
         ..Encounter::PLAIN
     },
@@ -133,6 +308,7 @@ pub static ENCOUNTERS: &[Encounter] = &[
     Encounter {
         id: "lots_of_slimes",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局把 5 只的池(3 尖刺小 + 2 酸小)全不放回抽完
         enemies: &[
             "spike_slime_small",
             "spike_slime_small",
@@ -140,6 +316,7 @@ pub static ENCOUNTERS: &[Encounter] = &[
             "acid_slime_small",
             "acid_slime_small",
         ],
+        lineup: Some(lots_of_slimes_lineup),
         weight: 2,
         ..Encounter::PLAIN
     },
@@ -153,14 +330,18 @@ pub static ENCOUNTERS: &[Encounter] = &[
     Encounter {
         id: "exordium_thugs",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局抽弱野生动物 + 强人形
         enemies: &["red_louse", "blue_slaver"],
+        lineup: Some(exordium_thugs_lineup),
         weight: 3,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "exordium_wildlife",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局抽强野生动物 + 弱野生动物
         enemies: &["fungi_beast", "jaw_worm"],
+        lineup: Some(exordium_wildlife_lineup),
         weight: 3,
         ..Encounter::PLAIN
     },
@@ -181,14 +362,18 @@ pub static ENCOUNTERS: &[Encounter] = &[
     Encounter {
         id: "large_slime",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局酸/尖刺五五开(分裂产物跟着走)
         enemies: &["acid_slime_large"],
+        lineup: Some(large_slime_lineup),
         weight: 4,
         ..Encounter::PLAIN
     },
     Encounter {
         id: "three_louses",
         kind: EnemyKind::Normal,
+        // 代表阵容;真正开局每只独立掷红绿
         enemies: &["red_louse", "green_louse", "red_louse"],
+        lineup: Some(three_louses_lineup),
         weight: 4,
         ..Encounter::PLAIN
     },
@@ -358,7 +543,9 @@ pub static ACT2_ELITES: &[Encounter] = &[
     Encounter {
         id: "gremlin_leader_gang",
         kind: EnemyKind::Elite,
+        // 代表阵容;真正开局从 8 只池里各抽一只小鬼,头目固定
         enemies: &["mad_gremlin", "sneaky_gremlin", "gremlin_leader"],
+        lineup: Some(gremlin_leader_gang_lineup),
         presets: GREMLIN_LEADER_PRESETS,
         ..Encounter::PLAIN
     },
@@ -397,7 +584,7 @@ pub static ACT2_BOSSES: &[Encounter] = &[
     },
 ];
 
-/// 三种"形状"遭遇的抽签池:参考实现从这 6 个里不放回地抽(每种最多两只)
+/// 三种"形状"遭遇的抽签池:原版从这 6 个里不放回地抽(每种最多两只)
 const SHAPE_POOL: [&str; 6] = [
     "repulsor",
     "repulsor",
@@ -407,34 +594,29 @@ const SHAPE_POOL: [&str; 6] = [
     "spiker",
 ];
 
-/// 不放回地抽 n 只形状:每抽一只就把它从池子里删掉
-/// (参考实现里就是 miscRng.random(lastIdx),lastIdx 依次是 5、4、3、2)
-fn draw_shapes(rng: &mut Rng, n: usize) -> Vec<&'static str> {
-    let mut pool = SHAPE_POOL.to_vec();
-    let mut out = Vec::with_capacity(n);
-    for _ in 0..n {
-        let i = rng.range_inclusive(0, pool.len() as i32 - 1) as usize;
-        out.push(pool.remove(i));
-    }
-    out
+/// 不放回地抽 n 只形状再构造(原版 miscRng.random(lastIdx),lastIdx 依次是 5、4、3、2)
+fn shapes_lineup(rng: &mut RngRegistry, n: usize) -> Vec<Spawned> {
+    let ids = draw_without_replacement(rng.floor(FloorStream::MiscRng), &SHAPE_POOL, n);
+    construct_all(rng, ids)
 }
 
-fn three_shapes_lineup(rng: &mut Rng) -> Vec<&'static str> {
-    draw_shapes(rng, 3)
+fn three_shapes_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    shapes_lineup(rng, 3)
 }
 
-fn four_shapes_lineup(rng: &mut Rng) -> Vec<&'static str> {
-    draw_shapes(rng, 4)
+fn four_shapes_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
+    shapes_lineup(rng, 4)
 }
 
 /// 两只形状放回地抽(池子只有三种),球体守卫固定排在最后
-fn sphere_and_two_shapes_lineup(rng: &mut Rng) -> Vec<&'static str> {
+fn sphere_and_two_shapes_lineup(rng: &mut RngRegistry) -> Vec<Spawned> {
     const POOL: [&str; 3] = ["spiker", "repulsor", "exploder"];
     let mut out = Vec::with_capacity(3);
     for _ in 0..2 {
-        out.push(POOL[rng.range_inclusive(0, 2) as usize]);
+        let i = rng.floor(FloorStream::MiscRng).random(2) as usize;
+        out.push(construct(rng, POOL[i]));
     }
-    out.push("spheric_guardian");
+    out.push(construct(rng, "spheric_guardian"));
     out
 }
 
@@ -979,10 +1161,21 @@ mod tests {
         );
     }
 
-    /// 按遭遇自带的抽签规则抽一次阵容
+    /// 按遭遇自带的抽签规则抽一次阵容(只取 id,血量另测)
     fn lineup(enc: &Encounter, seed: u64) -> Vec<&'static str> {
         let roll = enc.lineup.expect("这个遭遇没有抽签规则");
-        roll(&mut Rng::new(seed))
+        let mut reg = RngRegistry::new(seed);
+        roll(&mut reg).into_iter().map(|s| s.id).collect()
+    }
+
+    /// 抽一次阵容,连血量带流计数一起交出来
+    fn lineup_full(enc: &Encounter, seed: u64) -> (Vec<Spawned>, u32, u32) {
+        let roll = enc.lineup.expect("这个遭遇没有抽签规则");
+        let mut reg = RngRegistry::new(seed);
+        let roster = roll(&mut reg);
+        let hp_calls = reg.floor(FloorStream::MonsterHpRng).counter();
+        let misc_calls = reg.floor(FloorStream::MiscRng).counter();
+        (roster, hp_calls, misc_calls)
     }
 
     fn encounter_with_id(id: &str) -> &'static Encounter {
@@ -1078,6 +1271,171 @@ mod tests {
             seen.contains(&("spiker", "spiker")) || seen.contains(&("exploder", "exploder")),
             "放回地抽应该出现过两只同种"
         );
+    }
+
+    /// 抽签后的掷点流次数:原版构造怪物组时各条流各掷几次.
+    /// 这些数字照 sts_lightspeed MonsterGroup::createMonsters 数出来,错一个就流错位
+    #[test]
+    fn lineups_consume_the_same_rolls_as_the_original() {
+        // (遭遇, miscRng 掷点数, monsterHpRng 掷点数)
+        let cases: &[(&str, u32, u32)] = &[
+            ("gremlin_gang", 4, 4),
+            ("lots_of_slimes", 5, 5),
+            ("small_slimes", 1, 2),
+            ("large_slime", 1, 1),
+            // 每只虱子:颜色 1 次 + 血 1 次 + 咬伤 1 次
+            ("two_louses", 2, 4),
+            ("three_louses", 3, 6),
+            // 弱野:虱子颜色 + 三选一;强人形:奴贩颜色 + 三选一;候选的血全掷
+            ("exordium_thugs", 4, 7),
+            // 强野:二选一(血 2);弱野同上
+            ("exordium_wildlife", 3, 6),
+            ("gremlin_leader_gang", 2, 3),
+        ];
+        for (id, misc, hp) in cases {
+            let (_, hp_calls, misc_calls) = lineup_full(encounter_with_id(id), 7);
+            assert_eq!(misc_calls, *misc, "{id} 的 miscRng 掷点数");
+            assert_eq!(hp_calls, *hp, "{id} 的 monsterHpRng 掷点数");
+        }
+    }
+
+    #[test]
+    fn gremlin_gang_draws_four_from_the_eight_pool_without_replacement() {
+        let enc = encounter_with_id("gremlin_gang");
+        let cap = |id: &str| match id {
+            "shield_gremlin" | "gremlin_wizard" => 1,
+            _ => 2,
+        };
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..256u64 {
+            let ids = lineup(enc, seed);
+            assert_eq!(ids.len(), 4, "小鬼团伙就是四只");
+            assert_eq!(ids, lineup(enc, seed), "同一种子要抽出一致的阵容");
+            for id in &ids {
+                assert!(
+                    act2::GREMLIN_POOL.contains(id),
+                    "抽到了池外的 {id}"
+                );
+                assert!(
+                    ids.iter().filter(|x| **x == *id).count() <= cap(id),
+                    "seed {seed} 抽出了超过池子份数的 {ids:?}"
+                );
+            }
+            seen.insert(ids);
+        }
+        assert!(seen.len() >= 5, "小鬼团伙的阵容只抽出 {} 种", seen.len());
+    }
+
+    #[test]
+    fn gremlin_leader_escorts_come_from_the_gremlin_pool() {
+        let enc = encounter_with_id("gremlin_leader_gang");
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..128u64 {
+            let ids = lineup(enc, seed);
+            assert_eq!(ids.len(), 3);
+            assert_eq!(ids[2], "gremlin_leader", "头目固定排在最后");
+            for id in &ids[..2] {
+                assert!(act2::GREMLIN_POOL.contains(id), "开战小鬼抽到了 {id}");
+            }
+            seen.insert((ids[0], ids[1]));
+        }
+        assert!(seen.len() >= 3, "开战小鬼的抽签没变化过");
+    }
+
+    #[test]
+    fn slime_lineups_roll_the_vanilla_variants() {
+        // 小史莱姆:五五开两种组合
+        let small = encounter_with_id("small_slimes");
+        let mut combos = std::collections::HashSet::new();
+        for seed in 0..128u64 {
+            let ids = lineup(small, seed);
+            let pair: Vec<&str> = ids.clone();
+            assert!(
+                pair == vec!["spike_slime_small", "acid_slime_medium"]
+                    || pair == vec!["acid_slime_small", "spike_slime_medium"],
+                "小史莱姆抽出了 {ids:?}"
+            );
+            combos.insert(pair);
+        }
+        assert_eq!(combos.len(), 2, "两种组合都该出现");
+        // 一堆史莱姆:3 尖刺小 + 2 酸小,只是顺序在抽
+        let lots = encounter_with_id("lots_of_slimes");
+        let mut orders = std::collections::HashSet::new();
+        for seed in 0..128u64 {
+            let ids = lineup(lots, seed);
+            assert_eq!(ids.len(), 5);
+            assert_eq!(ids.iter().filter(|x| **x == "spike_slime_small").count(), 3);
+            assert_eq!(ids.iter().filter(|x| **x == "acid_slime_small").count(), 2);
+            orders.insert(ids);
+        }
+        assert!(orders.len() >= 3, "顺序应当会变");
+        // 大史莱姆:酸/尖刺五五开
+        let large = encounter_with_id("large_slime");
+        let kinds: std::collections::HashSet<&str> =
+            (0..64).map(|s| lineup(large, s)[0]).collect();
+        assert_eq!(
+            kinds,
+            ["acid_slime_large", "spike_slime_large"].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn louse_lineups_roll_colors_and_preset_the_bite() {
+        for (id, n) in [("two_louses", 2usize), ("three_louses", 3)] {
+            let (roster, _, _) = lineup_full(encounter_with_id(id), 11);
+            assert_eq!(roster.len(), n);
+            for m in &roster {
+                let (lo, hi) = match m.id {
+                    "red_louse" => (10, 15),
+                    "green_louse" => (11, 17),
+                    other => panic!("{id} 抽出了 {other}"),
+                };
+                assert!((lo..=hi).contains(&m.hp), "{} 的血 {}", m.id, m.hp);
+                let bite = m.rolled.expect("虱子的咬伤要在抽签时就掷好");
+                assert!((5..=7).contains(&bite), "咬伤 {bite}");
+            }
+        }
+        // 两种颜色都要能抽到
+        let colors: std::collections::HashSet<&str> = (0..64u64)
+            .flat_map(|s| lineup(encounter_with_id("two_louses"), s))
+            .collect();
+        assert_eq!(colors, ["red_louse", "green_louse"].into_iter().collect());
+    }
+
+    #[test]
+    fn exordium_lineups_roll_from_the_vanilla_candidate_pools() {
+        let weak = [
+            "red_louse",
+            "green_louse",
+            "spike_slime_medium",
+            "acid_slime_medium",
+        ];
+        let humanoid = ["cultist", "red_slaver", "blue_slaver", "looter"];
+        let strong_wild = ["fungi_beast", "jaw_worm"];
+        let mut thugs_first = std::collections::HashSet::new();
+        let mut humanoids = std::collections::HashSet::new();
+        let mut wildlife_first = std::collections::HashSet::new();
+        for seed in 0..256u64 {
+            let thugs = lineup(encounter_with_id("exordium_thugs"), seed);
+            assert_eq!(thugs.len(), 2);
+            assert!(weak.contains(&thugs[0]), "Thugs 首只抽到了 {}", thugs[0]);
+            assert!(humanoid.contains(&thugs[1]), "Thugs 次只抽到了 {}", thugs[1]);
+            thugs_first.insert(thugs[0]);
+            humanoids.insert(thugs[1]);
+
+            let wildlife = lineup(encounter_with_id("exordium_wildlife"), seed);
+            assert_eq!(wildlife.len(), 2);
+            assert!(
+                strong_wild.contains(&wildlife[0]),
+                "Wildlife 首只抽到了 {}",
+                wildlife[0]
+            );
+            assert!(weak.contains(&wildlife[1]), "Wildlife 次只抽到了 {}", wildlife[1]);
+            wildlife_first.insert(wildlife[0]);
+        }
+        assert_eq!(thugs_first, weak.into_iter().collect());
+        assert_eq!(humanoids, humanoid.into_iter().collect());
+        assert_eq!(wildlife_first, strong_wild.into_iter().collect());
     }
 
     #[test]

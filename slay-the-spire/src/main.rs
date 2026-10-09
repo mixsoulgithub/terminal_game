@@ -22,10 +22,16 @@ options:
   --seed <n|STR>  fixed seed, so a run can be reproduced
                   a decimal number is used as-is; anything else is read as a
                   base-35 seed string (same form `:seed` prints)
-  --dump <what>   print data and exit (cards|enemies|relics|potions|events)
+  --dump <what>   print data and exit (cards|enemies|relics|potions|events|gated)
   --replay <seed> headless scripted run: walk act 1 to the boss, one JSON
                   line per step on stdout (no terminal needed)
   --script <file> path script for --replay (neow/reward/card/event/rest/shop)
+  --sandbox <seed> <scenario.json>
+                  headless single-combat sandbox: build the given board, run the
+                  given actions, one JSON line per step on stdout (diff ruler)
+  --sandbox-batch <seed> <list>
+                  run many sandbox scenarios in one process; each line of <list>
+                  is `name<TAB>scenario.json`, output is `#name` + its JSONL
   -h, --help      show this help
   -V, --version   show version
 
@@ -49,6 +55,10 @@ struct Args {
     replay: Option<u64>,
     /// --replay 用的路径脚本文件
     script: Option<String>,
+    /// 沙盒:(种子, scenario.json 路径)
+    sandbox: Option<(u64, String)>,
+    /// 沙盒批量:(种子, 清单路径)
+    sandbox_batch: Option<(u64, String)>,
     help: bool,
     version: bool,
 }
@@ -59,6 +69,8 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
         dump: None,
         replay: None,
         script: None,
+        sandbox: None,
+        sandbox_batch: None,
         help: false,
         version: false,
     };
@@ -84,6 +96,18 @@ fn parse(argv: impl Iterator<Item = String>) -> Result<Args, String> {
             "--script" => {
                 let v = it.next().ok_or("--script needs a path")?;
                 args.script = Some(v);
+            }
+            "--sandbox-batch" => {
+                let s = it.next().ok_or("--sandbox-batch needs a seed")?;
+                let seed = crate::rng::seed_from_arg(&s).ok_or_else(|| format!("bad seed: {s}"))?;
+                let path = it.next().ok_or("--sandbox-batch needs a list path")?;
+                args.sandbox_batch = Some((seed, path));
+            }
+            "--sandbox" => {
+                let s = it.next().ok_or("--sandbox needs a seed")?;
+                let seed = crate::rng::seed_from_arg(&s).ok_or_else(|| format!("bad seed: {s}"))?;
+                let path = it.next().ok_or("--sandbox needs a scenario path")?;
+                args.sandbox = Some((seed, path));
             }
             "-h" | "--help" => args.help = true,
             "-V" | "--version" => args.version = true,
@@ -116,6 +140,33 @@ fn main() -> ExitCode {
             Err(e) => {
                 eprintln!("spire: {e}");
                 ExitCode::from(2)
+            }
+        };
+    }
+    if let Some((seed, path)) = args.sandbox_batch {
+        let list = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("spire: cannot read scenario list {path}: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        print!("{}", core::replay::sandbox::run_batch(seed, &list));
+        return ExitCode::SUCCESS;
+    }
+    if let Some((seed, path)) = args.sandbox {
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("spire: cannot read scenario {path}: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        return match sandbox(seed, &text) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("spire: {e}");
+                ExitCode::from(1)
             }
         };
     }
@@ -200,6 +251,13 @@ fn replay(seed: u64, script: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// 沙盒:构造给定局面、跑给定动作,逐步一行 JSON(与参考侧同 schema)
+fn sandbox(seed: u64, scenario: &str) -> Result<(), String> {
+    let text = core::replay::sandbox::run(seed, scenario)?;
+    print!("{text}");
+    Ok(())
+}
+
 /// 打印静态数据,便于查表与自检
 fn dump(what: &str) -> Result<(), String> {
     match what {
@@ -243,6 +301,28 @@ fn dump(what: &str) -> Result<(), String> {
         "potions" => {
             for p in core::potions::POTIONS {
                 println!("{:<20} {:<8} {}", p.id, p.rarity.name(), p.desc);
+            }
+            Ok(())
+        }
+        // 刻意不实现的机制(别的职业专属/原作里本作没有的系统):
+        // 沙盒扫描器据此把它们排除在"必须一致"之外
+        "gated" => {
+            for r in core::relics::RELICS {
+                if r.fx == core::relics::RelicFx::ZERO && !r.note.is_empty() {
+                    println!("relic {} {}", r.id, r.note);
+                }
+            }
+            for p in core::potions::POTIONS {
+                let missing = match p.fx {
+                    core::potions::PotionFx::Nothing => true,
+                    core::potions::PotionFx::AddCardToHand { id, .. } => {
+                        core::cards::card_def(id).is_none()
+                    }
+                    _ => false,
+                };
+                if missing {
+                    println!("potion {} {}", p.id, p.desc);
+                }
             }
             Ok(())
         }

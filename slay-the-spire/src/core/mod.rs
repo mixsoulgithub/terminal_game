@@ -9,6 +9,8 @@ pub mod enemies;
 pub mod events;
 #[cfg(test)]
 pub mod golden;
+#[cfg(test)]
+pub mod golden_sandbox;
 pub mod map;
 pub mod potions;
 pub mod relics;

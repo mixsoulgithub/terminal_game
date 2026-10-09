@@ -977,7 +977,9 @@ mod effect_tests {
         let before = c.enemies[0].hp;
         let energy = c.energy;
         c.use_potion(def("distilled_chaos"), None);
-        assert_eq!(c.enemies[0].hp, before - 6);
+        // 混沌药剂打 3 张:抽牌堆只有 1 张时,打掉的牌会被洗回抽牌堆接着打
+        // (参考实现的 PlayTopCardAction 在抽牌堆空时会洗牌),所以这张打击打了 3 次
+        assert_eq!(c.enemies[0].hp, before - 6 * 3);
         assert_eq!(c.energy, energy, "替打出来的牌不花能量");
         assert!(c.draw.is_empty(), "那张牌应该已经打出去了");
     }

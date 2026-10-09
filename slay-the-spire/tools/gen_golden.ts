@@ -39,6 +39,49 @@ const n = Number(process.argv[2] ?? "12345");
 const seedStr = seedToString(BigInt(n));
 const bundle = buildBaseContentBundle();
 
+// 弱遭遇里的两只怪,原版在开战那一刻才抽签定(参考实现把它们写死了:
+// TWO_LOUSE 固定红+绿、SMALL_SLIMES 固定尖刺小+酸中).金标准要跟原版,
+// 所以第一场如果撞上这两个遭遇,阵容与血量按原版规则重算——掷点仍然走参考实现
+// 同一套具名流(miscRng / monsterHpRng),只是抽签规则按原版(见
+// sts_lightspeed MonsterGroup::createMonsters).第一场是怪房间时这两条流都还没动过.
+function vanillaWeakLineup(
+  encounterId: string,
+  seed: bigint,
+  floorNum: number,
+): [string, number][] | null {
+  const vr = new RngRegistry(seed);
+  vr.reseedFloorStreams(floorNum); // 战斗那一刻的层流种子是 seed + 层号
+  const misc = vr.get("miscRng");
+  const hpRng = vr.get("monsterHpRng");
+  const hp = (id: string): number => {
+    const def = bundle.monsters.get(id);
+    if (def === undefined) throw new Error(`unknown monster ${id}`);
+    return hpRng.randomRange(def.hp(0)[0], def.hp(0)[1]);
+  };
+  const louse = (): [string, number] => {
+    const id = misc.randomBoolean() ? "RED_LOUSE" : "GREEN_LOUSE";
+    const h = hp(id);
+    hpRng.randomRange(5, 7); // 咬伤:构造时和血量一起掷
+    return [id, h];
+  };
+  switch (encounterId) {
+    case "TWO_LOUSE":
+      return [louse(), louse()];
+    case "SMALL_SLIMES":
+      return misc.randomBoolean()
+        ? [
+            ["SPIKE_SLIME_S", hp("SPIKE_SLIME_S")],
+            ["ACID_SLIME_M", hp("ACID_SLIME_M")],
+          ]
+        : [
+            ["ACID_SLIME_S", hp("ACID_SLIME_S")],
+            ["SPIKE_SLIME_M", hp("SPIKE_SLIME_M")],
+          ];
+    default:
+      return null;
+  }
+}
+
 // 1) 第一章地图布局
 const gm = generateMap(BigInt(n), 0, 1, true);
 const mapString = mapToString(gm);
@@ -59,7 +102,11 @@ const firstRoom = {
   x: startX,
   roomKind: room.kind,
   encounterId: room.kind === "combat" ? room.encounterId : null,
-  monsters: state.combat!.monsters.map((m) => [m.id, m.maxHp]),
+  monsters:
+    room.kind === "combat"
+      ? vanillaWeakLineup(room.encounterId, BigInt(n), state.run.floor) ??
+        state.combat!.monsters.map((m) => [m.id, m.maxHp])
+      : state.combat!.monsters.map((m) => [m.id, m.maxHp]),
   floor: state.run.floor,
 };
 
@@ -299,7 +346,12 @@ for (const s of SEEDS) {
   const r0 = st.run.map!.rows[0]!;
   const x0 = r0.findIndex((v) => v !== null);
   st = advance(st, { cmd: "mapPick", x: x0, y: 0 }, bundle);
-  const monsters: [string, number][] = st.combat!.monsters.map((m) => [m.id, m.maxHp]);
+  const room0 = st.run.room;
+  const monsters: [string, number][] =
+    room0 !== null && room0.kind === "combat"
+      ? vanillaWeakLineup(room0.encounterId, BigInt(s), st.run.floor) ??
+        st.combat!.monsters.map((m) => [m.id, m.maxHp])
+      : st.combat!.monsters.map((m) => [m.id, m.maxHp]);
   st = autoWinCombat(st, bundle);
   const room = st.run.room;
   const ents: RewardEntry[] = room !== null && room.kind === "rewards" ? room.entries : [];

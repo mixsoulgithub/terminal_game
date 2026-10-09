@@ -9,9 +9,13 @@ use crate::core::status::Status;
 // ---- 共用的选招工具:招式表下标 ----
 // 每只怪的招式下标都写死成常量,选招函数读起来才像参考实现里的名字.
 
-/// 虱子/巨口之类"开局掷一次固定伤害"的怪在构造时掷
+/// 虱子/巨口之类"开局掷一次固定伤害"的怪在构造时掷.
+/// 带抽签的遭遇(两只/三只虱子、Exordium)在抽签时就掷好了咬伤,这里只补卷曲,
+/// 否则重掷会把 monsterHpRng 的流位置顶偏
 fn louse_spawn(ctx: &mut SpawnCtx) {
-    ctx.state.rolled = ctx.rng.range_inclusive(5, 7);
+    if !ctx.state.rolled_preset {
+        ctx.state.rolled = ctx.rng.range_inclusive(5, 7);
+    }
     let curl = ctx.rng.range_inclusive(3, 7);
     ctx.statuses.add(Status::CurlUp, curl);
 }

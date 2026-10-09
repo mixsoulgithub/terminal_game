@@ -847,8 +847,9 @@ fn pick_book_of_stabbing(ctx: &mut PickCtx) -> usize {
 }
 
 /// 召集时抽的 8 只小鬼池(参考实现里 MonsterGroup 的 getGremlin 表):
-/// 疯的两只、偷偷的两只、胖的两只、盾牌一只、巫师一只
-static GREMLIN_POOL: &[&str] = &[
+/// 疯的两只、偷偷的两只、胖的两只、盾牌一只、巫师一只.
+/// 第一章的小鬼团伙与第二章头目开局的小鬼也用这张表.
+pub static GREMLIN_POOL: &[&'static str] = &[
     "mad_gremlin",
     "mad_gremlin",
     "sneaky_gremlin",

@@ -9,6 +9,7 @@
 // (史莱姆的 S/M/L 与铁甲战士的两张基础牌).归一化只改"名字",不改数值.
 
 import { readFileSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
+import { seedToString } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rng.ts";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 
@@ -21,6 +22,8 @@ const DEFAULT_SCRIPT = join(FIXTURE_DIR, "act1.script");
 //   act1.script -> seed<N>.ref.jsonl(既有的一套,不许改名)
 //   其它脚本     -> seed<N>.<脚本名>.ref.jsonl
 let SCRIPT = DEFAULT_SCRIPT;
+/** --raw-ref:参考侧不做补掷(直接比原样的参考实现) */
+let RAW_REF = false;
 function fixturePath(seed: string): string {
   const stem = SCRIPT.split("/").pop()!.replace(/\.script$/, "");
   const name = stem === "act1" ? `seed${seed}.ref.jsonl` : `seed${seed}.${stem}.ref.jsonl`;
@@ -118,7 +121,10 @@ function parseJsonl(text: string): Line[] {
 }
 
 function runReference(seed: string, script: string): { ok: boolean; lines: Line[]; err: string } {
-  const r = spawnSync("bun", [join(HERE, "replay_ref.ts"), seed, script], {
+  // 默认让参考侧按原版补掷;--raw-ref 直接比原样的参考实现(不补偿)
+  const args = [join(HERE, "replay_ref.ts"), seed, script];
+  if (RAW_REF) args.push("--raw-ref");
+  const r = spawnSync("bun", args, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -231,7 +237,12 @@ function writeFixture(seed: string): void {
   if (!ref.ok) throw new Error(`参考实现跑不通: ${ref.err}`);
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const path = fixturePath(seed);
-  writeFileSync(path, ref.lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  // 参考侧的名字归一化会把 init 行的 seed_str 也折成小写,本作那边是原样大写.
+  // fixture 要跟本作的原始输出逐字节对齐(act1_walk_matches_reference 逐行比原始行),
+  // 所以这里把这一格改回定种时的大小写.
+  const seedStr = seedToString(BigInt(seed));
+  const lines = ref.lines.map((l) => JSON.stringify("seed_str" in l ? { ...l, seed_str: seedStr } : l));
+  writeFileSync(path, lines.join("\n") + "\n");
   console.log(`wrote ${path.slice(ROOT.length + 1)}`);
 }
 
@@ -251,6 +262,7 @@ function fixtureSeeds(): string[] {
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   const write = argv.includes("--write");
+  RAW_REF = argv.includes("--raw-ref");
   const pin = argv.includes("--pin");
   const all = argv.includes("--all");
   // --script <file> 选路径脚本(默认 act1.script);fixture 的名字跟着脚本走
@@ -267,7 +279,7 @@ if (import.meta.main) {
     ? fixtureSeeds()
     : argv.filter((a) => /^\d+$/.test(a));
   if (seeds.length === 0) {
-    console.error("usage: bun tools/e2e_diff.ts <seed...> [--write] [--all] [--script <file>]");
+    console.error("usage: bun tools/e2e_diff.ts <seed...> [--write] [--all] [--script <file>] [--raw-ref]");
     process.exit(2);
   }
   let diffTotal = 0;

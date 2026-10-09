@@ -1369,6 +1369,43 @@ impl Run {
         out
     }
 
+    /// 调试钩子(--replay 的 `act n`):从当前幕一路切幕到第 n 幕开头,
+    /// 走的就是 `begin_act`(幕切换的那套掷点),参考侧用同样的切幕驱动.
+    pub fn debug_jump_act(&mut self, n: u32) {
+        while self.act < n.max(1) {
+            self.begin_act();
+        }
+    }
+
+    /// 调试钩子(--replay 的 `keys all`):三把钥匙直接到手,用来开第四章的门.
+    pub fn debug_grant_keys(&mut self) {
+        self.keys = Keys {
+            emerald: true,
+            ruby: true,
+            sapphire: true,
+        };
+    }
+
+    /// 调试钩子(--replay 的 `hp n`):把生命与上限直接设成 n,
+    /// 好让起手牌组也能在第三/四幕活着走到 Boss(纯状态,不掷点).
+    pub fn debug_set_hp(&mut self, hp: i32) {
+        self.player.max_hp = hp;
+        self.player.hp = hp;
+    }
+
+    /// 调试钩子(--replay 的 `deck strong`):把牌组换成 10 张强化重锤.
+    /// 只有 3 点能量时,最笨的出牌策略(先挑费用最低的)也打得出 32/回合,
+    /// 刚好够破开第四章精英(盾与矛)的格挡、一路走到心脏(纯状态,不掷点).
+    pub fn debug_set_strong_deck(&mut self) {
+        let mut deck = Vec::with_capacity(10);
+        for _ in 0..10 {
+            let mut c = cards::card("bludgeon");
+            c.upgrade();
+            deck.push(c);
+        }
+        self.player.deck = deck;
+    }
+
     /// 记一笔:既进历史记录,也更新界面上的提示
     fn say(&mut self, text: impl Into<String>) {
         self.push_history(text, HistoryKind::System);
@@ -2212,7 +2249,10 @@ impl Run {
         if !self.has_relic_fx(|fx| fx.no_rest) {
             out.push(RestOption::Rest);
         }
-        if !self.has_relic_fx(|fx| fx.no_smith) {
+        // 打铁:除了熔火之锤,还得牌组里真有一张能升的(参考实现 canSmith 的条件)
+        if !self.has_relic_fx(|fx| fx.no_smith)
+            && !self.picker_candidates_is_empty(PickPurpose::Upgrade)
+        {
             out.push(RestOption::Smith);
         }
         if self.can_recall() {
@@ -3477,13 +3517,15 @@ impl Run {
             }
         }
         if let Some(rule) = o.remove_random {
+            // "坠落"随机夺走的那张牌:原版会把封进瓶子的牌排除在外
+            // (参考实现这里没做,是它自认的 TODO;本作按原版来)
             let cands: Vec<usize> = self
                 .player
                 .deck
                 .iter()
                 .enumerate()
                 .filter(|(_, c)| {
-                    if c.def.unremovable {
+                    if c.def.unremovable || c.bottled {
                         return false;
                     }
                     match rule {

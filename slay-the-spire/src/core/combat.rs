@@ -3,7 +3,8 @@
 use crate::core::card::{CardInstance, Cost, Effect, Rarity, Target};
 use crate::core::cards;
 use crate::core::enemy::{
-    CardSpot, Encounter, EnemyDef, EnemyFx, EnemyKind, EnemyState, Intent, PickCtx, Scope, Special,
+    CardSpot, Encounter, EnemyDef, EnemyFx, EnemyKind, EnemyState, Intent, PickCtx, Scope,
+    Spawned, Special,
 };
 use crate::core::potions::{DiscoveryPool, PotionDef, PotionFx};
 use crate::core::relics::{RelicDef, RelicFx};
@@ -396,10 +397,18 @@ pub struct Combat {
     pub fairy_used: bool,
     /// 回合结束正等一个选牌(尼尔瑞的抄本):选完才把回合交给对面
     pub pending_end_turn: bool,
+    /// 选牌之后还没跑的效果:出牌时挂起的收尾,选完再按序补跑.
+    /// 参考实现把动作队列的尾巴快照进 resumeArgs.__tail,选完 replayTail 放回去;
+    /// 这里同理 —— 否则"选牌之后的效果"会抢在选牌前面跑,顺序与掷点位置都错
+    choice_tail: Vec<Effect>,
+    /// 那一截效果瞄准的敌人
+    choice_tail_target: Option<usize>,
+    /// 那一截效果接着用的结算统计(已打出的伤害/消耗数)
+    choice_tail_ctx: PlayCtx,
 }
 
 /// 单次打牌过程中的临时统计
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct PlayCtx {
     x: i32,
     exhausted: i32,
@@ -410,25 +419,39 @@ struct PlayCtx {
 
 impl Combat {
     pub fn new(enc: &'static Encounter, setup: CombatSetup, mut streams: RngRegistry) -> Self {
-        // 阵容:带抽签规则的遭遇(三种"形状")开局按参考规则重抽,其余用固定名单
-        let lineup: Vec<&'static str> = match enc.lineup {
-            Some(roll) => roll(streams.floor(FloorStream::MiscRng)),
-            None => enc.enemies.to_vec(),
+        // 阵容:带抽签规则的遭遇(原版开战才定阵容)按原版规则抽,其余用固定名单.
+        // 抽签函数连候选的血都掷在里面(原版构造怪物组时就是这样烧 monsterHpRng 的);
+        // 固定名单的血在这里按槽位顺序补掷,顺序与抽签函数内的掷法一致.
+        let lineup: Vec<Spawned> = match enc.lineup {
+            Some(roll) => roll(&mut streams),
+            None => enc
+                .enemies
+                .iter()
+                .map(|&id| {
+                    let def = crate::core::enemies::enemy_def_or_panic(id);
+                    Spawned {
+                        id,
+                        hp: streams
+                            .floor(FloorStream::MonsterHpRng)
+                            .range_inclusive(def.hp.0, def.hp.1),
+                        rolled: None,
+                    }
+                })
+                .collect(),
         };
         let mut enemies = Vec::new();
-        for (i, id) in lineup.iter().enumerate() {
+        for (i, sp) in lineup.iter().enumerate() {
+            let id = sp.id;
             let def = crate::core::enemies::enemy_def_or_panic(id);
             // 同名敌人加编号,保证日志与选中项能对上
-            let dup = lineup.iter().filter(|e| *e == id).count() > 1;
+            let dup = lineup.iter().filter(|e| e.id == id).count() > 1;
             let name = if dup {
                 format!("{} #{}", def.name, i + 1)
             } else {
                 def.name.to_string()
             };
-            // 血量按槽位顺序从 monsterHpRng 掷
-            let hp = streams
-                .floor(FloorStream::MonsterHpRng)
-                .range_inclusive(def.hp.0, def.hp.1);
+            // 血量由抽签函数(或上面的固定名单补掷)给定
+            let hp = sp.hp;
             let mut statuses = Statuses::new();
             for (s, n) in def.innate {
                 if *n == 0 {
@@ -438,6 +461,11 @@ impl Combat {
                 }
             }
             let mut state = EnemyState::default();
+            // 抽签时就把咬伤掷好的怪:记下来,spawn 钩子不再重掷
+            if let Some(r) = sp.rolled {
+                state.rolled = r;
+                state.rolled_preset = true;
+            }
             let mut block = def.start_block;
             // 遭遇级预置状态:开局的状态/格挡,以及"已经行动过"的招式历史
             for p in enc.presets.iter().filter(|p| p.slots.contains(&i)) {
@@ -546,6 +574,9 @@ impl Combat {
             fairy_save: false,
             fairy_used: false,
             pending_end_turn: false,
+            choice_tail: Vec::new(),
+            choice_tail_target: None,
+            choice_tail_ctx: PlayCtx::default(),
         };
         // 跨战斗的遗物计数器由一局流程注入(参考实现里这些数挂在 Run 的遗物上,
         // 开局第一回合就会 +1,所以必须在 start_turn 之前放进去)
@@ -1042,7 +1073,9 @@ impl Combat {
     /// 打出抽牌堆顶那张;exhaust_after 为真时打完直接消耗(浩劫),
     /// via 是播报里"谁打出了它"(浩劫/万物皆动/混沌药剂)
     fn play_top_of_draw(&mut self, exhaust_after: bool, via: &str) {
-        if self.draw.is_empty() {
+        // 抽牌堆空了先把弃牌堆洗回来(参考实现的 PlayTopCardAction 会洗),
+        // 没得洗才什么都不做
+        if self.draw.is_empty() && !self.reshuffle_discard_into_draw() {
             return;
         }
         let mut card = self.draw.remove(0);
@@ -1291,6 +1324,22 @@ impl Combat {
         }
     }
 
+    /// 弃牌堆洗回抽牌堆(洗牌掷点与 onShuffle 都在里面).没牌可洗返回 false
+    fn reshuffle_discard_into_draw(&mut self) -> bool {
+        if self.discard.is_empty() {
+            return false;
+        }
+        self.draw = std::mem::take(&mut self.discard);
+        let count = self.draw.len();
+        java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
+        self.push_log(
+            LogKind::Info,
+            format!("shuffled {count} cards into the draw pile"),
+        );
+        self.on_shuffle();
+        true
+    }
+
     /// 抽牌;抽牌堆空了就把弃牌堆洗回来.顶牌在下标 0,从头取
     pub fn draw_cards(&mut self, n: usize) {
         for _ in 0..n {
@@ -1298,18 +1347,8 @@ impl Combat {
                 self.push_log(LogKind::Info, format!("hand is full ({HAND_LIMIT})"));
                 return;
             }
-            if self.draw.is_empty() {
-                if self.discard.is_empty() {
-                    return;
-                }
-                self.draw = std::mem::take(&mut self.discard);
-                let count = self.draw.len();
-                java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
-                self.push_log(
-                    LogKind::Info,
-                    format!("shuffled {count} cards into the draw pile"),
-                );
-                self.on_shuffle();
+            if self.draw.is_empty() && !self.reshuffle_discard_into_draw() {
+                return;
             }
             let card = self.draw.remove(0);
             self.hand.push(card);
@@ -1764,6 +1803,14 @@ impl Combat {
         let regen = self.player.statuses.get(Status::Regenerate);
         if regen > 0 {
             self.player.statuses.add(Status::Regenerate, -1);
+        }
+        // 双发/复制:只在"打这张牌的那一回合"有效,回合末整条移除
+        // (参考实现的 atEndOfTurn 直接 removePower,不按层数递减)
+        for s in [Status::DoubleTap, Status::Duplication] {
+            let n = self.player.statuses.get(s);
+            if n != 0 {
+                self.player.statuses.add(s, -n);
+            }
         }
         // 暴怒/火焰屏障的层数是"效果数值"而不是持续回合数:
         // 参考实现里暴怒在回合末整条移除、火焰屏障在下回合开始时整条移除.
@@ -2496,6 +2543,10 @@ impl Combat {
             let half = self.enemies[idx].max_hp / 2;
             self.enemies[idx].hp = half;
             self.enemies[idx].state.half_dead = false;
+            // 原版 REINCARNATE 会重新挂上 REGROW:复活后还能再半死一次,
+            // 死亡触发也要重新武装,否则第二次倒下就再也起不来了.
+            self.enemies[idx].state.regrow_used = false;
+            self.enemies[idx].death_done = false;
             self.push_log(LogKind::Enemy, format!("{name} regrows ({half} HP)"));
         }
         // 倒计时:爆裂与消逝
@@ -2639,6 +2690,26 @@ impl Combat {
         }
     }
 
+    /// 遗物带来的荆棘层数(与卡牌给的 Thorns 状态分开记)
+    pub fn relic_thorns(&self) -> i32 {
+        self.relic_thorns
+    }
+
+    /// 场上定时炸弹的剩余回合数(没有炸弹就是 0)
+    pub fn bomb_turns(&self) -> i32 {
+        self.bombs.iter().map(|b| b.0 as i32).max().unwrap_or(0)
+    }
+
+    /// 新造一张牌放进手牌:手牌到上限时装不下,进弃牌堆
+    /// (参考实现 makeTempCard 的规则:hand overflow goes to discard)
+    fn add_created_card_to_hand(&mut self, card: CardInstance) {
+        if self.hand.len() >= HAND_LIMIT {
+            self.discard.push(card);
+        } else {
+            self.hand.push(card);
+        }
+    }
+
     /// 战斗中后来拿到的牌:把本场已有的降费补给嗜血;神化之后一律直接升级
     pub fn fix_new_card(&self, card: &mut CardInstance) {
         if card.def.id == "blood_for_blood" {
@@ -2729,9 +2800,7 @@ impl Combat {
             }
             (ChoiceSource::Hand, ChoiceAction::Copy) => {
                 let card = self.hand[idx].clone();
-                if self.hand.len() < HAND_LIMIT {
-                    self.hand.push(card);
-                }
+                self.add_created_card_to_hand(card);
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
                 // 抽牌堆的顶是下标 0(从头取,插入也要插到最前)
@@ -2767,9 +2836,7 @@ impl Combat {
                 card.free_this_turn = ch.free;
                 let label = card.label();
                 for _ in 0..ch.copies.max(1) {
-                    if self.hand.len() < HAND_LIMIT {
-                        self.hand.push(card.clone());
-                    }
+                    self.add_created_card_to_hand(card.clone());
                 }
                 self.push_log(LogKind::Player, format!("{label} is added to your hand"));
             }
@@ -2830,6 +2897,15 @@ impl Combat {
 
     /// 收尾一次选择:该弃的弃、该消耗的消耗,赌徒之酿再补抽等量张
     fn close_choice(&mut self, mut ch: Choice) {
+        // 出牌时挂起的那一截效果现在接着跑(参考实现 replayTail)
+        if !self.choice_tail.is_empty() {
+            if let Some((card, _)) = ch.played.as_mut() {
+                let tail = std::mem::take(&mut self.choice_tail);
+                let mut ctx = std::mem::take(&mut self.choice_tail_ctx);
+                let target = self.choice_tail_target;
+                self.resolve_effects(card, &tail, target, &mut ctx);
+            }
+        }
         self.finish_played(ch.played.take());
         if ch.draw_after && ch.taken > 0 {
             self.draw_cards(ch.taken);
@@ -2877,6 +2953,9 @@ impl Combat {
             self.energy += cost;
             self.hand.push(card);
         }
+        // 牌都没打出去,挂起的那一截效果也一并作废
+        self.choice_tail.clear();
+        self.choice_tail_target = None;
         self.resume_after_choice();
     }
 
@@ -3281,7 +3360,8 @@ impl Combat {
             taken = taken.min(left);
         }
         if taken > 0 {
-            self.enemies[idx].hp -= taken;
+            // 过量伤害不把血量压到 0 以下(参考实现结算时夹在 0)
+            self.enemies[idx].hp = (self.enemies[idx].hp - taken).max(0);
             self.enemies[idx].state.taken_this_turn += taken;
             self.damage_dealt += taken;
             self.shake(ShakeWho::Enemy(idx), 1, ShakeKind::Hurt, taken);
@@ -3358,9 +3438,11 @@ impl Combat {
                     self.enemies[idx].statuses.add(Status::Flight, -1);
                 }
             }
-            // 移形换影:掉多少血就临时少多少力量
+            // 移形换影:掉多少血就等量少力量,自己回合结束再补回来
+            // (和黑暗镣铐走同一条路:当下真扣,回合末按 temp_strength 回补)
             if self.enemies[idx].statuses.holds(Status::Shifting) {
-                self.enemies[idx].temp_strength -= taken;
+                self.enemies[idx].statuses.add(Status::Strength, -taken);
+                self.enemies[idx].temp_strength += taken;
             }
         }
         self.check_hp_thresholds(idx, taken);
@@ -3798,7 +3880,7 @@ impl Combat {
     fn resolve_effects(
         &mut self,
         card: &mut CardInstance,
-        effects: &'static [Effect],
+        effects: &[Effect],
         target: Option<usize>,
         ctx: &mut PlayCtx,
     ) {
@@ -3818,7 +3900,21 @@ impl Combat {
         // 笔尖:第 10 张攻击翻倍
         let pen_nib_double = is_attack && self.rs.pen_nib == 9 && self.relic_any(|fx| fx.double_damage_per_10_attacks);
         let _ = pen_nib_double;
-        for e in effects {
+        for (i, e) in effects.iter().enumerate() {
+            // 上一条效果挂起了选牌(消耗/放顶那类):后面的效果先原样存起来,等选完
+            // 由 close_choice 接着跑.参考实现把动作队列的尾巴快照进 resumeArgs.__tail
+            // 再 replayTail,顺序与掷点位置才对得上
+            if self.choice.is_some() {
+                self.choice_tail = effects[i..].to_vec();
+                self.choice_tail_target = target;
+                self.choice_tail_ctx = PlayCtx {
+                    x: ctx.x,
+                    exhausted: ctx.exhausted,
+                    unblocked: ctx.unblocked,
+                    hand_size: ctx.hand_size,
+                };
+                break;
+            }
             match *e {
                 Effect::Damage { amount, times } => {
                     if let Some(t) = target {
@@ -4125,13 +4221,13 @@ impl Combat {
                         .iter()
                         .filter(|c| c.kind == crate::core::card::CardType::Attack)
                         .collect();
-                    if !pool.is_empty() && self.hand.len() < HAND_LIMIT {
+                    if !pool.is_empty() {
                         let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
                         inst.free_this_turn = true;
                         let label = inst.label();
-                        self.hand.push(inst);
+                        self.add_created_card_to_hand(inst);
                         self.push_log(LogKind::Player, format!("{label} appears (costs 0)"));
                     }
                 }
@@ -4141,12 +4237,9 @@ impl Combat {
                 Effect::AddCardToHand { id, n } => {
                     let def = cards::card_def_or_panic(id);
                     for _ in 0..n {
-                        if self.hand.len() >= HAND_LIMIT {
-                            break;
-                        }
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
-                        self.hand.push(inst);
+                        self.add_created_card_to_hand(inst);
                     }
                 }
                 Effect::EnergyOnExhaust { .. } => {
@@ -4166,6 +4259,17 @@ impl Combat {
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
                         self.discard.push(inst);
+                    }
+                }
+                Effect::AddSelfToDiscard { n } => {
+                    // 副本照抄这张牌自己的升级数与战斗内加成(愤怒+ 塞的是 愤怒+)
+                    for _ in 0..n {
+                        let mut copy = CardInstance::new(card.def);
+                        copy.upgraded = card.upgraded;
+                        copy.plus = card.plus;
+                        copy.bonus = card.bonus;
+                        self.fix_new_card(&mut copy);
+                        self.discard.push(copy);
                     }
                 }
                 Effect::UpgradeChosenInHand => {
@@ -4286,15 +4390,16 @@ impl Combat {
                     java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
                 }
                 Effect::ShuffleDiscardIntoDraw => {
-                    if !self.discard.is_empty() {
-                        let n = self.discard.len();
-                        self.draw.append(&mut self.discard);
-                        java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
-                        self.push_log(
-                            LogKind::Info,
-                            format!("shuffled {n} cards into the draw pile"),
-                        );
-                    }
+                    // 参考实现的 reshuffleDiscardIntoDraw 无条件洗一次:哪怕弃牌堆是空的,
+                    // 也照样从 shuffleRng 取一个 long 并洗整个抽牌堆.这里的掷点消耗
+                    // 必须一致,不然之后的随机(洗牌、随机目标)会整体错位.
+                    let n = self.discard.len();
+                    self.draw.append(&mut self.discard);
+                    java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
+                    self.push_log(
+                        LogKind::Info,
+                        format!("shuffled {n} cards into the draw pile"),
+                    );
                 }
                 Effect::FreeRandomInHand => {
                     if !self.hand.is_empty() {
@@ -4340,20 +4445,18 @@ impl Combat {
                 Effect::TargetLoseStrengthThisTurn { n } => {
                     if let Some(t) = target {
                         if self.enemies[t].alive() {
-                            // 只能扣掉它当前真有的力量,回合结束按扣掉的量补回来
-                            let cur = self.enemies[t].statuses.get(Status::Strength);
-                            let loss = n.min(cur.max(0));
-                            if loss > 0 {
-                                self.enemies[t].statuses.add(Status::Strength, -loss);
-                                self.enemies[t].temp_strength += loss;
-                                self.push_log(
-                                    LogKind::Player,
-                                    format!(
-                                        "{} loses {loss} Strength this turn",
-                                        self.enemies[t].name
-                                    ),
-                                );
-                            }
+                            // 原版直接把力量压成负数(力量允许低于 0),
+                            // 回合结束再按扣掉的量补回来.
+                            let loss = n;
+                            self.enemies[t].statuses.add(Status::Strength, -loss);
+                            self.enemies[t].temp_strength += loss;
+                            self.push_log(
+                                LogKind::Player,
+                                format!(
+                                    "{} loses {loss} Strength this turn",
+                                    self.enemies[t].name
+                                ),
+                            );
                         }
                     }
                 }
@@ -5706,10 +5809,11 @@ mod tests {
         c.enemies[0].statuses.add(Status::Strength, 5);
         let idx = hand_idx(&c, "dark_shackles");
         c.play_card(idx, Some(0)).unwrap();
-        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 0, "这回合力量被扣光");
-        // 它这一击因此从 16 掉到 11
+        // 原版直接扣 9 点力量,力量允许被压成负数(参考实现也是 -9)
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), -4, "这回合力量被扣成 -4");
+        // 它这一击因此从 16 掉到 7
         c.end_turn();
-        assert_eq!(c.player.hp, 80 - 11, "力量被扣掉后攻击也变弱了");
+        assert_eq!(c.player.hp, 80 - 7, "力量被扣掉后攻击也变弱了");
         assert_eq!(c.enemies[0].statuses.get(Status::Strength), 5, "回合结束后补回来");
     }
 
@@ -6469,16 +6573,18 @@ mod monster_tests {
     #[test]
     fn large_slime_splits_into_two_mediums() {
         let mut c = lock("large_slime");
-        assert_eq!(c.enemies[0].def.id, "acid_slime_large");
+        // 大史莱姆是酸/尖刺五五开抽的,分裂产物要跟着抽到的那只走
+        let id = c.enemies[0].def.id;
+        let medium = match id {
+            "acid_slime_large" => "acid_slime_medium",
+            "spike_slime_large" => "spike_slime_medium",
+            other => panic!("大史莱姆不该是 {other}"),
+        };
         c.enemies[0].hp = 30;
         c.damage_enemy(0, 1);
         c.end_turn();
-        let mediums = c
-            .enemies
-            .iter()
-            .filter(|e| e.def.id == "acid_slime_medium")
-            .count();
-        assert_eq!(mediums, 2, "大史莱姆分裂成两只中史莱姆");
+        let mediums = c.enemies.iter().filter(|e| e.def.id == medium).count();
+        assert_eq!(mediums, 2, "{id} 分裂成两只 {medium}");
     }
 
     #[test]
@@ -6611,8 +6717,14 @@ mod monster_tests {
     #[test]
     fn acid_slime_small_alternates_lick_and_tackle() {
         let mut c = lock("lots_of_slimes");
-        // 只留中间那只小酸液,免得被别的走位干扰
-        c.enemies.drain(0..3);
+        // 只留一只小酸液(一堆史莱姆的阵容是随机顺序,先按 id 找出来)
+        let i = c
+            .enemies
+            .iter()
+            .position(|e| e.def.id == "acid_slime_small")
+            .expect("一堆史莱姆里必有一只小酸液");
+        let only = c.enemies.remove(i);
+        c.enemies = vec![only];
         assert_eq!(c.enemies[0].def.id, "acid_slime_small");
         let first = c.enemies[0].next_move;
         c.end_turn();
@@ -6719,10 +6831,11 @@ mod power_tests {
         assert_eq!(c.enemies[0].statuses.get(Status::Flight), 1);
         c.damage_enemy(0, 11);
         assert!(!c.enemies[0].statuses.has(Status::Flight), "第三次命中就落地");
-        // 落地之后被打不再减半
-        let hp = c.enemies[0].hp;
+        // 落地之后被打不再减半(给足血量,免得被"过量伤害夹在 0"盖住)
+        c.enemies[0].hp = 50;
+        c.enemies[0].max_hp = 50;
         c.damage_enemy(0, 11);
-        assert_eq!(c.enemies[0].hp, hp - 11);
+        assert_eq!(c.enemies[0].hp, 50 - 11);
     }
 
     #[test]
@@ -6855,9 +6968,10 @@ mod power_tests {
         c.end_turn();
         assert_eq!(hp - c.player.hp, 30, "第一回合打 30");
         assert_eq!(c.enemies[0].statuses.get(Status::Fading), 4);
-        // 掉血会让它掉等量力量(移形换影)
+        // 掉血会让它当下少等量力量(移形换影),自己的回合结束再补回来
         c.damage_enemy(0, 40);
-        assert!(c.enemies[0].temp_strength < 0, "挨打就掉力量");
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), -40, "挨打就掉力量");
+        assert_eq!(c.enemies[0].temp_strength, 40, "掉的力量记着回合末回补");
         for _ in 0..4 {
             if c.phase != Phase::PlayerTurn {
                 break;
@@ -7268,9 +7382,13 @@ mod summon_tests {
     fn rally_into_a_corpse_slot_keeps_the_team_in_slot_order() {
         let mut c = fight("gremlin_leader_gang", 7);
         // 槽 1 的小鬼先死、槽 2 的还活着:召集补的是槽 1 和槽 0.
-        // 尸体那一格被顶掉,新来的按槽位排进队里
-        let mad = idx_of(&c, "mad_gremlin");
-        c.enemies[mad].hp = 0;
+        // 尸体那一格被顶掉,新来的按槽位排进队里(开局的小鬼是哪几只随种子变)
+        let slot1 = c
+            .enemies
+            .iter()
+            .position(|e| e.slot == 1)
+            .expect("槽 1 上有一只开战小鬼");
+        c.enemies[slot1].hp = 0;
         use_move(&mut c, "gremlin_leader", 0);
         assert_eq!(slots(&c), vec![0, 1, 2, 3], "补完后按槽位排");
         assert_eq!(c.enemies[0].slot, 0, "槽 0 的新鬼排在队首");
@@ -7354,10 +7472,16 @@ mod summon_tests {
     fn split_slimes_take_the_parent_slot_and_the_next_one() {
         let mut c = fight("large_slime", 7);
         assert_eq!(slots(&c), vec![0]);
+        let parent = c.enemies[0].def.id;
+        let medium = match parent {
+            "acid_slime_large" => "acid_slime_medium",
+            "spike_slime_large" => "spike_slime_medium",
+            other => panic!("大史莱姆不该是 {other}"),
+        };
         c.enemies[0].hp = 30;
         c.damage_enemy(0, 1);
         c.end_turn();
-        assert_eq!(ids(&c), vec!["acid_slime_medium", "acid_slime_medium"]);
+        assert_eq!(ids(&c), vec![medium, medium]);
         assert_eq!(slots(&c), vec![0, 1], "两只子体占原来那一格和下一格");
     }
 }

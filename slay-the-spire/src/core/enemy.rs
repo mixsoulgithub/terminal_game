@@ -163,6 +163,9 @@ pub struct EnemyState {
     pub prev: Option<usize>,
     /// 构造时掷出的固定伤害(虱子的咬、暗灵的撕咬)
     pub rolled: i32,
+    /// 这一掷是不是已经由遭遇抽签掷好了(带 lineup 的遭遇在构造候选时就掷了咬伤).
+    /// 为真时 spawn 钩子不再重掷,否则掷点流会多一下
+    pub rolled_preset: bool,
     /// 刺击之书:多段刺击当前是几段
     pub stab: u32,
     /// 小鬼巫师:充能计数
@@ -467,8 +470,20 @@ impl EnemyPreset {
     }
 }
 
-/// 遭遇开局按参考规则重抽阵容:返回按槽位排好的敌人 id
-pub type LineupFn = fn(&mut Rng) -> Vec<&'static str>;
+/// 遭遇开局抽出来的一只怪:按原版构造顺序掷出来的 id、血量,和构造时就定下的固定伤害.
+/// 原版在构建怪物组时就把每只候选的血掷了(连没被选上的候选也掷,见 sts_lightspeed
+/// MonsterGroup::createWeakWildlife 之类),所以抽签函数要自己把血掷掉,不能留给引擎
+/// 按槽位补掷,不然 monsterHpRng 的流位置对不上.
+#[derive(Clone, Copy, Debug)]
+pub struct Spawned {
+    pub id: &'static str,
+    pub hp: i32,
+    /// 构造时就定下的咬伤(虱子).Some 时 spawn 钩子不再重掷这一掷
+    pub rolled: Option<i32>,
+}
+
+/// 遭遇开局按原版规则抽阵容:返回按槽位排好的怪(血已经掷在里面)
+pub type LineupFn = fn(&mut RngRegistry) -> Vec<Spawned>;
 
 /// 一场遭遇战:同一组的敌人 id,加上开局的阵容抽签与预置状态
 #[derive(Debug)]
@@ -477,7 +492,7 @@ pub struct Encounter {
     pub kind: EnemyKind,
     /// 固定阵容.有 lineup 时它只当代表阵容(图鉴/查找用),真正开局按抽签来
     pub enemies: &'static [&'static str],
-    /// 开局重新抽阵容(三种"形状"遭遇).None 时直接用 enemies
+    /// 开局重新抽阵容(原版在开战时才决定阵容的遭遇).None 时直接用 enemies
     pub lineup: Option<LineupFn>,
     /// 开局按槽位施加的预置状态
     pub presets: &'static [EnemyPreset],

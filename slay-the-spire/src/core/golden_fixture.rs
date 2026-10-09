@@ -35,7 +35,7 @@ pub const REWARD_POTION: Option<&str> = None;
 pub const REWARD_CARDS: &[(&str, bool)] = &[("ARMAMENTS", false), ("TWIN_STRIKE", false), ("ANGER", false)];
 /// 多颗种子的第一个怪房间与第一场战斗奖励
 pub const CASES: &[Case] = &[
-    Case { seed: 3, burning: (1, 10, 0), monsters: &[("SPIKE_SLIME_S", 14), ("ACID_SLIME_M", 31)], gold: 11, potion: None, cards: &[("HEAVY_BLADE", false), ("TWIN_STRIKE", false), ("SHRUG_IT_OFF", false)] },
+    Case { seed: 3, burning: (1, 10, 0), monsters: &[("ACID_SLIME_S", 12), ("SPIKE_SLIME_M", 31)], gold: 11, potion: None, cards: &[("HEAVY_BLADE", false), ("TWIN_STRIKE", false), ("SHRUG_IT_OFF", false)] },
     Case { seed: 5, burning: (5, 5, 3), monsters: &[("JAW_WORM", 42)], gold: 17, potion: None, cards: &[("HAVOC", false), ("PERFECTED_STRIKE", false), ("WILD_STRIKE", false)] },
     Case { seed: 55, burning: (5, 5, 2), monsters: &[("JAW_WORM", 44)], gold: 15, potion: None, cards: &[("TRUE_GRIT", false), ("IRON_WAVE", false), ("TWIN_STRIKE", false)] },
     Case { seed: 89, burning: (3, 9, 0), monsters: &[("CULTIST", 48)], gold: 15, potion: Some("EXPLOSIVE_POTION"), cards: &[("BURNING_PACT", false), ("CLOTHESLINE", false), ("PUMMEL", false)] },
