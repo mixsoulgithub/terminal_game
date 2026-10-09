@@ -109,6 +109,35 @@ function parsePolicy(text: string): Policy {
 
 const bundle = buildBaseContentBundle();
 
+// ---- 参考侧缺口的驱动补偿:燃烧精英的"再生" ----
+//
+// 参考实现 applyBurningEliteBuff(runFlow.ts:352)照原版把 REGEN 挂到了怪身上,
+// 但它的战斗解释器里没有 REGEN 这个能力定义(hooks 是空的,monsterTurn 里
+// fireHook(...,"atStartOfTurn") 找不到钩子就什么都不做),于是燃烧精英抽到 3 号
+// 增益时怪物一点血都不回.原版 Monster::applyStartOfTurnPowers 会按层数回血
+// (反编译 src/combat/Monster.cpp:59-60;挂载见 MonsterGroup.cpp:622),本作引擎
+// 照原版实现,不动.这里在驱动侧补一枚 REGEN 能力,让两边的规则一致.
+// 另:本作 apply_burning_elite_buff 的 act*2+1 与原版一致(runFlow.ts:370 同).
+const REGEN_POWER = {
+  id: "REGEN",
+  name: "Regen",
+  kind: "buff" as const,
+  stacking: "intensity" as const,
+  turnBased: false,
+  hooks: {
+    atStartOfTurn: (ctx: {
+      owner: { idx: number };
+      power?: { amount: number };
+      combat?: { monsters: { hp: number; maxHp: number; isDead: boolean; isEscaped: boolean }[] };
+    }) => {
+      const m = ctx.combat?.monsters[ctx.owner.idx];
+      if (!m || m.isDead || m.isEscaped) return;
+      m.hp = Math.min(m.maxHp, m.hp + (ctx.power?.amount ?? 0));
+    },
+  },
+};
+bundle.powers.set("REGEN" as never, REGEN_POWER as never);
+
 // ---- 参考侧缺口的驱动补偿:蛋类遗物 ----
 //
 // 参考实现的 MOLTEN_EGG/TOXIC_EGG/FROZEN_EGG(src/content/relics/*.ts)都是
@@ -516,7 +545,7 @@ function smartPlay(state: GameState): GameState {
     if (process.env.SPIRE_TRACE) {
       const hand = c.player.piles.hand.map((iid) => {
         const x = c.cards[iid]!;
-        return `${x.defId}(b${x.misc ?? 0})`;
+        return `${x.defId}(b${x.misc ?? 0}c${x.costForTurn ?? x.cost})`;
       });
       const foes = c.monsters.map((m, i) => `${m.id}:${m.hp}/${m.maxHp}b${m.block}m${m.move}${m.halfDead ? "HALF" : ""}`);
       console.error(
@@ -905,6 +934,36 @@ function planLineup(encounterId: string, seed: bigint, floor: number, asc: numbe
 /** 补偿开关(--raw-ref 关掉) */
 let COMPENSATE = true;
 
+/**
+ * 结算一次挂起的选牌并输出 pick 行.
+ *
+ * 本作的窗口是"每选一张发一行 pick"(空笼删 2 张 = 候选 20 → 19 两行);
+ * 参考侧把整个窗口一次 choose 交完,所以要按被选中的张数逐张补出中间态.
+ * 这是驱动的导出约定(不是规则分歧):中间态 = 原状态里删掉前 k+1 张被选中的牌,
+ * 牌组下标从 resumeArgs 的 indices 拿(参考侧 removeDeckCards 用的同一组下标).
+ */
+function emitPendingPick(out: string[], step: number, s: GameState): { s: GameState; step: number } {
+  const req = s.pending!.request;
+  const n = req.kind === "cards" ? req.iids.length : 0;
+  const picks = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
+  const deckIdx = (s.pending!.resumeArgs as { indices?: number[] } | undefined)?.indices;
+  if (picks.length > 1 && deckIdx && deckIdx.length >= picks.length) {
+    for (let k = 0; k < picks.length - 1; k++) {
+      const mid = structuredClone(s);
+      // 中间态:按牌组下标从大到小删掉前 k+1 张被选中的牌
+      for (let j = k; j >= 0; j--) mid.run.deck.splice(deckIdx[picks[j]!]!, 1);
+      out.push(line(step, "pick", `"candidates":${n - k},"pick":0`, stateJson(mid)));
+      step += 1;
+    }
+  }
+  const next = advanceWithEggs(s, { cmd: "choose", indices: picks });
+  out.push(
+    line(step, "pick", `"candidates":${n - Math.max(0, picks.length - 1)},"pick":0`, stateJson(next)),
+  );
+  step += 1;
+  return { s: next, step };
+}
+
 /** 把补掷出来的阵容写进参考侧的遭遇表,好让它按这个阵容开战 */
 function injectLineup(act: number, encounterId: string, ids: string[]): void {
   const actDef = bundle.acts.find((a) => a.act === act);
@@ -1049,17 +1108,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
 
   for (let guard = 0; guard < policy.maxSteps; guard++) {
     if (s.pending) {
-      const req = s.pending.request;
-      const n = req.kind === "cards" ? req.iids.length : 0;
-      // choose 的 indices 是 iids 的下标(见 chosenIid:iids[chosen[0]]),
-      // 所以取前 min 个位置,不是前 min 个 iid
-      const picks =
-        req.kind === "cards"
-          ? req.iids.map((_, i) => i).slice(0, req.min)
-          : [0];
-      s = advanceWithEggs(s, { cmd: "choose", indices: picks });
-      out.push(line(step, "pick", `"candidates":${n},"pick":0`, stateJson(s)));
-      step += 1;
+      ({ s, step } = emitPendingPick(out, step, s));
       continue;
     }
     const room = s.run.room;
@@ -1095,8 +1144,13 @@ export function replayRefl(seedStr: string, policy: Policy): string {
           `"from":${from},"to":[${target.x},${target.y}],"node":${JSON.stringify(node === "unknown" ? "event" : node)},` +
           `"resolved":${JSON.stringify(resolved)}`;
         if (s.combat) {
+          // 参考实现用 GAP 占位符铺满原版的定长怪物槽(collector 在 2 号槽、
+          // 小鬼头目在 3 号槽这种),_shared.ts 的 padMonsterSlots 插的.
+          // 本作导出的是"真实存在的怪",GAP 不是怪(参考自己的 CLI 也过滤它,
+          // 见 slay-the-cli/src/cli/state/view.ts:851),对拍时折掉.
           payload +=
             `,"monsters":[${s.combat.monsters
+              .filter((m) => m.id !== "GAP")
               .map((m) => `{"id":${JSON.stringify(m.id)},"hp":${m.hp},"max_hp":${m.maxHp}}`)
               .join(",")}]`;
         }
@@ -1124,12 +1178,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
             taken.push(...res.taken);
             if (!s.pending) break;
             while (s.pending) {
-              const req = s.pending.request;
-              const n = req.kind === "cards" ? req.iids.length : 0;
-              const sel = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
-              s = advanceWithEggs(s, { cmd: "choose", indices: sel });
-              out.push(line(step, "pick", `"candidates":${n},"pick":0`, stateJson(s)));
-              step += 1;
+              ({ s, step } = emitPendingPick(out, step, s));
             }
           }
           taken.sort((a, b) => rewardRank(a) - rewardRank(b));

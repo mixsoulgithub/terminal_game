@@ -1468,7 +1468,11 @@ impl Combat {
             // 混乱:抽到的牌费用随机化
             if self.player.statuses.has(Status::Confused) {
                 let i = self.hand.len() - 1;
-                let base = match self.hand[i].def.cost {
+                // 基线要取这张牌"当前"的费用(升级后的),不是牌面基础费用:
+                // 反编译 CardManager::draw 是把掷出来的值直接写进 cost/costForTurn,
+                // 升级降费的牌(havoc+ 这种基础 1 升级后 0)也得是掷出的那个值,
+                // 拿基础费用当基线会凭空少 1.
+                let base = match self.hand[i].cost() {
                     Cost::Fixed(n) => n as i32,
                     _ => -1,
                 };
@@ -1493,11 +1497,12 @@ impl Combat {
             self.resolve_effects(&mut card, effects, None, &mut ctx);
             self.push_log(LogKind::Player, format!("{label} triggers when drawn"));
         }
-        if card.kind() != crate::core::card::CardType::Status {
-            return;
-        }
+        use crate::core::card::CardType;
+        // 吐火:抽到状态牌或诅咒牌都打全体(反编译 CardManager::draw 的两个分支各自
+        // 挂了一次 DamageAllEnemy).只认状态牌会漏掉诅咒 —— 原版诅咒一样触发.
+        let fires_on = matches!(card.kind(), CardType::Status | CardType::Curse);
         let fire = self.player.statuses.get(Status::FireBreathing);
-        if fire > 0 {
+        if fire > 0 && fires_on {
             for i in self.alive_enemies() {
                 self.damage_enemy_plain(i, fire);
             }
@@ -1507,10 +1512,13 @@ impl Combat {
             );
             self.settle_deaths();
         }
-        let evolve = self.player.statuses.get(Status::Evolve);
-        if evolve > 0 {
-            // 递归深度受手牌上限约束
-            self.draw_cards(evolve as usize);
+        // 进化:抽到状态牌再抽 N 张(反编译里这次抽牌排在吐火伤害之后结算)
+        if card.kind() == CardType::Status {
+            let evolve = self.player.statuses.get(Status::Evolve);
+            if evolve > 0 {
+                // 递归深度受手牌上限约束
+                self.draw_cards(evolve as usize);
+            }
         }
     }
 
@@ -5163,10 +5171,11 @@ impl Combat {
     /// 蛇油:手上能算出费用的牌重掷成 0~3 费(整场战斗有效,和蛇眼的"混乱"一致)
     fn randomize_hand_costs(&mut self) {
         let idxs: Vec<usize> = (0..self.hand.len())
-            .filter(|i| matches!(self.hand[*i].def.cost, Cost::Fixed(_)))
+            .filter(|i| matches!(self.hand[*i].cost(), Cost::Fixed(_)))
             .collect();
         for i in idxs {
-            let base = match self.hand[i].def.cost {
+            // 同抽牌时的混乱:基线取当前费用(升级后的),掷出来的值就是这一张的费用
+            let base = match self.hand[i].cost() {
                 Cost::Fixed(n) => n as i32,
                 _ => continue,
             };
@@ -5914,6 +5923,52 @@ mod tests {
         let before = c.enemies[0].hp;
         c.draw_cards(1);
         assert!(c.enemies[0].hp < before);
+    }
+
+    /// 吐火对诅咒牌一样触发(反编译 CardManager::draw 的 CURSE 分支;此前只认状态牌,
+    /// 抽到"腐朽"这类诅咒时白丢一次全体伤害).
+    #[test]
+    fn fire_breathing_punishes_drawing_curses() {
+        let mut c = combat_with("jaw_worm_solo", &["decay"; 5]);
+        c.player.statuses.add(Status::FireBreathing, 6);
+        c.hand.clear();
+        c.draw.clear();
+        c.discard = vec![card("decay"), card("decay")];
+        let before = c.enemies[0].hp;
+        c.draw_cards(1);
+        assert_eq!(c.enemies[0].hp, before - 6, "抽到诅咒要打 6 点全体");
+        // 抽普通牌不该触发:牌堆里只留一张技能牌,再抽一张血量不动
+        c.draw.clear();
+        c.discard = vec![card("defend")];
+        let mid = c.enemies[0].hp;
+        c.draw_cards(1);
+        assert_eq!(c.enemies[0].hp, mid, "非状态/诅咒不触发吐火");
+    }
+
+    /// 混乱把抽到的牌改成掷出来的那个费用.升级降费的牌(havoc+ 基础 1、升级后 0)
+    /// 也必须正好是掷出的值:此前拿牌面基础费用当基线算 delta,这类牌会凭空少 1,
+    /// 于是"3 费打 0 费牌"这种费用账在对拍里会走到不同的分支(seed 16 的蛇怪战).
+    #[test]
+    fn confused_sets_the_rolled_cost_even_when_the_upgrade_discounts_it() {
+        let havoc_up = || {
+            let mut inst = cards::card("havoc");
+            inst.upgrade();
+            inst
+        };
+        let mut c = combat_with("jaw_worm_solo", &["havoc"; 5]);
+        c.player.statuses.add(Status::Confused, 1);
+        c.hand.clear();
+        c.draw = vec![havoc_up()];
+        assert_eq!(havoc_up().fixed_cost(), Some(0), "havoc+ 基础费用是 0");
+        let before = c.streams.floor(FloorStream::CardRandomRng).state();
+        let expected = crate::rng::Rng::from_state(before).random(3) as i32;
+        c.draw_cards(1);
+        assert_eq!(c.hand.len(), 1);
+        assert_eq!(
+            c.hand[0].fixed_cost(),
+            Some(expected),
+            "混乱后的费用就是掷出来的值(0..3),不该再被升级降费减掉一档"
+        );
     }
 
     #[test]

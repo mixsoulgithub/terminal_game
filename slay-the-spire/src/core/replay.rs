@@ -580,7 +580,7 @@ fn smart_play(run: &mut Run) -> Result<(), String> {
                 let hand: Vec<String> = c
                     .hand
                     .iter()
-                    .map(|x| format!("{}{}(b{})", x.def.id, if x.upgraded { "+" } else { "" }, x.bonus))
+                    .map(|x| format!("{}{}(b{}c{})", x.def.id, if x.upgraded { "+" } else { "" }, x.bonus, x.fixed_cost().map(|c| c.to_string()).unwrap_or_else(|| "-".into())))
                     .collect();
                 let foes: Vec<String> = c
                     .enemies
@@ -1868,19 +1868,64 @@ mod e2e {
     /// 本轮退赃折掉后:seed 18 那余下的 2..7 六步全是退赃级联 —— 参考驱动补上退赃
     /// (见 ASC2 上方"驱动侧补偿之二")之后 seed 18 逐字节全对齐,全表合计 159->153 处.
     /// 其余含盗贼的 seed(15/19 步 40 的空槽口径)不受影响.
+    ///
+    /// 本轮把 153 处逐颗反查了一遍(逐 seed 跑 + SPIRE_TRACE=1 两侧对 trace 逐回合定分叉).
+    /// 四条根因,两条是本作真 bug(已修 + 断言),两条是参考侧缺口(驱动侧补偿):
+    ///   (a)1 吐火只认状态牌、不认诅咒.反编译 CardManager.cpp:420-440 里 STATUS 与 CURSE
+    ///       两个分支各挂一次 DamageAllEnemy.修在 combat.rs 的 on_card_drawn,断言 =
+    ///       fire_breathing_punishes_drawing_curses(seed 6 的斗兽场第一场、旧日记里
+    ///       那条"被归成 (c) 的灼伤"其实混着这一条).卡面文案同步补上 "or Curse"
+    ///       (corpus.rs 的 FIRE_BREATHING 本来就是对的).
+    ///   (a)2 混乱(蛇眼/蛇油)把费用写成"掷出的值减去牌面基础费用",升级降费的牌会少一档
+    ///       (havoc+ 基础 1、升级后 0,掷出 2 只给 1 费).反编译 CardManager.cpp:398-410 是
+    ///       直接 newCost 写进 cost/costForTurn.修在 on_card_drawn + randomize_hand_costs,
+    ///       断言 = confused_sets_the_rolled_cost_even_when_the_upgrade_discounts_it
+    ///       (seed 16 的蛇怪战 9 处差异的头 3 步).
+    ///   (b)1 参考侧燃烧精英的"再生"没生效:它 runFlow.ts:352 照原版挂了 REGEN 能力,
+    ///       但战斗解释器里没有 REGEN 定义(monsterTurn 的 atStartOfTurn 钩子落空),
+    ///       于是抽到 3 号增益的精英怪一点血都不回.原版见反编译 Monster.cpp:59-60
+    ///       (按层数回血)与 MonsterGroup.cpp:622(act*2+1).驱动侧补一枚能力定义
+    ///       (tools/replay_ref.ts 的 REGEN_POWER),本作引擎不动 —— seed 17/25/33 的
+    ///       燃烧精英战、以及它们后面的级联一共 40 处由此消失.
+    ///   (b)2 参考侧导出用 GAP 占位符铺原版的定长怪物槽,进 Boss 房那一行会多两格
+    ///       (收集者 Boss 在 2 号槽、0/1 留给火炬头).参考自己的 CLI 也过滤 GAP
+    ///       (slay-the-cli/src/cli/state/view.ts:851),驱动侧导出时同样折掉(seed 4/11/16).
+    ///   另有两条属"一次选多张"的导出口径:本作把空笼删 2 张拆成两行 pick(候选 20 → 19),
+    ///   参考侧一次 choose 交完 —— 驱动侧按张数补出中间态(seed 25 尾部 27 处消失).
+    ///
+    /// 反查后逐颗口径(对齐前缀 / 首分叉步 / 成因 / 归类),全表合计差异 153->71 处:
+    ///   全对齐(0 处):4 6 15 17 18 19
+    ///   seed 3 : 14 步 / 步 14 百夫长+神秘者 / (b)3 参考侧怪物的"下一招掷点"早于它自己
+    ///            排队的回血结算 —— 反编译 Monster.cpp/Actions 里回血先落地、RollMove 排在
+    ///            回血动作之后;参考 executeMonsterMove 是先 rollMove 再让队列里的回血跑,
+    ///            于是同一个 t3 两侧意图分叉(heal vs attack-debuff,血量逐字段相同).
+    ///            30 处全是这一处的 hp 级联.
+    ///   seed 11: 29 步 / 步 29 百夫长+神秘者 / (b)4 参考侧没实现 Nilry 宝典
+    ///            (refs/slay-the-cli/src/content/relics/event.ts:149 是 hooks: {}
+    ///            的空壳并自带 ENGINE-GAP 注释).本作每回合末真的会开三选一,抽到的那张
+    ///            进了抽牌堆,于是 t2 起手牌多一张 true_grit.17 处是该分叉的级联.
+    ///   seed 13: 33 步 / 步 33(精英奖励 hp 差 2)/ (b)5 参考侧小鬼头目 Rally 的召唤槽位与
+    ///            顺序和反编译不同(Actions.cpp:459 SummonGremlins:固定补 2 只、按 1,2,0
+    ///            找空槽;MonsterGroup.cpp:244 头目在 3 号槽、0 号槽空着).4 处.
+    ///   seed 16: 36 步 / 步 36 百夫长+神秘者 / (b)3 同 seed 3;另有 1 处未定:
+    ///            同一场里 havoc 打出的顶牌伤害两侧 8 vs 16(trace E8 第 1 回合,
+    ///            手上牌与抽牌堆都一致,只剩这张顶牌的伤害不同),留待下一轮.
+    ///   seed 25: 35 步 / 步 35 百夫长+神秘者 / (b)3 同 seed 3.5 处.
+    ///   seed 33: 32 步 / 步 32 燃烧精英小鬼头目 / (b)5 同族:参考侧 Rally 只补 1 只小鬼
+    ///            (3 个怪),本作补 2 只(4 个怪,与反编译的定长槽一致).9 处.
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45], diff_digest: 0xf2b5f8db28da67f0 },
-    Expected { seed: 4, lines: 46, ref_lines: 46, aligned: 42, diff_steps: &[42], diff_digest: 0x63794b5f370ddd17 },
-    Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 33, diff_steps: &[33, 34, 35], diff_digest: 0xbbad701c251ec8fe },
-    Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 44, 45, 46, 47], diff_digest: 0xca3d3b7324c93093 },
+    Expected { seed: 4, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 47], diff_digest: 0x1e373abd1d72e271 },
     Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 41, 42, 43], diff_digest: 0xec4d2485f4448232 },
-    Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0xd5335c7c61c77f9d },
-    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 34, 35, 36, 37, 38, 40, 41, 42, 43], diff_digest: 0x45eb5e91e9ccca2 },
-    Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 17, diff_steps: &[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0x1a7cf5c3daeb0962 },
+    Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 36, diff_steps: &[36, 37, 38, 41, 42, 43], diff_digest: 0x3047f57b1d3c8787 },
+    Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x18db065dfd5ce919 },
-    Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46], diff_digest: 0x988b6e1c6f0aa4f1 },
-    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x664f5d82fe38755b },
+    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 25, lines: 47, ref_lines: 47, aligned: 35, diff_steps: &[35, 36, 37, 38, 39], diff_digest: 0x3ae9f68ee6a0abc1 },
+    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0xeb6910a2348c1b5a },
 ];
 
     /// 第二幕对拍:同一颗种子 + act2.script,逐行比对(两侧都转小写).

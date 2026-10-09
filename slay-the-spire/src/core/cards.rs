@@ -1442,7 +1442,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Power,
         rarity: Rarity::Uncommon,
         target: Target::None,
-        text: "Whenever you draw a Status card, deal 6 damage to ALL enemies.",
+        text: "Whenever you draw a Status or Curse card, deal 6 damage to ALL enemies.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -1458,7 +1458,7 @@ pub static CARDS: &[CardDef] = &[
         }],
         upgrade: up!(
             None,
-            "Whenever you draw a Status card, deal 10 damage to ALL enemies.",
+            "Whenever you draw a Status or Curse card, deal 10 damage to ALL enemies.",
             [Effect::AddSelfStatus {
                 status: Status::FireBreathing,
                 n: 10
