@@ -339,6 +339,14 @@ pub struct Combat {
     /// 浩劫链:依次被打出的牌(层级, 牌名),表现层拿去做"链式播报"
     pub havoc_chain: Vec<(u8, String)>,
     havoc_depth: u8,
+    /// 延迟结算的"打出抽牌堆顶"(浩劫顶牌).原版打出浩劫时:先把顶牌从抽牌堆摘下来
+    /// 交给卡牌队列(抽牌堆空了就在这一步先重洗弃牌堆,此时浩劫还没进弃牌堆),而浩劫
+    /// 自己进弃牌堆排在动作队列里,先于卡牌队列清空 —— 所以顶牌真正结算时浩劫已经在
+    /// 弃牌堆(顶牌自己的"抽 1"再触发重洗时就会把浩劫一起洗进去).见反编译
+    /// BattleContext.cpp 的 useCard / onAfterUseCard 与主循环(actionQueue 先于 cardQueue).
+    /// 这里照同一顺序:打牌时先摘顶牌存进这条队列,等本张牌收尾之后再结算.
+    /// 每项是(浩劫链层级, 顶牌, 打完是否消耗).
+    pending_top_plays: Vec<(u8, CardInstance, bool)>,
     /// 放到抽牌堆顶的序号,每次放都 +1
     top_seq: u32,
     /// 待选择(选牌窗口/手牌选择模式)
@@ -554,6 +562,7 @@ impl Combat {
             hp_losses: 0,
             havoc_chain: Vec::new(),
             havoc_depth: 0,
+            pending_top_plays: Vec::new(),
             top_seq: 0,
             choice: None,
             shakes: Vec::new(),
@@ -1066,7 +1075,7 @@ impl Combat {
         }
         // 混乱:回合开始打出抽牌堆顶那张(打完按它自己的规矩去弃牌堆/消耗堆)
         if self.player.statuses.has(Status::Mayhem) {
-            self.play_top_of_draw(false, "Mayhem");
+            self.play_top_of_draw_now(false, "Mayhem");
         }
         // 磁力:回合开始随机给一张无色牌
         let mag = self.player.statuses.get(Status::Magnetism);
@@ -1102,26 +1111,30 @@ impl Combat {
         self.push_log(LogKind::Player, format!("{label} appears"));
     }
 
-    /// 打出抽牌堆顶那张;exhaust_after 为真时打完直接消耗(浩劫),
-    /// via 是播报里"谁打出了它"(浩劫/万物皆动/混沌药剂)
-    fn play_top_of_draw(&mut self, exhaust_after: bool, via: &str) {
-        // 抽牌堆空了先把弃牌堆洗回来(参考实现的 PlayTopCardAction 会洗),
-        // 没得洗才什么都不做
+    /// 原版 PlayTopCard 动作的前半:抽牌堆空了先把弃牌堆洗回来(此时本张牌还没进
+    /// 弃牌堆),再摘走顶牌.返回摘下的那张(没得打返回 None).
+    fn take_top_card_for_play(&mut self, via: &str) -> Option<CardInstance> {
         if self.draw.is_empty() && !self.reshuffle_discard_into_draw() {
-            return;
+            return None;
         }
-        let mut card = self.draw.remove(0);
-        let label = card.label();
-        self.push_log(LogKind::Player, format!("{via} plays {label}"));
+        let card = self.draw.remove(0);
+        self.push_log(LogKind::Player, format!("{via} plays {}", card.label()));
+        Some(card)
+    }
+
+    /// 原版 PlayTopCard 动作的后半:结算摘下来的那张牌(exhaust_after 为真时打完
+    /// 直接消耗,浩劫就是),depth 是浩劫链层级.
+    fn play_top_card(&mut self, mut card: CardInstance, exhaust_after: bool, depth: u8) {
         let kind = card.kind();
         // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
-        self.havoc_depth = self.havoc_depth.saturating_add(1);
-        self.havoc_chain.push((self.havoc_depth, label));
+        let saved_depth = self.havoc_depth;
+        self.havoc_depth = depth;
+        self.havoc_chain.push((depth, card.label()));
         let target = self.pick_random_alive();
         self.snapshot_sharp_hide();
         let mut top_ctx = PlayCtx::default();
         self.resolve(&mut card, target, &mut top_ctx);
-        self.havoc_depth = self.havoc_depth.saturating_sub(1);
+        self.havoc_depth = saved_depth;
         card.free_this_turn = false;
         if card.kind() == crate::core::card::CardType::Power {
             // 能力牌一样是打完就退场(浩劫放出来的也不例外)
@@ -1133,6 +1146,24 @@ impl Combat {
         }
         self.note_card_played(kind);
         self.check_win();
+        // 这张顶牌自己也可能又压了一次"打顶牌"(浩劫打浩劫),接着跑
+        self.drain_pending_top_plays();
+    }
+
+    /// 立刻打抽牌堆顶:没有"本张牌"要收尾的场合(混乱/混沌药剂)走这条.
+    fn play_top_of_draw_now(&mut self, exhaust_after: bool, via: &str) {
+        if let Some(card) = self.take_top_card_for_play(via) {
+            self.play_top_card(card, exhaust_after, 1);
+        }
+    }
+
+    /// 把延迟的"打出抽牌堆顶"跑掉.调用点都在"当前打出的那张牌已经收尾"之后 ——
+    /// 顺序与原版一致(浩劫先进弃牌堆,再结算摘下来的顶牌).
+    fn drain_pending_top_plays(&mut self) {
+        while !self.pending_top_plays.is_empty() {
+            let (depth, card, exhaust) = self.pending_top_plays.remove(0);
+            self.play_top_card(card, exhaust, depth);
+        }
     }
 
     /// 记一张打出的牌;浮夸每打满 5 张就对所有敌人来一下;痛苦手里有就掉血
@@ -3074,6 +3105,8 @@ impl Combat {
         if let Some(kind) = played_kind {
             self.note_card_played(kind);
         }
+        // 选牌那一截尾巴里如果压了"打顶牌"(理论上没有,留着兜底),同样等收尾后再打
+        self.drain_pending_top_plays();
         if ch.draw_after && ch.taken > 0 {
             self.draw_cards(ch.taken);
         }
@@ -4085,6 +4118,8 @@ impl Combat {
         }
         // 结算完后决定去处(与 finish_played 走同一条路:能力牌退场、该消耗的消耗)
         self.finish_played(Some((card, cost)));
+        // 浩劫那张牌已经进了弃牌堆,现在才打抽牌堆顶(与原版动作队列/卡牌队列的先后一致)
+        self.drain_pending_top_plays();
         self.check_win();
         Ok(())
     }
@@ -4469,7 +4504,13 @@ impl Combat {
                     }
                 }
                 Effect::PlayTopOfDraw => {
-                    self.play_top_of_draw(true, "Havoc");
+                    // 原版:浩劫先把顶牌摘进卡牌队列(这一步抽牌堆空了会先重洗弃牌堆,
+                    // 浩劫还没进去),浩劫自己进弃牌堆的动作在动作队列里先跑,顶牌最后才
+                    // 结算(见反编译 BattleContext.cpp).这里照同一顺序:现在只摘牌,
+                    // 等本张牌收尾之后再结算(见 drain_pending_top_plays).
+                    if let Some(card) = self.take_top_card_for_play("Havoc") {
+                        self.pending_top_plays.push((self.havoc_depth + 1, card, true));
+                    }
                 }
                 Effect::AddCardToHand { id, n } => {
                     let def = cards::card_def_or_panic(id);
@@ -5056,7 +5097,7 @@ impl Combat {
             }
             PotionFx::PlayTopCards { n } => {
                 for _ in 0..n {
-                    self.play_top_of_draw(false, "Distilled Chaos");
+                    self.play_top_of_draw_now(false, "Distilled Chaos");
                 }
             }
             PotionFx::AddCardToHand { id, n, upgraded } => {
@@ -5398,6 +5439,32 @@ mod tests {
         assert!(ids.contains(&"bash"), "别的消耗牌还能拿:{ids:?}");
     }
 
+
+    /// 浩劫打出"会抽牌"的牌时的先后:浩劫自己先进弃牌堆,顶牌最后才结算 ——
+    /// 顶牌那个"抽 1"触发重洗时要把刚打出的浩劫一起洗进去.
+    /// 依据:反编译 BattleContext.cpp 打出浩劫时把 PlayTopCard 压进动作队列、把
+    /// OnAfterCardUsed(浩劫进弃牌堆)排在它后面,而顶牌进的是卡牌队列 —— 主循环
+    /// actionQueue 先于 cardQueue 清空,所以浩劫先落地、顶牌后结算.
+    #[test]
+    fn havoc_enters_the_discard_pile_before_the_autoplayed_card_resolves() {
+        let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
+        c.hand = vec![card("havoc")];
+        c.draw = vec![card("pommel_strike")];
+        c.discard = vec![card("strike")];
+        c.energy = 3;
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.enemies[0].hp, e_hp - 9, "抽牌堆顶的重拳被打了出来");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "pommel_strike"),
+            "浩劫放出来的顶牌打完进消耗堆"
+        );
+        // 重拳的"抽 1"把弃牌堆洗回来:这时浩劫已经在弃牌堆里,所以手牌 + 抽牌堆
+        // 该凑出浩劫与打击两张;按旧的顺序(浩劫等顶牌打完才落地)只会剩一张.
+        let mut ids: Vec<&str> = c.hand.iter().chain(c.draw.iter()).map(|x| x.def.id).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["havoc", "strike"], "重洗要把刚打出的浩劫一起算进去");
+    }
 
     /// 浩劫连锁:浩劫打浩劫再打出一张普通牌,链上每张都记下来
     #[test]

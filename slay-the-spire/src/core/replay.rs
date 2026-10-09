@@ -1748,12 +1748,14 @@ mod e2e {
     /// 随"血量掷点"两条修复又各前移了一点:本作原先对固定血量的怪少掷一次 monsterHpRng,
     /// 对拍器的 planLineup 也跟着少掷,于是 fixture 里那几场阵容的血本来就是错的 ——
     /// 两侧规则一起修正后按 tools/replay_ref.ts 重新生成了 act2/acts/a20a2 的 ref.jsonl,
-    /// 本表随之重钉(见 ASC2_CASES 上方"已修的三条").
+    /// 本表随之重钉(见 ASC2_CASES 上方"已修的四条").
+    /// 本轮修掉"浩劫顶牌先后"(见 ASC2_CASES (a)4)后,seed 11 的差异步集合没变(首分叉
+    /// 仍是步 18 的 cursed_tome 参考缺口),只是级联里那几场仗抽牌顺序修正,内容指纹随之重钉.
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45], diff_digest: 0xf2b5f8db28da67f0 },
     Expected { seed: 4, lines: 46, ref_lines: 45, aligned: 41, diff_steps: &[41, 42, 43, 44, 45], diff_digest: 0x7387b1ab31891131 },
     Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35], diff_digest: 0x27ad071e5ee60238 },
-    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x6a59feba54951b98 },
+    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0xdaaea4611a5b2aed },
     Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 41, 42, 43], diff_digest: 0xec4d2485f4448232 },
     Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0xd5335c7c61c77f9d },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 34, 35, 36, 37, 38, 40, 41, 42, 43], diff_digest: 0x45eb5e91e9ccca2 },
@@ -2194,7 +2196,7 @@ mod e2e {
     ///
     /// 逐颗 seed 归因(12 颗,复跑命令 `bun tools/e2e_diff.ts --all --script
     /// tools/golden/e2e/a20a2.script`)."对齐前缀"= 第一处分叉前的步数,"首分叉"= 第一处
-    /// 字段不同的步号(其后差异都是这一处的级联).当前合计 1665 处差异:
+    /// 字段不同的步号(其后差异都是这一处的级联).当前合计 1657 处差异:
     ///
     ///   seed  步数(本作/参考)  对齐前缀  首分叉            首分叉成因 / 归类
     ///    3     45/45            13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)  [共 30 处]
@@ -2207,10 +2209,10 @@ mod e2e {
     ///   17     44/44            14       步 14 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c) [共 24 处]
     ///   18     47/47             2       步 2  fight       击杀盗贼/强盗退赃 (b)               [共 381 处]
     ///   19     45/45             8       步 8  fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c) [共 45 处]
-    ///   25     47/46            32       步 32 fight       书呆子精英战:伤口张数/抽牌堆 待查    [共 50 处]
-    ///   33     46/46            26       步 26 fight       头目小鬼精英战 117 hp 缺口 待查      [共 15 处]
+    ///   25     47/46            36       步 36 pick        designer_in_spire 升级目标 (b)     [共 42 处]
+    ///   33     46/46            26       步 26 fight       首领排槽→少召唤一只小鬼 (c)        [共 15 处]
     ///
-    /// (a) 已修的三条(本轮从 1689 处降到 1665 处):
+    /// (a) 已修的四条(上一轮从 1689 处降到 1665 处;本轮从 1665 处降到 1657 处):
     ///   1) 召唤物的血量掷点少了一次.反编译 Actions::SpawnTorchHeads 对每只火炬头
     ///      `construct`(内部 initHp 掷一次)之后又调一次 `initHp`(第二次获胜),铜球的
     ///      initHp 分支也自带一次废掷(`hpRng.random(52,58)` 再 setRandomHp);本作原先
@@ -2231,6 +2233,15 @@ mod e2e {
     ///   附:带选牌的牌(战争怒吼/坚毅/双持…)原先在选牌收完之前就记"打出一张牌",
     ///      与反编译/参考实现的时序(onUseCard/onAfterCardPlayed 排在牌的效果之后)不符,
     ///      已改为 close_choice 里补记(见 combat.rs).
+    ///   4) 浩劫打出顶牌的先后(本轮修).原版打出浩劫时:先把顶牌从抽牌堆摘进"卡牌队列"
+    ///      (抽牌堆空了就在这一步先重洗弃牌堆,此时浩劫还没进弃牌堆),而浩劫自己进弃牌堆
+    ///      的动作排在"动作队列"里,主循环先清空动作队列再跑卡牌队列 —— 所以顶牌真正结算
+    ///      时浩劫已经在弃牌堆里(顶牌那个"抽 1"再触发重洗就会把浩劫一起洗进去).本作原先
+    ///      在浩劫的效果里同步打顶牌、等全部结算完才让浩劫进弃牌堆,seed 25 的书呆子精英战
+    ///      里浩劫打战吼时重洗少了浩劫自己,抽牌堆整体错位,那场差 80 hp.修法 =
+    ///      Effect::PlayTopOfDraw 只摘牌、存进 pending_top_plays,等本张牌收尾之后再跑
+    ///      (见 combat.rs 的 take_top_card_for_play / drain_pending_top_plays);断言 =
+    ///      combat.rs havoc_enters_the_discard_pile_before_the_autoplayed_card_resolves.
     ///
     /// (b) 参考缺口(参照实现 / 导出器口径不同,不改本作):
     ///   1) 退赃:原版击杀偷过钱的怪会退回赃款,参考 looters.ts/mugger.ts 只把 goldStolen
@@ -2241,21 +2252,30 @@ mod e2e {
     ///      槽 0/1 是两个 hp=0 的 "gap"),本作只列出场上真有的怪(1 只).战斗本身逐帧一致
     ///      (用 tools/sandbox 把收藏家战摆成同一局面跑过),差的只是导出器要不要列空槽;
     ///      seed 16 的 6 处差异全在这一行,后面 fight/reward/end 的动态字段已经全同.
+    ///   5) designer_in_spire 的"升级一张"选牌:本作升的是玩家真正选中的那张(候选表里
+    ///      第一张可升级牌,seed 25 是牌组第 11 张 pummel);参考的 requestDeckChoice 把
+    ///      候选表当 iids 传(oneTime.ts),续牌时却直接 upgradeDeckCard(chosen[0]),
+    ///      把"候选表里的下标 0"当成"牌组下标 0",于是把 deck[0] 已经强化过的狂暴又升成
+    ///      rampage+2 —— 原版里非 multiUpgrade 的牌根本升不了第二次,参考这一支是错的.
+    ///      seed 25 第 36 步起的分叉(含其后 event/pick/reward 的级联)全是它.
     ///
     /// (c) 参照实现自己反着来、本作按反编译的(不改本作):
     ///   1) 神秘者 MYSTIC_HEAL 的结算时点:反编译 MonsterSpecific.cpp 先 heal 再 rollMove,
     ///      参考把 heal 塞进动作队列,于是 getMove 读的是改状态之前的血量.seed 3/17/19 的
     ///      "百夫长+神秘者"战因此终点 hp 不同(挂格挡的 CENTURION_DEFEND 同理).
-    ///   2) 小鬼头目的开战摆位:参考把首领排在槽 2、随从只剩槽 0/1;原版是首领槽 3 + 随从
-    ///      槽 0/1/2(反编译 MonsterGroup.cpp 与语料槽位).seed 13 的头目小鬼战差 5 hp.
+    ///   2) 小鬼头目的开战摆位:参考把首领排在槽 2、随从只剩槽 0/1;原版是首领槽 3、
+    ///      起始随从槽 1/2、槽 0 空(反编译 MonsterGroup.cpp:255 把 GREMLIN_LEADER
+    ///      construct 在槽 3,起始随从在 arr[1]/arr[2]).摆位差的直接后果落在 Rally 找空槽:
+    ///      反编译 Actions.cpp:459 SummonGremlins 按 1,2,0 的顺序找"死的/空的"槽塞两只,
+    ///      参考把首领摆在槽 2 后候选就少了槽 2.本作与反编译一致;seed 13 只差 5 hp
+    ///      (纯朝向/格挡口径),seed 33 那场槽 1 的盾牌小鬼已死、槽 0 空,参考只找到 1 个
+    ///      空槽、少召唤一只胖小鬼,整场因此差 117 hp —— 两颗是同一处参考缺口的级联.
     ///
-    /// 还没归因的两颗(下一轮接着查,别当已归因):
-    ///   seed 25 = 书呆子(Book of Stabbing)精英战的抽牌堆:轨迹里本作第 3 回合抽到
-    ///     rampage,参考抽到 wound(两边敌人血量相同),说明痛苦刺击往弃牌堆塞的伤口张数
-    ///     或抽牌堆顺序不同;seed 33 = 头目小鬼精英战终点差 117 hp,轨迹更早就分叉.
-    ///     两颗都不属于上面任何一条,继续按反编译追掷点/伤害级.
+    /// 12 颗 seed 至此全部归因:1 处是本作真 bug(seed 25 的浩劫顶牌先后,(a)4),
+    /// 其余 11 颗的 8 处分叉分别是退赃/事件选项数/进 Boss 房口径/(b)、
+    /// 神秘者回血时点/小鬼首领排槽/(c).
     const ASC2_CASES: &[Expected] = &[
-    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0x71f056406a4052d1 },
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0x2378b9ac22ab3b13 },
     Expected { seed: 4, lines: 50, ref_lines: 49, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49], diff_digest: 0x3c7f60f8beaae77a },
     Expected { seed: 6, lines: 52, ref_lines: 53, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52], diff_digest: 0x98f743945c957f29 },
     Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0xd44adbf85aaf8f04 },
@@ -2265,7 +2285,7 @@ mod e2e {
     Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 41, 42, 43], diff_digest: 0xf5dca7770e705a38 },
     Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0xf2b6ae1d03e4dc15 },
     Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x6835cb622831038b },
-    Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x4fb240ce3fd98222 },
+    Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x536fd949b8fd5146 },
     Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0x70b10e426e8964fa },
 ];
 
