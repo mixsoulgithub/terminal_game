@@ -1014,6 +1014,29 @@ fn card_of_power(p: &str) -> Option<&'static str> {
 
 /// 少数需要整体替换效果的招式(参考实现里是重写 effects 列表)
 fn hard_replace(id: &str, move_name: &str, asc: u32) -> Option<&'static [EnemyFx]> {
+    // 巨大头颅的"时候到了":基础 30(A3 起 40) + 每回合 +5、上限 +30;
+    // A18 起首用回合从第 5 提前到第 4(A20 起就对得上参考实现).
+    // AttackScaling 的算式是 amount + per_turn * min(turns-1, cap),
+    // 所以把"首用回合"折进 amount、cap 取 首用-1 + 6.
+    if id == "giant_head" && norm(move_name) == "itistime" {
+        if asc >= 18 {
+            return Some(&[EnemyFx::AttackScaling {
+                amount: 25,
+                per_turn: 5,
+                cap: 9,
+                times: 1,
+            }]);
+        }
+        if asc >= 3 {
+            return Some(&[EnemyFx::AttackScaling {
+                amount: 20,
+                per_turn: 5,
+                cap: 10,
+                times: 1,
+            }]);
+        }
+        return None;
+    }
     if asc < 18 {
         return None;
     }
@@ -1041,10 +1064,11 @@ fn hard_replace(id: &str, move_name: &str, asc: u32) -> Option<&'static [EnemyFx
                 n: 2,
             },
         ]),
-        // 蛇形祭司:召唤两只匕首
+        // 蛇形祭司:召唤两只匕首(参考实现按 [4,1,3,0] 的顺序逐个填空槽,
+        // 所以候选槽要留全,只取前两个空位)
         ("reptomancer", "summon") => Some(&[EnemyFx::Summon {
             ids: &["dagger", "dagger"],
-            slots: &[4, 1],
+            slots: &[4, 1, 3, 0],
         }]),
         _ => None,
     }

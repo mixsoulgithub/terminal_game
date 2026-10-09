@@ -88,8 +88,10 @@ fn construct(rng: &mut RngRegistry, id: &'static str, asc: u32) -> Spawned {
     let (lo, hi) = crate::core::ascension::hp_range(def, asc);
     let hp = rng.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi);
     let rolled = match id {
+        // 虱子的咬伤在构造候选时就掷(区间随飞升 2 换档)
         "red_louse" | "green_louse" => {
-            Some(rng.floor(FloorStream::MonsterHpRng).range_inclusive(5, 7))
+            let (lo, hi) = crate::core::ascension::louse_bite_range(asc);
+            Some(rng.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi))
         }
         _ => None,
     };
@@ -806,13 +808,14 @@ pub static MINIONS: &[Encounter] = &[
 
 /// 开局的槽位.参考实现里每只怪站在一个固定槽位上,有几场遭遇是刻意留空槽的:
 /// 小鬼头目的首领在 3、两只小鬼在 1 和 2、槽 0 空着;自动机在 1(铜球占 0 和 2);
-/// 收集者在 2(火炬头占 0 和 1);爬行者在 2(小刀占 1 和 4).
+/// 收集者在 2(火炬头占 0 和 1).
+/// 爬行者不在这里:参考实现的数组就是 [匕首, 爬行者, 匕首](下标 0/1/2),它到第一次
+/// 召唤时才补空槽,语料里的"0 与 3 空、爬行者在 2"只是摆位,不影响召唤顺序.
 /// 每项是"该遭遇里第 i 只怪的槽位",没列到的遭遇就按 0,1,2... 密集排.
 pub static ENCOUNTER_SLOTS: &[(&str, &[usize])] = &[
     ("gremlin_leader_gang", &[1, 2, 3]),
     ("bronze_automaton", &[1]),
     ("the_collector", &[2]),
-    ("reptomancer_solo", &[1, 2, 4]),
 ];
 
 /// 遭遇里第 i 只怪开局的槽位

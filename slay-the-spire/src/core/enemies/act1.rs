@@ -232,13 +232,15 @@ pub const GREEN_LOUSE: EnemyDef = EnemyDef {
     spawn: louse_spawn,
 };
 
-/// 咬/缠蛛丝各 25%;不许连着三下咬,也不许连着三下特殊动作
+/// 咬/缠蛛丝各 25%;不许连着三下咬,也不许连着三下特殊动作.
+/// 飞升 17 起特殊招只看前一招(再前一招是特殊也照出),咬的连三限制不变
 fn pick_louse(ctx: &mut PickCtx) -> usize {
     const BITE: usize = 0;
     const SPECIAL: usize = 1;
     let roll = ctx.roll();
     if roll < 25 {
-        if ctx.last_two_is(SPECIAL) {
+        let special_blocked = ctx.last_is(SPECIAL) && (ctx.asc >= 17 || ctx.prev_is(SPECIAL));
+        if special_blocked {
             BITE
         } else {
             SPECIAL
@@ -284,11 +286,14 @@ pub const ACID_SLIME_SMALL: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 第一招 50/50,之后严格交替
+/// 第一招 50/50(飞升 17 起固定舔一口),之后严格交替
 fn pick_acid_slime_small(ctx: &mut PickCtx) -> usize {
     const LICK: usize = 0;
     const TACKLE: usize = 1;
     if ctx.first_turn() {
+        if ctx.asc >= 17 {
+            return LICK;
+        }
         return if ctx.coin() { TACKLE } else { LICK };
     }
     if ctx.last_is(LICK) {
@@ -350,13 +355,51 @@ pub const ACID_SLIME_MEDIUM: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 中/大酸液史莱姆共用:30/40/30,吐口水不许连三,撞不许连二,舔不许连三
+/// 中/大酸液史莱姆共用选招.
+/// A0:30/40/30(吐口水不许连三,撞不许连二,舔不许连三).
+/// A17:中史莱姆改成 40/40/20(档位 40/80),大史莱姆改成 40/30/30(档位 40/70);
+///      两档的"舔"都只看前一招,中史的"撞"改成看最近两招.
+/// 三处分支的"回退重掷"概率也不一样(中 1/2,大 3/5).
 fn pick_acid_slime(ctx: &mut PickCtx) -> usize {
     const SPIT: usize = 0;
     const TACKLE: usize = 1;
     const LICK: usize = 2;
+    // 大史莱姆 A17 的档位与回退概率和中史莱姆不同
+    let large = ctx.me().def.id == "acid_slime_large";
     let roll = ctx.roll();
-    if roll < 30 {
+    if ctx.asc >= 17 {
+        let (mid, high) = if large { (40, 70) } else { (40, 80) };
+        let (back_num, back_den) = if large { (3, 5) } else { (1, 2) };
+        if roll < mid {
+            if ctx.last_two_is(SPIT) {
+                if ctx.flip(back_num, back_den) {
+                    TACKLE
+                } else {
+                    LICK
+                }
+            } else {
+                SPIT
+            }
+        } else if roll < high {
+            if ctx.last_two_is(TACKLE) {
+                if ctx.flip(back_num, back_den) {
+                    SPIT
+                } else {
+                    LICK
+                }
+            } else {
+                TACKLE
+            }
+        } else if ctx.last_is(LICK) {
+            if ctx.flip(2, 5) {
+                SPIT
+            } else {
+                TACKLE
+            }
+        } else {
+            LICK
+        }
+    } else if roll < 30 {
         if ctx.last_two_is(SPIT) {
             if ctx.flip(1, 2) {
                 TACKLE
@@ -517,7 +560,8 @@ pub const SPIKE_SLIME_MEDIUM: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 中/大尖刺史莱姆共用:30% 冲撞,其余舔;两种都不许连三
+/// 中/大尖刺史莱姆共用:30% 冲撞,其余舔;两种都不许连三.
+/// 飞升 17 起"舔"再多一道限制:前一招是舔也照出冲撞(只看前一招)
 fn pick_spike_slime(ctx: &mut PickCtx) -> usize {
     const FLAME: usize = 0;
     const LICK: usize = 1;
@@ -528,7 +572,7 @@ fn pick_spike_slime(ctx: &mut PickCtx) -> usize {
         } else {
             FLAME
         }
-    } else if ctx.last_two_is(LICK) {
+    } else if ctx.last_two_is(LICK) || (ctx.asc >= 17 && ctx.last_is(LICK)) {
         FLAME
     } else {
         LICK
@@ -750,7 +794,7 @@ pub const GREMLIN_WIZARD: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 充能两次之后放大招,循环往复
+/// 充能两次之后放大招,循环往复;飞升 17 起首爆之后每回合都放大招
 fn pick_gremlin_wizard(ctx: &mut PickCtx) -> usize {
     const CHARGING: usize = 0;
     const BLAST: usize = 1;
@@ -759,6 +803,9 @@ fn pick_gremlin_wizard(ctx: &mut PickCtx) -> usize {
         return CHARGING;
     }
     if ctx.last_is(BLAST) {
+        if ctx.asc >= 17 {
+            return BLAST;
+        }
         ctx.state.charge = 0;
         return CHARGING;
     }
@@ -954,14 +1001,19 @@ pub const BLUE_SLAVER: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 60% 捅一刀,40% 耙;两种都不许连三
+/// 60% 捅一刀,40% 耙;两种都不许连三(A17 起耙只看前一招)
 fn pick_blue_slaver(ctx: &mut PickCtx) -> usize {
     const STAB: usize = 0;
     const RAKE: usize = 1;
     let roll = ctx.roll();
+    let rake_blocked = if ctx.asc >= 17 {
+        ctx.last_is(RAKE)
+    } else {
+        ctx.last_two_is(RAKE)
+    };
     if roll >= 40 && !ctx.last_two_is(STAB) {
         STAB
-    } else if !ctx.last_two_is(RAKE) {
+    } else if !rake_blocked {
         RAKE
     } else {
         STAB
@@ -1019,7 +1071,7 @@ pub const RED_SLAVER: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 开场捅一刀;缠斗每场只用一次,其余时候 [耙, 耙, 捅] 循环
+/// 开场捅一刀;缠斗每场只用一次,其余时候 [耙, 耙, 捅] 循环(A17 起耙只看前一招)
 fn pick_red_slaver(ctx: &mut PickCtx) -> usize {
     const STAB: usize = 0;
     const SCRAPE: usize = 1;
@@ -1035,7 +1087,12 @@ fn pick_red_slaver(ctx: &mut PickCtx) -> usize {
     if roll >= 50 && ctx.state.entangle_used && !ctx.last_two_is(STAB) {
         return STAB;
     }
-    if !ctx.last_two_is(SCRAPE) {
+    let scrape_blocked = if ctx.asc >= 17 {
+        ctx.last_is(SCRAPE)
+    } else {
+        ctx.last_two_is(SCRAPE)
+    };
+    if !scrape_blocked {
         SCRAPE
     } else {
         STAB

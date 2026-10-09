@@ -637,10 +637,9 @@ add({
 
 // ---- The Library ----
 add({
-  event: "the_library", choice: 0, option: "Read", expected: "牌组 +1 本职业牌(本作按随机一张表示,原版为 20 选 1)",
-  scenario: choose(0),
-  check: (r) => eq(lastSt(r).deck.length, openSt(r).deck.length + 1, "牌 +1"),
-  note: "(c) 表示差异:本作直接随机加一张,原版是 20 张选牌屏",
+  event: "the_library", choice: 0, option: "Read", expected: "开 20 张不重样的本职业选牌屏,选一张进牌组",
+  scenario: choose(0, {}, [{ op: "choose", i: 0 }]),
+  check: (r) => seq(eq(lastSt(r).deck.length, openSt(r).deck.length + 1, "牌 +1"), eq(lastSt(r).screen, "EVENT", "收尾屏")),
 });
 add({
   event: "the_library", choice: 1, option: "Sleep", expected: "回血 round(33% 上限)=26",
@@ -812,19 +811,18 @@ add({
 
 // ---- Sensory Stone ----
 add({
-  event: "sensory_stone", choice: 0, option: "Recall 1", expected: "得 1 张无色牌,不掉血",
-  scenario: choose(0),
+  event: "sensory_stone", choice: 0, option: "Recall 1", expected: "开 1 组无色牌奖励屏(三选一),不掉血",
+  scenario: choose(0, {}, [{ op: "take" }]),
   check: (r) => seq(eq(lastSt(r).deck.length, openSt(r).deck.length + 1, "牌 +1"), eq(lastSt(r).hp, openSt(r).hp, "血")),
-  note: "(c) 表示差异:本作直接随机加一张无色牌,原版是奖励屏 3 选 1",
 });
 add({
-  event: "sensory_stone", choice: 1, option: "Recall 2", expected: "扣 5 血,得 2 张无色牌",
-  scenario: choose(1),
+  event: "sensory_stone", choice: 1, option: "Recall 2", expected: "扣 5 血,开 2 组无色牌奖励屏,各选一张",
+  scenario: choose(1, {}, [{ op: "take" }, { op: "take" }]),
   check: (r) => seq(eq(openSt(r).hp - lastSt(r).hp, 5, "扣血"), eq(lastSt(r).deck.length, openSt(r).deck.length + 2, "牌 +2")),
 });
 add({
-  event: "sensory_stone", choice: 2, option: "Recall 3", expected: "扣 10 血,得 3 张无色牌",
-  scenario: choose(2),
+  event: "sensory_stone", choice: 2, option: "Recall 3", expected: "扣 10 血,开 3 组无色牌奖励屏,各选一张",
+  scenario: choose(2, {}, [{ op: "take" }, { op: "take" }, { op: "take" }]),
   check: (r) => seq(eq(openSt(r).hp - lastSt(r).hp, 10, "扣血"), eq(lastSt(r).deck.length, openSt(r).deck.length + 3, "牌 +3")),
 });
 

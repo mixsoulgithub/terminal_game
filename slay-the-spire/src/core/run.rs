@@ -189,7 +189,8 @@ fn act_shrine_pool(act: u32) -> Vec<&'static str> {
         _ => ACT23_SHRINES.to_vec(),
     }
 }
-/// 一次性事件池(抽走即移除);A15 起去掉 note_for_yourself
+/// 一次性事件池(抽走即移除).A15 起去掉 note_for_yourself
+/// (参考实现 ONE_TIME_EVENTS_ASC15 = ASC0 里去掉 NOTE_FOR_YOURSELF)
 const ONE_TIME_EVENTS: [&str; 14] = [
     "ominous_forge",
     "bonfire_spirits",
@@ -206,6 +207,15 @@ const ONE_TIME_EVENTS: [&str; 14] = [
     "we_meet_again",
     "the_woman_in_blue",
 ];
+
+/// 本局的一次性事件池:A15 起 note_for_yourself 不进池子(抽签的档位也就少了它)
+fn one_time_event_pool(asc: u32) -> Vec<&'static str> {
+    ONE_TIME_EVENTS
+        .iter()
+        .copied()
+        .filter(|id| asc < 15 || *id != "note_for_yourself")
+        .collect()
+}
 
 /// 历史记录里一条的类别,决定它在历史窗口里怎么上色
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -950,7 +960,7 @@ impl Run {
             last_room_was_shop: false,
             event_pool: ACT1_EVENTS.to_vec(),
             shrine_pool: ACT1_SHRINES.to_vec(),
-            one_time_pool: ONE_TIME_EVENTS.to_vec(),
+            one_time_pool: one_time_event_pool(asc),
             removes_purchased: 0,
             neow_lament: 0,
             chest_extra_left: 0,
@@ -3042,7 +3052,6 @@ impl Run {
     /// 这个事件现在能不能出现(参考实现各事件里的 canSpawn).act 是当前章号.
     fn event_can_spawn(&self, id: &str) -> bool {
         let act = self.act;
-        let ascension = 0u32;
         // 参考实现的 run.floor 从 1 起(全局层号),这里同样用全局的那个
         let floor = self.floor_num as i32 + 1;
         match id {
@@ -3065,7 +3074,7 @@ impl Run {
                 .any(|c| c.kind() == crate::core::card::CardType::Curse),
             "knowing_skull" => act == 2 && self.player.hp >= 13,
             "nloth" => act == 2 && self.player.relics.len() >= 2,
-            "note_for_yourself" => ascension <= 14,
+            "note_for_yourself" => self.ascension <= 14,
             "secret_portal" => act == 3,
             "the_joust" => act == 2 && self.player.gold >= 50,
             "the_woman_in_blue" => self.player.gold >= 50,

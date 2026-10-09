@@ -482,14 +482,16 @@ pub const SPIRE_GROWTH: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 玩家没被缠绕、上招不是缠绕、且掷点过半时缠绕;两种攻击都不许连三
+/// 玩家没被缠绕、上招不是缠绕、且掷点过半时缠绕;两种攻击都不许连三.
+/// A17 起掷点那道门去掉:只要没被缠绕、上招不是缠绕就必缠绕
 fn pick_spire_growth(ctx: &mut PickCtx) -> usize {
     const QUICK_TACKLE: usize = 0;
     const SMASH: usize = 1;
     const CONSTRICT: usize = 2;
     let roll = ctx.roll();
+    let constrict_gate = ctx.asc >= 17 || roll >= 50;
     let use_constrict =
-        !ctx.player_has(Status::Constricted) && !ctx.last_is(CONSTRICT) && roll >= 50;
+        !ctx.player_has(Status::Constricted) && !ctx.last_is(CONSTRICT) && constrict_gate;
     if use_constrict {
         return CONSTRICT;
     }
@@ -726,12 +728,14 @@ pub const GIANT_HEAD: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 掷招时已经行动过 4 回合(即第 5 回合要用)就"时候到了",之前数数/瞪视
+/// 掷招时已经行动过 4 回合(即第 5 回合要用)就"时候到了",之前数数/瞪视.
+/// A18 起提前一回合(行动过 3 回合就定"时候到了")
 fn pick_giant_head(ctx: &mut PickCtx) -> usize {
     const COUNT: usize = 0;
     const GLARE: usize = 1;
     const IT_IS_TIME: usize = 2;
-    if ctx.turn() >= 4 {
+    let first_use = if ctx.asc >= 18 { 3 } else { 4 };
+    if ctx.turn() >= first_use {
         return IT_IS_TIME;
     }
     let roll = ctx.roll();

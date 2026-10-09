@@ -2066,33 +2066,36 @@ mod e2e {
     //   a20a4.script = act4.script + `asc 20`(smart on,hp 9999,deck burst,量飞升 18/19/20 的
     //                  精英盾与矛 / 心脏)
     //
-    // A20 目前**尚未完全对齐**:第一幕的分叉来自飞升 17 的"怪更狠的招式"(敌人选招分支)与
-    // 飞升 15 的事件池(一次性事件去掉 note_for_yourself),第三幕的分叉来自飞升 17-19 的
-    // 敌人 AI/召唤时机;这些差异已逐条记在 report 的"飞升差异清单"里.表里把当前的对齐前缀、
-    // 差异步与内容指纹登记下来,修好一条就重跑 `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
-    // 第四幕(A20)目前 16 个种子逐字节全对齐(飞升 18/19/20 的盾矛与心脏数值都过了).
+    // A20 第一幕现已逐字节全对齐(11/11):修掉了飞升 17 的敌人选招分支(史莱姆/虱子/
+    // 奴隶主/小鬼巫师)、飞升 15 的一次性事件池(去掉 note_for_yourself)、飞升 2+ 的虱子
+    // 咬伤区间,以及"自己回合内死掉的怪也要照常掷下一招"(参考实现里自爆的死亡是排队生效的).
+    // 第三幕还有分叉:主要是飞升 18/19 的敌人 AI 与机制(巨大头颅提前一回合"时候到了"、
+    // 蛇形祭司召唤两只匕首已修),以及守护者第二次形态切换的额度没有累计 +10(40→50);
+    // 这些差异已逐条记在 report 的"飞升差异清单"里.表里把当前的对齐前缀、差异步与内容
+    // 指纹登记下来,修好一条就重跑 `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
+    // 第四幕(A20)16 个种子逐字节全对齐(飞升 18/19/20 的盾矛与心脏数值都过了).
     const ASC_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 6, lines: 16, ref_lines: 21, aligned: 6, diff_steps: &[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], diff_digest: 0x8173849c030e9ac3 },
-    Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], diff_digest: 0x5a27724ebf05d80b },
-    Expected { seed: 19, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 15, diff_steps: &[15, 16, 17, 18, 19], diff_digest: 0x3cb0141fb6da0051 },
-    Expected { seed: 25, lines: 17, ref_lines: 17, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], diff_digest: 0x3cbc6ed22de60d86 },
-    Expected { seed: 33, lines: 16, ref_lines: 17, aligned: 6, diff_steps: &[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], diff_digest: 0x81b4c45926abb921 },
-    Expected { seed: 34, lines: 31, ref_lines: 31, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], diff_digest: 0xd241524798b08d8c },
-    Expected { seed: 37, lines: 25, ref_lines: 17, aligned: 6, diff_steps: &[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], diff_digest: 0x1c43ca9e7f33e86a },
-    Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], diff_digest: 0xae571abd5ddeeac1 },
+    Expected { seed: 6, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 19, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 25, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 33, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 34, lines: 31, ref_lines: 31, aligned: 31, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 37, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     const ASC3_CASES: &[Expected] = &[
-    Expected { seed: 29, lines: 44, ref_lines: 43, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42, 43], diff_digest: 0x92920991d926348f },
-    Expected { seed: 30, lines: 46, ref_lines: 44, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], diff_digest: 0x1791073173cd74e },
-    Expected { seed: 121, lines: 43, ref_lines: 42, aligned: 22, diff_steps: &[22, 23, 24, 25, 26, 27, 28, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x19660e66835a090c },
-    Expected { seed: 237, lines: 43, ref_lines: 42, aligned: 14, diff_steps: &[14, 15, 16, 19, 20, 21, 40, 41, 42], diff_digest: 0x934223abe6cb5748 },
-    Expected { seed: 284, lines: 46, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], diff_digest: 0xd73737b9d7414313 },
-    Expected { seed: 494, lines: 42, ref_lines: 41, aligned: 34, diff_steps: &[34, 35, 36, 38, 39, 40, 41], diff_digest: 0x123be2cee9e583f4 },
-    Expected { seed: 510, lines: 45, ref_lines: 44, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44], diff_digest: 0x2423b0e20d6e0d62 },
+    Expected { seed: 29, lines: 44, ref_lines: 43, aligned: 41, diff_steps: &[41, 42, 43], diff_digest: 0x87a83439a0cb81e2 },
+    Expected { seed: 30, lines: 45, ref_lines: 44, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 25, 42, 43, 44], diff_digest: 0xff0ad933f8102e4c },
+    Expected { seed: 121, lines: 43, ref_lines: 42, aligned: 33, diff_steps: &[33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xf97ce7bd8120a148 },
+    Expected { seed: 237, lines: 43, ref_lines: 42, aligned: 14, diff_steps: &[14, 15, 16, 40, 41, 42], diff_digest: 0x5043a687ae0fdb33 },
+    Expected { seed: 284, lines: 46, ref_lines: 45, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45], diff_digest: 0x880820a419dd45cc },
+    Expected { seed: 494, lines: 42, ref_lines: 41, aligned: 38, diff_steps: &[38, 39, 40, 41], diff_digest: 0x982656cc0c6b1226 },
+    Expected { seed: 510, lines: 45, ref_lines: 44, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44], diff_digest: 0xc73995dae39630eb },
 ];
 
     const ASC4_CASES: &[Expected] = &[

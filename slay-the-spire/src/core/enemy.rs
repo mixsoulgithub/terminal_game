@@ -320,6 +320,8 @@ pub struct PickCtx<'a> {
     pub all: &'a [Enemy],
     pub player: &'a PlayerBattle,
     pub state: &'a mut EnemyState,
+    /// 这只怪的飞升等级(0 = 关).选招分支按它换档(参考实现 getMove 里的 asc 判断)
+    pub asc: u32,
     /// 引擎在选招前先掷的那次 aiRng.random(99):参考实现的 rollMove 每回合必掷,
     /// 哪怕这一招用不到,不掷就会让后面所有掷点错位
     pub first_roll: i32,

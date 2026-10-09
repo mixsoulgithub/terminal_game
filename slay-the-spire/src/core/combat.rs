@@ -1892,20 +1892,25 @@ impl Combat {
             self.enemies[idx].state.phase2 = true;
             self.push_log(LogKind::Enemy, format!("{name} rises again!"));
         }
-        // 自己已经离场(分裂/自爆)就不用收尾了
-        if !self.enemies[idx].up() {
+        // 自己已经离场(分裂视作逃逸、逃跑)就不用收尾了:参考实现里这类怪
+        // isEscaped,rollMove 也会跳过.但"死在自己回合里"的怪(爆炸者自爆、
+        // 撞荆棘撞死)不一样——参考实现里这些死亡是排队生效的,rollMove 在它
+        // 生效前已经跑过,所以这里也要照常记历史、掷下一招;少掷一次会让它之后
+        // 所有怪的 aiRng 掷点整体错位.
+        if self.enemies[idx].up() {
+            self.enemy_end_of_turn(idx, &name);
+            if self.phase == Phase::Lost {
+                return;
+            }
+            // 无形循环:复仇女神每次行动完都会补上两层
+            if def.special == Special::Intangible
+                && !self.enemies[idx].statuses.has(Status::Intangible)
+            {
+                self.enemies[idx].statuses.add(Status::Intangible, 2);
+                self.push_log(LogKind::Enemy, format!("{name} becomes intangible"));
+            }
+        } else if self.enemies[idx].escaped {
             return;
-        }
-        self.enemy_end_of_turn(idx, &name);
-        if self.phase == Phase::Lost {
-            return;
-        }
-        // 无形循环:复仇女神每次行动完都会补上两层
-        if def.special == Special::Intangible
-            && !self.enemies[idx].statuses.has(Status::Intangible)
-        {
-            self.enemies[idx].statuses.add(Status::Intangible, 2);
-            self.push_log(LogKind::Enemy, format!("{name} becomes intangible"));
         }
         // 记进出招历史,再定下一招
         let e = &mut self.enemies[idx];
@@ -2656,6 +2661,7 @@ impl Combat {
         // 参考实现的 rollMove 每次选招都先消耗一次 aiRng.random(99)(哪怕这一招用不到),
         // 所以这里先掷出来交给选招函数,保证掷点流与参考逐步对齐
         let first_roll = self.streams.floor(FloorStream::AiRng).random(99) as i32;
+        let asc = self.enemies[idx].asc;
         let pick = {
             let Combat {
                 enemies,
@@ -2669,6 +2675,7 @@ impl Combat {
                 all: enemies,
                 player,
                 state: &mut state,
+                asc,
                 first_roll,
                 roll_consumed: false,
             };
@@ -7917,12 +7924,13 @@ mod summon_tests {
     #[test]
     fn reptomancer_daggers_fill_the_reference_slots() {
         let mut c = fight("reptomancer_solo", 7);
-        assert_eq!(slots(&c), vec![1, 2, 4], "小刀在 1 和 4,爬行者在 2");
-        // 搜索顺序 4、1、3、0:4 和 1 都占着,第一把进 3
+        // 参考实现的数组就是 [匕首, 爬行者, 匕首](0/1/2),到召唤时才补空槽
+        assert_eq!(slots(&c), vec![0, 1, 2], "匕首在 0 和 2,爬行者在 1");
+        // 搜索顺序 4、1、3、0:1 是爬行者,第一把补进 4
         use_move(&mut c, "reptomancer", 0);
-        assert_eq!(slots(&c), vec![1, 2, 3, 4], "第一把补进槽 3");
+        assert_eq!(slots(&c), vec![0, 1, 2, 4], "第一把补进槽 4");
         use_move(&mut c, "reptomancer", 0);
-        assert_eq!(slots(&c), vec![0, 1, 2, 3, 4], "最后一把进槽 0");
+        assert_eq!(slots(&c), vec![0, 1, 2, 3, 4], "下一把补进槽 3");
         assert_eq!(
             c.enemies.iter().filter(|e| e.def.id == "dagger").count(),
             4,

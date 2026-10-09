@@ -175,13 +175,25 @@ pub const CHOSEN: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 开局戳一下,第二回合上咒;之后debuff回合与攻击回合严格交替
+/// 开局戳一下,第二回合上咒;之后debuff回合与攻击回合严格交替.
+/// 飞升 17 起开局直接上咒,第二回合起就按"上过 debuff 没有"分档
 fn pick_chosen(ctx: &mut PickCtx) -> usize {
     const POKE: usize = 0;
     const ZAP: usize = 1;
     const DEBILITATE: usize = 2;
     const DRAIN: usize = 3;
     const HEX: usize = 4;
+    if ctx.asc >= 17 {
+        if ctx.first_turn() {
+            return HEX;
+        }
+        let roll = ctx.roll();
+        let after_debuff = ctx.last_is(DEBILITATE) || ctx.last_is(DRAIN);
+        if !after_debuff {
+            return if roll < 50 { DEBILITATE } else { DRAIN };
+        }
+        return if roll < 40 { ZAP } else { POKE };
+    }
     if ctx.first_turn() {
         return POKE;
     }
@@ -267,13 +279,16 @@ pub const SHELLED_PARASITE: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 开局 50/50 双击或吸血;之后重击 20%、双击 40%、吸血 40%,都不许连三
+/// 开局 50/50 双击或吸血(A17 起固定重击);之后重击 20%、双击 40%、吸血 40%,都不许连三
 fn pick_shelled_parasite(ctx: &mut PickCtx) -> usize {
     const FELL: usize = 0;
     const DOUBLE_STRIKE: usize = 1;
     const SUCK: usize = 2;
     const STUNNED: usize = 3;
     if ctx.first_turn() {
+        if ctx.asc >= 17 {
+            return FELL;
+        }
         return if ctx.coin() {
             DOUBLE_STRIKE
         } else {
@@ -639,22 +654,28 @@ pub const MYSTIC: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 自己或骑士缺血满 16 就先治疗;否则 60% 削弱打击,40% 增益,都不许连三
+/// 自己或骑士缺血满 heal_need 就先治疗;否则 60% 削弱打击,40% 增益,都不许连三.
+/// A17 起治疗门槛从 16 抬到 21,且削弱打击只看前一招
 fn pick_mystic(ctx: &mut PickCtx) -> usize {
     const ATTACK_DEBUFF: usize = 0;
     const HEAL: usize = 1;
     const BUFF: usize = 2;
-    const HEAL_NEED: i32 = 16;
+    let heal_need: i32 = if ctx.asc >= 17 { 21 } else { 16 };
     // 骑士站在 0 号位
     let knight_needs = ctx.idx != 0
         && ctx
             .slot(0)
-            .is_some_and(|k| k.alive() && k.max_hp - k.hp >= HEAL_NEED);
-    if ctx.max_hp() - ctx.hp() >= HEAL_NEED || knight_needs {
+            .is_some_and(|k| k.alive() && k.max_hp - k.hp >= heal_need);
+    if ctx.max_hp() - ctx.hp() >= heal_need || knight_needs {
         return HEAL;
     }
     let roll = ctx.roll();
-    if roll >= 40 && !ctx.last_two_is(ATTACK_DEBUFF) {
+    let debuff_blocked = if ctx.asc >= 17 {
+        ctx.last_is(ATTACK_DEBUFF)
+    } else {
+        ctx.last_two_is(ATTACK_DEBUFF)
+    };
+    if roll >= 40 && !debuff_blocked {
         return ATTACK_DEBUFF;
     }
     if !ctx.last_two_is(BUFF) {
@@ -704,7 +725,8 @@ pub const SNAKE_PLANT: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 65% 啃咬(不许连三),其余减速孢子(不许连二)
+/// 65% 啃咬(不许连三),其余减速孢子(不许连二).
+/// A17 起孢子改成只看前一招(不许连三)
 fn pick_snake_plant(ctx: &mut PickCtx) -> usize {
     const CHOMP: usize = 0;
     const SPORES: usize = 1;
@@ -714,6 +736,12 @@ fn pick_snake_plant(ctx: &mut PickCtx) -> usize {
             SPORES
         } else {
             CHOMP
+        }
+    } else if ctx.asc >= 17 {
+        if ctx.last_two_is(SPORES) {
+            CHOMP
+        } else {
+            SPORES
         }
     } else if ctx.last_is(SPORES) {
         CHOMP

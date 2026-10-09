@@ -700,7 +700,8 @@ function planLineup(encounterId: string, seed: bigint, floor: number, asc: numbe
     if (!def) throw new Error(`参考实现里没有这只怪: ${ours}`);
     const [lo, hi] = def.hp(asc);
     const hp = hi <= lo ? lo : hpRng.randomRange(lo, hi);
-    const bite = isLouse(ours) ? hpRng.randomRange(5, 7) : null;
+    // 虱子的咬伤随飞升 2 换档(与本作 ascension::louse_bite_range 同档)
+    const bite = isLouse(ours) ? (asc >= 2 ? hpRng.randomRange(6, 8) : hpRng.randomRange(5, 7)) : null;
     return { ours, hp, bite };
   };
 
@@ -783,8 +784,11 @@ function planLineup(encounterId: string, seed: bigint, floor: number, asc: numbe
   const ids = rolled.map((r) => refId(r.ours));
 
   const miscAfter = misc.saveState();
-  // 开局卷曲:每只虱子一次(原版 preBattle,槽位顺序)
-  const curl: (number | null)[] = rolled.map((r) => (isLouse(r.ours) ? hpRng.randomRange(3, 7) : null));
+  // 开局卷曲:每只虱子一次(原版 preBattle,槽位顺序);随飞升 7/17 换档
+  const curlTier: [number, number] = asc >= 17 ? [9, 12] : asc >= 7 ? [4, 8] : [3, 7];
+  const curl: (number | null)[] = rolled.map((r) =>
+    isLouse(r.ours) ? hpRng.randomRange(curlTier[0], curlTier[1]) : null,
+  );
   const hpAfter = hpRng.saveState();
 
   return { ids, hp: rolled.map((r) => r.hp), bite: rolled.map((r) => r.bite), curl, miscAfter, hpAfter };

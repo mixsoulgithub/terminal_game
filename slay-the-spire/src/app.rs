@@ -169,12 +169,6 @@ impl App {
         app
     }
 
-    /// 测试用:飞升 0 的开局
-    #[cfg(test)]
-    pub fn start(seed: u64) -> App {
-        App::start_asc(seed, 0)
-    }
-
     /// 开始界面的键位:不碰 run 的其它状态
     fn start_key(&mut self, key: KeyEvent) {
         match self.run.screen {
