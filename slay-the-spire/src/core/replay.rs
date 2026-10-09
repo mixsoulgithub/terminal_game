@@ -1287,6 +1287,7 @@ mod e2e {
             remaining: 1,
             bottle_kind: None,
             store_note: false,
+            include_bottled: false,
         });
         let n = confirm_pick(&mut run).expect("空候选不该报错");
         assert_eq!(n, 0);
@@ -1308,10 +1309,33 @@ mod e2e {
         diff_digest: u64,
     }
 
+    /// 第一章登记表(CASES = 42 颗;SWEEP = 其中 seed 1..40 的扫荡).本轮把噪声最大的
+    /// "击杀盗贼/强盗退还赃款"在**参考驱动侧**折掉了(tools/replay_ref.ts 的 refundStolenGold:
+    /// 每次 advance 之后按参考引擎自己的 monsterDeath 事件,把已死 LOOTER/MUGGER 的
+    /// data.stolenGold 加回 run.gold —— 原版 BattleContext.cpp:494-506 的 updateMonstersOnExit
+    /// 汇总 stolenGold、奖励层第一件事就是 addGold;本作 combat.rs 击杀时也退,逃跑不退).
+    /// 折掉后第一章差异 279 -> 104 处(SWEEP 40 颗 254 -> 104 处),12 颗含盗贼的种子
+    /// (3/11/12/15/20/22/27/29/31/35/42/54)全部归零.
+    ///
+    /// (a) 本轮修:事件/商店的"移除 / 变形"屏不该列瓶装的牌 —— 就是折掉退赃后 seed 12
+    ///   露出来的那一条(步 48 候选 18 vs 17,本作多算了被封进瓶子的那张 defend).反编译
+    ///   GameContext.cpp:3799-3808 的 REMOVE / TRANSFORM / BONFIRE_SPIRITS 走同一个分支
+    ///   `c.canTransform() && !deck.isCardBottled(i)`(Deck.h:34 的 transformableCount 也
+    ///   注明不含瓶装),本作原先只排"不可移除"的牌.修完 seed 12 逐字节全对齐;断言 =
+    ///   run.rs bottled_cards_are_not_offered_for_removal_but_astrolabe_sees_them.
+    ///   星盘的"变形升级"屏是另一回事(反编译 GameContext.cpp:1305-1316 自己拼 canTransform()
+    ///   候选、不排瓶装;参考 relics/pickup.ts:56-59 同),用 Picker::include_bottled 区分.
+    ///
+    /// 余下 4 颗与退赃无关,都是既有登记:
+    ///   seed 9 / 10:仙女在瓶中的参考缺口 —— 参考把 FAIRY_POTION 当空药喝掉/判死,本作留着
+    ///     保命(见 ASC2 的 (c)2),参考因此提前结束(步流 31/21 步 vs 本作 34/41 步);
+    ///   seed 24:同一条仙女瓶,参考 potions[2] 还捏着 fairy_potion、本作已经喝掉;
+    ///   seed 40:参考的 MATRYOSHKA 是 RUN-LAYER 空壳(relics/uncommon.ts:402-413),宝箱
+    ///      不给第二件遗物,本作按原版给两件(第 23 步 relics 多一件 orichalcum) —— (b).
     const CASES: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x310a57ffe7a44709 },
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 5, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1319,46 +1343,48 @@ mod e2e {
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 9, lines: 34, ref_lines: 31, aligned: 29, diff_steps: &[29, 30, 31, 32, 33], diff_digest: 0xd995a3f88e81266b },
     Expected { seed: 10, lines: 41, ref_lines: 21, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xd746f059d1f3a5c8 },
-    Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20], diff_digest: 0xd2bdcb27709405db },
-    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 41, diff_steps: &[41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53], diff_digest: 0x2cb7bedae3c72c37 },
+    Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 14, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 15, lines: 17, ref_lines: 17, aligned: 12, diff_steps: &[12, 13, 14, 15, 16], diff_digest: 0x5bf166c09026e52d },
+    Expected { seed: 15, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 16, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 17, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 20, lines: 22, ref_lines: 22, aligned: 15, diff_steps: &[15, 16, 17, 18, 19, 20, 21], diff_digest: 0x3cf8ea7500cb5abf },
+    Expected { seed: 20, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 21, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xe29b71bba304ea2 },
+    Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 24, lines: 17, ref_lines: 17, aligned: 15, diff_steps: &[15, 16], diff_digest: 0xb3e49f4f3735e49c },
     Expected { seed: 25, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xc11e7d50c86f558e },
+    Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 28, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 29, lines: 17, ref_lines: 17, aligned: 12, diff_steps: &[12, 13, 14, 15, 16], diff_digest: 0x720614be46209ef3 },
+    Expected { seed: 29, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 31, lines: 38, ref_lines: 38, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37], diff_digest: 0x18f1eabae1e7e606 },
+    Expected { seed: 31, lines: 38, ref_lines: 38, aligned: 38, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 32, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 33, lines: 25, ref_lines: 25, aligned: 25, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 34, lines: 37, ref_lines: 37, aligned: 37, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 35, lines: 29, ref_lines: 29, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], diff_digest: 0x10dc5af3c3590af8 },
+    Expected { seed: 35, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 36, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 39, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x486665cfaa299e93 },
-    Expected { seed: 42, lines: 43, ref_lines: 43, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42], diff_digest: 0xf7e5bbf37042caf5 },
-    Expected { seed: 54, lines: 43, ref_lines: 43, aligned: 25, diff_steps: &[25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xabde3528579e7910 },
+    Expected { seed: 42, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 54, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     /// 扫荡集合:seed 1..40 的逐字段对拍登记表(与 tools/e2e_diff.ts 的归一化一致,
     /// 比较时两侧都转小写 —— 现在唯一的大小写差异是 init 行的 seed_str).
+    /// 值就是上面 CASES 里 seed 1..40 那几行(42/54 不在扫荡里);退赃折掉 + 瓶装牌修复后
+    /// 40 颗只剩 9/10/24(仙女瓶)与 40(matryoshka)四颗,合计 104 处.
     const SWEEP: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x310a57ffe7a44709 },
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 5, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1366,31 +1392,31 @@ mod e2e {
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 9, lines: 34, ref_lines: 31, aligned: 29, diff_steps: &[29, 30, 31, 32, 33], diff_digest: 0xd995a3f88e81266b },
     Expected { seed: 10, lines: 41, ref_lines: 21, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xd746f059d1f3a5c8 },
-    Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20], diff_digest: 0xd2bdcb27709405db },
-    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 41, diff_steps: &[41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53], diff_digest: 0x2cb7bedae3c72c37 },
+    Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 14, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 15, lines: 17, ref_lines: 17, aligned: 12, diff_steps: &[12, 13, 14, 15, 16], diff_digest: 0x5bf166c09026e52d },
+    Expected { seed: 15, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 16, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 17, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 20, lines: 22, ref_lines: 22, aligned: 15, diff_steps: &[15, 16, 17, 18, 19, 20, 21], diff_digest: 0x3cf8ea7500cb5abf },
+    Expected { seed: 20, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 21, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xe29b71bba304ea2 },
+    Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 24, lines: 17, ref_lines: 17, aligned: 15, diff_steps: &[15, 16], diff_digest: 0xb3e49f4f3735e49c },
     Expected { seed: 25, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xc11e7d50c86f558e },
+    Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 28, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 29, lines: 17, ref_lines: 17, aligned: 12, diff_steps: &[12, 13, 14, 15, 16], diff_digest: 0x720614be46209ef3 },
+    Expected { seed: 29, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 31, lines: 38, ref_lines: 38, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37], diff_digest: 0x18f1eabae1e7e606 },
+    Expected { seed: 31, lines: 38, ref_lines: 38, aligned: 38, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 32, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 33, lines: 25, ref_lines: 25, aligned: 25, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 34, lines: 37, ref_lines: 37, aligned: 37, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 35, lines: 29, ref_lines: 29, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], diff_digest: 0x10dc5af3c3590af8 },
+    Expected { seed: 35, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 36, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 39, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1654,18 +1680,17 @@ mod e2e {
     ///
     /// 本轮把这张表的差异逐条反查过一遍(逐颗 seed 跑 + SPIRE_TRACE=1 两侧对 trace).
     /// 历史数字:19 颗合计差异 194 处 → 修掉两条本作真 bug 后 182 处 → 参考驱动补上
-    /// 蛋类遗物再生成 fixture 后 92 处.下面按 seed 列出:对齐前缀 / 首分叉步 / 成因 / 归类.
-    ///   全对齐(0 处):3605 7140 10242 11535 12835 20703 21075 24873 25365 26848 28104
-    ///   seed 8    : 47 步 / 步 47(fight,盗贼+强盗那场打完)/ 退赃 +45 金币 / (b)1
-    ///   seed 1815 : 47 步 / 步 47(同型)/ 退赃 +30 金币 / (b)1
+    /// 蛋类遗物再生成 fixture 后 92 处 → 参考驱动补上退赃后 77 处.下面按 seed 列出:
+    /// 对齐前缀 / 首分叉步 / 成因 / 归类.
+    ///   全对齐(0 处):8 1815 3605 7140 10242 11535 12835 20703 21075 24873 25365 26848 28104
     ///   seed 2474 : 42 步 / 步 42(六角幽魂首领战收尾)/ (c)1 炼狱的灼伤,本作多挨几下 / hp 差
     ///   seed 23808: 42 步 / 步 42(六角幽魂首领战收尾)/ (c)1 同上(手里那张 Burn+ 回合末
     ///               打 4 点而不是 2 点,整场差 2 hp)
-    ///   seed 4327 : 40 步 / 步 40(六角幽魂首领战收尾)/ 三条叠加:
+    ///   seed 4327 : 40 步 / 步 40(六角幽魂首领战收尾)/ 两条叠加:
     ///               步 40-41 是本作多挨 2 hp —— (c)1 炼狱;
-    ///               步 46-49 是金币 +30 —— (b)1 退赃;
     ///               步 49-53 是"本作靠仙女瓶保命活了下来,参考死在那场":参考每回合试喝
     ///               药水时把 FAIRY_POTION 当空药喝掉,本作跳过它留着保命(步数 54 vs 51).
+    ///               (折掉退赃之前这里还有 46-49 四步金币差,现已消失.)
     ///   seed 12691: 19 步 / 步 19(哨卫战)/ 同一条仙女瓶:参考从步 19 起把仙女喝掉,
     ///               potions 数组此后整串错开一位(38 处随机流错位);步 49 那一场本作有两瓶
     ///               仙女、连保两次命活下来,参考死在当场(59 处里的其余部分是这场之后的
@@ -1699,13 +1724,19 @@ mod e2e {
     ///   再重新生成 fixture(`bun tools/e2e_diff.ts <seed> --write`).折掉后 acts seed 12691
     ///   的 149 处降到 59 处(128 处 deck 级联消失),act1 seed 38 的 10 处降到 0 处.
     ///
-    /// (b) 参考缺口(参考侧没实现,本作按原版,不改本作):
-    ///   1) 退赃:原版击杀偷过钱的怪会把赃款还回来.反编译 BattleContext.cpp:494-506 的
-    ///      updateMonstersOnExit 把"没逃跑的 LOOTER/MUGGER"的 miscInfo 汇总成 info.stolenGold;
-    ///      本作照此在击杀时还钱(combat.rs:3881-3890 "drops the N gold it stole"),逃跑则不还
-    ///      (断言 = combat.rs:7448-7450).参考 looters.ts/mugger.ts 只把 goldStolen 记在
-    ///      data 上、注释写着"reward layer refunds it",runFlow.ts 的奖励层却从不加回去,
-    ///      于是金币差 45/60 起、一路带到底(seed 8/1815/4327;同 ASC2 的 (b)1).
+    /// 驱动侧补偿之二:击杀盗贼/强盗的退赃(本轮,本作引擎不动).原版战斗结束时
+    ///   (BattleContext.cpp:494-506 的 updateMonstersOnExit)把没逃跑的 LOOTER/MUGGER 的
+    ///   miscInfo 汇总成 info.stolenGold,奖励层第一件事就是 reward.addGold(它)还回去;
+    ///   本作照此在敌死时还钱(combat.rs "drops the N gold it stole",逃跑则不还).参考
+    ///   looters.ts/mugger.ts 只把 goldStolen 记在自己的 data 上、奖励层从不加回,于是金币
+    ///   从第一场盗贼战起就差赃款、一路带到底.做法 = tools/replay_ref.ts 的 refundStolenGold:
+    ///   每次 advance 之后按参考引擎自己的 monsterDeath 事件,把死掉的 LOOTER/MUGGER 的
+    ///   data.stolenGold 加回 run.gold 并清零,再重新生成受影响的 fixture.折掉后 acts
+    ///   92 -> 77 处(seed 8/1815 归零)、act1 全体 279 -> 104 处(SWEEP 254 -> 104)、
+    ///   a20a2 1157 -> 249 处(seed 15/18 从 566/381 降到 26/26 处,各自露出新分叉见 ASC2).
+    ///
+    /// (b) 参考缺口(参考侧没实现,本作按原版,不改本作):这张表目前为空 —— 原先唯一一条
+    ///   退赃已改由参考驱动侧补偿折掉(见上),不再算差异.
     ///
     /// (c) 参考侧反着来 / 缺一块(本作按原版/反编译,不改本作):
     ///   1) 六角幽魂的炼狱(Inferno):原版这一招除了 2x6 还会往弃牌堆塞 3 张 Burn+、并把
@@ -1726,11 +1757,11 @@ mod e2e {
     ///      战斗收尾两边局面又合回来,fixture 与各张表都没被它影响到(seed 4327 的 trace 里
     ///      能看到),本作不改.
     const ACTS_CASES: &[Expected] = &[
-    Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xc785cdc1b1cf221 },
-    Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xf28cd9b0aa241e08 },
+    Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 52, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 52, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2474, lines: 50, ref_lines: 50, aligned: 42, diff_steps: &[42, 43], diff_digest: 0x68589ce8642de114 },
     Expected { seed: 3605, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 4327, lines: 54, ref_lines: 51, aligned: 40, diff_steps: &[40, 41, 46, 47, 48, 49, 50, 51, 52, 53], diff_digest: 0x31b828abe6c093d7 },
+    Expected { seed: 4327, lines: 54, ref_lines: 51, aligned: 40, diff_steps: &[40, 41, 49, 50, 51, 52, 53], diff_digest: 0x145c91b804e11e6c },
     Expected { seed: 7140, lines: 51, ref_lines: 51, aligned: 51, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 10242, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11535, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1747,8 +1778,8 @@ mod e2e {
     Expected { seed: 28104, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
     /// 多幕对拍:同一颗种子 + acts.script,本作与参考实现逐行比对(两侧都转小写).
-    /// 「击杀盗贼退还赃款」的差额会一直带着,所以和第一章一样分两段断言:
-    /// 前缀逐字节相同 + 差异步集合与内容指纹固定.
+    /// 「击杀盗贼退还赃款」这条差额本轮已改由参考驱动侧补偿(见 ACTS_CASES 上方),所以现在
+    /// 只剩炼狱/仙女瓶那两条参考缺口,登记表照旧分两段断言:前缀逐字节相同 + 差异步集合与内容指纹固定.
     #[test]
     fn acts_walk_matches_reference() {
         let script = std::fs::read_to_string(fixture_dir().join("acts.script"))
@@ -1833,6 +1864,10 @@ mod e2e {
     /// 参考驱动(tools/replay_ref.ts)按本作同一套规则补出 dream_catcher 休息后那一屏、
     /// 并重新生成 seed4.act2.ref.jsonl 之后,seed 4 的 41..45 五步差异消失(前缀 41->42,
     /// 只剩进 Boss 房那一行的空槽口径).全表合计差异 198->159 处.
+    ///
+    /// 本轮退赃折掉后:seed 18 那余下的 2..7 六步全是退赃级联 —— 参考驱动补上退赃
+    /// (见 ASC2 上方"驱动侧补偿之二")之后 seed 18 逐字节全对齐,全表合计 159->153 处.
+    /// 其余含盗贼的 seed(15/19 步 40 的空槽口径)不受影响.
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45], diff_digest: 0xf2b5f8db28da67f0 },
     Expected { seed: 4, lines: 46, ref_lines: 46, aligned: 42, diff_steps: &[42], diff_digest: 0x63794b5f370ddd17 },
@@ -1842,7 +1877,7 @@ mod e2e {
     Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0xd5335c7c61c77f9d },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 34, 35, 36, 37, 38, 40, 41, 42, 43], diff_digest: 0x45eb5e91e9ccca2 },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 17, diff_steps: &[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0x1a7cf5c3daeb0962 },
-    Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7], diff_digest: 0xb6859b163b5e8c3 },
+    Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x18db065dfd5ce919 },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46], diff_digest: 0x988b6e1c6f0aa4f1 },
     Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x664f5d82fe38755b },
@@ -2190,9 +2225,10 @@ mod e2e {
     //     参考实现 potions/index.ts 的 FAIRY_POTION 自己写着 "ENGINE-GAP: non-drinkable
     //     death-save; playerDeath has no hook yet",于是参考当场判死、本作续命到后面几间
     //     (步流因此更长,seed 10/44 是同一回事,没登记).
-    //   seed 22(14 处):盗贼退赃.原版打死偷过钱的怪会把赃款吐回来(A20 的 looter 每偷 20),
+    //   seed 22(修前 14 处):盗贼退赃.原版打死偷过钱的怪会把赃款吐回来(A20 的 looter 每偷 20),
     //     参考实现只在 goldStolen 里记账、奖励层从不退(与第二幕 ASC2 的 (b)1 同一条,
-    //     seed 31/36 同理没登记).
+    //     seed 31/36 同理没登记).本轮改由参考驱动侧补偿(见 ASC2 上方"驱动侧补偿之二"),
+    //     seed 22 随之逐字节全对齐,A20 第一幕合计 31 -> 17 处(只剩 seed 9 的仙女瓶).
     // 第三幕:表里 7 颗 seed,29/121/494 三颗逐字节全对齐,其余 4 颗共 30 处差异.
     // 逐条归因(每颗有差异的 seed 都能对回下面某一条;步号是含 init 行的 0 起行号):
     //   1) seed 30 步 [42, 43, 44](3 处)、seed 237 步 [41, 42](2 处)
@@ -2248,7 +2284,7 @@ mod e2e {
     Expected { seed: 14, lines: 15, ref_lines: 15, aligned: 15, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 15, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 22, lines: 33, ref_lines: 33, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0xee14f10ea3d66b33 },
+    Expected { seed: 22, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 24, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2278,7 +2314,8 @@ mod e2e {
     ///
     /// 逐颗 seed 归因(12 颗,复跑命令 `bun tools/e2e_diff.ts --all --script
     /// tools/golden/e2e/a20a2.script`)."对齐前缀"= 第一处分叉前的步数,"首分叉"= 第一处
-    /// 字段不同的步号(其后差异都是这一处的级联).当前合计 1157 处差异:
+    /// 字段不同的步号(其后差异都是这一处的级联).本轮把退赃折掉后合计 1157 -> 249 处,
+    /// 原来被退赃级联盖住的 seed 15/18 各露出下面一条新分叉:
     ///
     ///   seed  步数(本作/参考)  对齐前缀  首分叉            首分叉成因 / 归类
     ///    3     45/45            13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 30 处]
@@ -2288,12 +2325,19 @@ mod e2e {
     ///    6     53/53            36       步 36 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 15 处]
     ///   11     48/48            32       步 32 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 17 处]
     ///   13     42/42            19       步 19 fight       小鬼头目开战摆位 (c),终点差 5 hp      [共 7 处]
-    ///   15     45/44             5       步 5  fight       击杀盗贼/强盗退赃 (b)                 [共 566 处]
+    ///   15     45/45           13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 23 处]
+    ///                                                    (修前首分叉在步 5、566 处:击杀盗贼/
+    ///                                                    强盗退赃 (b) —— 已由驱动侧补偿折掉);
+    ///                                                    折掉后步 32 又露出 the_library 的屏
+    ///                                                    表示差异 (b)5、步 41 是进 Boss 房
+    ///                                                    空槽口径 (b)2
     ///   16     44/44            40       步 40 move        进 Boss 房那一行/空槽口径 (b)         [共 6 处]
     ///   17     44/44            14       步 14 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 24 处]
-    ///   18     47/47             2       步 2  fight       击杀盗贼/强盗退赃 (b),级联里又经
-    ///                                                    "老乞丐要 75 金"这条 canSpawn 门槛
-    ///                                                    换掉了事件抽签                       [共 381 处]
+    ///   18     47/47            32       步 32 fight       参考 PRESERVED_INSECT 按"战斗里有
+    ///                                                    elite 类怪"就减血 (c),本作按原版只在
+    ///                                                    精英房减 —— 哨卫+球形守卫那场
+    ///                                                    43/20 -> 32/15,整段 hp 差 10      [共 16 处]
+    ///                                                    (修前首分叉在步 2、381 处:退赃 (b) 级联)
     ///   19     45/45             8       步 8  fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 45 处]
     ///   25     47/46            36       步 36 pick        designer_in_spire 升级目标 (b)         [共 42 处]
     ///   33     46/46            26       步 26 fight       首领排槽→少召唤一只小鬼 (c)           [共 15 处]
@@ -2310,8 +2354,10 @@ mod e2e {
     ///   这条对齐还暴露出 wing_statue 砸雕像的可选性差异(见 (a)7),并让 fixture 侧
     ///   39 个 ref.jsonl 重生成、act1/act2/acts/a20/a20a2/a20a3 各表随之重钉.
     ///
-    /// (a) 已修的八条(上一轮从 1689 处降到 1665 处;再上一轮从 1665 处降到 1657 处;
-    ///   再上一轮从 1657 处降到 1190 处;本轮从 1190 处降到 1157 处):
+    /// (a) 已修的九条(上一轮从 1689 处降到 1665 处;再上一轮从 1665 处降到 1657 处;
+    ///   再上一轮从 1657 处降到 1190 处;再上一轮从 1190 处降到 1157 处;本轮 1157 -> 249 处,
+    ///   908 处全是参考驱动侧折掉的退赃(seed 15 566->23、seed 18 381->16);新修的第九条
+    ///   "瓶装牌不该进移除/变形屏"露在 act1 seed 12,不在这张表里,见 CASES 上方 (a)):
     ///   1) 召唤物的血量掷点少了一次.反编译 Actions::SpawnTorchHeads 对每只火炬头
     ///      `construct`(内部 initHp 掷一次)之后又调一次 `initHp`(第二次获胜),铜球的
     ///      initHp 分支也自带一次废掷(`hpRng.random(52,58)` 再 setRandomHp);本作原先
@@ -2371,8 +2417,10 @@ mod e2e {
     ///      不等于没问题,本轮反查时才发现.
     ///
     /// (b) 参考缺口(参照实现 / 导出器口径不同,不改本作):
-    ///   1) 退赃:原版击杀偷过钱的怪会退回赃款,参考 looters.ts/mugger.ts 只把 goldStolen
-    ///      记下来、奖励层从不加回去.金币差从 45/60 起,seed 15/18 整串都是它的级联.
+    ///   1) 退赃(本轮已在参考驱动侧补偿,不再算差异):原版击杀偷过钱的怪会退回赃款,
+    ///      参考 looters.ts/mugger.ts 只把 goldStolen 记下来、奖励层从不加回去.金币差从
+    ///      45/60 起,seed 15/18 整串都是它的级联(修前 566/381 处).做法 = tools/replay_ref.ts
+    ///      的 refundStolenGold(见本表上方"驱动侧补偿之二"),本作引擎不动.
     ///   2) 进 Boss 房那一行的 monsters 数组:参考按原版的 3 个槽位导出(收藏者在槽 2、
     ///      槽 0/1 是两个 hp=0 的 "gap"),本作只列出场上真有的怪(1 只).战斗本身逐帧一致
     ///      (用 tools/sandbox 把收藏家战摆成同一局面跑过),差的只是导出器要不要列空槽;
@@ -2391,11 +2439,22 @@ mod e2e {
     ///      (用参考侧自己的 cardRng 跑 createCardReward、写回流状态、按同一策略拿同一张),
     ///      再重新生成 seed4.act2/a20a2 的 ref.jsonl.折掉后 seed 4 的 42 处级联降到 9 处,
     ///      只剩下面 (b)2 的空槽口径与 (c)3 的抽牌限制.
+    ///   5) the_library 的"读一本书(20 选 1)"屏:参考把这一屏实现成 option 型待选项
+    ///      (act2.ts:384-410 的 read 选项走 requestOptionChoice),导出器只认 cards 型的
+    ///      候选数,于是这一步导出成 `pick`(candidates 0);本作把这一屏当事件的第二屏,
+    ///      导出成 `event`(options 20).两边选的都是第 0 项,下一行状态完全一致(seed 15
+    ///      步 33 起全对齐),只是同一屏被摊成了不同的行 —— 属导出器口径,本作不改.
+    ///      这是折掉退赃之后 seed 15 新露出来的一条(步 32).
     ///
     /// (c) 参照实现自己反着来、本作按反编译的(不改本作):
-    ///   1) 神秘者 MYSTIC_HEAL 的结算时点:反编译 MonsterSpecific.cpp 先 heal 再 rollMove,
-    ///      参考把 heal 塞进动作队列,于是 getMove 读的是改状态之前的血量.seed 3/6/11/17/19
-    ///      的"百夫长+神秘者"战因此终点 hp 不同(挂格挡的 CENTURION_DEFEND 同理).
+    ///   1) 神秘者 MYSTIC_HEAL 的结算时点:反编译 MonsterSpecific.cpp:600-607 的 MYSTIC_HEAL
+    ///      先 heal(骑士与自己)再 rollMove,于是下一招读到的是补过血的血量;
+    ///      参考把 heal 塞进动作队列,getMove 读的是改状态之前的血(参考在自己残血时选 HEAL、
+    ///      本作选 ATTACK_DEBUFF).seed 3/6/11/17/19 的"百夫长+神秘者"战因此终点 hp 不同
+    ///      (挂格挡的 CENTURION_DEFEND 同理);折掉退赃后 seed 15 步 13 露出的新分叉就是这条
+    ///      —— 逐帧追到 t3:两边都在怪回合 2 把神秘者补回 34/54,本作按补后血量判"不用治"
+    ///      出 ATTACK_DEBUFF(本作 hp 9694),参考按补前 14/54 判"要治"出 HEAL(hp 9706),
+    ///      其后 hp 整段差 12~21 点.
     ///   2) 小鬼头目的开战摆位:参考把首领排在槽 2、随从只剩槽 0/1;原版是首领槽 3、
     ///      起始随从槽 1/2、槽 0 空(反编译 MonsterGroup.cpp:255 把 GREMLIN_LEADER
     ///      construct 在槽 3,起始随从在 arr[1]/arr[2]).摆位差的直接后果落在 Rally 找空槽:
@@ -2410,21 +2469,30 @@ mod e2e {
     ///      于是 seed 4 的 A20 收藏家战里,参考在战斗怒吼之后打的"忍痛"(抽 1)多抽一张,
     ///      到 Boss 结束差 64 hp(本作 t4 起抽牌堆/手牌差一张).反编译里 NO_DRAW 是
     ///      DrawCardAction 的前置检查,参考漏了这一层 —— 本作不改.
+    ///   4) 参考 PRESERVED_INSECT 的判定口径(折掉退赃后 seed 18 步 32 新露出的一条):
+    ///      原版只在**精英房**减 25%(反编译 BattleContext.cpp:315-322 的
+    ///      `if (room == Room::ELITE) m.curHp = maxHp * .75`),本作 relics.rs 的
+    ///      elite_hp_reduction_pct 也按房间判;参考 relics/common.ts:321-330 却写成
+    ///      "战斗里只要有 category === 'elite' 的怪就减",于是普通房里的"哨卫+球形守卫"
+    ///      (acts.ts:69 的 SENTRY_AND_SPHERE,两只都是 elite 类)被参考削成 32/15,本作按
+    ///      原版是 43/20,那场之后整段 hp 差 10 点.参考反向,本作不改.
     ///
-    /// 12 颗 seed 至此全部归因:没有本作真 bug 了;剩下的是退赃/进 Boss 房空槽/
-    /// designer 升级目标三条参考缺口(b),与神秘者回血时点/小鬼首领排槽/
-    /// Battle Trance 抽牌限制三条参考反向(c).合计 1157 处里 947 处(seed 15/18)
-    /// 是退赃一条造成的级联;dream_catcher 那条已由参考驱动补上(见 (b)4).
+    /// 12 颗 seed 至此全部归因(折掉退赃、逐颗重跑反查完之后):没有本作真 bug 了;剩下的
+    /// 是进 Boss 房空槽 / designer 升级目标 / the_library 屏口径三条参考缺口(b),与
+    /// 神秘者回血时点 / 小鬼首领排槽 / Battle Trance 抽牌限制 / PRESERVED_INSECT 判定
+    /// 四条参考反向(c).合计 249 处里,seed 15/18 的 39 处就是折掉退赃后新露出的两条
+    /// (MYSTIC_HEAL 与 PRESERVED_INSECT);退赃那条已由参考驱动补上(见 (b)1),
+    /// dream_catcher 那条上一轮已补(见 (b)4).
     const ASC2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0x2378b9ac22ab3b13 },
     Expected { seed: 4, lines: 50, ref_lines: 50, aligned: 46, diff_steps: &[46, 47, 48, 49], diff_digest: 0xebf1b5926687d802 },
     Expected { seed: 6, lines: 53, ref_lines: 53, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 50, 51, 52], diff_digest: 0x552379055326753a },
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 44], diff_digest: 0xed3fe8ca5ade3f53 },
     Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25], diff_digest: 0xbcaf9803b4db43af },
-    Expected { seed: 15, lines: 45, ref_lines: 44, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x997c1e958d5fa7bc },
+    Expected { seed: 15, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 32, 41], diff_digest: 0x95b19ae2a3b32800 },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x393a225bb620c109 },
     Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 41, 42, 43], diff_digest: 0xf5dca7770e705a38 },
-    Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0xf2b6ae1d03e4dc15 },
+    Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x92af2c2162864ac4 },
     Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x6835cb622831038b },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x536fd949b8fd5146 },
     Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0x70b10e426e8964fa },

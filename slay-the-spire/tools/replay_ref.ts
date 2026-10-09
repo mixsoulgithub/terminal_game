@@ -147,11 +147,45 @@ export function applyEggUpgrades(state: GameState, deckLenBefore: number): strin
   return upgraded;
 }
 
-/** 与引擎的 advance 同义,只是给新加的牌补上蛋类遗物的强化 */
+// ---- 参考侧缺口的驱动补偿:击杀盗贼/强盗的退赃 ----
+//
+// 原版战斗结束时(BattleContext::updateMonstersOnExit)把没逃跑的 LOOTER/MUGGER
+// 身上的 miscInfo(偷走的金币)汇总成 info.stolenGold,奖励层第一件事就是
+// reward.addGold(info.stolenGold) 还给玩家;本作 src/core/combat.rs 的敌死处理
+// 也把 state.stolen 加回 player_gold(见 combat.rs 的 thief_steals_gold_and_flees
+// "打死就把赃款吐出来").参考实现的 looters.ts/mugger.ts 只在自己的 data.stolenGold
+// 上记账,奖励层从不加回 —— 两边金币从第一场盗贼战起就差了赃款(盗贼每偷一次
+// 记一笔,一直挂到战斗结束).这里在驱动侧按原版补上:每次 advance 之后,把
+// "已死、还没退过账"的 LOOTER/MUGGER 的 data.stolenGold 加回 run.gold 并清零
+// (清零即标记;该怪的 getMove 不读这个字段,清掉不影响它的选招).本作引擎不动.
+
+/** 把这一步里"死掉的盗贼/强盗"记着的赃款还给参考侧的金币.
+ *  认"死了哪只"靠参考引擎自己的 monsterDeath 事件(advance 会把这一步的事件记进
+ *  state.eventLog):最后一只怪倒下时这场战斗已经被收尾(combat 已清空),死掉的那只
+ *  不在新状态里,取不到就回 advance 之前的状态里按槽位找(advance 是 structuredClone,
+ *  旧状态原样没动).清零 data.stolenGold 即标记,免得重复退. */
+function refundStolenGold(before: GameState, after: GameState): void {
+  for (const ev of after.eventLog ?? []) {
+    if (ev.event !== "monsterDeath") continue;
+    const idx = (ev.payload as { idx: number } | undefined)?.idx;
+    if (idx === undefined) continue;
+    const m =
+      after.combat?.monsters.find((x) => x.idx === idx) ??
+      before.combat?.monsters.find((x) => x.idx === idx);
+    if (!m) continue;
+    const n = (m.data.stolenGold as number) ?? 0;
+    if (n <= 0) continue;
+    m.data.stolenGold = 0;
+    after.run.gold += n;
+  }
+}
+
+/** 与引擎的 advance 同义,只是给新加的牌补上蛋类遗物的强化,并把已死盗贼的赃款还回来 */
 function advanceWithEggs(s: GameState, cmd: Command): GameState {
   const n = s.run.deck.length;
   const out = advance(s, cmd, bundle);
   applyEggUpgrades(out, n);
+  if (COMPENSATE) refundStolenGold(s, out);
   return out;
 }
 

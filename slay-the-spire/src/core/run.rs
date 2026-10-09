@@ -348,6 +348,12 @@ pub struct Picker {
     pub bottle_kind: Option<CardType>,
     /// 便条事件:选中的牌要写回存卡文件留给下一局
     pub store_note: bool,
+    /// 候选里要不要带上瓶装的牌.只有星盘的"变形升级"屏为真(反编译
+    /// GameContext.cpp:1305-1316 自己拼 canTransform() 的候选,不走 REMOVE/TRANSFORM
+    /// 那层的瓶装过滤;参考 pickup.ts:56-59 同);事件与商店的移除/变形屏都排掉瓶装牌
+    /// (Deck 的 transformableCount 注释"does not include cards which are bottled",
+    /// GameContext.cpp:3799-3808 的 REMOVE/TRANSFORM/BONFIRE_SPIRITS 分支带 !isCardBottled).
+    pub include_bottled: bool,
 }
 
 pub struct Player {
@@ -2427,7 +2433,7 @@ impl Run {
         }
         // 打铁:除了熔火之锤,还得牌组里真有一张能升的(参考实现 canSmith 的条件)
         if !self.has_relic_fx(|fx| fx.no_smith)
-            && !self.picker_candidates_is_empty(PickPurpose::Upgrade)
+            && !self.picker_candidates_is_empty(PickPurpose::Upgrade, false)
         {
             out.push(RestOption::Smith);
         }
@@ -4824,9 +4830,19 @@ impl Run {
             remaining: remaining.max(1),
             bottle_kind: None,
             store_note: false,
+            include_bottled: false,
         });
         self.screen = Screen::Pick;
         self.picker_clamp();
+    }
+
+    /// 星盘的"变形升级"屏:与 open_picker_n 同,只是候选里也带上瓶装的牌
+    /// (那一层瓶装过滤是 REMOVE/TRANSFORM 屏的,星盘不走).
+    fn open_picker_transform_upgrade(&mut self, back: Screen, remaining: u8) {
+        self.open_picker_n(PickPurpose::Transform, back, 0, None, remaining);
+        if let Some(p) = self.picker.as_mut() {
+            p.include_bottled = true;
+        }
     }
 
     /// 当前可选牌的 deck 下标
@@ -4844,15 +4860,17 @@ impl Run {
                 .map(|(i, _)| i)
                 .collect(),
             PickPurpose::Remove | PickPurpose::Transform => {
-                // 不能把牌组删空;带"不可移除"标记的牌(升天者的诅咒等)不进候选
+                // 不能把牌组删空;带"不可移除"标记的牌(升天者的诅咒等)不进候选;
+                // 瓶装的牌也要排掉(除星盘的变形升级屏外,见 Picker::include_bottled)
                 if self.player.deck.len() <= 1 {
                     Vec::new()
                 } else {
+                    let include_bottled = p.include_bottled;
                     self.player
                         .deck
                         .iter()
                         .enumerate()
-                        .filter(|(_, c)| !c.def.unremovable)
+                        .filter(|(_, c)| !c.def.unremovable && (include_bottled || !c.bottled))
                         .map(|(i, _)| i)
                         .collect()
                 }
@@ -4899,6 +4917,7 @@ impl Run {
         let slot = p.shop_slot;
         let remaining = p.remaining;
         let store_note = p.store_note;
+        let include_bottled = p.include_bottled;
         if cost > 0 && self.player.gold < cost {
             return Err("not enough gold".to_string());
         }
@@ -4964,8 +4983,12 @@ impl Run {
         // Neow 的"移除两张/变形两张":选完一张再开一次(免费的才这样重复)
         if remaining > 1 && cost == 0 && slot.is_none() {
             let left = remaining - 1;
-            if !self.picker_candidates_is_empty(purpose) {
-                self.open_picker_n(purpose, back, cost, slot, left);
+            if !self.picker_candidates_is_empty(purpose, include_bottled) {
+                if include_bottled {
+                    self.open_picker_transform_upgrade(back, left);
+                } else {
+                    self.open_picker_n(purpose, back, cost, slot, left);
+                }
             }
         }
         Ok(msg)
@@ -5016,12 +5039,16 @@ impl Run {
     }
 
     /// 这个用途下还有没有可选的牌(重复开选牌界面前先看一眼)
-    fn picker_candidates_is_empty(&self, purpose: PickPurpose) -> bool {
+    fn picker_candidates_is_empty(&self, purpose: PickPurpose, include_bottled: bool) -> bool {
         match purpose {
             PickPurpose::Upgrade => !self.player.deck.iter().any(|c| c.can_upgrade()),
             PickPurpose::Remove | PickPurpose::Transform => {
                 self.player.deck.len() <= 1
-                    || !self.player.deck.iter().any(|c| !c.def.unremovable)
+                    || !self
+                        .player
+                        .deck
+                        .iter()
+                        .any(|c| !c.def.unremovable && (include_bottled || !c.bottled))
             }
             PickPurpose::Duplicate => self.player.deck.is_empty(),
             // 瓶装与祭品只选一次,不走"再开一次"的分支
@@ -5437,7 +5464,8 @@ impl Run {
         if fx.remove_cards > 0 {
             self.open_picker_n(PickPurpose::Remove, back, 0, None, fx.remove_cards as u8);
         } else if fx.transform_cards > 0 {
-            self.open_picker_n(PickPurpose::Transform, back, 0, None, fx.transform_cards as u8);
+            // 星盘:变形升级屏,候选带上瓶装的牌(见 Picker::include_bottled)
+            self.open_picker_transform_upgrade(back, fx.transform_cards as u8);
         } else if fx.duplicate_cards > 0 {
             self.open_picker_n(PickPurpose::Duplicate, back, 0, None, fx.duplicate_cards as u8);
         }
@@ -6650,6 +6678,37 @@ mod tests {
         assert!(r.player.deck[cands[0]].kind() == CardType::Power);
         r.picker_confirm().unwrap();
         assert!(r.player.deck[cands[0]].bottled);
+    }
+
+    /// 事件/商店的移除(或变形)屏不列瓶装的牌;星盘的"变形升级"屏列.
+    /// 依据:反编译 GameContext.cpp:3799-3808 的 REMOVE/TRANSFORM/BONFIRE_SPIRITS 走同一个
+    /// 分支 `canTransform() && !deck.isCardBottled(i)`(Deck.h:34 的 transformableCount
+    /// 也注明不含瓶装),而星盘(GameContext.cpp:1305-1316)自己拼 `canTransform()` 的候选、
+    /// 不过这层;参考实现 events/lib.ts:193 的 removableIndices 排瓶装、relics/pickup.ts:56
+    /// 的 transformableIndices 不排.act1 seed 12 的 living_wall 移除屏候选数差 1 就是这条.
+    #[test]
+    fn bottled_cards_are_not_offered_for_removal_but_astrolabe_sees_them() {
+        let mut r = run(44);
+        r.player.deck[0].bottled = true;
+        let deck_len = r.player.deck.len();
+        r.open_picker(PickPurpose::Remove, Screen::Map, 0, None);
+        let cands = r.picker_candidates();
+        assert_eq!(cands.len(), deck_len - 1, "移除屏比牌组少一张(瓶装的)");
+        assert!(!cands.contains(&0), "瓶装的牌不在移除候选里");
+
+        let mut t = run(45);
+        t.player.deck[1].bottled = true;
+        t.open_picker(PickPurpose::Transform, Screen::Event, 0, None);
+        assert!(!t.picker_candidates().contains(&1), "事件变形屏也排掉瓶装");
+
+        let mut a = run(46);
+        a.player.deck[0].bottled = true;
+        a.debug_add_relic("astrolabe").unwrap();
+        assert_eq!(a.screen, Screen::Pick, "星盘要开选牌界面");
+        assert!(
+            a.picker_candidates().contains(&0),
+            "星盘的变形升级屏允许选瓶装的牌"
+        );
     }
 
     /// 神圣树皮:地图上喝的药水也翻倍(果汁 +5 -> +10 最大生命)
