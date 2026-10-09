@@ -233,8 +233,71 @@ function advanceWithEggs(s: GameState, cmd: Command): GameState {
   if (COMPENSATE) {
     refundStolenGold(s, out);
     renameBurningRegen(out);
+    ensureFairyWatch(out);
   }
   return out;
+}
+
+// ---- 参考侧缺口的驱动补偿:仙女在瓶中的保命 ----
+//
+// 参考实现把 FAIRY_POTION 写成了 ENGINE-GAP(src/content/potions/index.ts:315-324
+// "non-drinkable death-save; playerDeath has no hook yet"),onUse 是空函数,它的
+// playerDeath(interpreter.ts:335-339)只把 combatOver 置成 defeat —— 玩家一到 0 血
+// 就判负,瓶子还攥在手里.原版是死亡拦截:Player::wouldDie(反编译 Player.cpp:320-345)
+// 先扫药水栏,有 FAIRY_POTION 就丢掉瓶子、按 max HP 的 30%(神圣树皮 60%,至少 1)
+// 回血并**继续战斗**;战斗外同一规则在 GameContext::playerOnDie(GameContext.cpp:
+// 2132-2151,花开彼岸除外).本作 combat.rs 的 resolve_player_death 照原版实现(见
+// run.rs 的 resolve_player_death 与测试 fairy_potion_saves_the_player_once),不动.
+//
+// 参考引擎没有"将死"这一钩子,但它给玩家侧的伤害管线留了 onLoseHp 折叠
+// (interpreter.ts:211/235 的 foldHook(ctx, PLAYER, "onLoseHp", d));这里就借它
+// 补上:注册一枚隐藏的 FAIRY_SAVE 玩家能力,每次开战挂到玩家身上,onLoseHp 里
+// 发现"这一下会把血打到 0 或以下"且身上还有 FAIRY_POTION 时,就按原版丢掉瓶子、
+// 把 run.hp 直接设成回复值、并把这一次的掉血折成 0(等价于原版"先置 0 再回血"
+// 的最终值).既不改参考源码,也不碰它自己的 Regen Potion 之类能力.
+// 挂能力而不是事后改 outcome:原版是当场继续打,参考侧若先判负再回滚,行动队列
+// 剩余的那几段就丢了(seed 9 会陷进打不完的战斗).
+// 已知口径差:这一折把致命那一下的掉血整个折成 0,于是"掉血触发"的钩子(Runic Cube
+// 这类)在参考侧不会响,原版会响;现有各表没碰到这种组合,碰到时按参考侧登记.
+
+const FAIRY_SAVE_POWER = {
+  id: "FAIRY_SAVE",
+  name: "Fairy in a Bottle",
+  kind: "buff" as const,
+  stacking: "none" as const,
+  turnBased: false,
+  hidden: true, // 不显示成 buff 图标、不写日志
+  hooks: {
+    onLoseHp: (ctx: EffectCtx, amount: number): number => {
+      const run = ctx.run;
+      if (amount <= 0) return amount;
+      if (run.relics.some((r) => r.defId === "MARK_OF_THE_BLOOM")) return amount;
+      const slot = run.potions.findIndex((p) => p === "FAIRY_POTION");
+      if (slot === -1) return amount;
+      // 这枚能力挂在玩家能力表末尾,先跑的能力(BUFFER)已经改过 amount 了;
+      // 但遗物侧的 onLoseHp 折叠(钨钢棒 -1)排在能力之后,这里先自己按它算一遍,
+      // 免得"钨钢棒刚好救下"的场合也把仙女瓶吃掉
+      const afterRod = run.relics.some((r) => r.defId === "TUNGSTEN_ROD")
+        ? amount > 0
+          ? amount - 1
+          : amount
+        : amount;
+      if (run.hp - afterRod > 0) return amount; // 这一下打不死,不触发
+      run.potions[slot] = null; // 丢掉瓶子,同时当作"用过一次"的标记
+      const bark = run.relics.some((r) => r.defId === "SACRED_BARK");
+      run.hp = Math.max(1, Math.floor(run.maxHp * (bark ? 0.6 : 0.3)));
+      return 0;
+    },
+  },
+};
+bundle.powers.set("FAIRY_SAVE" as never, FAIRY_SAVE_POWER as never);
+
+/** 开战时给玩家挂上仙女保命符(不在战斗里或已经挂了就不动) */
+function ensureFairyWatch(s: GameState): void {
+  const c = s.combat;
+  if (!c) return;
+  if (c.player.powers.some((p) => p.id === ("FAIRY_SAVE" as never))) return;
+  c.player.powers.push({ id: "FAIRY_SAVE" as never, amount: 0, justApplied: false, data: null });
 }
 
 /** 调试钩子 `act n`:从当前幕切到第 n 幕开头.

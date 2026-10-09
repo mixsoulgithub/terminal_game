@@ -1326,12 +1326,21 @@ mod e2e {
     ///   星盘的"变形升级"屏是另一回事(反编译 GameContext.cpp:1305-1316 自己拼 canTransform()
     ///   候选、不排瓶装;参考 relics/pickup.ts:56-59 同),用 Picker::include_bottled 区分.
     ///
-    /// 余下 4 颗与退赃无关,都是既有登记:
-    ///   seed 9 / 10:仙女在瓶中的参考缺口 —— 参考把 FAIRY_POTION 当空药喝掉/判死,本作留着
-    ///     保命(见 ASC2 的 (c)2),参考因此提前结束(步流 31/21 步 vs 本作 34/41 步);
-    ///   seed 24:同一条仙女瓶,参考 potions[2] 还捏着 fairy_potion、本作已经喝掉;
-    ///   seed 40:参考的 MATRYOSHKA 是 RUN-LAYER 空壳(relics/uncommon.ts:402-413),宝箱
-    ///      不给第二件遗物,本作按原版给两件(第 23 步 relics 多一件 orichalcum) —— (b).
+    /// 上一轮登记的 4 颗(9/10/24 仙女瓶、40 套娃)本轮已收尾:
+    ///   seed 9 / 10 / 24:仙女在瓶中的保命 —— 参考把它写成 ENGINE-GAP
+    ///     (content/potions/index.ts:315-324 "non-drinkable death-save";playerDeath
+    ///     interpreter.ts:335-339 只置 combatOver,没有保命钩子),本作按原版
+    ///     Player::wouldDie(反编译 Player.cpp:320-345:丢瓶、按 max HP 30%/60% 回血、
+    ///     继续战斗)实现。属**参考缺口 (c)**,本轮在参考驱动侧借它自己的 onLoseHp
+    ///     折叠折掉(tools/replay_ref.ts 的 FAIRY_SAVE 能力),三颗逐字节全对齐。
+    ///   seed 40:套娃 —— 本轮查出是**本作 (a) bug**,不是登记里的 (b):原版
+    ///     openTreasureRoomChest(GameContext.cpp:1888-1892)的套娃结算排在金币与箱子
+    ///     遗物**之前**,开箱本身开出来的套娃不算这一次的次数(拿到手时 charges 还是 0);
+    ///     本作原先在主遗物之后才结算,于是同一箱被开成两件(第 23 步 relics 多一件
+    ///     orichalcum),并顺带错位了后面的血量。修 = run.rs open_chest 把套娃块提到主
+    ///     遗物之前;断言 = run.rs matryoshka_from_a_chest_does_not_double_that_chest。
+    ///
+    /// 收尾后 CASES(42 颗)/ SWEEP(40 颗)全部逐字节对齐,0 处差异。
     const CASES: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1341,8 +1350,8 @@ mod e2e {
     Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 9, lines: 34, ref_lines: 31, aligned: 29, diff_steps: &[29, 30, 31, 32, 33], diff_digest: 0xd995a3f88e81266b },
-    Expected { seed: 10, lines: 41, ref_lines: 21, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xd746f059d1f3a5c8 },
+    Expected { seed: 9, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 10, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1356,7 +1365,7 @@ mod e2e {
     Expected { seed: 21, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 24, lines: 17, ref_lines: 17, aligned: 15, diff_steps: &[15, 16], diff_digest: 0xb3e49f4f3735e49c },
+    Expected { seed: 24, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1372,15 +1381,25 @@ mod e2e {
     Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 39, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x486665cfaa299e93 },
+    Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 42, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 54, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     /// 扫荡集合:seed 1..40 的逐字段对拍登记表(与 tools/e2e_diff.ts 的归一化一致,
     /// 比较时两侧都转小写 —— 现在唯一的大小写差异是 init 行的 seed_str).
-    /// 值就是上面 CASES 里 seed 1..40 那几行(42/54 不在扫荡里);退赃折掉 + 瓶装牌修复后
-    /// 40 颗只剩 9/10/24(仙女瓶)与 40(matryoshka)四颗,合计 104 处.
+    /// 值就是上面 CASES 里 seed 1..40 那几行(42/54 不在扫荡里).
+    ///
+    /// 本轮逐颗反查的结论(复跑命令 `bun tools/e2e_diff.ts 1 2 ... 40`):
+    ///   seed 1-8,11-23,25-39(36 颗):逐字节全对齐,0 处差异;
+    ///   seed 9/10/24:仙女在瓶中的参考缺口 (c),参考驱动侧补 FAIRY_SAVE 后归零;
+    ///   seed 40:本作套娃结算时点 bug (a),run.rs open_chest 提到主遗物之前后归零。
+    /// 40/40 颗全对齐(每颗 aligned == lines,fingerprint 为 FNV 空串初值
+    /// 0xcbf29ce484222325),合计 0 处差异。
+    ///
+    /// 数字沿革:上一轮(退赃 + 瓶装牌折掉后)SWEEP 40 颗共 104 处 = seed 9/10/24 的
+    /// 仙女瓶 51 处 + seed 40 的套娃 53 处。本轮 (a) 修套娃 104 -> 51(seed 40 归零),
+    /// (c) 折仙女 51 -> 0(seed 9/10/24 归零)。
     const SWEEP: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1390,8 +1409,8 @@ mod e2e {
     Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 9, lines: 34, ref_lines: 31, aligned: 29, diff_steps: &[29, 30, 31, 32, 33], diff_digest: 0xd995a3f88e81266b },
-    Expected { seed: 10, lines: 41, ref_lines: 21, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xd746f059d1f3a5c8 },
+    Expected { seed: 9, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 10, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1405,7 +1424,7 @@ mod e2e {
     Expected { seed: 21, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 24, lines: 17, ref_lines: 17, aligned: 15, diff_steps: &[15, 16], diff_digest: 0xb3e49f4f3735e49c },
+    Expected { seed: 24, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1421,7 +1440,7 @@ mod e2e {
     Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 39, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x486665cfaa299e93 },
+    Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     fn fixture_dir() -> std::path::PathBuf {
@@ -2344,7 +2363,7 @@ mod e2e {
     Expected { seed: 6, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 9, lines: 16, ref_lines: 11, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15], diff_digest: 0x2b7c707e3bfd3115 },
+    Expected { seed: 9, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 12, lines: 30, ref_lines: 30, aligned: 30, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2381,32 +2400,31 @@ mod e2e {
     ///
     /// 逐颗 seed 归因(12 颗,复跑命令 `bun tools/e2e_diff.ts --all --script
     /// tools/golden/e2e/a20a2.script`)."对齐前缀"= 第一处分叉前的步数,"首分叉"= 第一处
-    /// 字段不同的步号(其后差异都是这一处的级联).本轮把退赃折掉后合计 1157 -> 249 处,
+    /// 字段不同的步号(其后差异都是这一处的级联).退赃等驱动侧补偿折掉后从 1157 降到
+    /// 249 处,后续几轮修 bug 再降到 195 处(下表 [共 N 处] 已按本轮复跑的数字更新):
     /// 原来被退赃级联盖住的 seed 15/18 各露出下面一条新分叉:
     ///
     ///   seed  步数(本作/参考)  对齐前缀  首分叉            首分叉成因 / 归类
     ///    3     45/45            13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 30 处]
-    ///    4     50/50            46       步 46 move        进 Boss 房那一行/空槽口径 (b);另有 3 处
-    ///                                                    是 Battle Trance 的"本回合不能再抽牌"
-    ///                                                    参考未实现 (c)                       [共 9 处]
+    ///    4     50/50            47       步 47 fight       末场战斗结算后 hp 差 64(纯 s.hp)     [共 3 处]
     ///    6     53/53            36       步 36 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 15 处]
-    ///   11     48/48            32       步 32 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 17 处]
+    ///   11     48/48            32       步 32 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 11 处]
     ///   13     42/42            19       步 19 fight       小鬼头目开战摆位 (c),终点差 5 hp      [共 7 处]
-    ///   15     45/45           13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 23 处]
+    ///   15     45/45           13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 17 处]
     ///                                                    (修前首分叉在步 5、566 处:击杀盗贼/
     ///                                                    强盗退赃 (b) —— 已由驱动侧补偿折掉);
     ///                                                    折掉后步 32 又露出 the_library 的屏
     ///                                                    表示差异 (b)5、步 41 是进 Boss 房
     ///                                                    空槽口径 (b)2
-    ///   16     44/44            40       步 40 move        进 Boss 房那一行/空槽口径 (b)         [共 6 处]
+    ///   16     44/44            44       (已全对齐)                                             [共 0 处]
     ///   17     44/44            14       步 14 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 24 处]
     ///   18     47/47            32       步 32 fight       参考 PRESERVED_INSECT 按"战斗里有
     ///                                                    elite 类怪"就减血 (c),本作按原版只在
     ///                                                    精英房减 —— 哨卫+球形守卫那场
     ///                                                    43/20 -> 32/15,整段 hp 差 10      [共 16 处]
     ///                                                    (修前首分叉在步 2、381 处:退赃 (b) 级联)
-    ///   19     45/45             8       步 8  fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 45 处]
-    ///   25     47/46            36       步 36 pick        designer_in_spire 升级目标 (b)         [共 42 处]
+    ///   19     45/45             8       步 8  fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)   [共 39 处]
+    ///   25     47/47            36       步 36 pick        designer_in_spire 升级目标 (b)         [共 18 处]
     ///   33     46/46            26       步 26 fight       首领排槽→少召唤一只小鬼 (c)           [共 15 处]
     ///
     /// 除首分叉外,种子 6 的步 47、种子 11 的步 44(进 Boss 房的空槽口径,(b)2)也在

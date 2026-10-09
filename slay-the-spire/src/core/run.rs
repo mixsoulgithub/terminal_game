@@ -4748,19 +4748,12 @@ impl Run {
             self.finish_chest();
             return;
         }
-        if !chest.empty {
-            let def = self.take_relic_of_tier(chest.tier);
-            self.gain_relic(def);
-            self.say(format!("you found {}", def.name));
-        } else {
-            self.say("the chest is empty");
-        }
-        // 诅咒钥匙:非 Boss 宝箱里附带一张诅咒
-        if self.has_relic_fx(|fx| fx.curse_on_chest) {
-            self.add_random_curse();
-        }
-        // 俄罗斯套娃:还带次数就再给一件.额外那件的档次固定 75% 普通 / 25% 罕见,
-        // 与箱子大小无关(参考实现 getMatryoshkaRelicTier);饥肠辘辘之脸吃空的箱子也照给
+        // 俄罗斯套娃:还带次数就先给一件,再算箱子自己的那件.原版
+        // GameContext.cpp:1888-1892 的这套娃结算排在金币与箱子遗物**之前**,所以这一次
+        // 开箱本身开出的套娃不算次数(拿到手时 charges 还是 0),要等下一个箱子才生效;
+        // 额外那件的档次固定 75% 普通 / 25% 罕见,与箱子大小无关(getMatryoshkaRelicTier),
+        // 饥肠辘辘之脸吃空的箱子也照给.玩家 relic 列表里套娃那件排在箱子遗物之前
+        // (原版 reward.addRelic 的顺序).
         if self.chest_extra_left > 0 {
             self.chest_extra_left -= 1;
             let tier = if self
@@ -4775,6 +4768,17 @@ impl Run {
             let second = self.take_relic_of_tier(tier);
             self.gain_relic(second);
             self.say(format!("the chest also holds {}", second.name));
+        }
+        if !chest.empty {
+            let def = self.take_relic_of_tier(chest.tier);
+            self.gain_relic(def);
+            self.say(format!("you found {}", def.name));
+        } else {
+            self.say("the chest is empty");
+        }
+        // 诅咒钥匙:非 Boss 宝箱里附带一张诅咒
+        if self.has_relic_fx(|fx| fx.curse_on_chest) {
+            self.add_random_curse();
         }
         self.finish_chest();
     }
@@ -8233,6 +8237,40 @@ mod tests {
         r.debug_room("treasure").expect("开宝箱房 3");
         r.take_treasure();
         assert_eq!(r.player.relics.len(), base + 5, "第三个箱子只给一件");
+    }
+
+    /// 开箱本身开出的套娃不算这一次的次数:原版 GameContext.cpp:1888-1892 的套娃结算
+    /// 排在箱子遗物**之前**,此时玩家还没拿到套娃(charges 为 0),这一次只给一件;
+    /// 拿到手后(charges=2)接下来两个箱子才各多给一件.
+    #[test]
+    fn matryoshka_from_a_chest_does_not_double_that_chest() {
+        let mut r = Run::new(11);
+        // 让这个箱子(罕见档)开出套娃:把它换到罕见池的第一位
+        let i = r
+            .relic_pools
+            .uncommon
+            .iter()
+            .position(|d| d.id == "matryoshka")
+            .expect("套娃要在罕见池里");
+        r.relic_pools.uncommon.swap(0, i);
+        r.chest = Some(Chest {
+            size: ChestSize::Small,
+            gold_present: false,
+            tier: RelicTier::Uncommon,
+            empty: false,
+            opened: false,
+        });
+        r.screen = Screen::Treasure;
+        let base = r.player.relics.len();
+        r.take_treasure();
+        assert_eq!(r.player.relics.len(), base + 1, "开出套娃的这一次只给一件");
+        assert_eq!(r.player.relics.last().unwrap().id, "matryoshka");
+        r.debug_room("treasure").expect("开宝箱房 2");
+        r.take_treasure();
+        assert_eq!(r.player.relics.len(), base + 3, "之后第一个箱子给两件");
+        r.debug_room("treasure").expect("开宝箱房 3");
+        r.take_treasure();
+        assert_eq!(r.player.relics.len(), base + 5, "之后第二个箱子还是两件");
     }
 
     /// 血祭匕首的永久成长会写回牌组原件(击杀非随从时 +3)
