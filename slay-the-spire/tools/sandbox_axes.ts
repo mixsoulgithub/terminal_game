@@ -277,6 +277,100 @@ add(
   },
 );
 
+// ---- 诅咒/状态轴:持有(手牌限制/掉血)、抽到、回合末 ----
+add(
+  "curses/burn_end_turn_2",
+  board({ hand: ["burn", "defend"], actions: [{ op: "noop" }, { op: "end_turn" }] }),
+  (r) => (hurtBy(r) === 2 ? null : `灼伤回合末掉了 ${hurtBy(r)},期望 2`),
+);
+add(
+  "curses/regret_hand_size",
+  board({ hand: ["regret", "defend", "strike"], actions: [{ op: "noop" }, { op: "end_turn" }] }),
+  (r) => (hurtBy(r) === 3 ? null : `悔恨按 3 张手牌该掉 3,实际 ${hurtBy(r)}`),
+);
+add(
+  "curses/normality_limits_three",
+  board({
+    hand: ["normality", "strike", "strike", "strike", "strike"],
+    actions: [
+      { op: "noop" },
+      { op: "play", hand: 1, target: 0 },
+      { op: "play", hand: 1, target: 0 },
+      { op: "play", hand: 1, target: 0 },
+      { op: "play", hand: 1, target: 0 },
+    ],
+  }),
+  (r) => {
+    const ok = r.filter((x) => x.op === "play" && x.st).length;
+    if (ok !== 3) return `常世允许打出的张数 ${ok},期望 3`;
+    return r.some((x) => x.error) ? null : "第 4 张没被拦下";
+  },
+);
+add(
+  "curses/necro_returns_on_exhaust",
+  board({
+    hand: ["necronomicurse", "purity", "strike", "defend", "strike"],
+    actions: [{ op: "noop" }, { op: "play", hand: 1, target: 0, choose: [0, 0, 0] }],
+  }),
+  (r) => (lastSt(r).hand.includes("necronomicurse") ? null : "死灵诅咒被消耗后没回到手上"),
+);
+add(
+  "curses/writhe_innate",
+  {
+    player: { hp: 40, max_hp: 80, energy: 5, max_energy: 5 },
+    relics: [],
+    potions: [null, null, null],
+    deck: [...Array.from({ length: 9 }, () => "strike"), "writhe"],
+    enemies: [CULTIST],
+    actions: [{ op: "noop" }],
+  },
+  (r) => (r[0]!.st!.hand.includes("writhe") ? null : `扭曲没进开局手牌:[${r[0]!.st!.hand.join(",")}]`),
+);
+
+// ---- 能力牌轴:多回合滚动 ----
+add(
+  "powers/barricade_keeps_block",
+  board({
+    hand: ["barricade", "defend", "strike"],
+    actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "play", hand: 0, target: 0 }, { op: "end_turn" }],
+  }),
+  (r) => (lastSt(r).player.block === 5 ? null : `壁垒下回合开始格挡 ${lastSt(r).player.block},期望 5`),
+);
+add(
+  "powers/brutality_start_of_turn",
+  board({ hand: ["brutality", "defend", "strike"], actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "end_turn" }] }),
+  (r) => {
+    const st = lastSt(r);
+    if (st.player.hp !== 39) return `暴行回合开始后血 ${st.player.hp},期望 39`;
+    return st.hand.length === 6 ? null : `暴行多抽 1 后手牌 ${st.hand.length},期望 6`;
+  },
+);
+add(
+  "powers/corruption_skill_free_and_exhausts",
+  board({
+    hand: ["corruption", "defend", "strike"],
+    actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "play", hand: 0, target: 0 }],
+  }),
+  (r) => {
+    const plays = r.filter((x) => x.op === "play" && x.st);
+    const e0 = plays[0]!.st!.energy;
+    const st = lastSt(r);
+    if (st.energy !== e0) return `腐化下技能没变 0 费:${e0} -> ${st.energy}`;
+    return st.exhaust.includes("defend") ? null : "腐化下打出的技能没被消耗";
+  },
+);
+
+// ---- 选牌结果集合轴:发现升级后不再消耗(回归断言) ----
+add(
+  "choices/discovery_up_does_not_exhaust",
+  board({
+    hand: ["discovery+", "defend"],
+    enemies: [CULTIST],
+    actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [1] }],
+  }),
+  (r) => (lastSt(r).exhaust.includes("discovery+") ? "发现+ 不该消耗(语料升级文本去掉了 Exhaust)" : null),
+);
+
 // ---- 跑 ----
 const DIR = mkdtempSync(join(tmpdir(), "spire-axes-"));
 const listPath = join(DIR, "list.txt");

@@ -1918,6 +1918,8 @@ mod e2e {
 //   hand/draw/discard/exhaust  ["strike","defend+"] 显式牌堆,顶牌在数组开头
 //   enemies    [{id,hp,max_hp,block,powers,move}]
 //   actions    [{"op":"play","hand":0,"target":0},{"op":"end_turn"},...]
+//   report     开了以后每行额外带 "report":{candidates,costs}(这次选牌亮出的候选、
+//              手牌当前实际费用);审计核对选牌池大小与"本回合 0 费"用,默认关
 //   combats    [{"encounter":...,"hand":...,"enemies":...,"actions":...}, ...]
 //              多场连打:血量与跨战斗遗物计数器接着上一场走;给了 combats 就
 //              忽略根上的那场,每行多带 "c"(场次号)与 st.counters(计数器)
@@ -2332,6 +2334,9 @@ pub mod sandbox {
         deck: Vec<CardInstance>,
         /// 一场或多场战斗:写了 combats 就按数组顺序连打,否则根上那场单独打
         combats: Vec<CombatSc>,
+        /// 每行额外带上"这次选牌亮出的候选"与"手牌当前实际费用"(审计用);
+        /// 默认关,免得改动 sandbox 与参考侧逐字段比对的 schema
+        report: bool,
     }
 
     fn need_str<'a>(v: &'a Json, key: &str) -> Result<&'a str, String> {
@@ -2464,6 +2469,7 @@ pub mod sandbox {
             potions: Vec::new(),
             deck: Vec::new(),
             combats: Vec::new(),
+            report: matches!(root.get("report"), Some(Json::Bool(true))),
         };
         if let Some(p) = root.get("player") {
             sc.hp = num_or(p, "hp", sc.hp)?;
@@ -2733,20 +2739,52 @@ pub mod sandbox {
         c: &Combat,
         potions: &[Option<&'static PotionDef>],
         ci: Option<usize>,
+        tail: &str,
     ) -> String {
         let extra = if ci.is_some() { counters_json(c) } else { String::new() };
-        line(step, op, ci, &format!("\"st\":{}", state_json(c, potions, &extra)))
+        line(step, op, ci, &format!("\"st\":{}{tail}", state_json(c, potions, &extra)))
+    }
+
+    /// scenario 开了 report 时,每行额外带"这次选牌亮出的候选"与"手牌当前实际费用"
+    /// (不可打出记 -1).审计靠它核对选牌池大小与"本回合 0 费"这类不在状态里的约束。
+    fn report_tail(report: bool, c: &Combat, offered: &[String]) -> String {
+        if !report {
+            return String::new();
+        }
+        // 候选 token 由 card_token 生成时已带 JSON 引号,直接拼
+        let cands: Vec<String> = offered.to_vec();
+        let costs: Vec<String> = c
+            .hand
+            .iter()
+            .map(|x| match x.fixed_cost() {
+                Some(n) => n.to_string(),
+                None => "-1".to_string(),
+            })
+            .collect();
+        format!(
+            ",\"report\":{{\"candidates\":[{}],\"costs\":[{}]}}",
+            cands.join(","),
+            costs.join(",")
+        )
     }
 
     // ---- 跑一段 scenario ----
 
     /// 选牌窗口:按 scenario 给的 indices 依次选,然后收尾(给空数组就是不选).
     /// indices 是"候选表里的第几个"(与参考实现的 chosen 语义一致),
-    /// 这里翻译成本作使用的牌堆下标.
-    fn resolve_choice(c: &mut Combat, indices: &[usize]) {
+    /// 这里翻译成本作使用的牌堆下标.返回第一轮亮出来的候选(审计报告用).
+    fn resolve_choice(c: &mut Combat, indices: &[usize]) -> Vec<String> {
+        let mut offered: Vec<String> = Vec::new();
         let mut guard = 0;
         while c.choice.is_some() && guard < 16 {
             guard += 1;
+            if guard == 1 {
+                offered = c
+                    .choice_candidates()
+                    .iter()
+                    .map(|(_, x)| super::card_token(x))
+                    .collect();
+            }
             for &rel in indices {
                 if c.choice.is_none() {
                     break;
@@ -2763,6 +2801,7 @@ pub mod sandbox {
                 c.finish_choice();
             }
         }
+        offered
     }
 
     /// 按 scenario 摆好一场战斗:牌堆 / 玩家 / 敌人覆盖,并把掷点流重置到同一颗种子.
@@ -2846,7 +2885,7 @@ pub mod sandbox {
         // 初始化时挂起的选牌(赌徒筹码这类开战就选牌的遗物)一律按"一张不选"收掉:
         // scenario 已经把牌堆摆成想要的样子了,构造期的选择只是初始化副作用.
         if c.choice.is_some() {
-            resolve_choice(&mut c, &[]);
+            let _ = resolve_choice(&mut c, &[]);
         }
         // 掷点流重置:初始化阶段两边消耗的掷点数可能不同,重置成同一颗种子
         // 之后,动作阶段的随机(洗牌/随机目标/随机卡)才能逐步对齐。
@@ -2868,10 +2907,12 @@ pub mod sandbox {
         }
         let mut out = String::new();
         let mut step = 0usize;
+        let report = sc.report;
         for (ci, cs) in sc.combats.iter().enumerate() {
             let tag = if multi { Some(ci) } else { None };
             let mut c = build_combat(cs, &sc, hp, max_hp, carried.clone(), seed)?;
-            out.push_str(&snapshot(step, "init", &c, &potions, tag));
+            let tail = report_tail(report, &c, &[]);
+            out.push_str(&snapshot(step, "init", &c, &potions, tag, &tail));
             for a in cs.actions.iter() {
                 step += 1;
                 // 开战就挂起的选牌(赌徒之骰/工具箱)先按动作给的 choose 收掉,
@@ -2880,14 +2921,19 @@ pub mod sandbox {
                     Action::Play { choose, .. } | Action::Potion { choose, .. } => choose.clone(),
                     _ => vec![0],
                 };
+                let mut offered: Vec<String> = Vec::new();
                 if c.choice.is_some() {
-                    resolve_choice(&mut c, &action_choose);
+                    offered = resolve_choice(&mut c, &action_choose);
                 }
                 match a {
                     Action::Play { hand, target, choose } => match c.play_card(*hand, *target) {
                         Ok(()) => {
-                            resolve_choice(&mut c, choose);
-                            out.push_str(&snapshot(step, "play", &c, &potions, tag));
+                            let more = resolve_choice(&mut c, choose);
+                            if offered.is_empty() {
+                                offered = more;
+                            }
+                            let tail = report_tail(report, &c, &offered);
+                            out.push_str(&snapshot(step, "play", &c, &potions, tag, &tail));
                         }
                         Err(e) => {
                             out.push_str(&line(step, "play", tag, &format!("\"error\":{}", js(e))));
@@ -2896,8 +2942,12 @@ pub mod sandbox {
                     },
                     Action::EndTurn => {
                         c.end_turn();
-                        resolve_choice(&mut c, &[0]);
-                        out.push_str(&snapshot(step, "end_turn", &c, &potions, tag));
+                        let more = resolve_choice(&mut c, &[0]);
+                        if offered.is_empty() {
+                            offered = more;
+                        }
+                        let tail = report_tail(report, &c, &offered);
+                        out.push_str(&snapshot(step, "end_turn", &c, &potions, tag, &tail));
                     }
                     Action::Potion { slot, target, choose } => {
                         let Some(Some(def)) = potions.get(*slot).copied() else {
@@ -2911,10 +2961,17 @@ pub mod sandbox {
                         };
                         c.use_potion(def, *target);
                         potions[*slot] = None;
-                        resolve_choice(&mut c, choose);
-                        out.push_str(&snapshot(step, "potion", &c, &potions, tag));
+                        let more = resolve_choice(&mut c, choose);
+                        if offered.is_empty() {
+                            offered = more;
+                        }
+                        let tail = report_tail(report, &c, &offered);
+                        out.push_str(&snapshot(step, "potion", &c, &potions, tag, &tail));
                     }
-                    Action::Noop => out.push_str(&snapshot(step, "noop", &c, &potions, tag)),
+                    Action::Noop => {
+                        let tail = report_tail(report, &c, &offered);
+                        out.push_str(&snapshot(step, "noop", &c, &potions, tag, &tail));
+                    }
                 }
             }
             // 结算这一场:血量与跨战斗遗物计数器带走,下一场接着来

@@ -2390,8 +2390,8 @@ pub static CARDS: &[CardDef] = &[
         on_draw: &[],
         on_end_turn: &[],
         in_hand: &[],
-        effects: &[Effect::CopyFromHand],
-        upgrade: up!(None, "Copy an Attack or Power card in your hand twice.", [Effect::CopyFromHand, Effect::CopyFromHand]),
+        effects: &[Effect::CopyFromHand { copies: 1 }],
+        upgrade: up!(None, "Copy an Attack or Power card in your hand twice.", [Effect::CopyFromHand { copies: 2 }]),
     },
     CardDef {
         id: "exhume",
@@ -2704,7 +2704,11 @@ pub static CARDS: &[CardDef] = &[
         on_end_turn: &[],
         in_hand: &[],
         effects: &[Effect::OfferRandomCardsFromClass { n: 3 }],
-        upgrade: None,
+        upgrade: up_no_exhaust!(
+            None,
+            "Choose 1 of 3 random cards to add into your hand. It costs 0 this turn.",
+            [Effect::OfferRandomCardsFromClass { n: 3 }]
+        ),
     },
     CardDef {
         id: "dramatic_entrance",
@@ -3734,8 +3738,12 @@ mod tests {
         mb.upgrade();
         assert_eq!(mb.cost(), Cost::Fixed(1));
 
-        // 发现没有升级版(语料里升级前后一模一样)
-        assert!(!card("discovery").can_upgrade());
+        // 发现升级后不再消耗(语料的升级文本去掉了 Exhaust)
+        let mut disc = card("discovery");
+        assert!(disc.is_exhaust());
+        assert!(disc.can_upgrade());
+        disc.upgrade();
+        assert!(!disc.is_exhaust());
     }
 
     #[test]

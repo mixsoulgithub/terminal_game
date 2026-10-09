@@ -2795,6 +2795,12 @@ impl Combat {
         };
         pile.iter()
             .enumerate()
+            // 掘出不能把自己(刚被消耗掉的那张)拿回来(wiki Update History + 参考实现)
+            .filter(|(_, c)| {
+                !(ch.source == ChoiceSource::Exhaust
+                    && ch.action == ChoiceAction::ToHand
+                    && c.def.id == "exhume")
+            })
             .filter(|(_, c)| ch.filter.allows(c))
             .collect()
     }
@@ -2824,7 +2830,10 @@ impl Combat {
             }
             (ChoiceSource::Hand, ChoiceAction::Copy) => {
                 let card = self.hand[idx].clone();
-                self.add_created_card_to_hand(card);
+                // 二重身升级版一次选择、复制两份(参考实现同样是一次选择加多份)
+                for _ in 0..ch.copies.max(1) {
+                    self.add_created_card_to_hand(card.clone());
+                }
             }
             (ChoiceSource::Hand, ChoiceAction::ToDrawTop) => {
                 // 抽牌堆的顶是下标 0(从头取,插入也要插到最前)
@@ -4219,7 +4228,7 @@ impl Combat {
                         "put a card on top of the draw pile",
                     );
                 }
-                Effect::CopyFromHand => {
+                Effect::CopyFromHand { copies } => {
                     self.begin_choice(
                         ChoiceSource::Hand,
                         ChoiceAction::Copy,
@@ -4227,6 +4236,10 @@ impl Combat {
                         1,
                         "copy an Attack or Power card",
                     );
+                    // 一次选择、复制 copies 份(升级版两份)
+                    if let Some(ch) = self.choice.as_mut() {
+                        ch.copies = copies as usize;
+                    }
                 }
                 Effect::FromExhaustToHand => {
                     self.begin_choice(
@@ -5131,6 +5144,39 @@ mod tests {
         assert_eq!(c.energy, energy_before, "取消要把能量退回来");
         assert_eq!(c.hand.len(), hand_before, "取消要把牌放回手牌");
     }
+
+    /// 二重身升级版:一次选择就把选中的牌复制两份(参考实现同样一次选择加两份)
+    #[test]
+    fn dual_wield_plus_copies_twice_in_one_choice() {
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        let mut dw = crate::core::cards::card("dual_wield");
+        dw.upgraded = true;
+        c.hand = vec![dw, crate::core::cards::card("strike")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Hand);
+        assert_eq!(c.choice.as_ref().unwrap().copies, 2, "升级版一次复制两份");
+        // 打出二重身后手牌只剩那张 strike,下标 0 就是它
+        c.choose(0).unwrap();
+        assert!(c.choice.is_none(), "一次选择就做完,不该再挂第二次选择");
+        let strikes = c.hand.iter().filter(|x| x.def.id == "strike").count();
+        assert_eq!(strikes, 3, "原来的 1 张 + 复制的 2 张");
+    }
+
+    /// 掘出:候选池里不能包含被消耗掉的掘出自己(wiki Update History + 参考实现)
+    #[test]
+    fn exhume_cannot_recover_itself() {
+        let mut c = combat_with("jaw_worm_solo", &["exhume"]);
+        c.exhaust.push(crate::core::cards::card("bash"));
+        c.hand = vec![crate::core::cards::card("exhume")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Exhaust);
+        let ids: Vec<&str> = c.choice_candidates().iter().map(|(_, x)| x.def.id).collect();
+        assert!(!ids.contains(&"exhume"), "掘出不能拿回自己:{ids:?}");
+        assert!(ids.contains(&"bash"), "别的消耗牌还能拿:{ids:?}");
+    }
+
 
     /// 浩劫连锁:浩劫打浩劫再打出一张普通牌,链上每张都记下来
     #[test]

@@ -47,6 +47,9 @@ interface CorpusCard {
   values: CorpusValues;
   upgrade: CorpusValues & { cost: number | null };
   text: string;
+  /** 颜色(red/green/blue/purple/colorless)与卡池归属,选牌结果集合要用 */
+  color?: string;
+  pool?: string;
 }
 interface CorpusPotion {
   id: string;
@@ -140,7 +143,9 @@ type Fact =
   | { k: "player_power"; name: string; v: number }
   | { k: "draw"; v: number }
   | { k: "self_hp"; v: number }
-  | { k: "energy"; v: number };
+  | { k: "energy"; v: number }
+  /** 探针轴(持有/抽到/回合末/多回合/选牌):key 是 probe 返回记录的字段名 */
+  | { k: "probe"; key: string; v: number };
 
 const POWER_KEY: Record<string, string> = {
   Vulnerable: "vulnerable",
@@ -281,6 +286,8 @@ interface Spec {
   scenario: Record<string, unknown>;
   /** delta: 打完后减开局;init: 开局绝对值 */
   mode: "delta" | "init";
+  /** 探针轴专用:直接读快照算出一组事实(返回错误字符串表示沙盒炸了) */
+  probe?: (rows: Row[]) => Record<string, number> | string;
 }
 
 const list: Spec[] = [];
@@ -394,6 +401,759 @@ function cardScenarios(): void {
   }
 }
 
+// ---- 追加轴:诅咒/状态(持有/抽到/回合末)、能力牌(多回合)、随机选牌(结果集合) ----
+//
+// 这 41 张牌的数值不在"当回合打一下"的口径里,分三种轴实测;期望值仍从语料
+// 文本(或 values)抽,选牌类只对"结果集合与约束"(可选张数/张数/是否 0 费/
+// 是否消耗/类型与颜色限制)对账,不比对随机出来的具体身份。
+
+const tokenBase = (tok: string) => tok.replace(/\+.*$/, "");
+const tokenType = (tok: string) => cardByGame.get(tokenBase(tok))?.type.toLowerCase() ?? "?";
+const tokenColor = (tok: string) => cardByGame.get(tokenBase(tok))?.color?.toLowerCase() ?? "?";
+const tokenUpgraded = (tok: string) => (tok.includes("+") ? 1 : 0);
+const handOf = (st: StateJson) => st.hand as string[];
+const firstSt = (rows: Row[]) => rows.filter((r) => r.st)[0]!.st!;
+const lastSt = (rows: Row[]) => {
+  const snaps = rows.filter((r) => r.st);
+  return snaps[snaps.length - 1]!.st!;
+};
+const playRows = (rows: Row[]) => rows.filter((r) => r.op === "play" && r.st);
+/** 最后一行带 report 的快照(通常是刚打完/刚回合末那一步) */
+const lastReport = (rows: Row[]) => {
+  const withReport = rows.filter((r) => r.report);
+  return withReport.length > 0 ? withReport[withReport.length - 1]!.report! : { candidates: [], costs: [] };
+};
+const errOf = (rows: Row[]) => rows.find((r) => r.error)?.error ?? null;
+const candsOf = (rows: Row[]) => lastReport(rows).candidates;
+const lastCosts = (rows: Row[]) => lastReport(rows).costs;
+const inPile = (st: StateJson, pile: "exhaust" | "draw" | "discard", tok: string) =>
+  (st[pile] as string[]).includes(tok) ? 1 : 0;
+/** after 里减去 before 的多重集,before 全被消掉后剩下的就是新加的牌 */
+function multisetDiff(after: string[], before: string[]): string[] {
+  const m = new Map<string, number>();
+  for (const t of before) m.set(t, (m.get(t) ?? 0) + 1);
+  const out: string[] = [];
+  for (const t of after) {
+    const n = m.get(t) ?? 0;
+    if (n > 0) m.set(t, n - 1);
+    else out.push(t);
+  }
+  return out;
+}
+/** 打出一张牌后手牌新增的牌(打出的那张从手牌移走,新增的都堆在手牌末尾) */
+const addedToHand = (rows: Row[]) => {
+  const before = handOf(firstSt(rows));
+  const after = handOf(lastSt(rows));
+  return after.slice(Math.max(0, before.length - 1));
+};
+/** 洗进抽牌堆的新牌(顺序会被重洗,只比多重集) */
+const addedToDrawOf = (rows: Row[]) =>
+  multisetDiff(lastSt(rows).draw as string[], firstSt(rows).draw as string[]);
+/** 打出后最后一张手牌(选牌选中的那张)的当前费用 */
+const lastHandCost = (rows: Row[]) => {
+  const costs = lastCosts(rows);
+  return costs.length > 0 ? costs[costs.length - 1]! : null;
+};
+
+function pushProbe(
+  id: string,
+  level: "base" | "up",
+  suffix: string,
+  facts: Fact[],
+  probe: (rows: Row[]) => Record<string, number> | string,
+  scenario: Record<string, unknown>,
+): void {
+  list.push({ name: `cards/${id}/${suffix}`, kind: "cards", id, level, facts, probe, scenario, mode: "delta" });
+}
+
+/** 诅咒/状态:持有(不可打出/手牌限制/掉血)、抽到(掉能量)、回合末(掉血/状态/回手)、天生 */
+function curseStatusScenarios(): void {
+  for (const id of ourCards) {
+    const c = cardByGame.get(id);
+    if (!c || !["curse", "status"].includes(c.type.toLowerCase())) continue;
+    const t = norm(c.text).replace(/\s+/g, " ").trim();
+    const unplayable = /Unplayable\./.test(t);
+
+    if (unplayable) {
+      pushProbe(
+        id,
+        "base",
+        "unplayable",
+        [{ k: "probe", key: "play_error", v: 1 }],
+        (rows) => ({ play_error: errOf(rows) ? 1 : 0 }),
+        playBoard({ report: true, hand: [id, "defend"], actions: [{ op: "play", hand: 0, target: 0 }] }),
+      );
+    }
+    if (/Ethereal\./.test(t)) {
+      pushProbe(
+        id,
+        "base",
+        "ethereal",
+        [{ k: "probe", key: "in_exhaust", v: 1 }],
+        (rows) => ({ in_exhaust: inPile(lastSt(rows), "exhaust", id) }),
+        playBoard({ hand: [id, "defend"], actions: [{ op: "noop" }, { op: "end_turn" }] }),
+      );
+    }
+    const dmg = t.match(/At the end of your turn, take (\d+) damage/);
+    if (dmg) {
+      pushProbe(
+        id,
+        "base",
+        "end_turn_hp",
+        [{ k: "probe", key: "hp_loss", v: Number(dmg[1]) }],
+        (rows) => ({ hp_loss: firstSt(rows).player.hp - lastSt(rows).player.hp }),
+        playBoard({ hand: [id, "defend"], actions: [{ op: "noop" }, { op: "end_turn" }] }),
+      );
+    }
+    const pw = t.match(/At the end of your turn, gain (\d+) (Weak|Frail)/);
+    if (pw) {
+      pushProbe(
+        id,
+        "base",
+        "end_turn_power",
+        [{ k: "probe", key: "gain", v: Number(pw[1]) }],
+        (rows) => ({ gain: lastSt(rows).player.powers[POWER_KEY[pw[2]!]!] ?? 0 }),
+        playBoard({ hand: [id, "defend"], actions: [{ op: "noop" }, { op: "end_turn" }] }),
+      );
+    }
+    if (/At the end of your turn, lose HP equal to the number of cards in your hand/.test(t)) {
+      const hand = [id, "defend", "strike"];
+      pushProbe(
+        id,
+        "base",
+        "end_turn_regret",
+        [{ k: "probe", key: "hp_loss", v: hand.length }],
+        (rows) => ({ hp_loss: firstSt(rows).player.hp - lastSt(rows).player.hp }),
+        playBoard({ hand, actions: [{ op: "noop" }, { op: "end_turn" }] }),
+      );
+    }
+    const drawn = t.match(/Whenever this card is drawn, lose (\d+) Energy/);
+    if (drawn) {
+      pushProbe(
+        id,
+        "base",
+        "on_draw",
+        [{ k: "probe", key: "energy_loss", v: Number(drawn[1]) }],
+        // 减去 pommel_strike 自己的 1 费,剩下的就是抽到这张牌扣的
+        (rows) => ({ energy_loss: firstSt(rows).energy - lastSt(rows).energy - 1 }),
+        playBoard({
+          hand: ["pommel_strike", "defend", "strike"],
+          draw: [id, "strike", "strike", "strike"],
+          actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+        }),
+      );
+    }
+    const limit = t.match(/While in hand, you cannot play more than (\d+) cards this turn/);
+    if (limit) {
+      const max = Number(limit[1]);
+      pushProbe(
+        id,
+        "base",
+        "play_limit",
+        [{ k: "probe", key: "played_ok", v: max }, { k: "probe", key: "blocked", v: 1 }],
+        (rows) => ({ played_ok: playRows(rows).length, blocked: errOf(rows) ? 1 : 0 }),
+        playBoard({
+          report: true,
+          hand: [id, ...Array.from({ length: max + 1 }, () => "strike")],
+          actions: [
+            { op: "noop" },
+            ...Array.from({ length: max + 1 }, () => ({ op: "play", hand: 1, target: 0 })),
+          ],
+        }),
+      );
+    }
+    const pain = t.match(/While in hand, lose (\d+) HP when other cards are played/);
+    if (pain) {
+      const per = Number(pain[1]);
+      pushProbe(
+        id,
+        "base",
+        "in_hand_pain",
+        [{ k: "probe", key: "hp_loss", v: per * 2 }],
+        (rows) => ({ hp_loss: firstSt(rows).player.hp - lastSt(rows).player.hp }),
+        playBoard({
+          hand: [id, "strike", "defend"],
+          actions: [{ op: "noop" }, { op: "play", hand: 1, target: 0 }, { op: "play", hand: 1, target: 0 }],
+        }),
+      );
+    }
+    if (/There is no escape from this curse/.test(t)) {
+      pushProbe(
+        id,
+        "base",
+        "returns_on_exhaust",
+        [{ k: "probe", key: "back_in_hand", v: 1 }],
+        (rows) => ({ back_in_hand: handOf(lastSt(rows)).includes(id) ? 1 : 0 }),
+        playBoard({
+          hand: [id, "purity", "strike", "defend", "strike"],
+          actions: [{ op: "noop" }, { op: "play", hand: 1, target: 0, choose: [0, 0, 0] }],
+        }),
+      );
+    }
+    if (/Innate\./.test(t)) {
+      pushProbe(
+        id,
+        "base",
+        "innate",
+        [{ k: "probe", key: "in_opening_hand", v: 1 }],
+        (rows) => ({ in_opening_hand: handOf(firstSt(rows)).includes(id) ? 1 : 0 }),
+        {
+          player: { hp: 40, max_hp: 80, energy: 5, max_energy: 5 },
+          relics: [],
+          potions: [null, null, null],
+          deck: [...Array.from({ length: 9 }, () => "strike"), id],
+          enemies: [{ id: "cultist", hp: 999, max_hp: 999, move: "Incantation" }],
+          actions: [{ op: "noop" }],
+        },
+      );
+    }
+    if (/put a copy of this card on top of your draw pile/.test(t)) {
+      pushProbe(
+        id,
+        "base",
+        "copy_on_end_turn",
+        [{ k: "probe", key: "in_hand_next_turn", v: 1 }],
+        (rows) => ({ in_hand_next_turn: handOf(lastSt(rows)).includes(id) ? 1 : 0 }),
+        playBoard({
+          hand: [id, "defend", "strike"],
+          actions: [{ op: "noop" }, { op: "end_turn" }],
+        }),
+      );
+    }
+    // 可打出且自带 Exhaust.(史莱姆粘液 / 傲慢):打出后进消耗堆
+    if (!unplayable && /\bExhaust\./.test(t)) {
+      pushProbe(
+        id,
+        "base",
+        "exhaust_on_play",
+        [{ k: "probe", key: "self_exhausted", v: 1 }],
+        (rows) => ({ self_exhausted: inPile(lastSt(rows), "exhaust", id) }),
+        playBoard({ hand: [id, "defend"], actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }] }),
+      );
+    }
+  }
+}
+
+/** 能力牌:多回合滚动(每回合抽牌/加力量/格挡不清空/技能 0 费且消耗) */
+function powerScenarios(): void {
+  const darkEmbrace = (rows: Row[]) => {
+    const p = playRows(rows);
+    const before = handOf(p[0]!.st!).length;
+    const after = handOf(p[1]!.st!).length;
+    return { draw_on_exhaust: after - (before - 1) };
+  };
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "dark_embrace+" : "dark_embrace";
+    pushProbe(
+      "dark_embrace",
+      level,
+      level,
+      [{ k: "probe", key: "draw_on_exhaust", v: 1 }],
+      darkEmbrace,
+      playBoard({
+        hand: [tok, "limit_break", "defend", "defend", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "barricade+" : "barricade";
+    pushProbe(
+      "barricade",
+      level,
+      level,
+      [{ k: "probe", key: "block_kept", v: 5 }],
+      (rows) => ({ block_kept: lastSt(rows).player.block }),
+      playBoard({
+        hand: [tok, "defend", "strike", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "play", hand: 0, target: 0 }, { op: "end_turn" }],
+      }),
+    );
+  }
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "brutality+" : "brutality";
+    pushProbe(
+      "brutality",
+      level,
+      level,
+      [{ k: "probe", key: "hp_loss", v: 1 }, { k: "probe", key: "extra_draw", v: 1 }],
+      (rows) => ({
+        hp_loss: firstSt(rows).player.hp - lastSt(rows).player.hp,
+        extra_draw: handOf(lastSt(rows)).length - 5,
+      }),
+      playBoard({
+        hand: [tok, "defend", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "end_turn" }],
+      }),
+    );
+  }
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "corruption+" : "corruption";
+    pushProbe(
+      "corruption",
+      level,
+      level,
+      [{ k: "probe", key: "skill_free", v: 1 }, { k: "probe", key: "skill_exhausted", v: 1 }],
+      (rows) => {
+        const p = playRows(rows);
+        const e0 = p[0]!.st!.energy;
+        const e1 = p[1]!.st!.energy;
+        return { skill_free: e0 - e1 === 0 ? 1 : 0, skill_exhausted: inPile(p[1]!.st!, "exhaust", "defend") };
+      },
+      playBoard({
+        hand: [tok, "defend", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+}
+
+/** 随机/选牌类:只对结果集合与约束对账(候选张数/加几张/0 费/消耗/类型与颜色限制) */
+function choiceScenarios(): void {
+  // 发现:亮 3 张选 1 张,选中的本回合 0 费;升级后不再消耗
+  for (const level of ["base", "up"] as const) {
+    const up = level === "up";
+    const tok = up ? "discovery+" : "discovery";
+    pushProbe(
+      "discovery",
+      level,
+      level,
+      [
+        { k: "probe", key: "options", v: 3 },
+        { k: "probe", key: "added", v: 1 },
+        { k: "probe", key: "added_free", v: 1 },
+        { k: "probe", key: "self_exhausted", v: up ? 0 : 1 },
+      ],
+      (rows) => ({
+        options: candsOf(rows).length,
+        added: addedToHand(rows).length,
+        added_free: addedToHand(rows).length === 1 && lastHandCost(rows) === 0 ? 1 : 0,
+        self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+      }),
+      playBoard({
+        report: true,
+        hand: [tok, "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [1] }],
+      }),
+    );
+  }
+  // 双重施法:选一张攻击/能力,加 1 份(升级 2 份);技能不能被选
+  for (const level of ["base", "up"] as const) {
+    const up = level === "up";
+    const tok = up ? "dual_wield+" : "dual_wield";
+    const strikesIn = (xs: string[]) => xs.filter((x) => tokenBase(x) === "strike").length;
+    pushProbe(
+      "dual_wield",
+      level,
+      level,
+      [
+        { k: "probe", key: "options", v: 1 },
+        { k: "probe", key: "copies", v: up ? 2 : 1 },
+        { k: "probe", key: "skill_offered", v: 0 },
+      ],
+      (rows) => ({
+        options: candsOf(rows).length,
+        copies: strikesIn(handOf(lastSt(rows))) - strikesIn(handOf(firstSt(rows))),
+        skill_offered: candsOf(rows).some((x) => tokenType(x) === "skill") ? 1 : 0,
+      }),
+      playBoard({
+        report: true,
+        hand: [tok, "strike", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
+      }),
+    );
+  }
+  // 地狱之刃:随机加 1 张攻击,本回合 0 费,消耗
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "infernal_blade+" : "infernal_blade";
+    pushProbe(
+      "infernal_blade",
+      level,
+      level,
+      [
+        { k: "probe", key: "added", v: 1 },
+        { k: "probe", key: "added_is_attack", v: 1 },
+        { k: "probe", key: "added_free", v: 1 },
+        { k: "probe", key: "self_exhausted", v: 1 },
+      ],
+      (rows) => {
+        const added = addedToHand(rows);
+        return {
+          added: added.length,
+          added_is_attack: added.length === 1 && tokenType(added[0]!) === "attack" ? 1 : 0,
+          added_free: added.length === 1 && lastHandCost(rows) === 0 ? 1 : 0,
+          self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+        };
+      },
+      playBoard({
+        report: true,
+        hand: [tok, "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 万事通:随机加 1(升级 2)张无色牌,消耗
+  for (const level of ["base", "up"] as const) {
+    const up = level === "up";
+    const tok = up ? "jack_of_all_trades+" : "jack_of_all_trades";
+    pushProbe(
+      "jack_of_all_trades",
+      level,
+      level,
+      [
+        { k: "probe", key: "added", v: up ? 2 : 1 },
+        { k: "probe", key: "all_colorless", v: 1 },
+        { k: "probe", key: "self_exhausted", v: 1 },
+      ],
+      (rows) => {
+        const added = addedToHand(rows);
+        return {
+          added: added.length,
+          all_colorless: added.length > 0 && added.every((x) => tokenColor(x) === "colorless") ? 1 : 0,
+          self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+        };
+      },
+      playBoard({
+        report: true,
+        hand: [tok, "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 嬗变:X 张随机无色牌,本回合 0 费;升级后给的是升级版
+  for (const level of ["base", "up"] as const) {
+    const up = level === "up";
+    const tok = up ? "transmutation+" : "transmutation";
+    pushProbe(
+      "transmutation",
+      level,
+      level,
+      [
+        { k: "probe", key: "added", v: 3 },
+        { k: "probe", key: "all_colorless", v: 1 },
+        { k: "probe", key: "all_free", v: 1 },
+        { k: "probe", key: "all_upgraded", v: up ? 1 : 0 },
+        { k: "probe", key: "self_exhausted", v: 1 },
+      ],
+      (rows) => {
+        const added = addedToHand(rows);
+        const costs = lastCosts(rows);
+        const addedCosts = costs.slice(Math.max(0, costs.length - added.length));
+        return {
+          added: added.length,
+          all_colorless: added.length > 0 && added.every((x) => tokenColor(x) === "colorless") ? 1 : 0,
+          all_free: added.length > 0 && addedCosts.every((x) => x === 0) ? 1 : 0,
+          all_upgraded: added.length > 0 && added.every(tokenUpgraded) ? 1 : 0,
+          self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+        };
+      },
+      playBoard({
+        report: true,
+        player: { energy: 3, max_energy: 9 },
+        hand: [tok, "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 暴力:从抽牌堆抓 3(升级 4)张随机攻击,消耗
+  for (const level of ["base", "up"] as const) {
+    const up = level === "up";
+    const tok = up ? "violence+" : "violence";
+    pushProbe(
+      "violence",
+      level,
+      level,
+      [
+        { k: "probe", key: "added", v: up ? 4 : 3 },
+        { k: "probe", key: "all_attacks", v: 1 },
+        { k: "probe", key: "self_exhausted", v: 1 },
+      ],
+      (rows) => {
+        const added = addedToHand(rows);
+        return {
+          added: added.length,
+          all_attacks: added.length > 0 && added.every((x) => tokenType(x) === "attack") ? 1 : 0,
+          self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+        };
+      },
+      playBoard({
+        report: true,
+        hand: [tok, "defend"],
+        draw: ["strike", "strike", "strike", "strike", "bash", "cleave"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 秘密技巧/秘密武器:从抽牌堆抓 1 张技能/攻击;升级后不再消耗
+  for (const [id, kindTok] of [["secret_technique", "skill"], ["secret_weapon", "attack"]] as const) {
+    for (const level of ["base", "up"] as const) {
+      const up = level === "up";
+      const tok = up ? `${id}+` : id;
+      pushProbe(
+        id,
+        level,
+        level,
+        [
+          { k: "probe", key: "added", v: 1 },
+          { k: "probe", key: `added_is_${kindTok}`, v: 1 },
+          { k: "probe", key: "self_exhausted", v: up ? 0 : 1 },
+        ],
+        (rows) => {
+          const added = addedToHand(rows);
+          return {
+            added: added.length,
+            [`added_is_${kindTok}`]: added.length === 1 && tokenType(added[0]!) === kindTok ? 1 : 0,
+            self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+          };
+        },
+        playBoard({
+          report: true,
+          hand: [tok, "defend"],
+          draw: ["defend", "strike", "bash", "defend"],
+          actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
+        }),
+      );
+    }
+  }
+  // 浩劫:打出抽牌堆顶那张并消耗它;浩劫自己不消耗
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "havoc+" : "havoc";
+    pushProbe(
+      "havoc",
+      level,
+      level,
+      [{ k: "probe", key: "top_exhausted", v: 1 }, { k: "probe", key: "self_exhausted", v: 0 }],
+      (rows) => ({
+        top_exhausted: inPile(lastSt(rows), "exhaust", "strike"),
+        self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+      }),
+      playBoard({
+        hand: [tok, "defend"],
+        draw: ["strike", "strike", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 茧/变形:洗 3(升级 5)张随机技能/攻击进抽牌堆,本场 0 费,消耗
+  for (const [id, kindTok] of [["chrysalis", "skill"], ["metamorphosis", "attack"]] as const) {
+    for (const level of ["base", "up"] as const) {
+      const up = level === "up";
+      const tok = up ? `${id}+` : id;
+      pushProbe(
+        id,
+        level,
+        level,
+        [
+          { k: "probe", key: "shuffled", v: up ? 5 : 3 },
+          { k: "probe", key: `all_${kindTok}s`, v: 1 },
+          { k: "probe", key: "self_exhausted", v: 1 },
+        ],
+        (rows) => {
+          const added = addedToDrawOf(rows);
+          return {
+            shuffled: added.length,
+            [`all_${kindTok}s`]: added.length > 0 && added.every((x) => tokenType(x) === kindTok) ? 1 : 0,
+            self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+          };
+        },
+        playBoard({
+          report: true,
+          hand: [tok, "defend"],
+          draw: FILLER,
+          actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+        }),
+      );
+    }
+  }
+  // 预谋:把手牌放到抽牌堆底,0 费直到被打出;升级可放任意张
+  {
+    pushProbe(
+      "forethought",
+      "base",
+      "base",
+      [{ k: "probe", key: "moved", v: 1 }, { k: "probe", key: "at_bottom", v: 1 }],
+      (rows) => {
+        const moved = addedToDrawOf(rows);
+        const draw = lastSt(rows).draw as string[];
+        return { moved: moved.length, at_bottom: moved.length > 0 && draw[draw.length - 1] === moved[0] ? 1 : 0 };
+      },
+      playBoard({
+        report: true,
+        hand: ["forethought", "bash", "defend"],
+        draw: ["strike", "strike", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
+      }),
+    );
+    pushProbe(
+      "forethought",
+      "base",
+      "cost0",
+      [{ k: "probe", key: "cost0_in_hand", v: 1 }],
+      (rows) => {
+        const costs = lastCosts(rows);
+        const hand = handOf(lastSt(rows));
+        const i = hand.indexOf("bash");
+        return { cost0_in_hand: i >= 0 && costs[i] === 0 ? 1 : 0 };
+      },
+      playBoard({
+        report: true,
+        hand: ["forethought", "bash"],
+        draw: [],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }, { op: "end_turn" }],
+      }),
+    );
+    pushProbe(
+      "forethought",
+      "up",
+      "up",
+      [{ k: "probe", key: "moved", v: 2 }],
+      (rows) => ({ moved: addedToDrawOf(rows).length }),
+      playBoard({
+        report: true,
+        hand: ["forethought+", "bash", "defend", "strike"],
+        draw: ["strike", "strike", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0, 0] }],
+      }),
+    );
+  }
+  // 启蒙:手牌费用降到 1
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "enlightenment+" : "enlightenment";
+    pushProbe(
+      "enlightenment",
+      level,
+      level,
+      [{ k: "probe", key: "capped", v: 1 }],
+      (rows) => {
+        const costs = lastCosts(rows);
+        return { capped: costs.length > 0 && costs.every((x) => x === 1) ? 1 : 0 };
+      },
+      playBoard({
+        report: true,
+        player: { energy: 3, max_energy: 9 },
+        hand: [tok, "bash", "bludgeon"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 疯狂:随机一张手牌费用变 0(本场),消耗
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "madness+" : "madness";
+    pushProbe(
+      "madness",
+      level,
+      level,
+      [{ k: "probe", key: "zeroed", v: 1 }, { k: "probe", key: "self_exhausted", v: 1 }],
+      (rows) => {
+        const costs = lastCosts(rows);
+        return { zeroed: costs.filter((x) => x === 0).length, self_exhausted: inPile(lastSt(rows), "exhaust", tok) };
+      },
+      playBoard({
+        report: true,
+        hand: [tok, "bash", "bludgeon"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 净化:最多消耗 3(升级 5)张手牌,自身也消耗
+  {
+    pushProbe(
+      "purity",
+      "base",
+      "base",
+      [{ k: "probe", key: "exhausted", v: 3 }],
+      (rows) => ({ exhausted: (lastSt(rows).exhaust as string[]).length - 1 }),
+      playBoard({
+        report: true,
+        hand: ["purity", "strike", "defend", "bash", "wound"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0, 0, 0] }],
+      }),
+    );
+    pushProbe(
+      "purity",
+      "up",
+      "up",
+      [{ k: "probe", key: "exhausted", v: 5 }],
+      (rows) => ({ exhausted: (lastSt(rows).exhaust as string[]).length - 1 }),
+      playBoard({
+        report: true,
+        hand: ["purity+", "strike", "defend", "bash", "wound", "strike", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0, 0, 0, 0, 0] }],
+      }),
+    );
+  }
+  // 神化:本场所有牌升级,自身消耗
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "apotheosis+" : "apotheosis";
+    pushProbe(
+      "apotheosis",
+      level,
+      level,
+      [{ k: "probe", key: "all_upgraded", v: 1 }],
+      (rows) => {
+        const st = lastSt(rows);
+        const toks = [...handOf(st), ...(st.draw as string[]), ...(st.discard as string[])];
+        return { all_upgraded: toks.length > 0 && toks.every(tokenUpgraded) ? 1 : 0 };
+      },
+      playBoard({
+        hand: [tok, "strike", "defend", "bash"],
+        draw: ["strike", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 完美打击:6 + 每张含 "Strike" 的牌 ×2/×3(受控牌组:1 张自身 + 2 张打击)
+  for (const level of ["base", "up"] as const) {
+    const c = cardByGame.get("perfected_strike")!;
+    const up = level === "up";
+    const tok = up ? "perfected_strike+" : "perfected_strike";
+    const strikes = 3; // 牌组 = 完美打击 + 2 张 strike + 3 张 defend,含 "Strike" 的共 3 张
+    const dmg = c.values.damage! + (up ? c.upgrade.magic! : c.values.magic!) * strikes;
+    pushProbe(
+      "perfected_strike",
+      level,
+      level,
+      [{ k: "probe", key: "damage", v: dmg }],
+      (rows) => ({ damage: firstSt(rows).enemies[0]!.hp - lastSt(rows).enemies[0]!.hp }),
+      playBoard({
+        hand: [tok],
+        draw: ["strike", "strike", "defend", "defend", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 发掘:从消耗堆拿一张回手;不能把消耗掉的发掘自己拿回来(原版限制)
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "exhume+" : "exhume";
+    pushProbe(
+      "exhume",
+      level,
+      level,
+      [
+        { k: "probe", key: "options", v: 1 },
+        { k: "probe", key: "offered_exhume", v: 0 },
+        { k: "probe", key: "took_bash", v: 1 },
+        { k: "probe", key: "self_exhausted", v: 1 },
+      ],
+      (rows) => {
+        const cands = candsOf(rows);
+        return {
+          options: cands.length,
+          offered_exhume: cands.some((x) => tokenBase(x) === "exhume") ? 1 : 0,
+          took_bash: handOf(lastSt(rows)).includes("bash") ? 1 : 0,
+          self_exhausted: inPile(lastSt(rows), "exhaust", tok),
+        };
+      },
+      playBoard({
+        report: true,
+        hand: [tok, "defend"],
+        exhaust: ["exhume", "bash"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
+      }),
+    );
+  }
+}
+
 function potionFacts(p: CorpusPotion, mul: number): Fact[] {
   const facts: Fact[] = [];
   const t = norm(p.text);
@@ -483,7 +1243,12 @@ function relicScenarios(): void {
   }
 }
 
-if (want("cards")) cardScenarios();
+if (want("cards")) {
+  cardScenarios();
+  curseStatusScenarios();
+  powerScenarios();
+  choiceScenarios();
+}
 if (want("potions")) potionScenarios();
 if (want("relics")) relicScenarios();
 
@@ -502,11 +1267,16 @@ interface Row {
   op: string;
   error?: string;
   st?: StateJson;
+  /** scenario 开了 report 才有:这次选牌亮出的候选与手牌当前实际费用 */
+  report?: { candidates: string[]; costs: number[] };
 }
 interface StateJson {
   energy: number;
   player: { hp: number; block: number; powers: Record<string, number> };
   hand: unknown[];
+  draw: unknown[];
+  discard: unknown[];
+  exhaust: unknown[];
   enemies: { hp: number; powers: Record<string, number> }[];
 }
 
@@ -574,7 +1344,18 @@ function observed(s: Spec, rows: Row[]): Obs | string {
 }
 
 // ---- 比对 ----
-const KNOWN: Record<string, string> = {};
+const KNOWN: Record<string, string> = {
+  // 引擎核心(combat.rs,归属另一个 agent)里的偏差:期望按原版/wiki 写,
+  // 最小修法见报告,这里只归类,不算"审计口径外"。
+  "cards/dual_wield/up":
+    "(a) 我们错 [combat.rs:双重施法+ 应一次选择加 2 份;本作要选两次(Effect::CopyFromHand 两次 begin_choice)," +
+    "修法:Effect::CopyFromHand 带 copies,choose() 的 Hand/Copy 分支按 ch.copies 复制]",
+  "cards/exhume/base":
+    "(a) 我们错 [combat.rs:发掘的候选池不该包含消耗掉的发掘自己(原版限制)," +
+    "修法:FromExhaustToHand 的 begin_choice 用排除 exhume 的过滤器]",
+  "cards/exhume/up":
+    "(a) 我们错 [combat.rs:同上,发掘+ 的候选池不该包含消耗掉的发掘]",
+};
 interface Mismatch {
   name: string;
   verdict: string;
@@ -587,6 +1368,23 @@ for (const s of list) {
   const rows = got.get(s.name);
   if (!rows) {
     mismatches.push({ name: s.name, verdict: "(a) 我们错", lines: ["沙盒没有输出这一段"] });
+    continue;
+  }
+  // 探针轴:直接读快照算事实(持有/抽到/回合末/多回合/选牌结果集合)
+  if (s.probe) {
+    const rec = s.probe(rows);
+    if (typeof rec === "string") {
+      mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines: [rec] });
+      continue;
+    }
+    const lines: string[] = [];
+    for (const f of s.facts) {
+      if (f.k !== "probe") continue;
+      const have = rec[f.key];
+      if (have !== f.v) lines.push(`${f.key}: 实测 ${JSON.stringify(have)} vs 期望 ${f.v}`);
+    }
+    if (lines.length === 0) passed++;
+    else mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines });
     continue;
   }
   const o = observed(s, rows);
@@ -674,6 +1472,14 @@ report.push(`证据源: ${CORPUS.replace(REPO + "/", "")}(记自 sts_lightspeed 
 report.push("");
 report.push(`覆盖: 牌 ${ourCards.length} 张(可审 ${totals.cards} 个场景)/ 药水 ${ourPotions.length} 瓶(${totals.potions})/ 遗物 ${ourRelics.length} 件(${totals.relics})`);
 report.push(`结果: 通过 ${passed}/${list.length}, 不一致 ${mismatches.length}, 未覆盖(数值不可当回合直测)牌 ${unaudited.length} 张`);
+{
+  const probeSpecs = list.filter((s) => s.probe);
+  const probeIds = new Set(probeSpecs.map((s) => s.id));
+  report.push(
+    `新增轴(持有/抽到/回合末/多回合/选牌结果集合): ${probeIds.size} 张牌,${probeSpecs.length} 个场景 —— ` +
+      `补上此前"数值不可当回合直测"的缺口牌(诅咒/状态、能力牌、随机/选牌类)`,
+  );
+}
 report.push("");
 if (selfIssues.length) {
   report.push(`== 语料自洽(文本 vs values)不一致 ${selfIssues.length} ==`);

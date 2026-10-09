@@ -1888,7 +1888,11 @@ impl Run {
             self.say(format!("Black Star grants {}", extra.name));
         }
         // 顺序照参考实现的 buildCombatRewards:金币 → 遗物(精英)→ 药水 → 卡牌
+        // 区间上下限相同就是"定值金币"(事件战斗的金币,原版直接给这个数):
+        // 不能掷点 —— 掷一次 random_range(50,50) 值一样,但会让宝箱与后续奖励
+        // 的 treasureRng 掷点整体错位
         let gold_raw = match plan.and_then(|p| p.gold) {
+            Some((lo, hi)) if lo == hi => lo,
             Some((lo, hi)) => self.streams.run(RunStream::TreasureRng).random_range(lo, hi),
             None => match kind {
                 EnemyKind::Normal => self

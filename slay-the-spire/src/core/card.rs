@@ -134,8 +134,8 @@ pub enum Effect {
     ExhaustFromHand,
     /// 从手牌选一张放回抽牌堆顶(战吼)
     TopFromHand,
-    /// 从手牌选一张攻击/能力牌,复制一份(二重身)
-    CopyFromHand,
+    /// 从手牌选一张攻击/能力牌,复制 `copies` 份(二重身;升级版一次复制两份)
+    CopyFromHand { copies: u8 },
     /// 从消耗堆选一张回手牌(掘出)
     FromExhaustToHand,
     /// 从弃牌堆选一张放到抽牌堆顶(头槌)
