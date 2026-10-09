@@ -33,6 +33,8 @@ pub enum Status {
     Artifact,
     /// 本回合起一段时间内不能从卡牌获得格挡(紧急按钮)
     NoBlock,
+    /// 本回合不能再抽牌(战斗恍惚)
+    NoDraw,
     Mayhem,
     Magnetism,
     Panache,
@@ -146,6 +148,7 @@ impl Status {
             FlameBarrier => "Flame Barrier",
             Artifact => "Artifact",
             NoBlock => "No Block",
+            NoDraw => "No Draw",
             Mayhem => "Mayhem",
             Magnetism => "Magnetism",
             Panache => "Panache",
@@ -221,6 +224,7 @@ impl Status {
             FlameBarrier => "FLMB",
             Artifact => "ARTF",
             NoBlock => "NBLK",
+            NoDraw => "NDRW",
             Mayhem => "MAYH",
             Magnetism => "MAGN",
             Panache => "PAN",
@@ -282,6 +286,7 @@ impl Status {
                 | Constricted
                 | Slow
                 | Poison
+                | NoDraw
         )
     }
 

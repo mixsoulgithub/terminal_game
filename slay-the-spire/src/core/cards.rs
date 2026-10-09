@@ -919,7 +919,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Skill,
         rarity: Rarity::Uncommon,
         target: Target::None,
-        text: "Draw 3 cards.",
+        text: "Draw 3 cards.\nYou cannot draw additional cards this turn.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -929,8 +929,24 @@ pub static CARDS: &[CardDef] = &[
         on_draw: &[],
         on_end_turn: &[],
         in_hand: &[],
-        effects: &[Effect::Draw { n: 3 }],
-        upgrade: up!(None, "Draw 4 cards.", [Effect::Draw { n: 4 }]),
+        effects: &[
+            Effect::Draw { n: 3 },
+            Effect::AddSelfStatus {
+                status: Status::NoDraw,
+                n: 1,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Draw 4 cards.\nYou cannot draw additional cards this turn.",
+            [
+                Effect::Draw { n: 4 },
+                Effect::AddSelfStatus {
+                    status: Status::NoDraw,
+                    n: 1
+                }
+            ]
+        ),
     },
     // ---- 罕见攻击 ----
     CardDef {

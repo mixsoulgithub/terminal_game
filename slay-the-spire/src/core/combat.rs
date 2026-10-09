@@ -1340,8 +1340,16 @@ impl Combat {
         true
     }
 
-    /// 抽牌;抽牌堆空了就把弃牌堆洗回来.顶牌在下标 0,从头取
+    /// 抽牌;抽牌堆空了就把弃牌堆洗回来.顶牌在下标 0,从头取.
+    /// 挂 No Draw 时本回合不能再抽(连洗牌掷点也不消耗).
     pub fn draw_cards(&mut self, n: usize) {
+        if self.player.statuses.has(Status::NoDraw) {
+            self.push_log(
+                LogKind::Info,
+                "No Draw: cannot draw any more cards this turn".to_string(),
+            );
+            return;
+        }
         for _ in 0..n {
             if self.hand.len() >= HAND_LIMIT {
                 self.push_log(LogKind::Info, format!("hand is full ({HAND_LIMIT})"));
@@ -2535,19 +2543,21 @@ impl Combat {
             let base = Self::innate_amount_of(def, s);
             self.enemies[idx].statuses.set(s, base);
         }
-        // 暗灵的复活倒计时:半死的那一只熬到头就半血站起来
-        if self.enemies[idx].state.half_dead
-            && self.enemies[idx].def.special == Special::Regrow
-            && self.enemies[idx].state.regrow_ticks <= 1
-        {
-            let half = self.enemies[idx].max_hp / 2;
-            self.enemies[idx].hp = half;
-            self.enemies[idx].state.half_dead = false;
-            // 原版 REINCARNATE 会重新挂上 REGROW:复活后还能再半死一次,
-            // 死亡触发也要重新武装,否则第二次倒下就再也起不来了.
-            self.enemies[idx].state.regrow_used = false;
-            self.enemies[idx].death_done = false;
-            self.push_log(LogKind::Enemy, format!("{name} regrows ({half} HP)"));
+        // 暗灵的复活倒计时:半死的那一只每个自己回合扣一格,扣到 0 就半血站起来.
+        // 扣到 1 的那次由选招函数把意图换成 REINCARNATE,玩家能看到"下一回合复活".
+        if self.enemies[idx].state.half_dead && self.enemies[idx].def.special == Special::Regrow {
+            let left = (self.enemies[idx].state.regrow_ticks - 1).max(0);
+            self.enemies[idx].state.regrow_ticks = left;
+            if left == 0 {
+                let half = self.enemies[idx].max_hp / 2;
+                self.enemies[idx].hp = half;
+                self.enemies[idx].state.half_dead = false;
+                // 原版 REINCARNATE 会重新挂上 REGROW:复活后还能再半死一次,
+                // 死亡触发也要重新武装,否则第二次倒下就再也起不来了.
+                self.enemies[idx].state.regrow_used = false;
+                self.enemies[idx].death_done = false;
+                self.push_log(LogKind::Enemy, format!("{name} regrows ({half} HP)"));
+            }
         }
         // 倒计时:爆裂与消逝
         let explosive = self.enemies[idx].statuses.get(Status::Explosive);
@@ -3449,7 +3459,7 @@ impl Combat {
     }
 
     /// 命中就触发、掉不掉血都算的(荆棘、狂怒)
-    fn on_enemy_attacked(&mut self, idx: usize, _taken: i32) {
+    fn on_enemy_attacked(&mut self, idx: usize, taken: i32) {
         let angry = self.enemies[idx].statuses.get(Status::Anger);
         if angry > 0 {
             self.enemies[idx].statuses.add(Status::Strength, angry);
@@ -3468,8 +3478,11 @@ impl Combat {
                 format!("{name}'s Thorns deal {hurt} to you"),
             );
         }
-        // 扭动巨物:挨打就换招
-        if self.enemies[idx].def.special == Special::Reactive && self.phase == Phase::PlayerTurn {
+        // 扭动巨物:挨到实打实的伤害才换招(全挡下来的不换)
+        if taken > 0
+            && self.enemies[idx].def.special == Special::Reactive
+            && self.phase == Phase::PlayerTurn
+        {
             self.reroll_intent(idx);
         }
     }
@@ -3586,7 +3599,9 @@ impl Combat {
                 let e = &mut self.enemies[i];
                 e.state.half_dead = true;
                 e.state.regrow_used = true;
-                e.state.regrow_ticks = 2;
+                // 死在玩家回合:它这一轮还没行动,从下一轮开始数两轮复活;
+                // 死在自己回合(荆棘之类):这一轮已经算过,要多等一轮
+                e.state.regrow_ticks = if self.phase == Phase::EnemyTurn { 3 } else { 2 };
                 e.statuses = Statuses::new();
                 e.statuses.add(Status::Regrow, 1);
                 e.block = 0;
@@ -4104,7 +4119,7 @@ impl Combat {
                     self.draw_cards(n as usize);
                 }
                 Effect::AddSelfStatus { status, n } => {
-                    self.player.statuses.add(status, n);
+                    self.add_self_status(status, n);
                 }
                 Effect::AddTargetStatus { status, n } => {
                     if let Some(t) = target {
@@ -4643,6 +4658,26 @@ impl Combat {
         // 下一次递减才算第一次,否则易伤/虚弱会少管一个回合.
         if n > 0 && status.decays() && !self.player.statuses.holds(status) {
             self.player.fresh_debuffs.push(status);
+        }
+        self.player.statuses.add(status, n);
+    }
+
+    /// 牌/药水给自己挂状态.减益一样先被神器顶掉(原版所有 ApplyPower 都走这条路),
+    /// 但不算"怪物来源",本轮结束照常递减(悔恨/羞耻挂的虚弱不会多管一回合).
+    fn add_self_status(&mut self, status: Status, n: i32) {
+        if n > 0 && status == Status::Weak && self.relic_any(|fx| fx.immune_weak) {
+            return;
+        }
+        if n > 0 && status == Status::Frail && self.relic_any(|fx| fx.immune_frail) {
+            return;
+        }
+        if n > 0 && status.is_debuff() && self.player.statuses.has(Status::Artifact) {
+            self.player.statuses.add(Status::Artifact, -1);
+            self.push_log(
+                LogKind::Player,
+                format!("Artifact blocks {}", status.name()),
+            );
+            return;
         }
         self.player.statuses.add(status, n);
     }
@@ -6281,6 +6316,48 @@ mod tests {
             "消耗之后手里又回来一张"
         );
     }
+
+    /// 战斗恍惚:先抽 3 张,再挂 No Draw,本回合之后连卡牌效果的抽牌也挡住
+    #[test]
+    fn battle_trance_gives_no_draw_for_the_rest_of_the_turn() {
+        let deck = [
+            "battle_trance",
+            "pommel_strike",
+            "strike",
+            "strike",
+            "strike",
+            "strike",
+            "strike",
+        ];
+        let mut c = staged(&deck, &["battle_trance", "pommel_strike"]);
+        let trance = hand_idx(&c, "battle_trance");
+        c.play_card(trance, None).unwrap();
+        assert_eq!(c.player.statuses.get(Status::NoDraw), 1, "挂上一层");
+        assert_eq!(c.hand.len(), 4, "本体先抽 3 张(手牌剩 pommel + 抽到的 3)");
+        assert_eq!(c.draw.len(), 2, "抽牌堆被拿掉 3 张");
+        // 打磨打击还要抽 1 张,被 No Draw 挡下
+        let pommel = hand_idx(&c, "pommel_strike");
+        c.play_card(pommel, Some(0)).unwrap();
+        assert_eq!(c.hand.len(), 3, "卡牌效果的抽牌也被挡住");
+        assert_eq!(c.draw.len(), 2, "抽牌堆没动");
+        // 回合末整条消失,下回合正常抽 5 张
+        c.end_turn();
+        assert!(!c.player.statuses.has(Status::NoDraw), "回合末消失");
+        assert_eq!(c.hand.len(), 5, "下回合起手 5 张");
+    }
+
+    /// No Draw 算减益,神器顶掉它(Battle Trance 自己照样抽 3 张)
+    #[test]
+    fn artifact_blocks_battle_trance_no_draw() {
+        let deck = ["battle_trance", "strike", "defend", "defend", "defend", "defend"];
+        let mut c = staged(&deck, &["battle_trance", "strike"]);
+        c.player.statuses.add(Status::Artifact, 1);
+        let trance = hand_idx(&c, "battle_trance");
+        c.play_card(trance, None).unwrap();
+        assert!(!c.player.statuses.has(Status::NoDraw), "被神器挡下");
+        assert_eq!(c.player.statuses.get(Status::Artifact), 0, "用掉一层神器");
+        assert_eq!(c.hand.len(), 4, "抽 3 张照常");
+    }
 }
 
 #[cfg(test)]
@@ -7021,6 +7098,53 @@ mod power_tests {
         }
         assert!(!c.enemies[0].state.half_dead, "倒计时结束就复活");
         assert!(c.enemies[0].hp > 0);
+    }
+
+    /// 暗灵半死:第一个自己回合摆 Regrow,最后一个自己回合换成 Reincarnate
+    /// (玩家能预读到"下一回合复活"),复活后就位
+    #[test]
+    fn darkling_intent_turns_to_reincarnate_before_reviving() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 999;
+        c.enemies[0].hp = 10;
+        c.damage_enemy(0, 20);
+        c.settle_deaths();
+        assert!(c.enemies[0].state.half_dead);
+        let intent_name = |c: &Combat| c.enemies[0].def.moves[c.enemies[0].next_move].name;
+        assert_eq!(intent_name(&c), "Regrow", "刚倒下先摆 Regrow");
+        c.end_turn();
+        assert_eq!(intent_name(&c), "Reincarnate", "最后一轮换成 Reincarnate");
+        assert!(c.enemies[0].state.half_dead, "这轮还没站起来");
+        c.end_turn();
+        assert!(!c.enemies[0].state.half_dead, "下一轮真正复活");
+        assert!(c.enemies[0].hp > 0);
+    }
+
+    /// 扭动巨物开场三选一是 多段/重击/枯萎,不会摆出连枷(防御攻击)
+    #[test]
+    fn writhing_mass_never_opens_with_block_attack() {
+        let mut seen_strong = false;
+        let mut seen_multi = false;
+        for seed in 0..200u64 {
+            let enc = crate::core::enemies::encounter_def("writhing_mass_solo").unwrap();
+            let setup = CombatSetup {
+                rested: false,
+                hp: 80,
+                max_hp: 80,
+                deck: vec![card("strike")],
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
+            };
+            let c = Combat::new(enc, setup, RngRegistry::new(seed));
+            let name = c.enemies[0].def.moves[c.enemies[0].next_move].name;
+            assert_ne!(name, "Flail", "开场不会是连枷(seed {seed})");
+            seen_strong |= name == "Strong Strike";
+            seen_multi |= name == "Multi Strike";
+        }
+        assert!(seen_strong, "开场该掷得到重击");
+        assert!(seen_multi, "开场该掷得到多段");
     }
 
     #[test]

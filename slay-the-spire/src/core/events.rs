@@ -138,6 +138,9 @@ pub struct Outcome {
     pub upgrade_starters: bool,
     /// 打开选牌界面移除一张牌
     pub remove_card: bool,
+    /// 便条事件("A Note For Yourself"):取回存档里的那张牌(升级照旧),
+    /// 再开一次选牌界面把选中的牌写回存档留给下一局
+    pub note_swap: bool,
     /// 移除全部起始打击
     pub remove_base_strikes: bool,
     /// 移除全部可移除的诅咒
@@ -230,6 +233,7 @@ impl Outcome {
         upgrade_all: false,
         upgrade_starters: false,
         remove_card: false,
+        note_swap: false,
         remove_base_strikes: false,
         remove_curses: false,
         remove_random: None,
@@ -309,6 +313,10 @@ pub struct EventChoice {
     pub req_removable: bool,
     /// 需要牌组里有能升级的牌
     pub req_upgradeable: bool,
+    /// 需要牌组里有该类型的可移除牌(没瓶装、非不可移除);坠落的三选项用
+    pub req_card_type: Option<CardType>,
+    /// 只有牌组里三类牌(技能/能力/攻击)都没有可移除时才可选;坠落的保底"Land"
+    pub req_no_card_type: bool,
     pub outcome: Outcome,
 }
 
@@ -326,6 +334,8 @@ impl EventChoice {
         max_uses: 0,
         req_removable: false,
         req_upgradeable: false,
+        req_card_type: None,
+        req_no_card_type: false,
         outcome: Outcome::NONE,
     };
 }
@@ -651,6 +661,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(heal_frac: 0.3333, text: "You eat well and feel restored."),
             },
             EventChoice {
@@ -666,6 +678,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(max_hp: 5, text: "Sturdy and sweet."),
             },
             EventChoice {
@@ -681,6 +695,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(
                     random_relic_any: true,
                     add_card: Some("regret"),
@@ -710,6 +726,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(heal_frac: 0.25, text: "Your wounds close under her touch."),
             },
             EventChoice {
@@ -725,6 +743,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(remove_card: true, text: "She burns one card from your deck."),
             },
             EventChoice {
@@ -740,6 +760,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(text: "You walk away."),
             },
         ],
@@ -819,6 +841,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(ooze: true, text: "You pull a relic out of the muck."),
             },
             EventChoice {
@@ -834,6 +858,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(text: "You step around it and keep moving."),
             },
         ],
@@ -1288,6 +1314,7 @@ pub static EVENTS: &[EventDef] = &[
         choices: &[
             choice!(
                 label: "Land: lose the shown skill card",
+                req_card_type: Some(CardType::Skill),
                 outcome: outcome!(
                     remove_random: Some(RemoveRule::OfType(CardType::Skill)),
                     text: "A skill slips out of your hands."
@@ -1295,6 +1322,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Channel: lose the shown power card",
+                req_card_type: Some(CardType::Power),
                 outcome: outcome!(
                     remove_random: Some(RemoveRule::OfType(CardType::Power)),
                     text: "A power slips out of your hands."
@@ -1302,6 +1330,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Strike: lose the shown attack card",
+                req_card_type: Some(CardType::Attack),
                 outcome: outcome!(
                     remove_random: Some(RemoveRule::OfType(CardType::Attack)),
                     text: "An attack slips out of your hands."
@@ -1309,6 +1338,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Land on your head (only if no option is available): no card lost",
+                req_no_card_type: true,
                 outcome: outcome!(text: "You land head first and keep every card.")
             ),
         ],
@@ -1798,9 +1828,8 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Take and give: obtain the stored card, then choose a deck card to remove (it is stored for a future run)",
                 outcome: outcome!(
-                    add_card: Some("iron_wave"),
-                    remove_card: true,
-                    text: "The note gives you Iron Wave; you leave a card behind."
+                    note_swap: true,
+                    text: "The note gives you a stored card; you leave one behind."
                 )
             ),
             choice!(label: "Ignore: no effect", outcome: outcome!(text: "You leave the note where it is.")),
@@ -1880,6 +1909,8 @@ pub static EVENTS: &[EventDef] = &[
                 max_uses: 0,
                 req_removable: false,
                 req_upgradeable: false,
+                req_card_type: None,
+                req_no_card_type: false,
                 outcome: outcome!(
                     wma: 3,
                     random_relic_any: true,
@@ -3218,15 +3249,61 @@ mod tests {
         }
         let def = event_def("falling").unwrap();
         open(&mut r, def);
-        let before = r.player.deck.len();
-        r.choose_event(0).unwrap();
-        assert_eq!(r.player.deck.len(), before, "瓶装技能牌不该被夺走");
-        assert!(
-            r.player.deck
-                .iter()
-                .all(|c| c.kind() != CardType::Skill || c.bottled),
-            "技能牌一张都不该少"
+        // 技能牌没有一张可选:Land 选项按原版锁住
+        assert!(!r.event_choice_available(0), "瓶装技能不构成可选项");
+        let skills = r
+            .player
+            .deck
+            .iter()
+            .filter(|c| c.kind() == CardType::Skill)
+            .count();
+        r.choose_event(2).unwrap();
+        assert_eq!(
+            r.player.deck.iter().filter(|c| c.kind() == CardType::Skill).count(),
+            skills,
+            "瓶装技能牌一张都不该少"
         );
+    }
+
+    /// 某类型一张可选牌都没有时,对应选项锁住(原版;参考实现没做)
+    #[test]
+    fn falling_locks_types_without_an_eligible_card() {
+        let mut r = Run::new(46);
+        let def = event_def("falling").unwrap();
+        open(&mut r, def);
+        // 起手没有能力牌:Channel 锁住
+        assert!(!r.event_choice_available(1), "没有能力牌时 Channel 不可选");
+        // 技能牌全封瓶:Land(技能)也锁住
+        for c in r.player.deck.iter_mut() {
+            if c.kind() == CardType::Skill {
+                c.bottled = true;
+            }
+        }
+        assert!(!r.event_choice_available(0), "技能全瓶装时 Land 不可选");
+        // 还有攻击牌:攻击的 Strike 可选,保底选项不可选
+        assert!(r.event_choice_available(2), "有攻击牌时 Strike 可选");
+        assert!(
+            !r.event_choice_available(3),
+            "还有可选的类型时不该出现保底 Land"
+        );
+    }
+
+    /// 三类牌都抽不出(全瓶装)时,只剩保底 Land,且不掉牌
+    #[test]
+    fn falling_falls_back_to_land_when_nothing_is_eligible() {
+        let mut r = Run::new(47);
+        for c in r.player.deck.iter_mut() {
+            c.bottled = true;
+        }
+        let def = event_def("falling").unwrap();
+        open(&mut r, def);
+        assert!(!r.event_choice_available(0));
+        assert!(!r.event_choice_available(1));
+        assert!(!r.event_choice_available(2));
+        assert!(r.event_choice_available(3), "三类都抽不出时保底 Land 可选");
+        let before = r.player.deck.len();
+        r.choose_event(3).unwrap();
+        assert_eq!(r.player.deck.len(), before, "保底 Land 不掉牌");
     }
 
     #[test]
@@ -3630,6 +3707,7 @@ mod tests {
     #[test]
     fn note_for_yourself_swaps_a_card() {
         let mut r = Run::new(50);
+        r.set_note_path(temp_note_path("swap"));
         let def = event_def("note_for_yourself").unwrap();
         open(&mut r, def);
         r.choose_event(0).unwrap();
@@ -3638,6 +3716,65 @@ mod tests {
         let before = r.player.deck.len();
         r.picker_confirm().unwrap();
         assert_eq!(r.player.deck.len(), before - 1);
+    }
+
+    /// 便条把交出的那张牌写进存档,下一局取回来(与 run 存档分开的文件)
+    #[test]
+    fn note_for_yourself_stores_a_card_for_the_next_run() {
+        let path = temp_note_path("cross");
+        let _ = std::fs::remove_file(&path);
+
+        // 第一局:默认给铁斩波,交出一张手选的牌(记下它的 id 与升级)
+        let mut r = Run::new(60);
+        r.set_note_path(path.clone());
+        let def = event_def("note_for_yourself").unwrap();
+        open(&mut r, def);
+        r.choose_event(0).unwrap();
+        let cands = r.picker_candidates();
+        let given = r.player.deck[cands[0]].clone();
+        r.picker_confirm().unwrap();
+        assert_eq!(
+            crate::core::save::read_note_at(&path),
+            Some((given.def.id.to_string(), 0)),
+            "交出的牌写进了便条存档"
+        );
+
+        // 第二局:读回来的就是上一局交出的那张
+        let mut r2 = Run::new(61);
+        r2.set_note_path(path.clone());
+        let def = event_def("note_for_yourself").unwrap();
+        open(&mut r2, def);
+        r2.choose_event(0).unwrap();
+        assert!(
+            r2.player.deck.iter().any(|c| c.def.id == given.def.id),
+            "下一局取回上一局存下的 {}",
+            given.def.id
+        );
+        assert_eq!(r2.screen, Screen::Pick, "取回后仍要选一张留下");
+    }
+
+    /// 存的是升级牌,下一局取回来还是升级牌(原版:灼热保留升级等级)
+    #[test]
+    fn note_for_yourself_keeps_upgrades() {
+        let path = temp_note_path("upgraded");
+        crate::core::save::write_note_at(&path, "shrug_it_off", 1).unwrap();
+        let mut r = Run::new(62);
+        r.set_note_path(path.clone());
+        let def = event_def("note_for_yourself").unwrap();
+        open(&mut r, def);
+        r.choose_event(0).unwrap();
+        let got = r
+            .player
+            .deck
+            .iter()
+            .find(|c| c.def.id == "shrug_it_off")
+            .expect("取回存下的牌");
+        assert!(got.upgraded, "存的是升级牌,取回也该是升级牌");
+    }
+
+    /// 测试用的临时便条文件路径(同进程不同名字,免得并行测试互相踩)
+    fn temp_note_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("spire-note-{}-{tag}.card", std::process::id()))
     }
 
     #[test]

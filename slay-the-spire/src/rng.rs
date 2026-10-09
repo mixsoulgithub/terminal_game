@@ -469,6 +469,11 @@ impl RngRegistry {
         &mut self.map
     }
 
+    /// 数学工具流(参考实现的 mathUtilRng):商店信使补货抽职业牌这类杂项取数点
+    pub fn math_util(&mut self) -> &mut Rng {
+        &mut self.math_util
+    }
+
     /// 进房间时调用:每层的流都用 seed+层号重开
     pub fn reseed_floor_streams(&mut self, floor: u32) {
         let s = self.seed.wrapping_add(floor as u64);

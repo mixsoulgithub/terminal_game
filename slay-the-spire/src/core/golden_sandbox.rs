@@ -4,7 +4,7 @@
 //! 每一条对应用户可感知的一处不一致:参考实现(以及原版)是那样,本作曾经是另一样。
 //! 场景都是"手牌/抽牌堆摆死 + 一只怪"的最小局面,不依赖随机。
 
-use crate::core::card::{CardInstance, CardType};
+use crate::core::card::{CardInstance};
 use crate::core::combat::{Combat, CombatSetup, RunRelicCounters};
 use crate::core::status::Status;
 use crate::core::{cards, enemies, potions};

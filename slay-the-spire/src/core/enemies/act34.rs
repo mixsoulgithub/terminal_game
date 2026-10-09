@@ -83,12 +83,11 @@ fn pick_darkling(ctx: &mut PickCtx) -> usize {
     let mut r = ctx.roll();
     if ctx.state.half_dead {
         // 半死期间不出招:还剩一个以上复活回合就继续摆 REGROW,最后一回合换 REINCARNATE
-        let ticks = ctx.state.regrow_ticks;
-        if ticks > 1 {
-            ctx.state.regrow_ticks = ticks - 1;
-            return REGROW;
-        }
-        return REINCARNATE;
+        return if ctx.state.regrow_ticks > 1 {
+            REGROW
+        } else {
+            REINCARNATE
+        };
     }
     if ctx.first_turn() {
         return if r < 50 { HARDEN } else { NIP };
@@ -590,7 +589,7 @@ pub const WRITHING_MASS: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 开场 33/33/33 掷多段/连枷/枯萎;之后按 spec 的五段级联,段内还会重掷
+/// 开场 33/33/33 掷多段/重击/枯萎;之后按 spec 的五段级联,段内还会重掷
 fn pick_writhing_mass(ctx: &mut PickCtx) -> usize {
     const STRONG_STRIKE: usize = 0;
     const MULTI_STRIKE: usize = 1;
@@ -603,7 +602,7 @@ fn pick_writhing_mass(ctx: &mut PickCtx) -> usize {
             return MULTI_STRIKE;
         }
         if r < 66 {
-            return FLAIL;
+            return STRONG_STRIKE;
         }
         return WITHER;
     }

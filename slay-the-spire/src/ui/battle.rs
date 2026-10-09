@@ -423,9 +423,11 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     if area.width < 8 || area.height == 0 || c.enemies.is_empty() {
         return;
     }
+    // 符文穹顶:看不到敌人的下一步意图(原版语义)
+    let hide_intents = app.run.has_relic("runic_dome");
     let n = c.enemies.len();
     let gap = 4u16;
-    let widths: Vec<u16> = (0..n).map(|i| enemy_block_w(c, i)).collect();
+    let widths: Vec<u16> = (0..n).map(|i| enemy_block_w(c, i, hide_intents)).collect();
     let total: u16 = widths.iter().sum::<u16>() + gap * (n as u16 - 1);
     // 整组重心和角色的 1/4 对称,放在屏幕 3/4 处
     let mut x0 = area.x as f32 + area.width as f32 * 3.0 / 4.0 - total as f32 / 2.0;
@@ -440,7 +442,7 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
             break;
         }
         let selected = app.target_sel == i && e.alive();
-        let lines = enemy_lines(c, i);
+        let lines = enemy_lines(c, i, hide_intents);
         let w = widths[i].min((area.x + area.width).saturating_sub(x)).max(1);
         // 抖动:这个敌人在挨打时往右退、出手时往左冲
         let off = app.battle_shake_offset(crate::core::combat::ShakeWho::Enemy(i));
@@ -451,8 +453,8 @@ fn render_enemies(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
 }
 
 /// 敌人框的总宽(内容 + 左右边框)
-fn enemy_block_w(c: &Combat, i: usize) -> u16 {
-    let lines = enemy_lines(c, i);
+fn enemy_block_w(c: &Combat, i: usize, hide_intents: bool) -> u16 {
+    let lines = enemy_lines(c, i, hide_intents);
     let w = lines
         .iter()
         .map(|l| l.iter().map(|(t, _)| display_width(t)).sum::<usize>())
@@ -462,8 +464,8 @@ fn enemy_block_w(c: &Combat, i: usize) -> u16 {
 }
 
 /// 一个敌人的四行:血量/上限/格挡、名字、本回合动作、身上的状态.
-/// 动作与状态相对名字缩进两格.
-fn enemy_lines(c: &Combat, i: usize) -> Vec<Vec<(String, Style)>> {
+/// 动作与状态相对名字缩进两格. 符文穹顶下动作那行留空(看不到意图).
+fn enemy_lines(c: &Combat, i: usize, hide_intents: bool) -> Vec<Vec<(String, Style)>> {
     let e = &c.enemies[i];
     if !e.alive() {
         return vec![
@@ -482,13 +484,15 @@ fn enemy_lines(c: &Combat, i: usize) -> Vec<Vec<(String, Style)>> {
         e.name.clone(),
         Style::default().fg(theme::BAD).add_modifier(Modifier::BOLD),
     )];
-    // 第三行:本回合动作
+    // 第三行:本回合动作(符文穹顶下整行留空)
     let mut action: Vec<(String, Style)> = vec![("  ".to_string(), theme::fg(theme::FG))];
-    for (j, (text, color)) in enemy_action_tokens(c, i).into_iter().enumerate() {
-        if j > 0 {
-            action.push((" ".to_string(), theme::fg(theme::FG)));
+    if !hide_intents {
+        for (j, (text, color)) in enemy_action_tokens(c, i).into_iter().enumerate() {
+            if j > 0 {
+                action.push((" ".to_string(), theme::fg(theme::FG)));
+            }
+            action.push((text, theme::fg(color).add_modifier(Modifier::BOLD)));
         }
-        action.push((text, theme::fg(color).add_modifier(Modifier::BOLD)));
     }
     // 第四行:身上的增减益
     let mut status: Vec<(String, Style)> = vec![("  ".to_string(), theme::fg(theme::FG))];
@@ -665,3 +669,28 @@ fn render_command(buf: &mut Buffer, area: Rect, app: &App) {
     put(buf, area.x + 2, area.y, "? help", theme::dim());
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::run::Run;
+
+    /// 符文穹顶:开战后动作行留空(看不到敌人意图),别的行照常
+    #[test]
+    fn runic_dome_hides_enemy_intents() {
+        let mut r = Run::new(3);
+        r.debug_add_relic("runic_dome").unwrap();
+        r.debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        let c = r.combat.as_ref().expect("进战斗");
+        assert!(
+            !enemy_action_tokens(c, 0).is_empty(),
+            "没有穹顶时看得到意图记号"
+        );
+        let lines = enemy_lines(c, 0, true);
+        let action: String = lines[2].iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(action.trim(), "", "符文穹顶下动作行留空");
+        // 名字与血量行还在,敌人照常行动(只是看不到)
+        let name: String = lines[1].iter().map(|(t, _)| t.as_str()).collect();
+        assert!(!name.trim().is_empty(), "名字行照常");
+    }
+}

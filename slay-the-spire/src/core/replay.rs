@@ -798,6 +798,8 @@ fn trim_to_row(lines: Vec<String>, row: u32) -> Vec<String> {
 /// 跑一局,返回没裁过的输出行.
 fn run_raw(seed: u64, policy: &Policy) -> Result<Vec<String>, String> {
     let mut run = Run::new(seed);
+    // headless 对拍:便条事件不读也不写真实存档(参考实现没有持久化,按默认铁斩波)
+    run.set_note_persist(false);
     run.open_neow();
     // 调试钩子:先给钥匙(会影响切幕时地图标不标燃烧精英),再切幕.
     if policy.keys_all {
@@ -2204,6 +2206,7 @@ pub mod sandbox {
             "flame_barrier" => Status::FlameBarrier,
             "artifact" => Status::Artifact,
             "no_block" => Status::NoBlock,
+            "no_draw" => Status::NoDraw,
             "mayhem" => Status::Mayhem,
             "magnetism" => Status::Magnetism,
             "panache" => Status::Panache,

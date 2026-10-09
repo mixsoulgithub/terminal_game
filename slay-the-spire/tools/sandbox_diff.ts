@@ -52,7 +52,10 @@ function dump(what: string): string[][] {
 }
 
 type CardRow = { id: string; kind: string; cost: string };
-const cards: CardRow[] = dump("cards").map((c) => ({ id: c[0]!, kind: c[1]!, cost: c[3]! }));
+// 描述里带换行的牌在 dump 里会多出续行(没有前 4 列),按列形状滤掉
+const cards: CardRow[] = dump("cards")
+  .filter((c) => c[3] === "cost")
+  .map((c) => ({ id: c[0]!, kind: c[1]!, cost: c[4]! }));
 const relics: string[] = dump("relics").map((c) => c[0]!);
 const potions: string[] = dump("potions").map((c) => c[0]!);
 
@@ -71,7 +74,6 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
   "cards/normality": ["normality"],
   "cards/pain": ["pain"],
   "cards/blood_for_blood": ["blood_for_blood"],
-  "cards/battle_trance": ["no_draw"],
 };
 
 /**

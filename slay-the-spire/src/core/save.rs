@@ -48,6 +48,34 @@ pub fn read_at(path: &PathBuf) -> Option<String> {
     fs::read_to_string(path).ok().filter(|s| !s.trim().is_empty())
 }
 
+/// "A Note For Yourself" 存卡用的文件名(跟 run.save 分开,跨局留存)
+pub const NOTE_FILE: &str = "note.card";
+
+/// 便条存卡文件:最近一局交给下一局的那张牌
+pub fn note_path() -> PathBuf {
+    dir().join(NOTE_FILE)
+}
+
+/// 读便条存卡:(卡 id, 升级次数);文件不在或坏了就返回 None
+pub fn read_note_at(path: &PathBuf) -> Option<(String, u8)> {
+    let text = read_at(path)?;
+    let mut lines = text.lines();
+    let id = lines.next()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let plus = lines
+        .next()
+        .and_then(|l| l.trim().parse::<u8>().ok())
+        .unwrap_or(0);
+    Some((id.to_string(), plus))
+}
+
+/// 写便条存卡:第一行卡 id,第二行升级次数
+pub fn write_note_at(path: &PathBuf, id: &str, plus: u8) -> io::Result<()> {
+    write_at(path, &format!("{id}\n{plus}\n"))
+}
+
 /// 自动存档:存在 / 清掉 / 读
 pub fn exists() -> bool {
     read_at(&path()).is_some()

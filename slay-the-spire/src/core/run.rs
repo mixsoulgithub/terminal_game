@@ -73,6 +73,8 @@ const SHOP_CARD_RARE_BELOW: i32 = 9;
 const SHOP_CARD_COMMON_AT: i32 = 46;
 /// 商店的无色牌比同稀有度的职业牌贵 20%
 const SHOP_COLORLESS_FACTOR: f32 = 1.2;
+/// 信使补一张无色牌:30% 掷稀有,否则罕见(原版 COLORLESS_RARE_CHANCE = 0.30)
+const SHOP_COLORLESS_RARE_CHANCE: f32 = 0.30;
 /// 七张牌里只有一格打折(掷 merchantRng.random(4))
 const SHOP_SALE_SLOTS: u32 = 5;
 /// 删牌服务:底价 75,本局每买过一次涨 25
@@ -332,6 +334,8 @@ pub struct Picker {
     pub remaining: u8,
     /// 瓶装时只让选这一类型的牌(None 表示不限)
     pub bottle_kind: Option<CardType>,
+    /// 便条事件:选中的牌要写回存卡文件留给下一局
+    pub store_note: bool,
 }
 
 pub struct Player {
@@ -436,9 +440,24 @@ impl ShopItem {
 
 pub struct ShopState {
     pub items: Vec<ShopItem>,
+    /// 每格的种类:信使补货时按同种类重掷一格
+    pub kinds: Vec<ShopKind>,
     pub sold: Vec<bool>,
     pub index: usize,
     pub removes: u32,
+}
+
+/// 商店格子的种类(信使 The Courier 补货时决定重掷什么)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShopKind {
+    /// 本职业牌格
+    ClassCard,
+    /// 无色牌格
+    ColorlessCard,
+    Relic,
+    Potion,
+    /// 删牌服务不补货
+    Remove,
 }
 
 /// 三把钥匙:进第四章的门票.燃烧精英给绿钥匙,营火"回忆"给红钥匙,
@@ -685,6 +704,10 @@ pub struct Run {
     potion_chance: i32,
     /// 卡牌稀有度的保底值(参考实现里的 cardRarityFactor:抽到稀有重置 5,普通 -1,下限 -40)
     card_rarity_factor: i32,
+    /// 便条事件存卡的文件路径覆盖(测试用);None 用存档目录里的 note.card
+    note_path: Option<std::path::PathBuf>,
+    /// 便条存卡是否落盘:headless 对拍/回放关掉,免得读到玩家存档或把回放写进存档
+    note_persist: bool,
     /// 玩家当前所在节点;None 表示还没上路
     pub pos: Option<usize>,
     /// 这一局走过的节点(按顺序),地图上走过的房间统一给底色
@@ -864,6 +887,8 @@ impl Run {
             unknown_rooms_seen: 0,
             potion_chance: 0,
             card_rarity_factor: CARD_RARITY_PITY_START,
+            note_path: None,
+            note_persist: true,
             pos: None,
             path: Vec::new(),
             floor_reached: 0,
@@ -2432,8 +2457,14 @@ impl Run {
             }
         }
         let mut items: Vec<ShopItem> = Vec::new();
-        for (def, price) in card_slots {
+        let mut kinds: Vec<ShopKind> = Vec::new();
+        for (i, (def, price)) in card_slots.into_iter().enumerate() {
             items.push(ShopItem::Card(CardInstance::new(def), self.discount(price)));
+            kinds.push(if i < n_class {
+                ShopKind::ClassCard
+            } else {
+                ShopKind::ColorlessCard
+            });
         }
         // --- 遗物:两件按档次掷、一件商店档(档次掷完才掷价格) ---
         let mut relic_picks: Vec<(&'static RelicDef, ShopTier)> = Vec::new();
@@ -2452,6 +2483,7 @@ impl Run {
                 .random_float_range(SHOP_OTHER_JITTER.0, SHOP_OTHER_JITTER.1);
             let price = (tier.base() as f32 * jitter).round() as i32;
             items.push(ShopItem::Relic(def, self.discount(price)));
+            kinds.push(ShopKind::Relic);
         }
         // --- 药水:三瓶(身份走 potionRng),价掷在身份之后 ---
         let mut potion_defs: Vec<&'static PotionDef> = Vec::new();
@@ -2468,6 +2500,7 @@ impl Run {
                 .random_float_range(SHOP_OTHER_JITTER.0, SHOP_OTHER_JITTER.1);
             let price = (base * jitter).round() as i32;
             items.push(ShopItem::Potion(def, self.discount(price)));
+            kinds.push(ShopKind::Potion);
         }
         // --- 删牌服务:75 + 25 × 本局已买过的次数(微笑面具固定 50) ---
         let fixed = self.player.relic_fx_sum(|r| r.fx.removal_cost_fixed);
@@ -2477,9 +2510,12 @@ impl Run {
             self.discount(SHOP_REMOVAL_BASE + SHOP_REMOVAL_STEP * self.removes_purchased as i32)
         };
         items.push(ShopItem::Remove(removal));
+        kinds.push(ShopKind::Remove);
+        debug_assert_eq!(items.len(), kinds.len(), "商店格子和种类数要对得上");
         let n = items.len();
         self.shop = Some(ShopState {
             items,
+            kinds,
             sold: vec![false; n],
             index: 0,
             removes: 0,
@@ -2590,6 +2626,7 @@ impl Run {
                 self.player.deck.push(card);
                 self.spend_gold(price);
                 self.shop.as_mut().unwrap().sold[i] = true;
+                self.restock_shop_slot(i);
                 Ok(format!("bought {label} for {price}"))
             }
             ShopItem::Relic(def, _) => {
@@ -2597,6 +2634,7 @@ impl Run {
                 self.spend_gold(price);
                 self.gain_relic(def);
                 self.shop.as_mut().unwrap().sold[i] = true;
+                self.restock_shop_slot(i);
                 Ok(format!("bought {} for {price}", def.name))
             }
             ShopItem::Potion(def, _) => {
@@ -2606,6 +2644,7 @@ impl Run {
                 }
                 self.spend_gold(price);
                 self.shop.as_mut().unwrap().sold[i] = true;
+                self.restock_shop_slot(i);
                 Ok(format!("bought {} for {price}", def.name))
             }
             ShopItem::Remove(_) => {
@@ -2614,6 +2653,97 @@ impl Run {
                 Ok("choose a card to remove".to_string())
             }
         }
+    }
+
+    /// 信使(The Courier)补货:买走一格就按同种类即时重掷一格(原版语义,参考实现未做).
+    /// 卡走商店房间的稀有度掷 + mathUtilRng 抽池;无色牌走 30% 稀有掷;
+    /// 遗物走 Shop::rollRelicTier(商店档遗物买走后补的是普通档次);药水走 potionRng.
+    /// 补出来的价格也照常打折(-20%).删牌服务不补货.
+    fn restock_shop_slot(&mut self, i: usize) {
+        if !self.has_relic("the_courier") {
+            return;
+        }
+        let Some(kind) = self.shop.as_ref().and_then(|s| s.kinds.get(i).copied()) else {
+            return;
+        };
+        let item = match kind {
+            ShopKind::ClassCard => self.roll_courier_class_card(),
+            ShopKind::ColorlessCard => self.roll_courier_colorless_card(),
+            ShopKind::Relic => self.roll_courier_relic(),
+            ShopKind::Potion => self.roll_courier_potion(),
+            ShopKind::Remove => None,
+        };
+        if let Some(item) = item {
+            if let Some(shop) = self.shop.as_mut() {
+                shop.items[i] = item;
+                shop.sold[i] = false;
+            }
+        }
+    }
+
+    /// 补一张本职业牌:稀有度按"商店房间"掷(和普通怪一样 3/37;恩洛斯礼物翻三倍),
+    /// 再从该稀有度的职业牌池里用 mathUtilRng 抽一张(稀有位次用本作的池子序).
+    fn roll_courier_class_card(&mut self) -> Option<ShopItem> {
+        let rarity = self.roll_card_rarity(EnemyKind::Normal);
+        let pool = cards::reward_pool(rarity);
+        if pool.is_empty() {
+            return None;
+        }
+        let def = *self.streams.math_util().pick(&pool);
+        let base = shop_base(SHOP_CARD_BASE, rarity) as f32;
+        let jitter = self
+            .streams
+            .run(RunStream::MerchantRng)
+            .random_float_range(SHOP_CARD_JITTER.0, SHOP_CARD_JITTER.1);
+        Some(ShopItem::Card(
+            CardInstance::new(def),
+            self.discount((base * jitter) as i32),
+        ))
+    }
+
+    /// 补一张无色牌:先掷 30% 决定稀有/罕见,再从无色池抽(cardRng),价 ×1.2
+    fn roll_courier_colorless_card(&mut self) -> Option<ShopItem> {
+        let rare = self
+            .streams
+            .run(RunStream::MerchantRng)
+            .random_float()
+            < SHOP_COLORLESS_RARE_CHANCE;
+        let rarity = if rare { Rarity::Rare } else { Rarity::Uncommon };
+        let def = self.roll_shop_colorless(rarity)?;
+        let base = shop_base(SHOP_CARD_BASE, rarity) as f32;
+        let jitter = self
+            .streams
+            .run(RunStream::MerchantRng)
+            .random_float_range(SHOP_CARD_JITTER.0, SHOP_CARD_JITTER.1);
+        Some(ShopItem::Card(
+            CardInstance::new(def),
+            self.discount((base * jitter * SHOP_COLORLESS_FACTOR) as i32),
+        ))
+    }
+
+    /// 补一件遗物:档次掷 merchantRng(永不掷出商店档),价格照常浮动
+    fn roll_courier_relic(&mut self) -> Option<ShopItem> {
+        let tier = self.roll_shop_relic_tier();
+        let def = self.take_shop_relic(tier)?;
+        let jitter = self
+            .streams
+            .run(RunStream::MerchantRng)
+            .random_float_range(SHOP_OTHER_JITTER.0, SHOP_OTHER_JITTER.1);
+        let price = (tier.base() as f32 * jitter).round() as i32;
+        Some(ShopItem::Relic(def, self.discount(price)))
+    }
+
+    /// 补一瓶药水:身份走 potionRng,价格照常浮动
+    fn roll_courier_potion(&mut self) -> Option<ShopItem> {
+        let def =
+            potions::random_potion(self.streams.run(RunStream::PotionRng), potions::class_color(self.character))?;
+        let base = shop_base(SHOP_POTION_BASE, def.rarity) as f32;
+        let jitter = self
+            .streams
+            .run(RunStream::MerchantRng)
+            .random_float_range(SHOP_OTHER_JITTER.0, SHOP_OTHER_JITTER.1);
+        let price = (base * jitter).round() as i32;
+        Some(ShopItem::Potion(def, self.discount(price)))
     }
 
     pub fn leave_shop(&mut self) {
@@ -2963,6 +3093,16 @@ impl Run {
         if c.req_upgradeable && !self.player.deck.iter().any(|c| c.can_upgrade()) {
             return false;
         }
+        // 坠落:某类型一张可移除的牌都没有,对应选项锁住(原版;参考实现没做)
+        if let Some(kind) = c.req_card_type {
+            if !self.deck_has_removable_of_type(kind) {
+                return false;
+            }
+        }
+        // 坠落的保底"Land":只有三类牌都抽不出时才可选
+        if c.req_no_card_type && self.deck_has_any_falling_card() {
+            return false;
+        }
         // N'loth:洗到的那件供奉遗物不存在(身上不足两件)时,对应选项不可选
         if i < 2 {
             if let Some(d) = &st.nloth {
@@ -2973,6 +3113,21 @@ impl Run {
             }
         }
         true
+    }
+
+    /// 牌组里有没有该类型的可移除牌(没瓶装、非不可移除);"坠落"选项的可用性
+    fn deck_has_removable_of_type(&self, kind: CardType) -> bool {
+        self.player
+            .deck
+            .iter()
+            .any(|c| c.kind() == kind && !c.def.unremovable && !c.bottled)
+    }
+
+    /// 技能/能力/攻击里有没有任意一张可移除牌("坠落"保底选项的可用性)
+    fn deck_has_any_falling_card(&self) -> bool {
+        [CardType::Skill, CardType::Power, CardType::Attack]
+            .into_iter()
+            .any(|k| self.deck_has_removable_of_type(k))
     }
 
     /// 能当祭品/能删掉的牌的下标(参考实现 removableIndices:没瓶装、不是不可移除的)
@@ -3657,7 +3812,14 @@ impl Run {
             self.start_combat(enc, false);
             return o.text;
         }
-        if o.remove_card {
+        // "A Note For Yourself":取回存档里那张牌(带升级),再开一次选牌界面把它写回存档
+        if o.note_swap {
+            self.note_recall();
+            self.open_picker(PickPurpose::Remove, Screen::Event, 0, None);
+            if let Some(p) = self.picker.as_mut() {
+                p.store_note = true;
+            }
+        } else if o.remove_card {
             self.open_picker(PickPurpose::Remove, Screen::Event, 0, None);
         } else if o.upgrade_card {
             self.open_picker(PickPurpose::Upgrade, Screen::Event, 0, None);
@@ -3960,6 +4122,79 @@ impl Run {
         }
     }
 
+    /// 便条事件的存卡文件:测试里指到临时文件,正式跑用存档目录里的 note.card
+    fn note_file(&self) -> std::path::PathBuf {
+        self.note_path
+            .clone()
+            .unwrap_or_else(crate::core::save::note_path)
+    }
+
+    /// 读存档里存的那张牌(id + 升级次数);没有、认不出来或没开持久化就按原版
+    /// 给未升级的铁斩波(headless 对拍时参考实现也只认默认的这张)
+    fn note_stored_card(&self) -> (&'static CardDef, u8) {
+        let stored = if self.note_persist {
+            crate::core::save::read_note_at(&self.note_file())
+        } else {
+            None
+        };
+        let (id, plus) = stored.unwrap_or_else(|| ("iron_wave".to_string(), 0));
+        let def =
+            cards::card_def(&id).unwrap_or_else(|| cards::card_def_or_panic("iron_wave"));
+        (def, plus)
+    }
+
+    /// 取回便条里存的牌:升级次数照旧(灼热攻击保留等级);拿牌算一次加牌,
+    /// 触发对应类型的蛋与陶瓷鱼(原版:取回算一次加牌)
+    fn note_recall(&mut self) {
+        let (def, plus) = self.note_stored_card();
+        let mut inst = CardInstance::new(def);
+        for _ in 0..plus {
+            inst.upgrade();
+        }
+        let egg = match def.kind {
+            CardType::Attack => self.has_relic_fx(|fx| fx.egg_attack_upgrade),
+            CardType::Skill => self.has_relic_fx(|fx| fx.egg_skill_upgrade),
+            CardType::Power => self.has_relic_fx(|fx| fx.egg_power_upgrade),
+            _ => false,
+        };
+        if !inst.upgraded && egg && inst.upgrade() {
+            self.say(format!("{} arrives upgraded", def.name));
+        }
+        let name = inst.label();
+        self.player.deck.push(inst);
+        let fish = self.player.relic_fx_sum(|r| r.fx.gold_on_card_add);
+        if fish > 0 {
+            self.gain_gold(fish);
+        }
+        self.say(format!("the note gives you {name}"));
+    }
+
+    /// 把一张牌写回便条存档,留给下一局(没开持久化就不写)
+    fn note_store_card(&self, card: &CardInstance) {
+        if !self.note_persist {
+            return;
+        }
+        let plus = if card.plus > 0 {
+            card.plus
+        } else if card.upgraded {
+            1
+        } else {
+            0
+        };
+        let _ = crate::core::save::write_note_at(&self.note_file(), card.def.id, plus);
+    }
+
+    /// 测试用:把便条存卡指到临时文件,免得读到真实存档目录
+    #[cfg(test)]
+    pub fn set_note_path(&mut self, path: std::path::PathBuf) {
+        self.note_path = Some(path);
+    }
+
+    /// 关掉便条存卡的持久化:headless 对拍/回放用,保证不读不写玩家存档
+    pub fn set_note_persist(&mut self, on: bool) {
+        self.note_persist = on;
+    }
+
     /// 随机一张本职业牌(不限稀有度时从三档里挑)
     fn random_class_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
         let mut pool: Vec<&'static CardDef> = match rarity {
@@ -4227,6 +4462,7 @@ impl Run {
             shop_slot,
             remaining: remaining.max(1),
             bottle_kind: None,
+            store_note: false,
         });
         self.screen = Screen::Pick;
         self.picker_clamp();
@@ -4301,6 +4537,7 @@ impl Run {
         let cost = p.cost_gold;
         let slot = p.shop_slot;
         let remaining = p.remaining;
+        let store_note = p.store_note;
         if cost > 0 && self.player.gold < cost {
             return Err("not enough gold".to_string());
         }
@@ -4312,6 +4549,10 @@ impl Run {
             }
             PickPurpose::Remove => {
                 let card = self.player.deck.remove(deck_idx);
+                // 便条事件:这张牌要留给下一局("A Note For Yourself")
+                if store_note {
+                    self.note_store_card(&card);
+                }
                 // 寄生这类"被抽出牌组要付代价"的牌
                 self.pay_deck_leave_cost(&card);
                 format!("{} removed from your deck", card.label())
@@ -4979,6 +5220,11 @@ impl Run {
     /// 有没有任何一件遗物的效果满足这个条件
     fn has_relic_fx(&self, f: impl Fn(&RelicFx) -> bool) -> bool {
         self.player.relics.iter().any(|r| f(&r.fx))
+    }
+
+    /// 身上有没有这件遗物(按 id)
+    pub fn has_relic(&self, id: &str) -> bool {
+        self.player.relics.iter().any(|r| r.id == id)
     }
 
     // ---- 调试命令:按名字加/删遗物与卡牌 ----
@@ -6525,6 +6771,123 @@ mod tests {
         r.enter_node(shop).unwrap();
         r.player.gold = 0;
         assert!(r.buy_selected().is_err());
+    }
+
+    /// 信使(The Courier):买走卡/遗物/药水后该格按同种类补货,且不再标已售
+    #[test]
+    fn courier_restocks_cards_relics_and_potions() {
+        let mut r = run(37);
+        r.debug_add_relic("the_courier").unwrap();
+        r.player.gold = 99_999;
+        r.open_shop();
+        let (card_i, relic_i, potion_i) = {
+            let shop = r.shop.as_ref().unwrap();
+            let find = |k: ShopKind| shop.kinds.iter().position(|x| *x == k).unwrap();
+            (find(ShopKind::ClassCard), find(ShopKind::Relic), find(ShopKind::Potion))
+        };
+
+        r.shop.as_mut().unwrap().index = card_i;
+        r.buy_selected().unwrap();
+        {
+            let shop = r.shop.as_ref().unwrap();
+            assert!(!shop.sold[card_i], "卡格买走后要补货");
+            assert!(matches!(shop.items[card_i], ShopItem::Card(..)), "补的还是牌");
+        }
+
+        r.shop.as_mut().unwrap().index = relic_i;
+        r.buy_selected().unwrap();
+        {
+            let shop = r.shop.as_ref().unwrap();
+            assert!(!shop.sold[relic_i], "遗物格买走后要补货");
+            match &shop.items[relic_i] {
+                // 商店档遗物买走后补的是普通档次(原版/wiki)
+                ShopItem::Relic(d, _) => assert_ne!(d.tier, RelicTier::Shop, "不补商店档"),
+                _ => panic!("补的还是遗物"),
+            }
+        }
+
+        r.shop.as_mut().unwrap().index = potion_i;
+        r.buy_selected().unwrap();
+        {
+            let shop = r.shop.as_ref().unwrap();
+            assert!(!shop.sold[potion_i], "药水格买走后要补货");
+            assert!(matches!(shop.items[potion_i], ShopItem::Potion(..)), "补的还是药水");
+        }
+    }
+
+    /// 补货价也带 20% 折扣:浮动上限 1.1(遗物/药水 1.05)乘 0.8 后低于原价
+    #[test]
+    fn courier_restocked_prices_are_discounted() {
+        let mut r = run(41);
+        r.debug_add_relic("the_courier").unwrap();
+        r.player.gold = 99_999;
+        r.open_shop();
+        let (class_i, colorless_i, relic_i, potion_i) = {
+            let shop = r.shop.as_ref().unwrap();
+            let find = |k: ShopKind| shop.kinds.iter().position(|x| *x == k).unwrap();
+            (
+                find(ShopKind::ClassCard),
+                find(ShopKind::ColorlessCard),
+                find(ShopKind::Relic),
+                find(ShopKind::Potion),
+            )
+        };
+        for (i, expected_base) in [
+            (class_i, None),
+            (colorless_i, None),
+            (relic_i, Some(SHOP_RELIC_BASE)),
+            (potion_i, Some(SHOP_POTION_BASE)),
+        ] {
+            r.shop.as_mut().unwrap().index = i;
+            r.buy_selected().unwrap();
+            let shop = r.shop.as_ref().unwrap();
+            let price = shop.items[i].price();
+            let base = match expected_base {
+                Some(table) => {
+                    // 遗物/药水按稀有度查底价
+                    let rarity = match &shop.items[i] {
+                        ShopItem::Relic(d, _) => match d.tier {
+                            RelicTier::Uncommon => Rarity::Uncommon,
+                            RelicTier::Rare => Rarity::Rare,
+                            _ => Rarity::Common,
+                        },
+                        ShopItem::Potion(d, _) => d.rarity,
+                        _ => unreachable!(),
+                    };
+                    shop_base(table, rarity)
+                }
+                None => {
+                    let rarity = match &shop.items[i] {
+                        ShopItem::Card(c, _) => c.rarity(),
+                        _ => unreachable!(),
+                    };
+                    shop_base(SHOP_CARD_BASE, rarity)
+                }
+            };
+            assert!(
+                price < base,
+                "补货价 {price} 应低于底价 {base}(带 -20% 折扣)"
+            );
+        }
+    }
+
+    /// 没有信使就不补货:格子买走后保持已售
+    #[test]
+    fn purchases_without_courier_leave_the_slot_sold() {
+        let mut r = run(43);
+        r.player.gold = 99_999;
+        r.open_shop();
+        let card_i = r
+            .shop
+            .as_ref()
+            .unwrap()
+            .kinds
+            .iter()
+            .position(|k| *k == ShopKind::ClassCard)
+            .unwrap();
+        r.shop.as_mut().unwrap().index = card_i;
+        r.buy_selected().unwrap();
+        assert!(r.shop.as_ref().unwrap().sold[card_i], "没有信使就维持已售");
     }
 
     /// 未知房判定在 eventRng 上走一次;事件抽签掷的是副本,不动主流
