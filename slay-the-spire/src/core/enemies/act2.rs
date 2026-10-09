@@ -1067,6 +1067,9 @@ pub const BRONZE_AUTOMATON: EnemyDef = EnemyDef {
             effects: &[EnemyFx::Summon {
                 ids: &["bronze_orb", "bronze_orb"],
                 slots: &[0, 2],
+                // 铜球的 construct 里自带一次废掷(反编译 MonsterSpecific.cpp
+                // 的 BRONZE_ORB 分支先 random(52,58) 再 setRandomHp)
+                hp_burn: 1,
             }],
         },
         MoveDef {
@@ -1224,6 +1227,9 @@ pub const THE_COLLECTOR: EnemyDef = EnemyDef {
             effects: &[EnemyFx::Summon {
                 ids: &["torch_head", "torch_head"],
                 slots: &[1, 0],
+                // 反编译 Actions::SpawnTorchHeads 对每只火炬头 construct 之后
+                // 又调一次 initHp(第二次掷点获胜),所以血量掷点比通常多一次
+                hp_burn: 1,
             }],
         },
         MoveDef {

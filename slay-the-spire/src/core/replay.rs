@@ -609,12 +609,20 @@ fn smart_play(run: &mut Run) -> Result<(), String> {
                     pick,
                     target,
                     hand.join(","),
-                    foes.join(",")
+                    foes.join(","),
                 );
             }
             (about_to_die, dangerous, low_hp, c.turn, pick, target)
         };
-        // 4) 危险或残血时先喝药水,每回合最多试一次
+        // 4) 危险或残血时先喝药水,每回合最多试一次.
+        //    为什么驱动要"每回合都试喝"一次:参考侧(tools/replay_ref.ts 的 smartPlay)
+        //    与这边必须是同一条策略 —— 能回血/加格挡的药水会直接改变"这回合会不会被打死",
+        //    所以两边统一成"危险或残血就按格子顺序找第一瓶喝掉,喝不动就接着打牌",
+        //    试喝本身不掷点、不消耗动作(失败的试喝不会改变任何状态),对拍时不会引入噪声.
+        //    仙女在瓶这类被动药水喝不掉:run.rs 的 quaff_potion 看到 drinkable()==false
+        //    直接返回 Err,try_drink_once 于是跳过这一格去试下一瓶 —— 它只在该被打死的
+        //    那一刻自动触发,允许主动喝等于白丢保命(见 run.rs quaff_potion 的注释与
+        //    仙女瓶那条断言).改驱动时别把"仙女瓶被跳过"当成两边的差异.
         if (about_to_die || dangerous || low_hp) && potion_turn != turn {
             if try_drink_once(run) {
                 potion_turn = run.combat().map(|c| c.turn).unwrap_or(turn);
@@ -1661,7 +1669,7 @@ mod e2e {
     Expected { seed: 23808, lines: 55, ref_lines: 55, aligned: 34, diff_steps: &[34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xb819deb2cb8b5d08 },
     Expected { seed: 24873, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25365, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 26848, lines: 58, ref_lines: 58, aligned: 53, diff_steps: &[53, 54, 55], diff_digest: 0xe7553c4d81a8c618 },
+    Expected { seed: 26848, lines: 58, ref_lines: 58, aligned: 58, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26951, lines: 63, ref_lines: 63, aligned: 43, diff_steps: &[43, 44], diff_digest: 0x664f19f5cdacbe10 },
     Expected { seed: 28104, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
@@ -1737,19 +1745,23 @@ mod e2e {
     /// 修掉"小鬼头目鼓励少掷一次台词掷点"后,seed 4/13/15/19 的对齐前缀大幅前移
     /// (4:29->41,13:22->33,15:18->40,19:28->40),剩下的多是头目小鬼摆位/事件选项数
     /// 这类参考表示差异(见 ASC2_CASES 的分类注释).
+    /// 随"血量掷点"两条修复又各前移了一点:本作原先对固定血量的怪少掷一次 monsterHpRng,
+    /// 对拍器的 planLineup 也跟着少掷,于是 fixture 里那几场阵容的血本来就是错的 ——
+    /// 两侧规则一起修正后按 tools/replay_ref.ts 重新生成了 act2/acts/a20a2 的 ref.jsonl,
+    /// 本表随之重钉(见 ASC2_CASES 上方"已修的三条").
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45], diff_digest: 0xf2b5f8db28da67f0 },
+    Expected { seed: 4, lines: 46, ref_lines: 45, aligned: 41, diff_steps: &[41, 42, 43, 44, 45], diff_digest: 0x7387b1ab31891131 },
+    Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35], diff_digest: 0x27ad071e5ee60238 },
+    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x6a59feba54951b98 },
     Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 41, 42, 43], diff_digest: 0xec4d2485f4448232 },
-    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x18db065dfd5ce919 },
-    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x664f5d82fe38755b },
-    Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35], diff_digest: 0xe67781a970da6824 },
+    Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0xd5335c7c61c77f9d },
+    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 34, 35, 36, 37, 38, 40, 41, 42, 43], diff_digest: 0x45eb5e91e9ccca2 },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 17, diff_steps: &[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0x9ee3dc12d09ebb12 },
     Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 40, 41, 42], diff_digest: 0x1ea5af3dfb8afa54 },
+    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x18db065dfd5ce919 },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46], diff_digest: 0x988b6e1c6f0aa4f1 },
-    Expected { seed: 4, lines: 46, ref_lines: 45, aligned: 41, diff_steps: &[41, 42, 43, 44, 45], diff_digest: 0x7387b1ab31891131 },
-    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x11abdc8473601d2 },
-    Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40, 41, 42, 43], diff_digest: 0x7001bbf9f1362919 },
-    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 26, diff_steps: &[26, 27, 28, 33, 34, 35, 36, 37, 38, 40, 41, 42, 43], diff_digest: 0x436132dc5db675f9 },
+    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x664f5d82fe38755b },
 ];
 
     /// 第二幕对拍:同一颗种子 + act2.script,逐行比对(两侧都转小写).
@@ -2175,52 +2187,86 @@ mod e2e {
     Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39], diff_digest: 0xd031f152ee8f5222 },
 ];
 
-    /// 飞升 20 第二幕:a20a2.script = act2.script + `asc 20`(路径/策略同第一幕那张
+    /// 飞升 20 第二幕:a20a2.script = act2.script + `asc 20`(路径/策略同第二幕那张
     /// act2 表,只把飞升抬到 20),量 A20 的第二幕:精英/Boss 血量与伤害档(A3/A4/A8/A9)、
     /// A17 的第二幕怪选招分支(被选中者/壳鹦鹉螺/神秘者/蛇形植物等)、A20 的 Boss 规则,
     /// 以及召唤/分裂在飞升档的血量.
     ///
-    /// 逐条归因(表里每颗差异 seed 都能对回下面某一条):
-    ///   1) (b) 退赃:击杀盗贼/强盗后本作把赃款退回来,参考不退,金币差从 45/60 起.
-    ///      seed 15/18 就是这一条.原版击杀偷过钱的怪会退还赃款(A20 的 looter/mugger
-    ///      每偷 20,退还也发生在奖励层);参考 looters.ts/mugger.ts 只把 goldStolen
-    ///      记下来,奖励层从不加回去(注释写着会退,代码里没有).依据 = 语料 + 参考源码.
-    ///   2) (b) 事件 cursed_tome 的选项数:本作 2、参考 5(seed 11 步 13 起;A0 的 act2 表里
-    ///      同一事件也差,不是 A20 才有).差的只是 event_choice_count 这个导出字段,两边
-    ///      选的还是同一项(步 13 的 pick 都是 0).
-    ///   3) (b) 事件 colosseum 的选项数:本作 1、参考 3(seed 4 步 27 起;A0 的 act2 表也
-    ///      1 vs 3).同样是两边把事件摊成几屏/几项的口径不同.
-    ///   4) (c) 神秘者 MYSTIC_HEAL 的结算时点:原版回血是同步结算、回合末选招在其后
-    ///      (反编译 MonsterSpecific.cpp 的 MYSTIC_HEAL 先 heal 再 rollMove,挂格挡的
-    ///      CENTURION_DEFEND 同理);参考实现把这些塞进动作队列,于是神秘者的 getMove 按
-    ///      血量差决定回不回血时,读到的是改状态之前的血量.本作按原版同步改血后再选招,
-    ///      所以 seed 3/19/17 的"百夫长+神秘者"战起点逐字段相同、终点 hp 不同.
-    ///   5) (c) 小鬼头目的开战摆位:参考实现把首领排在槽 2,随从只剩槽 0/1 两格;原版是
-    ///      首领槽 3 + 随从槽 0/1/2 三格(反编译 MonsterGroup.cpp 与语料槽位).seed 13 的
-    ///      头目小鬼战因此终点差 5 hp.
-    /// 已修的两条(不再是差异源,留作记录):
-    ///   (a) Book of Stabbing 的 A18 规则(单刺也自增刺击数):反编译 MonsterSpecific.cpp
-    ///       把两句 `if (asc18) ++stabCount` 写在 return 之后成了死代码,但意图明确,参考实现
-    ///       按 wiki/原版算进去 —— 修掉后 seed 6/25/33/16 的对齐前缀大幅前移(见下表).
-    ///   (c) 小鬼头目"鼓励"少了原版那次挑台词掷点(反编译 GREMLIN_LEADER_ENCOURAGE 开头
-    ///       的 `bc.aiRng.random(0, 2)`),补上后 seed 4 的头目小鬼战全程对齐(前缀 22 -> 27,
-    ///       后面剩的就是第 3 条的 colosseum);断言 = combat.rs
-    ///       gremlin_leader_encourage_consumes_the_quote_roll.
-    /// 原 (d) 的 5 颗 seed 全部落进上面几条:seed 3/19/17 = 第 4 条,seed 13 = 第 5 条 +
-    /// 已修的 (c),seed 4 = 已修的 (c) + 第 3 条,没有来历不明的"多掷/少掷".
+    /// 逐颗 seed 归因(12 颗,复跑命令 `bun tools/e2e_diff.ts --all --script
+    /// tools/golden/e2e/a20a2.script`)."对齐前缀"= 第一处分叉前的步数,"首分叉"= 第一处
+    /// 字段不同的步号(其后差异都是这一处的级联).当前合计 1665 处差异:
+    ///
+    ///   seed  步数(本作/参考)  对齐前缀  首分叉            首分叉成因 / 归类
+    ///    3     45/45            13       步 13 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c)  [共 30 处]
+    ///    4     50/49            27       步 27 event       colosseum 事件选项数 1 vs 3 (b)     [共 61 处]
+    ///    6     52/53            32       步 32 event       colosseum 事件选项数 1 vs 3 (b)     [共 83 处]
+    ///   11     47/48            13       步 13 event       cursed_tome 事件选项数 2 vs 5 (b)   [共 395 处]
+    ///   13     42/42            19       步 19 fight       小鬼头目开战摆位 (c),终点差 5 hp [共 7 处]
+    ///   15     45/44             5       步 5  fight       击杀盗贼/强盗退赃 (b)               [共 568 处]
+    ///   16     44/44            40       步 40 move        进 Boss 房那一行/空槽口径 (b)       [共 6 处]
+    ///   17     44/44            14       步 14 fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c) [共 24 处]
+    ///   18     47/47             2       步 2  fight       击杀盗贼/强盗退赃 (b)               [共 381 处]
+    ///   19     45/45             8       步 8  fight       百夫长+神秘者 MYSTIC_HEAL 结算时点 (c) [共 45 处]
+    ///   25     47/46            32       步 32 fight       书呆子精英战:伤口张数/抽牌堆 待查    [共 50 处]
+    ///   33     46/46            26       步 26 fight       头目小鬼精英战 117 hp 缺口 待查      [共 15 处]
+    ///
+    /// (a) 已修的三条(本轮从 1689 处降到 1665 处):
+    ///   1) 召唤物的血量掷点少了一次.反编译 Actions::SpawnTorchHeads 对每只火炬头
+    ///      `construct`(内部 initHp 掷一次)之后又调一次 `initHp`(第二次获胜),铜球的
+    ///      initHp 分支也自带一次废掷(`hpRng.random(52,58)` 再 setRandomHp);本作原先
+    ///      每只只掷一次,于是 monsterHpRng 整体错位,seed 16 的收藏家战(以及进 Boss 房
+    ///      前后的血量)跟着差.修法 = EnemyFx::Summon 的 hp_burn(见 combat.rs).
+    ///   2) 区间塌成一点时不掷点.本作 `Rng::range_inclusive` 原先在 hi == lo 时直接返回
+    ///      lo,不消耗掷点;原版 `Random.random(lo, hi)` = `lo + nextInt(hi-lo+1)` 一定消耗
+    ///      一次(反编译 include/game/Random.h).收藏家满飞升是固定 300/300,进 Boss 房
+    ///      这一掷因此漏掉,seed 16 的火炬头血量整排差 1.修法 = range_inclusive 一律掷,
+    ///      另按反编译 MonsterSpecific.cpp 的 initHp 把"连掷点都不消耗"的三只
+    ///      (球形守卫/巨口/闪现者)单独列进 ascension::hp_fixed_no_roll.
+    ///      fixture 侧对拍器 tools/replay_ref.ts 的 planLineup 同步改成同一规则并重生成
+    ///      act2/acts/a20a2 的 ref.jsonl(否则 fixture 里那三只的血是错的).
+    ///   3) 诅咒之眼(Hex)挂错人.被选中者的 HEX 招用 PlayerStatus 把 Hex 挂在玩家身上,
+    ///      本作的触发却去读怪身上的 Hex(永远为 0),于是"打非攻击牌塞眩晕"从来没触发,
+    ///      seed 16/19 的被选中者战抽牌堆少一张眩晕.修法 = 触发改读玩家身上的层数
+    ///      (见 combat.rs 的 on_enemy_card_hooks).
+    ///   附:带选牌的牌(战争怒吼/坚毅/双持…)原先在选牌收完之前就记"打出一张牌",
+    ///      与反编译/参考实现的时序(onUseCard/onAfterCardPlayed 排在牌的效果之后)不符,
+    ///      已改为 close_choice 里补记(见 combat.rs).
+    ///
+    /// (b) 参考缺口(参照实现 / 导出器口径不同,不改本作):
+    ///   1) 退赃:原版击杀偷过钱的怪会退回赃款,参考 looters.ts/mugger.ts 只把 goldStolen
+    ///      记下来、奖励层从不加回去.金币差从 45/60 起,seed 15/18 整串都是它的级联.
+    ///   2) cursed_tome 的 event_choice_count:本作 2、参考 5(seed 11),两边选的还是同一项.
+    ///   3) colosseum 的 event_choice_count:本作 1、参考 3(seed 4/6),同上.
+    ///   4) 进 Boss 房那一行的 monsters 数组:参考按原版的 3 个槽位导出(收藏者在槽 2、
+    ///      槽 0/1 是两个 hp=0 的 "gap"),本作只列出场上真有的怪(1 只).战斗本身逐帧一致
+    ///      (用 tools/sandbox 把收藏家战摆成同一局面跑过),差的只是导出器要不要列空槽;
+    ///      seed 16 的 6 处差异全在这一行,后面 fight/reward/end 的动态字段已经全同.
+    ///
+    /// (c) 参照实现自己反着来、本作按反编译的(不改本作):
+    ///   1) 神秘者 MYSTIC_HEAL 的结算时点:反编译 MonsterSpecific.cpp 先 heal 再 rollMove,
+    ///      参考把 heal 塞进动作队列,于是 getMove 读的是改状态之前的血量.seed 3/17/19 的
+    ///      "百夫长+神秘者"战因此终点 hp 不同(挂格挡的 CENTURION_DEFEND 同理).
+    ///   2) 小鬼头目的开战摆位:参考把首领排在槽 2、随从只剩槽 0/1;原版是首领槽 3 + 随从
+    ///      槽 0/1/2(反编译 MonsterGroup.cpp 与语料槽位).seed 13 的头目小鬼战差 5 hp.
+    ///
+    /// 还没归因的两颗(下一轮接着查,别当已归因):
+    ///   seed 25 = 书呆子(Book of Stabbing)精英战的抽牌堆:轨迹里本作第 3 回合抽到
+    ///     rampage,参考抽到 wound(两边敌人血量相同),说明痛苦刺击往弃牌堆塞的伤口张数
+    ///     或抽牌堆顺序不同;seed 33 = 头目小鬼精英战终点差 117 hp,轨迹更早就分叉.
+    ///     两颗都不属于上面任何一条,继续按反编译追掷点/伤害级.
     const ASC2_CASES: &[Expected] = &[
-    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xe2574da2a43f9a1 },
-    Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 39, 40, 41], diff_digest: 0x6eaf377dbb280199 },
-    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x86ae10273e6c61e2 },
-    Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0x70b10e426e8964fa },
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0x71f056406a4052d1 },
+    Expected { seed: 4, lines: 50, ref_lines: 49, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49], diff_digest: 0x3c7f60f8beaae77a },
     Expected { seed: 6, lines: 52, ref_lines: 53, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52], diff_digest: 0x98f743945c957f29 },
+    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0xd44adbf85aaf8f04 },
+    Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25], diff_digest: 0xbcaf9803b4db43af },
+    Expected { seed: 15, lines: 45, ref_lines: 44, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x3fda264dedf05446 },
+    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x393a225bb620c109 },
     Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 41, 42, 43], diff_digest: 0xf5dca7770e705a38 },
     Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0xf2b6ae1d03e4dc15 },
+    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x6835cb622831038b },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x4fb240ce3fd98222 },
-    Expected { seed: 4, lines: 50, ref_lines: 49, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49], diff_digest: 0xc9453db8b90b73f4 },
-    Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0xd44adbf85aaf8f04 },
-    Expected { seed: 15, lines: 45, ref_lines: 44, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x2ab901282429ff63 },
-    Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40, 41, 42, 43], diff_digest: 0x2f88599cc8de562f },
+    Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0x70b10e426e8964fa },
 ];
 
     /// 飞升 20 第四幕:在原有 16 颗的基础上扩到 25 颗(seed 1..24 + 33).

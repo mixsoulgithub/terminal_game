@@ -85,8 +85,7 @@ pub static ENEMIES: &[EnemyDef] = &[
 /// 虱子的咬伤(构造时就和血量一起掷,5..7)
 fn construct(rng: &mut RngRegistry, id: &'static str, asc: u32) -> Spawned {
     let def = enemy_def_or_panic(id);
-    let (lo, hi) = crate::core::ascension::hp_range(def, asc);
-    let hp = rng.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi);
+    let hp = crate::core::ascension::roll_hp(rng.floor(FloorStream::MonsterHpRng), def, asc);
     let rolled = match id {
         // 虱子的咬伤在构造候选时就掷(区间随飞升 2 换档)
         "red_louse" | "green_louse" => {

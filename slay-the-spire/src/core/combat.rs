@@ -446,12 +446,12 @@ impl Combat {
                 .iter()
                 .map(|&id| {
                     let def = crate::core::enemies::enemy_def_or_panic(id);
-                    let (lo, hi) = crate::core::ascension::hp_range(def, asc);
-                    Spawned {
-                        id,
-                        hp: streams.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi),
-                        rolled: None,
-                    }
+                    let hp = crate::core::ascension::roll_hp(
+                        streams.floor(FloorStream::MonsterHpRng),
+                        def,
+                        asc,
+                    );
+                    Spawned { id, hp, rolled: None }
                 })
                 .collect(),
         };
@@ -1325,6 +1325,21 @@ impl Combat {
                 }
             }
         }
+        // 诅咒之眼:打非攻击牌就往抽牌堆塞眩晕.这一条挂在玩家身上(怪物的 HEX 招
+        // 用 PlayerStatus 挂上来),所以只看玩家那一份,一张牌只触发一次.
+        let hex = self.player.statuses.get(Status::Hex);
+        if hex > 0 && kind != CardType::Attack {
+            for _ in 0..hex {
+                let mut inst = CardInstance::new(cards::card_def_or_panic("dazed"));
+                self.fix_new_card(&mut inst);
+                let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
+                self.draw.insert(pos, inst);
+            }
+            self.push_log(
+                LogKind::Enemy,
+                format!("Hex shuffles {hex} Dazed into your draw pile"),
+            );
+        }
         for i in 0..self.enemies.len() {
             if !self.enemies[i].alive() {
                 continue;
@@ -1363,20 +1378,6 @@ impl Combat {
                 self.push_log(
                     LogKind::Enemy,
                     format!("{name}'s Enrage: +{enrage} Strength"),
-                );
-            }
-            // 诅咒之眼:打非攻击牌就往抽牌堆塞眩晕
-            let hex = self.enemies[i].statuses.get(Status::Hex);
-            if hex > 0 && kind != CardType::Attack {
-                for _ in 0..hex {
-                    let mut inst = CardInstance::new(cards::card_def_or_panic("dazed"));
-                    self.fix_new_card(&mut inst);
-                    let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
-                    self.draw.insert(pos, inst);
-                }
-                self.push_log(
-                    LogKind::Enemy,
-                    format!("{name}'s Hex shuffles {hex} Dazed into your draw pile"),
                 );
             }
             // 时间扭曲:打满 12 张就结束这一回合
@@ -2227,9 +2228,17 @@ impl Combat {
             EnemyFx::StealCard => {
                 self.enemy_steal_card(idx, name);
             }
-            EnemyFx::Summon { ids, slots } => {
+            EnemyFx::Summon { ids, slots, hp_burn } => {
                 let me = self.enemies[idx].slot;
                 for (slot, id) in self.open_slots(me, slots, ids.len()).into_iter().zip(ids) {
+                    // 原版这两处召唤会多掷一次血量:火炬头是 construct 之后又 initHp
+                    // (第二次获胜),铜球的 construct 自带一次废掷.掷点值不用,但少掷
+                    // 一次会让 monsterHpRng 错位,后面每只怪的血量都跟着变.
+                    for _ in 0..hp_burn {
+                        let def = crate::core::enemies::enemy_def_or_panic(id);
+                        let (lo, hi) = crate::core::ascension::hp_range(def, self.asc);
+                        self.streams.floor(FloorStream::MonsterHpRng).random_range(lo, hi);
+                    }
                     self.summon_one(id, slot, name);
                 }
             }
@@ -2484,8 +2493,7 @@ impl Combat {
         };
         let asc = self.asc;
         let hp = hp.unwrap_or_else(|| {
-            let (lo, hi) = crate::core::ascension::hp_range(def, asc);
-            self.streams.floor(FloorStream::MonsterHpRng).range_inclusive(lo, hi)
+            crate::core::ascension::roll_hp(self.streams.floor(FloorStream::MonsterHpRng), def, asc)
         });
         let mut statuses = Statuses::new();
         for (s, n) in def.innate {
@@ -3060,7 +3068,12 @@ impl Combat {
                 self.resolve_effects(card, &tail, target, &mut ctx);
             }
         }
+        // 带选牌的牌到这里才算"牌的效果跑完":记一次"打出过这张牌"
+        let played_kind = ch.played.as_ref().map(|(c, _)| c.kind());
         self.finish_played(ch.played.take());
+        if let Some(kind) = played_kind {
+            self.note_card_played(kind);
+        }
         if ch.draw_after && ch.taken > 0 {
             self.draw_cards(ch.taken);
         }
@@ -4042,13 +4055,6 @@ impl Combat {
         if ctx.unblocked > 0 {
             self.push_log(LogKind::Info, format!("dealt {} damage", ctx.unblocked));
         }
-        // 浮夸按"本回合打出的牌数"结算(被人替打出来的牌也算)
-        self.note_card_played(card.kind());
-        // 活力(Akabeko):下一张攻击牌打出后立刻用掉(参考实现挂在 VIGOR 的
-        // onAfterCardPlayed 上;复读的那几下也算在里面,所以放在这里清)
-        if card.kind() == crate::core::card::CardType::Attack {
-            self.rs.vigor = 0;
-        }
         // 有选牌待定:牌和花的能量先存着,等选完(choose)或取消(cancel)再收尾
         if self.choice.is_some() {
             if let Some(ch) = self.choice.as_mut() {
@@ -4058,6 +4064,16 @@ impl Combat {
             self.check_win();
             return Ok(());
         }
+        // 浮夸按"本回合打出的牌数"结算(被人替打出来的牌也算).
+        // 带选牌的牌(战争怒吼/坚毅/双持之类)效果还没跑完:原版的 onUseCard 与
+        // onAfterCardPlayed 都是排在牌的效果之后才结算的动作,所以这里的"打出一张牌"
+        // 要等选牌收完再记(见 close_choice),否则诅咒之眼塞眩晕的位置会错.
+        // 活力(Akabeko):下一张攻击牌打出后立刻用掉(参考实现挂在 VIGOR 的
+        // onAfterCardPlayed 上;复读的那几下也算在里面,所以放在这里清)
+        if card.kind() == crate::core::card::CardType::Attack {
+            self.rs.vigor = 0;
+        }
+        self.note_card_played(card.kind());
         // 蓝蜡烛:打出诅咒要掉血(掉死了这张牌也照样落地)
         if relic_play && card.kind() == crate::core::card::CardType::Curse {
             let hp = self.relic_sum(|fx| fx.playable_curses_hp);

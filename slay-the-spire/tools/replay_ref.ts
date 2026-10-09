@@ -705,13 +705,16 @@ function planLineup(encounterId: string, seed: bigint, floor: number, asc: numbe
   const misc = new Rng(seed + BigInt(floor));
   const hpRng = new Rng(seed + BigInt(floor));
 
-  // 构造一只:掷血;虱子再掷咬伤(原版构造时就连着掷).区间退化时不掷点(与本作的
-  // range_inclusive 一致,例如球体守卫 20/20)
+  // 构造一只:掷血;虱子再掷咬伤(原版构造时就连着掷).
+  // 原版 Monster::initHp 只有球形守卫/巨口/闪现者直接给固定血量(一次掷点都不消耗),
+  // 其余怪即使区间塌成一点也照样掷一次(Random.random(min,max) 一定消耗)——
+  // 与本作 ascension::roll_hp 同规则.
+  const NO_ROLL_HP = new Set(["SPHERIC_GUARDIAN", "THE_MAW", "TRANSIENT"]);
   const construct = (ours: string): Rolled => {
     const def = bundle.monsters.get(refId(ours) as never);
     if (!def) throw new Error(`参考实现里没有这只怪: ${ours}`);
     const [lo, hi] = def.hp(asc);
-    const hp = hi <= lo ? lo : hpRng.randomRange(lo, hi);
+    const hp = NO_ROLL_HP.has(refId(ours)) ? lo : hpRng.randomRange(lo, hi);
     // 虱子的咬伤随飞升 2 换档(与本作 ascension::louse_bite_range 同档)
     const bite = isLouse(ours) ? (asc >= 2 ? hpRng.randomRange(6, 8) : hpRng.randomRange(5, 7)) : null;
     return { ours, hp, bite };

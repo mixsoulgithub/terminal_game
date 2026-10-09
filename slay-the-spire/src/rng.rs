@@ -174,12 +174,10 @@ impl Rng {
 
     // ---- 本仓库代码在用的几个顺手的封装,语义都按上面那套 ----
 
-    /// [lo, hi] 闭区间
+    /// [lo, hi] 闭区间.即使区间塌成一点(固定血量的怪、固定的金币数)也要掷一次:
+    /// 原版的 Random.random(lo, hi) 一定会消耗一次掷点,少掷会让后面所有掷点整体错位
     pub fn range_inclusive(&mut self, lo: i32, hi: i32) -> i32 {
-        if hi <= lo {
-            return lo;
-        }
-        self.random_range(lo, hi)
+        self.random_range(lo, hi.max(lo))
     }
 
     /// [0, n) 的整数;n 为 0 时返回 0(不消耗掷点)
@@ -690,6 +688,19 @@ mod tests {
         }
         assert_eq!(r.range_inclusive(5, 5), 5);
         assert_eq!(r.range_inclusive(9, 2), 9);
+    }
+
+    /// 区间塌成一点(固定血量的怪/固定金币)也要掷一次:原版的 Random.random(lo, hi)
+    /// 一律消耗一次掷点,少掷会让后面整条掷点流错位(收藏家满飞升 300/300 就是一例)
+    #[test]
+    fn range_inclusive_always_burns_a_roll() {
+        let mut a = Rng::new(7);
+        let mut b = Rng::new(7);
+        assert_eq!(a.range_inclusive(30, 30), 30);
+        assert_eq!(b.random_range(30, 30), 30);
+        assert_eq!(a.counter(), 1, "塌成一点的区间也要消耗一次掷点");
+        assert_eq!(a.counter(), b.counter());
+        assert_eq!(a.random_long(), b.random_long(), "后续掷点流没跑偏");
     }
 
     #[test]

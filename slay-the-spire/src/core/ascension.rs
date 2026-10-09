@@ -738,6 +738,22 @@ pub fn hp_range(def: &EnemyDef, asc: u32) -> (i32, i32) {
     def.hp
 }
 
+/// 原版里"血量固定、连一次掷点都不消耗"的怪(反编译 MonsterSpecific.cpp 的
+/// initHp 直接 curHp = maxHp = 固定值):球形守卫 / 巨口 / 闪现者
+pub fn hp_fixed_no_roll(def_id: &str) -> bool {
+    matches!(def_id, "spheric_guardian" | "the_maw" | "transient")
+}
+
+/// 掷一次怪物血量.上面那三只不掷;其余的即使区间塌成一点也要掷一次 ——
+/// 原版的 Random.random(min, max) 一律消耗一次掷点(Monster::setRandomHp)
+pub fn roll_hp(rng: &mut crate::rng::Rng, def: &crate::core::enemy::EnemyDef, asc: u32) -> i32 {
+    let (lo, hi) = hp_range(def, asc);
+    if hp_fixed_no_roll(def.id) {
+        return lo;
+    }
+    rng.range_inclusive(lo, hi)
+}
+
 /// 觉醒者二阶段血量:飞升 9+ 是 320,否则 300(参考实现 REBIRTH)
 pub fn awakened_phase2_hp(asc: u32) -> i32 {
     if asc >= 9 {
@@ -1078,6 +1094,7 @@ fn hard_replace(id: &str, move_name: &str, asc: u32) -> Option<&'static [EnemyFx
         ("reptomancer", "summon") => Some(&[EnemyFx::Summon {
             ids: &["dagger", "dagger"],
             slots: &[4, 1, 3, 0],
+            hp_burn: 0,
         }]),
         _ => None,
     }

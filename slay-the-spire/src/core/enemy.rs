@@ -113,9 +113,13 @@ pub enum EnemyFx {
     StealCard,
     /// 召唤固定的几只.参考实现里每只怪占一个固定槽位,召唤物进的是指定的空槽
     /// (不是队尾),所以 `ids` 与 `slots` 一一对应:第 i 只放进 slots[i].
+    /// `hp_burn`:每只召唤物开掷血量前先烧掉几次 monsterHpRng 掷点(原版
+    /// `Monster::construct` 掷一次、调用处又 `initHp` 再掷一次的重复掷点,
+    /// 以及 BRONZE_ORB 这种 construct 里自带一次废掷;值不用,但掷点不能少).
     Summon {
         ids: &'static [&'static str],
         slots: &'static [u8],
+        hp_burn: u8,
     },
     /// 从池子里随机抽 count 只召唤(小鬼头目的召集):
     /// 每只单独掷点挑一个,允许抽到同一只;同样按 slots 的顺序填空槽.

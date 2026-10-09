@@ -859,6 +859,7 @@ pub const REPTOMANCER: EnemyDef = EnemyDef {
             effects: &[EnemyFx::Summon {
                 ids: &["dagger"],
                 slots: &[4, 1, 3, 0],
+                hp_burn: 0,
             }],
         },
         MoveDef {
