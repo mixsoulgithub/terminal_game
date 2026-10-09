@@ -415,7 +415,13 @@ impl Statuses {
         self.list.retain(|(k, n)| *n > 0 || !k.decays());
     }
 
+    /// 敌人"清掉自己的减益"用:对齐反编译 Monster::removeDebuffs ——
+    /// 先把负的力量归零再清减益(力量是增益,不会被 is_debuff 清掉,所以单靠 retain
+    /// 会把 -3 这种负力量留在身上;冠军的怒吼、时间吞噬者的加速都靠这一步回正)
     pub fn clear_debuffs(&mut self) {
+        if self.get(Status::Strength) < 0 {
+            self.set(Status::Strength, 0);
+        }
         self.list.retain(|(k, _)| !k.is_debuff());
     }
 

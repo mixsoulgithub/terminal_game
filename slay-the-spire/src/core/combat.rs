@@ -3803,12 +3803,9 @@ impl Combat {
             self.enemies[i].state.half_dead = true;
             // 飞升 9+ 二阶段血量 320(参考实现 REBIRTH 把 maxHp 设成 320/300)
             self.enemies[i].max_hp = crate::core::ascension::awakened_phase2_hp(self.asc);
+            // clear_debuffs 已按反编译 Monster::removeDebuffs 把负力量归零
             self.enemies[i].statuses.clear_debuffs();
             self.enemies[i].statuses.add(Status::Curiosity, -999);
-            let strength = self.enemies[i].statuses.get(Status::Strength);
-            if strength < 0 {
-                self.enemies[i].statuses.add(Status::Strength, -strength);
-            }
             // 当前意图立刻换成复活那一招
             if let Some(rebirth) = def.moves.iter().position(|m| m.name == "Rebirth") {
                 self.enemies[i].next_move = rebirth;
@@ -8092,6 +8089,30 @@ mod power_tests {
         assert_eq!(move_of(&c, donu), "Circle of Power");
         assert_eq!(move_of(&c, deca), "Beam");
         assert!(c.enemies[deca].block > 0, "迪卡的团队护盾给自己(和全队)格挡");
+    }
+
+    /// 冠军的怒吼先把自己的负力量归零,再加 6 点:原版 Monster::removeDebuffs
+    /// (反编译 src/combat/Monster.cpp:538-543)在清减益前把负力量抬回 0,所以被缴械
+    /// 削到 -3 的冠军怒吼之后是 6 点力量而不是 3 点.本作原先的 clear_debuffs 只 retain
+    /// 非减益状态(力量算增益,负力量也跟着留下),于是比原版少一截力量.
+    #[test]
+    fn champ_anger_floors_negative_strength_before_buffing() {
+        let mut c = lock("the_champ");
+        let champ = idx_of(&c, "the_champ");
+        c.enemies[champ].statuses.add(Status::Strength, -3);
+        let anger = c.enemies[champ]
+            .def
+            .moves
+            .iter()
+            .position(|m| m.name == "Anger")
+            .unwrap();
+        c.enemies[champ].next_move = anger;
+        c.end_turn();
+        assert_eq!(
+            c.enemies[champ].statuses.get(Status::Strength),
+            6,
+            "缴械后的 -3 要先归零,再加怒吼的 6 点"
+        );
     }
 
     /// 灯怪的"防御姿态"当回合就给 5 点金属化格挡:原版 MetallicizePower 的

@@ -16,6 +16,7 @@ import { MAP_HEIGHT, MAP_WIDTH } from "/home/mix/projects/terminal_game/refs/sla
 import { buildEventScreen } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/eventRuntime.ts";
 import { restOptionAvailable, resolveUnknownRoom } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/runFlow.ts";
 import { canSmith } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/rest.ts";
+import { createCardReward, cardGroupEntries } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/rewards.ts";
 import { readFileSync } from "node:fs";
 import { ActionQueue } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/queue.ts";
 import { RngRegistry } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rngRegistry.ts";
@@ -1095,6 +1096,24 @@ export function replayRefl(seedStr: string, policy: Policy): string {
           s = advance(s, { cmd: "restOption", kind: "rest" }, bundle);
           out.push(line(step, "rest", `"options":[${opts.map((v) => JSON.stringify(v)).join(",")}],"pick":"rest"`, stateJson(s)));
           step += 1;
+          // 梦中情网(原版"休息后可以加一张牌")在参考实现里是 hooks: {} 的空实现.
+          // 这里按本作引擎的同一套规则补出那一屏:用参考侧自己的 cardRng 跑一遍
+          // createCardReward、把推进后的流写回,再按同一策略拿同一张 —— 两边掷点位置
+          // 与牌组才对齐;不补的话参考侧就是一把没刻度的尺子(与本文件对阵容补掷同理).
+          if (s.run.relics.some((x) => x.defId === "DREAM_CATCHER")) {
+            const cardRng = RngRegistry.fromState(s.rng).get("cardRng");
+            const cards = createCardReward({ ...scratchCtx(s), rng: () => cardRng }, "monster");
+            s.rng.run.cardRng = cardRng.saveState();
+            s.run.room = { kind: "rewards", entries: cardGroupEntries(cards), source: "monster" };
+            const entries = rewardEntries(s);
+            const res = takeRewards(s, policy);
+            s = res.state;
+            const taken = [...res.taken].sort((a, b) => rewardRank(a) - rewardRank(b));
+            s = advance(s, { cmd: "skipRewards" }, bundle);
+            const payload = `"source":"monster","entries":[${entries.join(",")}],"taken":[${taken.map((v) => JSON.stringify(v)).join(",")}]`;
+            out.push(line(step, "reward", payload, stateJson(s)));
+            step += 1;
+          }
         }
         if (s.run.room?.kind === "rest" && !s.pending) s = advance(s, { cmd: "proceed" }, bundle);
         break;
