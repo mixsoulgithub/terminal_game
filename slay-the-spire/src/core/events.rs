@@ -139,10 +139,12 @@ pub struct Outcome {
     pub add_random_curse: bool,
     /// 随机加 n 张该稀有度的本职业牌
     pub add_random_class: Option<(Rarity, u8)>,
-    /// 随机加 n 张本职业牌(不限稀有度)
-    pub add_random_class_any: u8,
+    /// the_library 的 Read:开"20 张选一张"的候选界面(cardRng 掷 20 张不重样的本职业牌)
+    pub library_read: bool,
     /// 随机加 n 张无色牌(None 稀有度表示不限)
     pub add_random_colorless: Option<(Option<Rarity>, u8)>,
+    /// sensory_stone 的 Recall:开 n 组无色牌奖励屏,每组三张里选一张(原版走卡牌奖励)
+    pub colorless_card_rewards: u8,
     /// 打开选牌界面升级一张牌
     pub upgrade_card: bool,
     /// 随机升级 n 张牌(逐张独立掷点,可重复选到同一张)
@@ -249,8 +251,9 @@ impl Outcome {
         add_curse: None,
         add_random_curse: false,
         add_random_class: None,
-        add_random_class_any: 0,
+        library_read: false,
         add_random_colorless: None,
+        colorless_card_rewards: 0,
         upgrade_card: false,
         upgrade_random_n: 0,
         upgrade_random_shuffle: 0,
@@ -1403,7 +1406,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Read: choose 1 of 20 distinct class cards to obtain",
                 outcome: outcome!(
-                    add_random_class_any: 1,
+                    library_read: true,
                     text: "You study one of the volumes and take its lesson with you."
                 )
             ),
@@ -1627,7 +1630,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Recall 1: receive 1 colorless card reward",
                 outcome: outcome!(
-                    add_random_colorless: Some((None, 1)),
+                    colorless_card_rewards: 1,
                     text: "A colorless memory takes shape in your deck."
                 )
             ),
@@ -1635,7 +1638,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Recall 2: lose 5 HP, receive 2 colorless card rewards",
                 outcome: outcome!(
                     hp: -5,
-                    add_random_colorless: Some((None, 2)),
+                    colorless_card_rewards: 2,
                     text: "Two colorless memories take shape, and your head throbs."
                 )
             ),
@@ -1643,7 +1646,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Recall 3: lose 10 HP, receive 3 colorless card rewards",
                 outcome: outcome!(
                     hp: -10,
-                    add_random_colorless: Some((None, 3)),
+                    colorless_card_rewards: 3,
                     text: "Three colorless memories take shape and your nose bleeds."
                 )
             ),
@@ -2797,20 +2800,7 @@ mod tests {
     /// 把一局直接摆到某个事件的某一屏上(dead_adventurer 这类要进房掷点的事件
     /// 走 debug_room,这样 onEnter 那次掷点也会发生)
     fn open(r: &mut Run, def: &'static EventDef) {
-        r.event = Some(crate::core::run::EventState {
-            def,
-            neow_options: Vec::new(),
-            index: 0,
-            result: None,
-            match_keep: None,
-            attempts: 0,
-            screen: None,
-            adv: None,
-            wma: None,
-            nloth: None,
-            designer: None,
-            skull: [0; 3],
-        });
+        r.event = Some(crate::core::run::EventState::new(def));
         r.screen = Screen::Event;
     }
 
@@ -3281,20 +3271,69 @@ mod tests {
 
     #[test]
     fn sensory_stone_deep_recall_costs_hp_and_gives_cards() {
-        let r = apply("sensory_stone", 35, 2);
-        assert_eq!(r.player.hp, 80 - 10);
-        assert_eq!(r.player.deck.len(), 10 + 3, "三张无色牌进牌组");
-        for c in r.player.deck.iter().rev().take(3) {
+        // 原版:这些"无色牌"其实是卡牌奖励屏——每组三张里选一张,选完(或跳过)顶下一组.
+        let mut r = Run::new(35);
+        let def = event_def("sensory_stone").unwrap();
+        open(&mut r, def);
+        assert_eq!(r.player.hp, 80);
+        r.choose_event(2).unwrap();
+        assert_eq!(r.player.hp, 80 - 10, "深潜扣 10 点血");
+        assert_eq!(r.screen, Screen::Reward, "深潜开的是奖励屏");
+        assert_eq!(r.player.deck.len(), 10, "还没选,牌组不动");
+        for group in 1..=3 {
+            assert_eq!(
+                r.reward.as_ref().unwrap().cards.len(),
+                3,
+                "第 {group} 组三张"
+            );
+            assert!(!r.reward.as_ref().unwrap().card_taken);
+            r.reward_take().unwrap();
+            let taken = r.player.deck.last().unwrap().def.id;
             assert_eq!(
                 crate::core::corpus::CARDS
                     .iter()
-                    .find(|x| x.id == c.def.id)
+                    .find(|x| x.id == taken)
                     .map(|x| x.color),
                 Some("colorless"),
-                "{} 不是无色牌",
-                c.def.id
+                "{taken} 不是无色牌"
             );
         }
+        assert_eq!(r.player.deck.len(), 10 + 3, "三张无色牌进牌组");
+        assert!(r.reward_slots().is_empty(), "三组拿完奖励屏就空了");
+        assert_eq!(r.leave_reward(), Screen::Map, "拿完回地图");
+    }
+
+    /// 无色牌既然是"卡牌奖励",唱歌碗就能把整组跳过换成 +2 上限;
+    /// 组与组之间也一样顶上来.
+    #[test]
+    fn sensory_stone_recall_skip_feeds_singing_bowl() {
+        let mut r = Run::new(35);
+        r.debug_add_relic("singing_bowl").unwrap();
+        let def = event_def("sensory_stone").unwrap();
+        open(&mut r, def);
+        let (hp, max_hp) = (r.player.hp, r.player.max_hp);
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.hp, hp - 5, "第二个深潜扣 5 点血");
+        let msg = r.reward_skip_cards();
+        assert!(msg.contains("max HP"), "{msg}");
+        assert_eq!(r.player.max_hp, max_hp + 2, "唱歌碗给 2 点上限");
+        assert!(!r.reward.as_ref().unwrap().card_taken, "第二组顶上来了");
+        assert_eq!(r.reward.as_ref().unwrap().cards.len(), 3);
+        r.reward_skip_cards();
+        assert!(r.reward_slots().is_empty(), "两组都跳过了");
+    }
+
+    /// 扣血扣死就不该再开奖励屏(原版在开屏前先看死没死)
+    #[test]
+    fn sensory_stone_death_before_the_rewards() {
+        let mut r = Run::new(35);
+        let def = event_def("sensory_stone").unwrap();
+        open(&mut r, def);
+        r.player.hp = 4;
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.hp, 0);
+        assert_eq!(r.screen, Screen::Death);
+        assert!(r.reward.is_none(), "死了就不开奖励屏");
     }
 
     #[test]
@@ -3849,18 +3888,59 @@ mod tests {
 
     #[test]
     fn the_library_reads_or_sleeps() {
+        // 原版 Read:从 20 张不重样的本职业牌里选 1 张(不是随机送一张);
+        // Sleep 按上限的 33% 回血.
         let mut r = Run::new(48);
         let def = event_def("the_library").unwrap();
         open(&mut r, def);
         let before = r.player.deck.len();
         r.choose_event(0).unwrap();
+        let offer: Vec<&'static str> = r
+            .event_offer()
+            .expect("Read 要摆出候选")
+            .iter()
+            .map(|c| c.def.id)
+            .collect();
+        assert_eq!(offer.len(), 20, "20 张候选");
+        let uniq: std::collections::HashSet<&&str> = offer.iter().collect();
+        assert_eq!(uniq.len(), 20, "候选不重样");
+        for id in &offer {
+            let def = crate::core::cards::card_def(id).expect("候选要是认识的牌");
+            assert_eq!(
+                crate::core::cards::pool_of(def),
+                "class",
+                "{id} 不是本职业牌"
+            );
+        }
+        assert_eq!(r.player.deck.len(), before, "挑之前牌组不动");
+        assert_eq!(r.event_choice_count(), 20, "20 个选择位");
+        assert!(r.event_choice_available(19), "最后一张也能选");
+        // 选第 4 个位置:进牌组的正是候选里那一张
+        let pick = offer[3];
+        r.choose_event(3).unwrap();
         assert_eq!(r.player.deck.len(), before + 1, "读一本书得一张本职业牌");
+        assert_eq!(r.player.deck.last().unwrap().def.id, pick);
+        assert!(r.event_offer().is_none(), "选完把候选收掉");
+        assert!(r.event.as_ref().unwrap().result.is_some(), "选完给结果文本");
 
         let mut r = Run::new(48);
         r.player.hp = 40;
         open(&mut r, def);
         r.choose_event(1).unwrap();
         assert_eq!(r.player.hp, 40 + 26, "睡觉按上限的 33% 回血");
+    }
+
+    /// 图书馆的 Read 摆 20 张是走 cardRng 掷的:同一颗种子每次摆出来的都一样
+    #[test]
+    fn the_library_offer_is_reproducible() {
+        let ids = |seed: u64| -> Vec<&'static str> {
+            let mut r = Run::new(seed);
+            let def = event_def("the_library").unwrap();
+            open(&mut r, def);
+            r.choose_event(0).unwrap();
+            r.event_offer().unwrap().iter().map(|c| c.def.id).collect()
+        };
+        assert_eq!(ids(48), ids(48), "同种子两次读出的候选应一致");
     }
 
     #[test]
@@ -4104,20 +4184,7 @@ mod event_audit_fix_tests {
     use crate::core::run::{Run, Screen};
 
     fn open(r: &mut Run, def: &'static EventDef) {
-        r.event = Some(crate::core::run::EventState {
-            def,
-            neow_options: Vec::new(),
-            index: 0,
-            result: None,
-            match_keep: None,
-            attempts: 0,
-            screen: None,
-            adv: None,
-            wma: None,
-            nloth: None,
-            designer: None,
-            skull: [0; 3],
-        });
+        r.event = Some(crate::core::run::EventState::new(def));
         r.screen = Screen::Event;
     }
 

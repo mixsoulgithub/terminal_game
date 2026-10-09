@@ -1,0 +1,18 @@
+# 飞升 20 的第四幕对拍脚本:spire --replay <seed> --script tools/golden/e2e/a20a4.script
+# 与 act4.script 完全同路径(三把钥匙直接到手、切到第四幕、hp 9999、deck burst、
+# smart on),只把飞升抬到 20。量的是飞升 18/19/20 对精英(盾与矛)与心脏
+# (死亡律动/无敌/A19 数值)的影响。A0 与 A20 的对齐前缀可直接对比。
+neow 1
+reward take
+card 2
+event 0
+rest rest
+shop skip
+keys all
+smart on
+acts 4
+steps 4000
+act 4
+hp 9999
+deck burst
+asc 20

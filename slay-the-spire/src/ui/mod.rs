@@ -1012,6 +1012,28 @@ mod tests {
     }
 
     #[test]
+    fn library_read_renders_the_twenty_card_grid() {
+        let mut app = App::new(48);
+        app.run.debug_open_event("the_library").expect("事件存在");
+        app.clamp();
+        // 走真实按键:Read 是第一个选项,回车就摆出 20 张候选
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let text = screen_text(&app, 107, 24);
+        assert!(
+            text.contains("The Library: choose 1 of 20"),
+            "没画出候选界面:\n{text}"
+        );
+        let first = app.run.event_offer().expect("候选要在")[0].def.name;
+        assert!(text.contains(first), "第一张候选 {first} 没画出来:\n{text}");
+        // 小终端也要能画(列表会自己截断)
+        let tiny = screen_text(&app, 80, 24);
+        assert!(tiny.contains("The Library: choose 1 of 20"), "小终端画不出来");
+    }
+
+    #[test]
     fn upgrade_picker_previews_the_upgraded_card() {
         let mut app = App::new(21);
         // 先把牌组里塞一张 Strike,再打开营火的升级界面

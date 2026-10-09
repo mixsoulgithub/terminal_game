@@ -1,0 +1,13 @@
+# 飞升 20 的第一幕对拍脚本:spire --replay <seed> --script tools/golden/e2e/a20.script
+# 与 act1.script 同路径,但把飞升等级抬到 20(A20 的开局状态:A6 掉血、A10 诅咒、
+# A11 少一个药水槽,A14 掉上限;以及第一幕的 A2/A3/A4 伤害与 A7/A8/A9 血量).
+# 不换牌组、不抬生命,所以开局那几行直接量到 A20 的起始状态差异.
+neow 1       # 第 2 个 Neow 祝福
+reward take  # 奖励全拿(金币/遗物/药水),卡牌三选一拿第 card 张
+card 2
+event 0
+rest rest    # 营火一律睡觉
+shop skip
+acts 1
+asc 20
+steps 400

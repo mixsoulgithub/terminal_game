@@ -1,0 +1,18 @@
+# 飞升 20 的第三幕对拍脚本:spire --replay <seed> --script tools/golden/e2e/a20a3.script
+# 与 act3.script 完全同路径(切到第三幕开头、hp 9999、deck ramp、smart on、
+# keys off、acts 3),只把飞升抬到 20。这样 A0 与 A20 的"对齐前缀"可以直接对比,
+# 差出来的部分就是飞升引起的。A20 的第三幕 Boss 要连打两个(双 Boss)。
+neow 1
+reward take
+card 2
+event 0
+rest rest
+shop skip
+keys off
+smart on
+acts 3
+steps 4000
+act 3
+hp 9999
+deck ramp
+asc 20

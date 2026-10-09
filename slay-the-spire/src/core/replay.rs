@@ -21,6 +21,7 @@
 //!     deck ramp     调试钩子:牌组换成 10 张强化狂暴(每打一次自己 +8,越打越重)
 //!     deck burst    调试钩子:1 张强化重刃 + 24 张强化火上浇油(力量越堆越高,量心脏的无敌)
 //!     smart off     智能打牌:开的话按 smart_play 的策略出牌(默认关,act1 序列不变)
+//!     asc 20        飞升等级(0-20,默认 0;A0 与之前逐字节一致)
 //!
 //! 环境变量 SPIRE_TRACE=1 会把智能打牌的每一次出牌(手牌/敌人血/意图/选择)打到
 //! stderr:tools/replay_ref.ts 有同一份,两边对着看就能定出分叉在第几回合.\n
@@ -44,6 +45,7 @@ use crate::core::combat::Phase;
 use crate::core::enemy::EnemyKind;
 use crate::core::map::{NodeKind, COLS, FLOORS};
 use crate::core::relics::RelicTier;
+use crate::core::roster;
 use crate::core::run::{ChestSize, RestOption, RewardSlot, Run, Screen, ShopItem};
 use crate::rng::seed_to_string;
 
@@ -81,6 +83,8 @@ pub struct Policy {
     /// (只有 3 点能量时最笨的策略也打得出 32/回合),`deck ramp` = 10 张强化狂暴
     /// (每打一次这张牌自己 +8,越打越重,第三幕那些血厚的遭遇才破得开).
     pub deck: Deck,
+    /// 飞升等级(0-20,默认 0).`asc 20` 就是 A20;0 时与既有 A0 fixture 逐字节一致.
+    pub asc: u32,
 }
 
 /// 调试钩子 `deck ...` 能换的那几套牌(默认不改牌组).
@@ -115,6 +119,7 @@ impl Default for Policy {
             keys_all: false,
             hp: None,
             deck: Deck::Keep,
+            asc: 0,
         }
     }
 }
@@ -185,6 +190,7 @@ impl Policy {
                         _ => return Err(format!("第 {} 行:rest 只能是 rest/smith", i + 1)),
                     }
                 }
+                "asc" => p.asc = crate::core::ascension::clamp(num(val)? as i64),
                 "shop" => {
                     p.shop_skip = match val {
                         "skip" => true,
@@ -892,9 +898,25 @@ fn set_burst_deck(run: &mut Run) {
     run.player.deck = deck;
 }
 
+/// 处理一次选牌屏:候选非空就确认第 0 张(picker_confirm 在 remaining > 1 时会自己
+/// 再开一次,外层循环接着选),候选为空就取消 —— 否则 picker_confirm 会报
+/// "nothing selected",把整局打断(少数 seed 卡在奖励屏就是这个原因).
+/// 返回候选数(pick 行的 candidates 字段).
+fn confirm_pick(run: &mut Run) -> Result<usize, String> {
+    let n = run.picker_candidates().len();
+    if n == 0 {
+        run.picker_cancel();
+    } else {
+        run.picker_confirm()
+            .map_err(|e| format!("选牌确认失败:{e}"))?;
+    }
+    Ok(n)
+}
+
 /// 跑一局,返回没裁过的输出行.
 fn run_raw(seed: u64, policy: &Policy) -> Result<Vec<String>, String> {
-    let mut run = Run::new(seed);
+    let ch = roster::find("ironclad").expect("ironclad 必须在语料里");
+    let mut run = Run::new_for_asc(seed, ch, policy.asc)?;
     // headless 对拍:便条事件不读也不写真实存档(参考实现没有持久化,按默认铁斩波)
     run.set_note_persist(false);
     run.open_neow();
@@ -1069,9 +1091,7 @@ fn run_raw(seed: u64, policy: &Policy) -> Result<Vec<String>, String> {
                         if run.screen != Screen::Pick {
                             break;
                         }
-                        let n = run.picker_candidates().len();
-                        run.picker_confirm()
-                            .map_err(|e| format!("选牌确认失败:{e}"))?;
+                        let n = confirm_pick(&mut run)?;
                         out.push(line(
                             step,
                             "pick",
@@ -1188,9 +1208,7 @@ fn run_raw(seed: u64, policy: &Policy) -> Result<Vec<String>, String> {
 
             // ---- 选牌(Neow 移除/商店删牌/事件选牌/营火打铁) ----
             Screen::Pick => {
-                let n = run.picker_candidates().len();
-                run.picker_confirm()
-                    .map_err(|e| format!("选牌确认失败:{e}"))?;
+                let n = confirm_pick(&mut run)?;
                 let payload = format!("\"candidates\":{n},\"pick\":0");
                 out.push(line(step, "pick", &payload, &state_json(&run)));
                 step += 1;
@@ -1235,6 +1253,34 @@ mod e2e {
     //! 修好一条差异就重新跑 `bun tools/e2e_diff.ts <seed> --pin` 更新下面这张表.
 
     use super::*;
+
+    /// 候选为空的选牌屏要"取消",不是"空手确认":旧实现直接 picker_confirm,
+    /// 会报 "nothing selected" 把整局打断(奖励屏上的升级/移除/变形选牌就踩这个).
+    #[test]
+    fn empty_picker_is_cancelled_not_confirmed() {
+        use crate::core::run::{PickPurpose, Picker};
+        let mut run = Run::new(7);
+        // 牌组全部升级后,"升级一张牌"这个用途就没有候选
+        for c in run.player.deck.iter_mut() {
+            c.upgrade();
+        }
+        assert!(!run.player.deck.iter().any(|c| c.can_upgrade()));
+        run.screen = Screen::Pick;
+        run.picker = Some(Picker {
+            purpose: PickPurpose::Upgrade,
+            back: Screen::Map,
+            index: 0,
+            cost_gold: 0,
+            shop_slot: None,
+            remaining: 1,
+            bottle_kind: None,
+            store_note: false,
+        });
+        let n = confirm_pick(&mut run).expect("空候选不该报错");
+        assert_eq!(n, 0);
+        assert!(run.picker.is_none(), "空候选应取消选牌屏");
+        assert_eq!(run.screen, Screen::Map, "取消后要回到打开选牌前的界面");
+    }
 
     struct Expected {
         seed: u64,
@@ -2009,6 +2055,130 @@ mod e2e {
                 case.diff_digest
             );
         }
+    }
+
+    // ---- 飞升(A20)三条尺子 ----
+    //
+    // 飞升 1-20 的数值/规则刚落地,但历史上只验证过 A0 逐字节不变,没跑过 A20 对拍.
+    // 这三张表把 A20 的第一幕 / 第三幕 / 第四幕各钉住一版:
+    //   a20.script   = act1.script + `asc 20`(auto_play,不换牌组/hp,量起始状态与第一幕规则)
+    //   a20a3.script = act3.script + `asc 20`(smart on,hp 9999,deck ramp,量第三幕与 A20 双 Boss)
+    //   a20a4.script = act4.script + `asc 20`(smart on,hp 9999,deck burst,量飞升 18/19/20 的
+    //                  精英盾与矛 / 心脏)
+    //
+    // A20 目前**尚未完全对齐**:第一幕的分叉来自飞升 17 的"怪更狠的招式"(敌人选招分支)与
+    // 飞升 15 的事件池(一次性事件去掉 note_for_yourself),第三幕的分叉来自飞升 17-19 的
+    // 敌人 AI/召唤时机;这些差异已逐条记在 report 的"飞升差异清单"里.表里把当前的对齐前缀、
+    // 差异步与内容指纹登记下来,修好一条就重跑 `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
+    // 第四幕(A20)目前 16 个种子逐字节全对齐(飞升 18/19/20 的盾矛与心脏数值都过了).
+    const ASC_CASES: &[Expected] = &[
+    Expected { seed: 1, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 4, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 6, lines: 16, ref_lines: 21, aligned: 6, diff_steps: &[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], diff_digest: 0x8173849c030e9ac3 },
+    Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], diff_digest: 0x5a27724ebf05d80b },
+    Expected { seed: 19, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 15, diff_steps: &[15, 16, 17, 18, 19], diff_digest: 0x3cb0141fb6da0051 },
+    Expected { seed: 25, lines: 17, ref_lines: 17, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], diff_digest: 0x3cbc6ed22de60d86 },
+    Expected { seed: 33, lines: 16, ref_lines: 17, aligned: 6, diff_steps: &[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], diff_digest: 0x81b4c45926abb921 },
+    Expected { seed: 34, lines: 31, ref_lines: 31, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], diff_digest: 0xd241524798b08d8c },
+    Expected { seed: 37, lines: 25, ref_lines: 17, aligned: 6, diff_steps: &[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], diff_digest: 0x1c43ca9e7f33e86a },
+    Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 3, diff_steps: &[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], diff_digest: 0xae571abd5ddeeac1 },
+];
+
+    const ASC3_CASES: &[Expected] = &[
+    Expected { seed: 29, lines: 44, ref_lines: 43, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42, 43], diff_digest: 0x92920991d926348f },
+    Expected { seed: 30, lines: 46, ref_lines: 44, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], diff_digest: 0x1791073173cd74e },
+    Expected { seed: 121, lines: 43, ref_lines: 42, aligned: 22, diff_steps: &[22, 23, 24, 25, 26, 27, 28, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x19660e66835a090c },
+    Expected { seed: 237, lines: 43, ref_lines: 42, aligned: 14, diff_steps: &[14, 15, 16, 19, 20, 21, 40, 41, 42], diff_digest: 0x934223abe6cb5748 },
+    Expected { seed: 284, lines: 46, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 16, 17, 18, 19, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], diff_digest: 0xd73737b9d7414313 },
+    Expected { seed: 494, lines: 42, ref_lines: 41, aligned: 34, diff_steps: &[34, 35, 36, 38, 39, 40, 41], diff_digest: 0x123be2cee9e583f4 },
+    Expected { seed: 510, lines: 45, ref_lines: 44, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44], diff_digest: 0x2423b0e20d6e0d62 },
+];
+
+    const ASC4_CASES: &[Expected] = &[
+    Expected { seed: 1, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 2, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 3, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 4, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 5, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 6, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 7, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 8, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 9, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 10, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 11, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 13, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 14, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 15, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 16, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+];
+
+    /// A20 三条尺子共用:按 <script> 解析策略(必须 asc 20),逐种子对 fixture.
+    fn check_asc_table(script: &str, stem: &str, cases: &[Expected], label: &str) {
+        let text = std::fs::read_to_string(fixture_dir().join(script))
+            .unwrap_or_else(|_| panic!("tools/golden/e2e/{script} 应该在"));
+        let policy = Policy::parse(&text).expect("路径脚本要能解析");
+        assert_eq!(policy.asc, 20, "{script} 要把飞升抬到 20");
+        for case in cases {
+            let ours = run_jsonl(case.seed, &policy)
+                .unwrap_or_else(|e| panic!("seed {}: 跑不完{label}: {e}", case.seed));
+            let a: Vec<String> = ours.lines().map(|l| l.to_lowercase()).collect();
+            let b: Vec<String> = fixture_text_named(case.seed, stem)
+                .lines()
+                .map(|l| l.to_lowercase())
+                .collect();
+            assert_eq!(a.len(), case.lines, "seed {}: 本作步数与登记的不同", case.seed);
+            assert_eq!(b.len(), case.ref_lines, "seed {}: 参考 fixture 步数变了", case.seed);
+            let mut diff_steps: Vec<usize> = Vec::new();
+            for i in 0..a.len().max(b.len()) {
+                let o = a.get(i).map(String::as_str).unwrap_or("null");
+                let r = b.get(i).map(String::as_str).unwrap_or("null");
+                if o != r {
+                    diff_steps.push(i);
+                }
+            }
+            let aligned = diff_steps.first().copied().unwrap_or(a.len().max(b.len()));
+            assert_eq!(aligned, case.aligned, "seed {}: {label} 对齐前缀变了", case.seed);
+            assert_eq!(
+                diff_steps.as_slice(),
+                case.diff_steps,
+                "seed {}: {label} 差异步集合变了",
+                case.seed
+            );
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for &i in &diff_steps {
+                let line = format!(
+                    "{i}\t{}\t{}\n",
+                    a.get(i).map(String::as_str).unwrap_or("null"),
+                    b.get(i).map(String::as_str).unwrap_or("null")
+                );
+                h = fnv1a(line.as_bytes(), h);
+            }
+            assert_eq!(
+                h, case.diff_digest,
+                "seed {}: {label} 差异步的内容变了(指纹 {h:#x}, 登记 {:#x})",
+                case.seed, case.diff_digest
+            );
+        }
+    }
+
+    /// 飞升 20 第一幕:起始状态(A6 掉血/A10 诅咒/A11 药水槽/A14 上限)与第一幕规则.
+    #[test]
+    fn asc20_act1_matches_reference() {
+        check_asc_table("a20.script", "a20", ASC_CASES, "A20 第一幕");
+    }
+
+    /// 飞升 20 第三幕:第三幕规则与 A20 的双 Boss(第一个 Boss 倒下后不结算,直接开第二个).
+    #[test]
+    fn asc20_act3_matches_reference() {
+        check_asc_table("a20a3.script", "a20a3", ASC3_CASES, "A20 第三幕");
+    }
+
+    /// 飞升 20 第四幕:飞升 18(盾与矛)/19(心脏数值)在 A20 下的表现.
+    #[test]
+    fn asc20_act4_matches_reference() {
+        check_asc_table("a20a4.script", "a20a4", ASC4_CASES, "A20 第四幕");
     }
 
     /// 第四幕这条尺子要真的量到"钥匙门后"的全貌:定死的四层、

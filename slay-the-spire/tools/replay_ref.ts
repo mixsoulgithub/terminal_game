@@ -46,6 +46,8 @@ type Policy = {
   hp: number | null;
   /** 调试钩子:把牌组整个换掉(deck keep/strong/ramp/burst);"keep" = 不改 */
   deck: "keep" | "strong" | "ramp" | "burst";
+  /** 飞升等级(0-20,默认 0).`asc 20` 就是 A20 */
+  ascension: number;
 };
 
 function defaultPolicy(): Policy {
@@ -65,6 +67,7 @@ function defaultPolicy(): Policy {
     keysAll: false,
     hp: null,
     deck: "keep",
+    ascension: 0,
   };
 }
 
@@ -83,6 +86,7 @@ function parsePolicy(text: string): Policy {
       case "act": p.act = Math.max(1, Number(val)); break;
       case "floor": p.floor = Number(val); break;
       case "hp": p.hp = Number(val); break;
+      case "asc": p.ascension = Math.max(0, Math.min(20, Number(val))); break;
       case "deck":
         if (val !== "keep" && val !== "strong" && val !== "ramp" && val !== "burst")
           throw new Error(`deck 只能是 strong/ramp/burst/keep,给的是 ${val}`);
@@ -899,7 +903,7 @@ function fixStreams(state: GameState, plan: LineupPlan): void {
 }
 
 export function replayRefl(seedStr: string, policy: Policy): string {
-  let s: GameState = createRun({ seed: seedStr, bundle, character: "IRONCLAD" });
+  let s: GameState = createRun({ seed: seedStr, bundle, character: "IRONCLAD", ascension: policy.ascension });
   // 调试钩子:先给钥匙(会影响切幕时地图标不标燃烧精英),再切幕(与 Rust 侧同序)
   if (policy.keysAll) s.run.keys = { emerald: true, ruby: true, sapphire: true };
   if (policy.hp !== null) {

@@ -479,6 +479,26 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
     let Some(st) = &app.run.event else {
         return;
     };
+    // the_library 的 Read:20 张候选摆成一张能滚的牌表,右半边是选中那张的说明
+    if let Some(offer) = app.run.event_offer() {
+        let rows: Vec<crate::ui::CardRow> = offer
+            .iter()
+            .map(|card| crate::ui::CardRow::Card {
+                card: card.clone(),
+                selectable: true,
+            })
+            .collect();
+        crate::ui::card_window(
+            buf,
+            area,
+            "The Library: choose 1 of 20",
+            &rows,
+            st.index,
+            None,
+            crate::ui::run_energy_color(&app.run),
+        );
+        return;
+    }
     draw_box(
         buf,
         area,

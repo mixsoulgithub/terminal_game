@@ -44,6 +44,8 @@ const CARD_UNCOMMON_CHANCE_ELITE: i32 = 40;
 const CARD_UNCOMMON_CHANCE_NON_ELITE: i32 = 37;
 /// 卡牌奖励固定三选一
 const CARD_REWARD_COUNT: usize = 3;
+/// the_library 的 Read:候选张数(原版 20 张选一张,不重样)
+const LIBRARY_CARD_COUNT: usize = 20;
 /// 药水掉落的基础概率与保底步长
 const POTION_DROP_BASE_CHANCE: i32 = 40;
 const POTION_PITY_STEP: i32 = 10;
@@ -498,6 +500,8 @@ pub struct EventState {
     pub result: Option<String>,
     /// 翻牌小游戏(match_and_keep)的棋盘;其它事件是 None
     pub match_keep: Option<MatchKeep>,
+    /// the_library 的 Read:掷好的 20 张候选;选走一张之前一直摆在这里,其余事件是 None
+    pub library: Option<LibraryOffer>,
     /// 可反复尝试的事件(废料泥怪)已经试过几次;别的用不上
     pub attempts: u32,
     /// 事件当前在哪一屏(参考实现 room.screen):golden_idol 靠它切换陷阱屏的选项
@@ -512,6 +516,35 @@ pub struct EventState {
     pub designer: Option<DesignerData>,
     /// 会说话的骷髅:三个购买项各自已经买过几次(涨价步数)
     pub skull: [u32; 3],
+}
+
+/// the_library 的 Read 摆出来的 20 张候选(参考实现 requestOptionChoice 的 extra.cards):
+/// 挑走一张时把 note 当结果文本显示
+#[derive(Clone, Debug)]
+pub struct LibraryOffer {
+    pub cards: Vec<CardInstance>,
+    pub note: &'static str,
+}
+
+impl EventState {
+    /// 事件屏的最小状态:Neow 的选项、翻牌棋盘、各事件的进房数据由调用方另填
+    pub fn new(def: &'static EventDef) -> EventState {
+        EventState {
+            def,
+            neow_options: Vec::new(),
+            index: 0,
+            result: None,
+            match_keep: None,
+            library: None,
+            attempts: 0,
+            screen: None,
+            adv: None,
+            wma: None,
+            nloth: None,
+            designer: None,
+            skull: [0; 3],
+        }
+    }
 }
 
 /// dead_adventurer 的事件状态(参考实现 room.data):
@@ -1407,20 +1440,9 @@ impl Run {
 
     /// 开局第一件事:Neow 的祝福(四个掷出来的选项,选一个)
     pub fn open_neow(&mut self) {
-        self.event = Some(EventState {
-            def: crate::core::events::neow(),
-            neow_options: self.neow_options.clone(),
-            index: 0,
-            result: None,
-            match_keep: None,
-            attempts: 0,
-            screen: None,
-            adv: None,
-            wma: None,
-            nloth: None,
-            designer: None,
-            skull: [0; 3],
-        });
+        let mut st = EventState::new(crate::core::events::neow());
+        st.neow_options = self.neow_options.clone();
+        self.event = Some(st);
         self.screen = Screen::Event;
     }
 
@@ -1929,20 +1951,7 @@ impl Run {
         }
         if let Some(def) = back {
             self.say(format!("victory over the {}", c.encounter_id));
-            self.event = Some(EventState {
-                def,
-                neow_options: Vec::new(),
-                index: 0,
-                result: None,
-                match_keep: None,
-                attempts: 0,
-                screen: None,
-                adv: None,
-                wma: None,
-                nloth: None,
-                designer: None,
-                skull: [0; 3],
-            });
+            self.event = Some(EventState::new(def));
             self.screen = Screen::Event;
             return;
         }
@@ -3095,20 +3104,13 @@ impl Run {
         } else {
             None
         };
-        self.event = Some(EventState {
-            def,
-            neow_options: Vec::new(),
-            index: 0,
-            result: None,
-            match_keep,
-            attempts: 0,
-            screen: None,
-            adv,
-            wma,
-            nloth,
-            designer,
-            skull: [0; 3],
-        });
+        let mut st = EventState::new(def);
+        st.match_keep = match_keep;
+        st.adv = adv;
+        st.wma = wma;
+        st.nloth = nloth;
+        st.designer = designer;
+        self.event = Some(st);
         self.screen = Screen::Event;
     }
 
@@ -3197,6 +3199,10 @@ impl Run {
         };
         if let Some(mk) = &st.match_keep {
             return st.result.is_none() && mk.available(i);
+        }
+        if let Some(offer) = &st.library {
+            // 20 张候选都能选(原版必须选一张才能离开这张网格界面)
+            return st.result.is_none() && i < offer.cards.len();
         }
         let Some(c) = st.def.choices.get(i) else {
             return false;
@@ -3298,10 +3304,13 @@ impl Run {
     /// 事件当前有几个选项:翻牌事件按棋盘的 12 格算
     pub fn event_choice_count(&self) -> usize {
         match &self.event {
-            Some(st) => match &st.match_keep {
-                Some(mk) => mk.board.len(),
-                None if !st.neow_options.is_empty() => st.neow_options.len(),
-                None => st.def.choices.len(),
+            Some(st) => match &st.library {
+                Some(offer) => offer.cards.len(),
+                None => match &st.match_keep {
+                    Some(mk) => mk.board.len(),
+                    None if !st.neow_options.is_empty() => st.neow_options.len(),
+                    None => st.def.choices.len(),
+                },
             },
             None => 0,
         }
@@ -3311,6 +3320,9 @@ impl Run {
     /// Neow 的标签是祝福名(带代价)
     pub fn event_choice_row(&self, i: usize) -> Option<(String, i32, i32)> {
         let st = self.event.as_ref()?;
+        if let Some(offer) = &st.library {
+            return Some((offer.cards.get(i)?.label(), 0, 0));
+        }
         if let Some(mk) = &st.match_keep {
             return Some((mk.label(i), 0, 0));
         }
@@ -3400,6 +3412,10 @@ impl Run {
         if st.match_keep.is_some() {
             return self.flip_event_card(i);
         }
+        // the_library 的 Read:候选已经摆出来时,选中的那张进牌组,事件收尾
+        if st.library.is_some() {
+            return self.take_library_card(i);
+        }
         // Neow 的选项不走 outcome:先结算代价,再结算祝福
         if let Some(opt) = st.neow_options.get(i).copied() {
             let text = self.apply_neow(opt.bonus, opt.drawback)?;
@@ -3419,6 +3435,10 @@ impl Run {
         }
         // 飞升 15+ 的选项覆盖(代价/效果)
         let choice = choice.effective(self.ascension);
+        // the_library 的 Read:先掷好 20 张候选摆在这一屏上,等玩家挑一张
+        if choice.outcome.library_read {
+            return self.open_library_read(choice.outcome.text);
+        }
         // 废料泥怪:"把手伸进去"可反复尝试,自己掷点决定去留,不走"结算完写 result"的流程
         if choice.outcome.ooze {
             return self.ooze_attempt();
@@ -3622,6 +3642,69 @@ impl Run {
         self.event.as_ref()?.match_keep.as_ref()?.note.as_deref()
     }
 
+    /// 事件屏上摆着的候选牌(the_library 的 Read 那 20 张);其它事件是 None
+    pub fn event_offer(&self) -> Option<&[CardInstance]> {
+        Some(self.event.as_ref()?.library.as_ref()?.cards.as_slice())
+    }
+
+    /// the_library 的 Read:按原版"20 张选一张"掷候选(参考实现 requestOptionChoice).
+    /// 每张先按事件档掷稀有度(cardRng;恩洛斯的礼物照样把稀有概率翻三倍),
+    /// 再从该稀有度的本职业池里抽一张,重样的重掷;候选的展示顺序是生成顺序倒过来
+    /// (参考实现同款).note 是挑走时显示的结果文本.
+    fn open_library_read(&mut self, note: &'static str) -> Result<(), String> {
+        let mut rolled: Vec<&'static CardDef> = Vec::new();
+        for _ in 0..LIBRARY_CARD_COUNT {
+            let rarity = self.roll_card_rarity(EnemyKind::Normal);
+            let pool = cards::reward_pool(rarity);
+            if pool.is_empty() {
+                continue;
+            }
+            let mut def = *self.streams.run(RunStream::CardRng).pick(&pool);
+            let mut guard = 0;
+            while rolled.iter().any(|c| c.id == def.id) {
+                guard += 1;
+                if guard >= 1000 {
+                    break;
+                }
+                def = *self.streams.run(RunStream::CardRng).pick(&pool);
+            }
+            rolled.push(def);
+        }
+        rolled.reverse();
+        let offer = LibraryOffer {
+            cards: rolled.into_iter().map(CardInstance::new).collect(),
+            note,
+        };
+        let Some(st) = self.event.as_mut() else {
+            return Err("no event here".to_string());
+        };
+        st.index = 0;
+        st.library = Some(offer);
+        Ok(())
+    }
+
+    /// the_library:把候选里的第 i 张收进牌组(蛋遗物照常升级),事件收尾
+    fn take_library_card(&mut self, i: usize) -> Result<(), String> {
+        let (card, note) = {
+            let Some(offer) = self.event.as_ref().and_then(|st| st.library.as_ref()) else {
+                return Err("no books here".to_string());
+            };
+            let card = offer
+                .cards
+                .get(i)
+                .cloned()
+                .ok_or_else(|| "no such card".to_string())?;
+            (card, offer.note)
+        };
+        let label = card.label();
+        self.push_card_to_deck(card);
+        if let Some(st) = self.event.as_mut() {
+            st.library = None;
+            st.result = Some(format!("{note} ({label})"));
+        }
+        Ok(())
+    }
+
     /// 事件结果结算;返回给玩家看的文本.
     /// 百分比一律按"结算前的生命上限"算(先加上限再扣血的那几个事件也照原作来).
     fn apply_outcome(&mut self, o: &Outcome) -> &'static str {
@@ -3779,17 +3862,27 @@ impl Run {
                 }
             }
         }
-        for _ in 0..o.add_random_class_any {
-            if let Some(def) = self.random_class_card(None) {
-                self.push_card_to_deck(CardInstance::new(def));
-            }
-        }
         if let Some((rarity, n)) = o.add_random_colorless {
             for _ in 0..n {
                 if let Some(def) = self.random_colorless_card(rarity) {
                     self.push_card_to_deck(CardInstance::new(def));
                 }
             }
+        }
+        // sensory_stone 的 Recall:无色牌其实是卡牌奖励(参考实现 extraCardGroups),
+        // 每组三张里选一张,选完(或跳过)顶下一组.扣血致死不推开奖励屏.
+        if o.colorless_card_rewards > 0 && self.screen != Screen::Death {
+            let mut r = RewardState::empty(Screen::Map);
+            for i in 0..o.colorless_card_rewards {
+                let group = self.create_colorless_card_reward();
+                if i == 0 {
+                    r.cards = group;
+                    r.card_taken = false;
+                } else {
+                    r.queued.push(group);
+                }
+            }
+            self.open_event_reward(r);
         }
         if o.upgrade_all || o.upgrade_starters {
             let starters = o.upgrade_starters;
@@ -6033,6 +6126,60 @@ impl Run {
         out
     }
 
+    /// sensory_stone 的无色牌奖励:一组三张(受问号卡/残缺王冠那类奖励件数加成),
+    /// 稀有度按事件档掷(参考实现 createColorlessCardReward),无色池里没有普通牌,
+    /// 掷到普通就抬成非普通;抽到稀有把保底压回初值,普通保底 -1;非稀有按幕数掷升级.
+    fn create_colorless_card_reward(&mut self) -> Vec<CardInstance> {
+        let mut out: Vec<CardInstance> = Vec::new();
+        let bonus = self.player.relic_fx_sum(|r| r.fx.card_reward_bonus);
+        let count = (CARD_REWARD_COUNT as i32 + bonus).max(0) as usize;
+        for _ in 0..count {
+            let mut rarity = self.roll_card_rarity(EnemyKind::Normal);
+            match rarity {
+                Rarity::Rare => self.card_rarity_factor = CARD_RARITY_PITY_START,
+                Rarity::Common => {
+                    self.card_rarity_factor =
+                        (self.card_rarity_factor - 1).max(CARD_RARITY_PITY_FLOOR)
+                }
+                _ => {}
+            }
+            if rarity == Rarity::Common {
+                rarity = Rarity::Uncommon;
+            }
+            let pool: Vec<&'static CardDef> = cards::colorless_pool()
+                .into_iter()
+                .filter(|c| c.rarity == rarity)
+                .collect();
+            if pool.is_empty() {
+                break;
+            }
+            let mut def = *self.streams.run(RunStream::CardRng).pick(&pool);
+            let mut guard = 0;
+            loop {
+                if !out.iter().any(|c| c.def.id == def.id) {
+                    break;
+                }
+                def = *self.streams.run(RunStream::CardRng).pick(&pool);
+                guard += 1;
+                if guard >= 1000 {
+                    break;
+                }
+            }
+            out.push(CardInstance::new(def));
+            let chance = reward_upgrade_chance(self.act, self.ascension);
+            if rarity != Rarity::Rare && chance > 0.0 {
+                let roll = self
+                    .streams
+                    .run(RunStream::CardRng)
+                    .random_bool_chance(chance);
+                if roll {
+                    out.last_mut().expect("刚推入一张").upgrade();
+                }
+            }
+        }
+        out
+    }
+
     /// 抽稀有度:Boss 直接稀有,其余 d100 + 保底值比 3/37(精英 10/40)
     fn roll_card_rarity(&mut self, kind: EnemyKind) -> Rarity {
         if kind == EnemyKind::Boss {
@@ -7414,6 +7561,24 @@ mod tests {
             assert!(r.quaff_potion(1, None).is_ok());
             assert!(r.player.potions[1].is_none());
         }
+    }
+
+    #[test]
+    fn targeting_potion_through_run_flips_the_facing() {
+        // 整局入口 run.quaff_potion 走的也是 Combat::use_potion 那条:朝向要跟着改,
+        // 于是夹击的 1.5 倍落到另一只身上(原版 Surrounded:牌或药水都能改朝向).
+        let mut r = run(44);
+        let enc = crate::core::enemies::encounter_def("shield_and_spear").unwrap();
+        r.debug_start_combat(enc);
+        let fear = potions::POTIONS
+            .iter()
+            .find(|p| p.id == "fear_potion")
+            .expect("恐惧药剂应该在池子里");
+        r.player.potions[0] = Some(fear);
+        assert_eq!(r.combat().unwrap().facing, 1, "开局朝向右边的长矛(slot 1)");
+        assert!(r.quaff_potion(0, Some(0)).is_ok());
+        assert_eq!(r.combat().unwrap().facing, 0, "药水命中谁就朝向谁");
+        assert!(r.player.potions[0].is_none(), "喝完该腾出格子");
     }
 
     #[test]

@@ -4774,6 +4774,14 @@ impl Combat {
         } else {
             def.fx
         };
+        // 原版 Surrounded(wiki:"Use targeting cards or potions to change your
+        // orientation"):指向敌人的药水命中的那只就是新朝向,夹击的 1.5 倍随之换边
+        // (判定见 enemy_attack_damage).不指向敌人的药水不动朝向.
+        if def.target.needs_enemy() {
+            if let Some(t) = self.potion_target(target) {
+                self.facing = t;
+            }
+        }
         match fx {
             PotionFx::Damage { amount } => {
                 if let Some(t) = self.potion_target(target) {
@@ -6789,6 +6797,34 @@ mod monster_tests {
         // 朝着的那只倒下也算(语料:朝向保持"最后指向的那只",不因它倒下而换边)
         c.damage_enemy(0, 9999);
         assert_eq!(c.enemy_attack_damage(1, 12), 18, "盾倒下后矛依旧算背后");
+    }
+
+    #[test]
+    fn targeting_potions_flip_the_facing_like_targeting_cards() {
+        // 原版 Surrounded(wiki:"Use targeting cards or potions to change your
+        // orientation"):指向敌人的药水命中的那只就是新朝向,夹击的 1.5 倍随之换边.
+        let mut c = lock("shield_and_spear");
+        assert_eq!(c.facing, 1, "开局朝向右边的长矛(slot 1)");
+        assert_eq!(c.enemy_attack_damage(0, 12), 18, "背后的盾 12 * 1.5");
+        assert_eq!(c.enemy_attack_damage(1, 12), 12, "正面的矛不打折也不加成");
+        // 恐惧药水指向盾(0):朝向翻到盾,改由矛吃 1.5
+        let fear = crate::core::potions::by_id("fear_potion").expect("恐惧药剂");
+        c.use_potion(fear, Some(0));
+        assert_eq!(c.facing, 0, "药水指向谁就朝向谁");
+        assert_eq!(c.enemy_attack_damage(0, 12), 12, "正面的盾不再加成");
+        assert_eq!(c.enemy_attack_damage(1, 12), 18, "背后的矛改成 1.5");
+        // 火焰药水指回矛(1):朝向再翻回去
+        let fire = crate::core::potions::by_id("fire_potion").expect("火焰药剂");
+        c.use_potion(fire, Some(1));
+        assert_eq!(c.facing, 1, "再指回矛");
+        assert_eq!(c.enemy_attack_damage(0, 12), 18, "盾又回到背后");
+        assert_eq!(c.enemy_attack_damage(1, 12), 12, "矛又回到正面");
+        // 不指向敌人的药水(格挡)不动朝向
+        let block = crate::core::potions::by_id("block_potion").expect("格挡药剂");
+        c.use_potion(block, None);
+        assert_eq!(c.facing, 1, "自身药水不改朝向");
+        assert_eq!(c.enemy_attack_damage(0, 12), 18, "盾照旧在背后");
+        assert_eq!(c.enemy_attack_damage(1, 12), 12, "矛照旧在正面");
     }
 
     #[test]
