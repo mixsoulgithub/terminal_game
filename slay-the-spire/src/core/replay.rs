@@ -1640,7 +1640,7 @@ mod e2e {
     /// 是堵墙,过了它的目前没有).本作按原版重掷了开战随机阵容之后,战斗走向与参考
     /// 分叉,其中 4 个种子活不到第二幕,其余依次列出各自的差异步.
     const ACTS_CASES: &[Expected] = &[
-    Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 16, diff_steps: &[16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 47, 48, 49, 50, 51], diff_digest: 0xf562bcc245cdb2fb },
+    Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xc785cdc1b1cf221 },
     Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xf28cd9b0aa241e08 },
     Expected { seed: 2474, lines: 50, ref_lines: 50, aligned: 42, diff_steps: &[42, 43], diff_digest: 0x68589ce8642de114 },
     Expected { seed: 3605, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1652,7 +1652,7 @@ mod e2e {
     Expected { seed: 12835, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 20703, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 21075, lines: 49, ref_lines: 49, aligned: 49, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 22882, lines: 55, ref_lines: 55, aligned: 41, diff_steps: &[41, 42], diff_digest: 0xb4a213315615d604 },
+    Expected { seed: 22882, lines: 55, ref_lines: 55, aligned: 41, diff_steps: &[41, 42], diff_digest: 0x19960778821c2228 },
     Expected { seed: 23808, lines: 55, ref_lines: 55, aligned: 34, diff_steps: &[34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xb819deb2cb8b5d08 },
     Expected { seed: 24873, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25365, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2069,10 +2069,14 @@ mod e2e {
     // A20 第一幕现已逐字节全对齐(11/11):修掉了飞升 17 的敌人选招分支(史莱姆/虱子/
     // 奴隶主/小鬼巫师)、飞升 15 的一次性事件池(去掉 note_for_yourself)、飞升 2+ 的虱子
     // 咬伤区间,以及"自己回合内死掉的怪也要照常掷下一招"(参考实现里自爆的死亡是排队生效的).
-    // 第三幕还有分叉:主要是飞升 18/19 的敌人 AI 与机制(巨大头颅提前一回合"时候到了"、
-    // 蛇形祭司召唤两只匕首已修),以及守护者第二次形态切换的额度没有累计 +10(40→50);
-    // 这些差异已逐条记在 report 的"飞升差异清单"里.表里把当前的对齐前缀、差异步与内容
-    // 指纹登记下来,修好一条就重跑 `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
+    // 第三幕还有分叉(42 → 31 处):seed 30 已全对齐(尖刺外壳在击杀那一击也照常反伤,
+    // 依据反编译源码:BattleContext 里 SHARP_HIDE 的伤害排在牌之后,而胜利清空动作队列
+    // 只清 clearOnCombatVictory=true 的动作,DamagePlayer 恰好是 false).剩下三颗:
+    //   seed 237(3 处)顿努与德卡的"团队护盾"在 A20 下的格挡记账;
+    //   seed 284(14 处)爬虫法师+匕首一战的 1 点伤害差;
+    //   seed 510(14 处)暗灵复活后的选招掷点;
+    // 表里把当前的对齐前缀、差异步与内容指纹登记下来,修好一条就重跑
+    // `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
     // 第四幕(A20)16 个种子逐字节全对齐(飞升 18/19/20 的盾矛与心脏数值都过了).
     const ASC_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2090,7 +2094,7 @@ mod e2e {
 
     const ASC3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], diff_digest: 0x103678f2ffe19c2f },
+    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 40, diff_steps: &[40, 41, 42], diff_digest: 0xaa19366d72d4fbbb },
     Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0x6c96de07441f5089 },

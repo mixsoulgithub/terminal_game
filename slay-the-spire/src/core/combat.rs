@@ -416,6 +416,11 @@ pub struct Combat {
     choice_tail_target: Option<usize>,
     /// 那一截效果接着用的结算统计(已打出的伤害/消耗数)
     choice_tail_ctx: PlayCtx,
+    /// 打这张牌之前,身上有尖刺外壳的敌人快照:(敌人下标, 层数).
+    /// 原版把这道反伤排在这张牌的效果之后结算,而战斗胜利清空动作队列时
+    /// 只清 clearOnCombatVictory=true 的那些,反伤不在其中 —— 所以这一击
+    /// 把守护者打死,反伤照样结算.出牌前先快照,结算后再看现在是否还活着就错了.
+    sharp_hide: Vec<(usize, i32)>,
 }
 
 /// 单次打牌过程中的临时统计
@@ -600,6 +605,7 @@ impl Combat {
             choice_tail: Vec::new(),
             choice_tail_target: None,
             choice_tail_ctx: PlayCtx::default(),
+            sharp_hide: Vec::new(),
         };
         // 跨战斗的遗物计数器由一局流程注入(参考实现里这些数挂在 Run 的遗物上,
         // 开局第一回合就会 +1,所以必须在 start_turn 之前放进去)
@@ -1111,6 +1117,7 @@ impl Combat {
         self.havoc_depth = self.havoc_depth.saturating_add(1);
         self.havoc_chain.push((self.havoc_depth, label));
         let target = self.pick_random_alive();
+        self.snapshot_sharp_hide();
         let mut top_ctx = PlayCtx::default();
         self.resolve(&mut card, target, &mut top_ctx);
         self.havoc_depth = self.havoc_depth.saturating_sub(1);
@@ -1240,15 +1247,20 @@ impl Combat {
                 self.settle_deaths();
             }
         }
-        // 木乃伊之手:打出能力牌就让手里一张随机牌本回合 0 费
-        if kind == CardType::Power && self.relic_any(|fx| fx.zero_hand_card_on_power) && !self.hand.is_empty() {
-            let idx = self
-                .streams
-                .floor(FloorStream::CardRandomRng)
-                .random(self.hand.len() as u32 - 1) as usize;
-            self.hand[idx].free_this_turn = true;
-            let label = self.hand[idx].label();
-            self.push_log(LogKind::Player, format!("Mummified Hand: {label} costs 0"));
+        // 木乃伊之手:打出能力牌就让手里一张随机牌本回合 0 费.
+        // 候选只有"当前还真的要花费用"的牌(原版:cost>0 且本回合费用>0 且不是免费打出),
+        // 已经 0 费/本回合已免费的牌不参选 —— 参选集合不同,掷点结果与后面整条链都会偏.
+        if kind == CardType::Power && self.relic_any(|fx| fx.zero_hand_card_on_power) {
+            let candidates: Vec<usize> = (0..self.hand.len())
+                .filter(|&i| self.hand[i].fixed_cost().unwrap_or(0) > 0)
+                .collect();
+            if !candidates.is_empty() {
+                let idx = candidates
+                    [self.streams.floor(FloorStream::CardRandomRng).random(candidates.len() as u32 - 1) as usize];
+                self.hand[idx].free_this_turn = true;
+                let label = self.hand[idx].label();
+                self.push_log(LogKind::Player, format!("Mummified Hand: {label} costs 0"));
+            }
         }
         // 橙皮:三种类型都打出过就清掉自己的减益
         if self.relic_any(|fx| fx.clear_debuffs_on_all_types) && self.rs.types_played == 7 {
@@ -1262,17 +1274,36 @@ impl Combat {
         }
     }
 
+    /// 出牌前快照:此刻站着的、身上有尖刺外壳的敌人(层数).结算时用这份快照,
+    /// 这样"被这张牌打死的守护者"也会照常反伤(见 sharp_hide 字段的注释).
+    fn snapshot_sharp_hide(&mut self) {
+        self.sharp_hide = self
+            .enemies
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.alive())
+            .map(|(i, e)| (i, e.statuses.get(Status::SharpHide)))
+            .filter(|(_, n)| *n > 0)
+            .collect();
+    }
+
     /// 敌人身上"玩家每打出一张牌"就触发的机制
     fn on_enemy_card_hooks(&mut self, kind: crate::core::card::CardType) {
         use crate::core::card::CardType;
-        for i in 0..self.enemies.len() {
-            if !self.enemies[i].alive() {
-                continue;
-            }
-            let name = self.enemies[i].name.clone();
-            // 尖刺外壳:打攻击牌就挨刺
-            let hide = self.enemies[i].statuses.get(Status::SharpHide);
-            if hide > 0 && kind == CardType::Attack {
+        // 尖刺外壳:打攻击牌就挨刺.伤害排在牌的效果之后,但不看目标此刻是否还活着 ——
+        // 原版这道反伤不落在"胜利时要清掉的动作"里(clearOnCombatVictory=false),
+        // 所以把守护者打死的这一击照吃.层数取出牌前的快照(见 sharp_hide 字段).
+        if kind == CardType::Attack {
+            let hides: Vec<(usize, i32)> = std::mem::take(&mut self.sharp_hide);
+            for (i, hide) in hides {
+                if hide <= 0 {
+                    continue;
+                }
+                let name = self
+                    .enemies
+                    .get(i)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
                 let (taken, _) = self.hit_player(hide);
                 self.push_log(
                     LogKind::Enemy,
@@ -1282,6 +1313,12 @@ impl Combat {
                     return;
                 }
             }
+        }
+        for i in 0..self.enemies.len() {
+            if !self.enemies[i].alive() {
+                continue;
+            }
+            let name = self.enemies[i].name.clone();
             // 慢速:每打一张牌就让巨大头颅多挨一成
             if self.enemies[i].statuses.holds(Status::Slow) {
                 let slow = self.enemies[i].statuses.get(Status::Slow);
@@ -3883,8 +3920,6 @@ impl Combat {
     pub fn play_card(&mut self, hand_idx: usize, target: Option<usize>) -> Result<(), &'static str> {
         self.playable(hand_idx)?;
         let mut card = self.hand.remove(hand_idx);
-        // 0 费只对这一回合的那一次打出有效,出手后立刻失效
-        card.free_this_turn = false;
         let corrupted_skill = card.kind() == crate::core::card::CardType::Skill
             && self.player.statuses.has(Status::Corruption);
         let relic_play = self.relic_playable(&card);
@@ -3893,6 +3928,9 @@ impl Combat {
         } else {
             card.cost_value(self.energy)
         };
+        // 0 费只对这一回合的那一次打出有效,出手后立刻失效.这一步必须排在"算完费用"之后 ——
+        // 费用是按 free_this_turn 归零的(见 fixed_cost),先清掉就等于这项优惠从来没生效过.
+        card.free_this_turn = false;
         self.energy -= cost.min(self.energy);
         let is_x = card.cost() == Cost::X;
         // 化学 X:X 费牌的 X 额外加 2(参考实现:效果按 X+2 结算,能量照常全花)
@@ -3927,6 +3965,7 @@ impl Combat {
         }
         self.push_log(LogKind::Player, format!("you play {label}"));
         let blocked_before = self.player.block;
+        self.snapshot_sharp_hide();
         self.resolve(&mut card, chosen, &mut ctx);
         // 双发:这一击再打一次
         if card.kind() == crate::core::card::CardType::Attack {
@@ -7061,6 +7100,53 @@ mod monster_tests {
         c.enemies[0].next_move = twin;
         c.end_turn();
         assert!(!c.enemies[0].statuses.has(Status::SharpHide));
+    }
+
+    #[test]
+    fn sharp_hide_still_bites_when_the_attack_kills_the_guardian() {
+        // 原版把尖刺的伤害排在这张牌之后结算,而战斗胜利清空动作队列时只清
+        // clearOnCombatVictory=true 的动作,所以击杀的那一击照样挨刺.
+        let mut c = lock("the_guardian");
+        c.damage_enemy(0, 30);
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::SharpHide), 3);
+        c.enemies[0].hp = 1;
+        c.energy = 3;
+        let hp = c.player.hp;
+        let strike = c.hand.iter().position(|x| x.def.id == "strike").unwrap();
+        c.play_card(strike, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 0, "这一击把它打死");
+        assert!(
+            c.player.hp < hp,
+            "击杀的那一击也要吃尖刺外壳(反伤排在牌之后,不因目标已死而取消)"
+        );
+    }
+
+    #[test]
+    fn a_card_that_costs_zero_this_turn_is_actually_free() {
+        // free_this_turn 要在"算费用"时还生效(木乃伊之手/发现类药水/液态记忆都靠它).
+        let mut c = lock("looter_solo");
+        c.hand[0] = card("bash"); // 2 费
+        c.hand[0].free_this_turn = true;
+        c.energy = 1;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.energy, 1, "本回合 0 费的牌不该花能量");
+    }
+
+    #[test]
+    fn mummified_hand_skips_cards_that_already_cost_nothing() {
+        // 候选只认"当前还要花费用"的牌;手里只剩 0 费牌时不该乱点一张.
+        let mut c = lock("looter_solo");
+        c.relics
+            .push(crate::core::relics::relic_def_or_panic("mummified_hand"));
+        c.hand = vec![card("flex"), card("inflame")]; // flex 0 费,inflame 是能力牌
+        c.energy = 3;
+        c.play_card(1, None).unwrap();
+        assert_eq!(c.hand.len(), 1);
+        assert!(
+            !c.hand[0].free_this_turn,
+            "候选为空时不该把已有的 0 费牌再标一次"
+        );
     }
 
     #[test]
