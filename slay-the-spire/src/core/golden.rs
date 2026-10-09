@@ -50,7 +50,7 @@ fn seed_string_matches_reference() {
 fn act1_map_layout_matches_reference() {
     // 第一章地图的流是 seed + 1
     let mut rng = Rng::new(SEED + 1);
-    let map = ActMap::generate(&mut rng);
+    let map = ActMap::generate(&mut rng, true);
     let ours = map.to_rows_string();
     let want = MAP;
     for (i, (a, b)) in ours.lines().zip(want.lines()).enumerate() {
@@ -64,7 +64,7 @@ fn act1_map_layout_matches_reference() {
 #[test]
 fn burning_elite_matches_reference() {
     let mut rng = Rng::new(SEED + 1);
-    let map = ActMap::generate(&mut rng);
+    let map = ActMap::generate(&mut rng, true);
     let (x, y, buff) = BURNING_ELITE;
     let idx = map.burning_node().expect("第一章应该有燃烧精英");
     let node = map.node(idx);

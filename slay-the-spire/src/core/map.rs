@@ -1,11 +1,13 @@
-// 第一章地图:7 列 15 层,6 条从下往上爬的路径 + 顶上单独一个 Boss 节点.
+// 地图:第一到第三章都是 7 列 15 层,6 条从下往上爬的路径 + 顶上单独一个
+// Boss 节点;第四章是第 3 列一条四层的竖线(休息点 → 商店 → 精英 → 心脏).
 //
 // 生成方式照抄参考实现(refs/slay-the-cli/src/engine/run/mapGen.ts,也就是原作
 // Map.cpp 的移植):先铺 6 条随机路径,再按每行的房间预算贴房间类型.
 // 两处"原作的怪毛病"也照抄,因为它们就是原作的行为:
 //   - 第 13 行只算"未分配"却不算进房间预算的 total(于是休息点比例少算一行),
 //   - getCommonAncestor 里那个 `x1 < y` 的比较(反编译原样).
-// 掷点全部来自 registry 的 mapRng(第一章的种子是 run seed + 1).
+// 掷点全部来自 registry 的 mapRng:各章按 act 重种(第一章 seed + 1,
+// 第二章 seed + 200,第三章 seed + 600),而"标不标燃烧精英"由 set_burning 决定.
 use crate::rng::Rng;
 
 /// 普通层数(0..15);第 15 层是 Boss 前的休息点
@@ -149,25 +151,63 @@ impl ActMap {
         seen
     }
 
-    /// 生成地图.掷点从 rng(registry 的 mapRng)来
-    pub fn generate(rng: &mut Rng) -> ActMap {
+    /// 生成地图.掷点从 rng(registry 的 mapRng)来.
+    /// `set_burning` 决定要不要标一个燃烧精英:第一章一定标,二、三章只有
+    /// 绿钥匙还没到手时才标(参考实现 generateActMapFor 的 setBurning).
+    pub fn generate(rng: &mut Rng, set_burning: bool) -> ActMap {
         let mut g = Grid::new();
         create_paths(&mut g, rng);
         filter_redundant_edges_from_first_row(&mut g);
         assign_rooms(&mut g, rng);
 
         // 燃烧精英:从所有精英里随机挑一个(参考实现的 assignBurningElite),
-        // 再掷一个增益编号(0..=3).第一章一定会设置,和参考实现一样两掷都消耗.
+        // 再掷一个增益编号(0..=3).标的时候两掷都消耗,不标就一掷不掷.
         let elites = g.elites();
         let mut burning = None;
         let mut buff = -1;
-        if !elites.is_empty() {
+        if set_burning && !elites.is_empty() {
             let idx = rng.random(elites.len() as u32 - 1) as usize;
             burning = Some(elites[idx]);
             buff = rng.random_range(0, 3);
         }
 
         g.into_act_map(burning, buff)
+    }
+
+    /// 第四章的固定地图:第 3 列一条竖线,休息点 → 商店 → 精英 → 心脏
+    /// (参考实现 act4Map).这一章只有 4 层,靠 boss 节点的楼层算总层数.
+    pub fn act4() -> ActMap {
+        let kinds = [
+            NodeKind::Rest,
+            NodeKind::Shop,
+            NodeKind::Elite,
+            NodeKind::Boss,
+        ];
+        let mut nodes: Vec<Node> = Vec::new();
+        let mut rows: Vec<Vec<usize>> = vec![Vec::new(); FLOORS + 1];
+        for (floor, kind) in kinds.iter().enumerate() {
+            let i = nodes.len();
+            nodes.push(Node {
+                floor,
+                col: BOSS_COL,
+                kind: *kind,
+                burning: false,
+                prev: if floor == 0 { Vec::new() } else { vec![i - 1] },
+                next: if floor + 1 < kinds.len() {
+                    vec![i + 1]
+                } else {
+                    Vec::new()
+                },
+            });
+            rows[floor].push(i);
+        }
+        let boss = kinds.len() - 1;
+        ActMap {
+            nodes,
+            rows,
+            boss,
+            burning_buff: -1,
+        }
     }
 
     /// 按参考实现的 mapToString 排版,给金标准测试逐格对比用
@@ -728,7 +768,7 @@ mod tests {
     use super::*;
 
     fn map(seed: u64) -> ActMap {
-        ActMap::generate(&mut Rng::new(seed))
+        ActMap::generate(&mut Rng::new(seed), true)
     }
 
     #[test]

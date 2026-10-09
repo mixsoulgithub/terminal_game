@@ -149,6 +149,24 @@ impl Rng {
         self.next_float() < chance
     }
 
+    /// 随机布尔:拿 nextLong 的最低位(参考实现的 randomBoolean())
+    pub fn random_boolean(&mut self) -> bool {
+        self.counter += 1;
+        self.next_long() & 1 != 0
+    }
+
+    /// 计数器当前值
+    pub fn counter(&self) -> u32 {
+        self.counter
+    }
+
+    /// 把计数器推到 target:一路烧 randomBoolean()(参考实现的 setCounter)
+    pub fn set_counter(&mut self, target: u32) {
+        while self.counter < target {
+            self.random_boolean();
+        }
+    }
+
     /// 不计数器的有界整数:地图生成器内部那圈洗牌直接调它
     pub fn next_int_raw(&mut self, n: u32) -> u32 {
         self.next_long_bounded(n as u64) as u32

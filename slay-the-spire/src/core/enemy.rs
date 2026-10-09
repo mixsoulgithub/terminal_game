@@ -90,6 +90,16 @@ pub enum EnemyFx {
         spot: CardSpot,
         n: i32,
     },
+    /// 往玩家牌堆塞牌,按 `from_turn` 决定是否升级:None 一律升级,Some(t) 是
+    /// 自己第 t 次行动起才升级(六火幽魂的 Sear 第 10 回合起塞 Burn+)
+    PlayerCardUpgraded {
+        card: &'static str,
+        spot: CardSpot,
+        n: i32,
+        from_turn: Option<u32>,
+    },
+    /// 把玩家所有牌堆里的灼伤全部升级成 Burn+(六火幽魂的 Inferno)
+    UpgradePlayerBurns,
     /// 只为对齐随机流的一次掷点:第 turn 次行动时按 num/den 掷一次 aiRng 布尔,值不用.
     /// (盗贼/强盗招式里的台词在原版里会消耗一次 aiRng,不掷就会让后面所有掷点错位)
     ParityCoin { num: u32, den: u32, turn: u32 },
@@ -191,10 +201,12 @@ pub struct EnemyState {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Special {
     None,
-    /// 掉到半血就分裂成两只(史莱姆).a 插在自己原来的位置,b 插在它后面
+    /// 掉到半血就分裂成两只(史莱姆).a 插在自己原来的位置,b 插在 a 之后第 b_offset 格
+    /// (大史莱姆是紧挨着的 1;史莱姆首领两只之间空一格,是 2)
     Split {
         a: &'static str,
         b: &'static str,
+        b_offset: u8,
     },
     /// 掉够 d 点生命就换防御姿态(守护者),guard 是防御姿态那一招的下标
     ModeShift {

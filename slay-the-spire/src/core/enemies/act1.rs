@@ -437,6 +437,7 @@ pub const ACID_SLIME_LARGE: EnemyDef = EnemyDef {
     special: Special::Split {
         a: "acid_slime_medium",
         b: "acid_slime_medium",
+        b_offset: 1,
     },
     spawn: spawn_default,
 };
@@ -573,6 +574,7 @@ pub const SPIKE_SLIME_LARGE: EnemyDef = EnemyDef {
     special: Special::Split {
         a: "spike_slime_medium",
         b: "spike_slime_medium",
+        b_offset: 1,
     },
     spawn: spawn_default,
 };
@@ -1184,9 +1186,10 @@ pub const SENTRY: EnemyDef = EnemyDef {
         MoveDef {
             name: "Bolt",
             intent: Intent::Debuff,
+            // 原版:螺栓把 2 张眩晕塞进弃牌堆(不是洗进抽牌堆)
             effects: &[EnemyFx::PlayerCard {
                 card: "dazed",
-                spot: crate::core::enemy::CardSpot::DrawShuffle,
+                spot: crate::core::enemy::CardSpot::Discard,
                 n: 2,
             }],
         },
@@ -1270,6 +1273,7 @@ pub const SLIME_BOSS: EnemyDef = EnemyDef {
     special: Special::Split {
         a: "spike_slime_large",
         b: "acid_slime_large",
+        b_offset: 2,
     },
     spawn: spawn_default,
 };
@@ -1446,10 +1450,12 @@ pub const HEXAGHOST: EnemyDef = EnemyDef {
                     amount: 6,
                     times: 1,
                 },
-                EnemyFx::PlayerCard {
+                // 第 10 回合起(即首次 Inferno 之后)塞进去的是 Burn+
+                EnemyFx::PlayerCardUpgraded {
                     card: "burn",
                     spot: crate::core::enemy::CardSpot::Discard,
                     n: 1,
+                    from_turn: Some(10),
                 },
             ],
         },
@@ -1485,10 +1491,21 @@ pub const HEXAGHOST: EnemyDef = EnemyDef {
                 damage: 2,
                 times: 6,
             },
-            effects: &[EnemyFx::Attack {
-                amount: 2,
-                times: 6,
-            }],
+            effects: &[
+                EnemyFx::Attack {
+                    amount: 2,
+                    times: 6,
+                },
+                // 原作:再塞 3 张 Burn+,并把已有的灼伤全部升级
+                // (参考实现把这部分省略了,属有意差异)
+                EnemyFx::PlayerCardUpgraded {
+                    card: "burn",
+                    spot: crate::core::enemy::CardSpot::Discard,
+                    n: 3,
+                    from_turn: None,
+                },
+                EnemyFx::UpgradePlayerBurns,
+            ],
         },
     ],
     pick: pick_hexaghost,

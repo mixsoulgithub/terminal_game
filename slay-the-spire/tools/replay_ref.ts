@@ -29,10 +29,24 @@ type Policy = {
   rest: "rest" | "smith";
   shopSkip: boolean;
   maxSteps: number;
+  /** 最多走到第几幕:在第 acts 幕的 Boss 奖励界面停下(默认 1) */
+  acts: number;
+  /** 钥匙模式:营火优先回忆拿红钥匙,宝箱优先拿蓝钥匙 */
+  keys: boolean;
 };
 
 function defaultPolicy(): Policy {
-  return { neow: 1, rewardTake: true, card: 0, event: 0, rest: "rest", shopSkip: true, maxSteps: 400 };
+  return {
+    neow: 1,
+    rewardTake: true,
+    card: 0,
+    event: 0,
+    rest: "rest",
+    shopSkip: true,
+    maxSteps: 400,
+    acts: 1,
+    keys: false,
+  };
 }
 
 function parsePolicy(text: string): Policy {
@@ -46,6 +60,8 @@ function parsePolicy(text: string): Policy {
       case "card": p.card = Number(val); break;
       case "event": p.event = Number(val); break;
       case "steps": p.maxSteps = Number(val); break;
+      case "acts": p.acts = Math.max(1, Number(val)); break;
+      case "keys": p.keys = val === "on"; break;
       case "reward": p.rewardTake = val === "take"; break;
       case "rest": p.rest = val === "smith" ? "smith" : "rest"; break;
       case "shop": p.shopSkip = val !== "buy"; break;
@@ -127,10 +143,13 @@ function autoPlay(state: GameState): GameState {
   let guard = 0;
   while (s.combat && !s.outcome) {
     if (guard++ > 5000) throw new Error("combat did not end");
-    // 战斗内挂起的选牌:跟本作一样选前 min 张,不给它单独一步
+    // 战斗内挂起的选牌:跟本作一样选前 min 张(位置下标),不给它单独一步
     if (s.pending) {
       const req = s.pending.request;
-      const picks = req.kind === "cards" ? req.iids.slice(0, req.min) : [0];
+      const picks =
+        req.kind === "cards"
+          ? req.iids.map((_, i) => i).slice(0, req.min)
+          : [0];
       s = advance(s, { cmd: "choose", indices: picks }, bundle);
       continue;
     }
@@ -312,7 +331,12 @@ export function replayRefl(seedStr: string, policy: Policy): string {
     if (s.pending) {
       const req = s.pending.request;
       const n = req.kind === "cards" ? req.iids.length : 0;
-      const picks = req.kind === "cards" ? req.iids.slice(0, req.min) : [0];
+      // choose 的 indices 是 iids 的下标(见 chosenIid:iids[chosen[0]]),
+      // 所以取前 min 个位置,不是前 min 个 iid
+      const picks =
+        req.kind === "cards"
+          ? req.iids.map((_, i) => i).slice(0, req.min)
+          : [0];
       s = advance(s, { cmd: "choose", indices: picks }, bundle);
       out.push(line(step, "pick", `"candidates":${n},"pick":0`, stateJson(s)));
       step += 1;
@@ -370,8 +394,13 @@ export function replayRefl(seedStr: string, policy: Policy): string {
         if (isBoss) {
           out.push(line(step, "reward", payload, stateJson(s)));
           step += 1;
-          out.push(line(step, "end", `"result":"boss"`, stateJson(s)));
-          return normalizeNames(out.join("\n") + "\n");
+          // 到了策略允许的最后一幕就在这里收尾;否则离开奖励屏去下一幕
+          if (s.run.act >= policy.acts) {
+            out.push(line(step, "end", `"result":"boss"`, stateJson(s)));
+            return normalizeNames(out.join("\n") + "\n");
+          }
+          s = advance(s, { cmd: "skipRewards" }, bundle);
+          break;
         }
         s = advance(s, { cmd: "skipRewards" }, bundle);
         out.push(line(step, "reward", payload, stateJson(s)));
@@ -380,7 +409,12 @@ export function replayRefl(seedStr: string, policy: Policy): string {
       }
       case "rest": {
         const opts = restOptions(s);
-        if (policy.rest === "smith") {
+        // 钥匙模式:营火优先"回忆"拿红钥匙
+        if (policy.keys && restOptionAvailable(scratchCtx(s), "recall")) {
+          s = advance(s, { cmd: "restOption", kind: "recall" }, bundle);
+          out.push(line(step, "rest", `"options":[${opts.map((v) => JSON.stringify(v)).join(",")}],"pick":"recall"`, stateJson(s)));
+          step += 1;
+        } else if (policy.rest === "smith") {
           // 参考实现的打铁要当场给牌组下标;挑第一张能升级的,并补一条 pick 步
           // (本作这边走的是"选牌界面",两边步流才对得上)
           const ctx = scratchCtx(s);
@@ -412,7 +446,13 @@ export function replayRefl(seedStr: string, policy: Policy): string {
       case "treasure": {
         const chest = room.chest;
         const before = { gold: s.run.gold, relics: s.run.relics.length };
-        const cmd: Command = chest.opened ? { cmd: "proceed" } : { cmd: "openChest" };
+        // 钥匙模式:箱子还没开又还没有蓝钥匙,就拿蓝钥匙(那件遗物就作废了)
+        const takeKey = policy.keys && chest.sapphireKeyAvailable && !chest.opened;
+        const cmd: Command = chest.opened
+          ? { cmd: "proceed" }
+          : takeKey
+            ? { cmd: "takeSapphireKey" }
+            : { cmd: "openChest" };
         s = advance(s, cmd, bundle);
         if (s.run.room?.kind === "treasure" && s.run.room.chest.opened && !s.pending) {
           s = advance(s, { cmd: "proceed" }, bundle);

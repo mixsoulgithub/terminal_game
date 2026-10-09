@@ -305,6 +305,14 @@ impl Status {
         self.is_debuff() || matches!(self, DoubleTap | Rage | FlameBarrier | NoBlock | Duplication)
     }
 
+    /// 层数可以降到 0 以下(参考实现里 canGoNegative 的那几条):
+    /// 力量/敏捷/集中的减益是把强度减成负数,而不是"减到 0 就消失"
+    /// (拉格文的汲魂在 0 力量时会把你压成 -1 力量).
+    pub fn can_go_negative(self) -> bool {
+        use Status::*;
+        matches!(self, Strength | Dexterity | Focus)
+    }
+
 }
 
 impl fmt::Display for Status {
@@ -359,19 +367,20 @@ impl Statuses {
         self.list.retain(|(k, n)| *k != s || *n != 0 || !k.decays());
     }
 
-    /// 叠加 n,n 可以为负;层数降到 0 以下就移除
+    /// 叠加 n,n 可以为负;多数状态层数降到 0 就移除,
+    /// 力量/敏捷/集中这类"强度"状态允许压到负数(见 can_go_negative)
     pub fn add(&mut self, s: Status, n: i32) {
         if n == 0 {
             return;
         }
         if let Some(slot) = self.list.iter_mut().find(|(k, _)| *k == s) {
             slot.1 += n;
-            if slot.1 <= 0 {
+            if slot.1 == 0 || (slot.1 < 0 && !s.can_go_negative()) {
                 self.list.retain(|(k, _)| *k != s);
             }
             return;
         }
-        if n > 0 {
+        if n > 0 || s.can_go_negative() {
             self.list.push((s, n));
         }
     }
@@ -434,6 +443,24 @@ mod tests {
         let mut s = Statuses::new();
         s.add(Status::Weak, -4);
         assert_eq!(s.iter().count(), 0);
+    }
+
+    /// 力量/敏捷可以压到 0 以下(拉格文的汲魂在 0 力量时把你压成 -1),
+    /// 0 到 0 仍是消失
+    #[test]
+    fn strength_can_go_negative() {
+        let mut s = Statuses::new();
+        s.add(Status::Strength, -1);
+        assert_eq!(s.get(Status::Strength), -1);
+        s.add(Status::Dexterity, -2);
+        assert_eq!(s.get(Status::Dexterity), -2);
+        // 负的加上正的回到 0 就消失
+        s.add(Status::Strength, 1);
+        assert!(!s.holds(Status::Strength));
+        // 减益类的状态仍旧不允许为负
+        s.add(Status::Vulnerable, 2);
+        s.add(Status::Vulnerable, -5);
+        assert!(!s.holds(Status::Vulnerable));
     }
 
     #[test]

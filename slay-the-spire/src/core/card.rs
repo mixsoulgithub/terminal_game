@@ -105,6 +105,8 @@ pub enum Effect {
     DoubleBlock,
     /// 直接掉血,不吃格挡也不吃力量
     LoseHp { amount: i32 },
+    /// 对自己造成 amount 点可格挡的伤害(灼伤在回合结束时结算;吃格挡、触发破裂)
+    DamageSelf { amount: i32 },
     GainEnergy { n: i32 },
     Draw { n: u8 },
     AddSelfStatus { status: Status, n: i32 },
@@ -214,6 +216,8 @@ pub struct CardUpgrade {
     pub retain: Option<bool>,
     pub ethereal: Option<bool>,
     pub innate: Option<bool>,
+    /// 升级后换一份"回合结束结算"的效果(灼伤 2 -> 4)
+    pub on_end_turn: Option<&'static [Effect]>,
 }
 
 #[derive(Debug)]
@@ -378,7 +382,10 @@ impl CardInstance {
 
     /// 这张牌留在手里、自己回合结束时结算的效果
     pub fn on_end_turn(&self) -> &'static [Effect] {
-        self.def.on_end_turn
+        match (&self.def.upgrade, self.upgraded) {
+            (Some(up), true) => up.on_end_turn.unwrap_or(self.def.on_end_turn),
+            _ => self.def.on_end_turn,
+        }
     }
 
     /// 这张牌在手里时持续生效的效果

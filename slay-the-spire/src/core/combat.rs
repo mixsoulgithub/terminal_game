@@ -1945,6 +1945,57 @@ impl Combat {
                     );
                 }
             }
+            EnemyFx::PlayerCardUpgraded {
+                card,
+                spot,
+                n,
+                from_turn,
+            } => {
+                let upgrade = match from_turn {
+                    None => true,
+                    Some(t) => turn >= t,
+                };
+                for _ in 0..n {
+                    let mut inst = CardInstance::new(cards::card_def_or_panic(card));
+                    self.fix_new_card(&mut inst);
+                    if upgrade {
+                        inst.upgrade();
+                    }
+                    let label = inst.label();
+                    match spot {
+                        CardSpot::Discard => self.discard.push(inst),
+                        CardSpot::DrawShuffle => {
+                            let pos = self.streams.floor(FloorStream::CardRandomRng).below(self.draw.len() as u32 + 1) as usize;
+                            self.draw.insert(pos, inst);
+                        }
+                        CardSpot::Deck => self.deck_cards.push(inst),
+                    }
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} puts a {label} in your deck"),
+                    );
+                }
+            }
+            EnemyFx::UpgradePlayerBurns => {
+                // 参考实现:把玩家各堆里的灼伤就地升级(已经升过的不动)
+                for pile in [
+                    &mut self.hand,
+                    &mut self.draw,
+                    &mut self.discard,
+                    &mut self.exhaust,
+                    &mut self.deck_cards,
+                ] {
+                    for c in pile.iter_mut() {
+                        if c.def.id == "burn" {
+                            c.upgrade();
+                        }
+                    }
+                }
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} upgrades every Burn ({mname})"),
+                );
+            }
             EnemyFx::ParityCoin { num, den, turn: at } => {
                 if turn == at {
                     let _ = self
@@ -2191,9 +2242,9 @@ impl Combat {
     }
 
     /// 大史莱姆分裂:自己离场,原地补上两只小史莱姆(生命等于分裂时的血量).
-    /// 两只子体占自己那一格和下一格,和参考实现一样顶掉原来的位置
+    /// a 占自己那一格,b 放在 a 之后第 b_offset 格(大史莱姆紧挨着;史莱姆首领空一格)
     fn enemy_split(&mut self, idx: usize, name: &str) {
-        let Special::Split { a, b } = self.enemies[idx].def.special else {
+        let Special::Split { a, b, b_offset } = self.enemies[idx].def.special else {
             return;
         };
         let hp = self.enemies[idx].hp;
@@ -2205,7 +2256,7 @@ impl Combat {
             format!("{name} splits into two slimes ({hp} HP each)"),
         );
         self.spawn_enemy_at(a, Some(hp), slot);
-        self.spawn_enemy_at(b, Some(hp), slot + 1);
+        self.spawn_enemy_at(b, Some(hp), slot + b_offset as usize);
     }
 
     /// 造一只新敌人.代价是掷生命、掷开场(可能记状态),不进队里
@@ -2511,7 +2562,9 @@ impl Combat {
             return;
         }
         let mut n = amount.max(0);
-        if !doubled {
+        // 敏捷与虚弱只作用在"来自卡牌"的格挡上(参考实现 calcBlock 里 fromCard 才走 modifyBlock);
+        // 遗物/能力给的格挡不吃这两项
+        if from_card && !doubled {
             n += self.player.statuses.get(Status::Dexterity);
             if self.player.statuses.has(Status::Frail) {
                 n = (n as f32 * 0.75).floor() as i32;
@@ -2928,6 +2981,18 @@ impl Combat {
             self.resolve_player_death();
         }
         (taken, blocked)
+    }
+
+    /// 状态牌(灼伤)在回合结束时对自己造成的可格挡伤害:
+    /// 走 hit_player 的格挡/无形/减伤链,并像掉血一样触发破裂
+    fn damage_self_blockable(&mut self, amount: i32) {
+        let (taken, _) = self.hit_player(amount);
+        if taken > 0 {
+            let rupt = self.player.statuses.get(Status::Rupture);
+            if rupt > 0 {
+                self.player.statuses.add(Status::Strength, rupt);
+            }
+        }
     }
 
     /// 玩家攻击一次的计算:力量、虚弱、目标易伤
@@ -3804,6 +3869,9 @@ impl Combat {
                     self.gain_block(b, true, true);
                 }                Effect::LoseHp { amount } => {
                     self.lose_hp_player(amount, true);
+                }
+                Effect::DamageSelf { amount } => {
+                    self.damage_self_blockable(amount);
                 }
                 Effect::LoseHpPerHandCard => {
                     let n = ctx.hand_size.max(0);

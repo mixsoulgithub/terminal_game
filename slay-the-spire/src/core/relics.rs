@@ -52,6 +52,8 @@ pub struct RelicFx {
     pub add_cards: i32,
     pub add_curse: bool,
     pub removes_starter_relic: bool,
+    /// 小房子:拾取效果的掷点顺序/随机源很特别,由 Run::apply_relic_pickup 特判
+    pub pickup_tiny_house: bool,
     // ---- 战斗开始 ----
     pub combat_start_block: i32,
     pub combat_start_energy: i32,
@@ -243,6 +245,7 @@ impl RelicFx {
         add_cards: 0,
         add_curse: false,
         removes_starter_relic: false,
+        pickup_tiny_house: false,
         combat_start_block: 0,
         combat_start_energy: 0,
         combat_start_energy_per_turn: 0,
@@ -2062,12 +2065,9 @@ pub static RELICS: &[RelicDef] = &[
         desc: "Upon pickup, obtain 1 Potion. Gain 50 Gold. Raise your Max HP by 5. Obtain 1 card. Upgrade 1 random card.",
         tier: RelicTier::Boss,
         pool: "shared",
+        // 效果在 Run::apply_relic_pickup 里特判(掷点顺序与药水池走 miscRng),不开通用 fx
         fx: RelicFx {
-            max_hp: 5,
-            gold: 50,
-            upgrade_random_cards: 1,
-            add_potions: 1,
-            add_cards: 1,
+            pickup_tiny_house: true,
             ..RelicFx::ZERO
         },
         note: "",

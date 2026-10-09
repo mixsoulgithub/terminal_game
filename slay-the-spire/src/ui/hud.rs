@@ -54,9 +54,16 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     x = seg(buf, x, y, limit, if run.keys.sapphire { "S" } else { "-" }, key(run.keys.sapphire, theme::BLOCK));
     x += 3;
 
+    // 最右:Act 紧挨着 Floor 再紧挨着 Deck,整组右对齐,右边留 2 格.
+    // 药水区要画在它左边,所以先把这一组算出来(窄终端上三瓶长名字会压过来)
+    let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
+    let floor_text = format!("Act {}  Floor {}/{}", run.act, floor, run.map.total_floors());
+    let right = format!("{}   Deck {}", floor_text, p.deck.len());
+    let rx = (area.x + area.width).saturating_sub(display_width(&right) as u16 + 2);
+
     // 药水区:每个槽位一个 (),空的也写出来;选中那个铺底色
     let px0 = x + 2;
-    let avail = limit.saturating_sub(px0) as usize;
+    let avail = rx.saturating_sub(px0 + 1) as usize;
     let labels = |short: bool| -> Vec<String> {
         p.potions
             .iter()
@@ -79,22 +86,21 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     }
     let mut px = px0;
     for (i, text) in texts.iter().enumerate() {
-        // 空格子也上色,不压暗
+        if px >= rx {
+            break;
+        }
+        // 空格子也上色,不压暗;放不下就截断,别压到右边那一组
         let style = if app.potion_sel == Some(i) {
             theme::selected()
         } else {
             theme::fg(theme::GOLD)
         };
-        put(buf, px, y, text, style);
-        px += display_width(text) as u16;
+        let t = truncate(text, rx.saturating_sub(px) as usize);
+        put(buf, px, y, &t, style);
+        px += display_width(&t) as u16;
     }
     let potion_rect = Rect::new(px0, y, px.saturating_sub(px0), 1);
 
-    // 最右:Floor 紧挨着 Deck,整组右对齐,右边留 2 格
-    let floor = if run.pos.is_some() { run.floor() + 1 } else { 0 };
-    let floor_text = format!("Floor {}/{}", floor, run.map.total_floors());
-    let right = format!("{}   Deck {}", floor_text, p.deck.len());
-    let rx = (area.x + area.width).saturating_sub(display_width(&right) as u16 + 2);
-    let _ = seg(buf, rx, y, area.x + area.width, &right, dim);
+    let _ = seg(buf, rx, y, limit, &right, dim);
     potion_rect
 }

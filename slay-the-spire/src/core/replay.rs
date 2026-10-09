@@ -8,9 +8,11 @@
 //!     reward take   奖励界面全拿(take)还是全跳过(skip)
 //!     card 0        卡牌三选一拿第几张
 //!     event 0       事件选第几个选项
-//!     rest rest     营火休息(rest)还是打铁(smith)
+//!     rest rest     营火休息(rest)还是打铁(smith);给 recall 就是拿红钥匙
 //!     shop skip     商店什么都不买
 //!     steps 400     最多走多少步
+//!     acts 1        最多走到第几幕(默认 1,即停在第一幕 Boss 奖励界面)
+//!     keys off      钥匙模式:开的话营火优先回忆、宝箱优先拿蓝钥匙
 //!
 //! 输出的每一行字段:
 //!   step   从 0 开始的步号
@@ -40,6 +42,11 @@ pub struct Policy {
     pub rest: RestOption,
     pub shop_skip: bool,
     pub max_steps: usize,
+    /// 最多走到第几幕:在第 acts 幕的 Boss 奖励界面停下(默认 1,即只走第一幕).
+    /// 设成 4 就一直走到第四章(集齐三把钥匙才会开门).
+    pub acts: u32,
+    /// 钥匙模式:营火优先"回忆"拿红钥匙,宝箱优先拿蓝钥匙,燃烧精英的绿钥匙照常拿
+    pub keys: bool,
 }
 
 impl Default for Policy {
@@ -52,6 +59,8 @@ impl Default for Policy {
             rest: RestOption::Rest,
             shop_skip: true,
             max_steps: 400,
+            acts: 1,
+            keys: false,
         }
     }
 }
@@ -77,6 +86,14 @@ impl Policy {
                 "card" => p.card = num(val)?,
                 "event" => p.event = num(val)?,
                 "steps" => p.max_steps = num(val)?,
+                "acts" => p.acts = num(val)?.max(1) as u32,
+                "keys" => {
+                    p.keys = match val {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err(format!("第 {} 行:keys 只能是 on/off", i + 1)),
+                    }
+                }
                 "reward" => {
                     p.reward_take = match val {
                         "take" => true,
@@ -215,12 +232,15 @@ fn state_json(run: &Run) -> String {
         .iter()
         .map(|p| p.map(|d| js(d.id)).unwrap_or_else(|| "null".to_string()))
         .collect();
+    // row 是本章地图上的行号;还没上路(null 位置)时是 0(与参考实现一致)
+    let row = if run.pos.is_some() { run.floor_reached } else { 0 };
     format!(
-        "{{\"hp\":{},\"max_hp\":{},\"gold\":{},\"act\":1,\"row\":{},\"deck\":[{}],\"relics\":[{}],\"potions\":[{}]}}",
+        "{{\"hp\":{},\"max_hp\":{},\"gold\":{},\"act\":{},\"row\":{},\"deck\":[{}],\"relics\":[{}],\"potions\":[{}]}}",
         run.player.hp,
         run.player.max_hp,
         run.player.gold,
-        run.floor_reached,
+        run.act,
+        row,
         deck.join(","),
         relics.join(","),
         potions.join(",")
@@ -298,11 +318,10 @@ fn auto_play(run: &mut Run) -> Result<(), String> {
             break;
         }
         let target = c.first_alive();
+        // 判据是牌面基础费用(升级/动态降费都不算),与参考实现的 autoWinCombat 一致
         let pick = (0..c.hand.len()).find(|&i| {
             c.hand[i].kind() == CardType::Attack
-                && c.hand[i]
-                    .fixed_cost()
-                    .is_some_and(|k| k >= 0 && k <= c.energy)
+                && matches!(c.hand[i].def.cost, crate::core::card::Cost::Fixed(n) if (n as i32) <= c.energy)
         });
         match (pick, target) {
             (Some(i), Some(t)) => {
@@ -647,12 +666,20 @@ pub fn run_jsonl(seed: u64, policy: &Policy) -> Result<String, String> {
                     entries.join(","),
                     tags.join(",")
                 );
-                // Boss 的奖励界面就是这一趟的终点:不离开(离开后两边会分叉)
-                if is_boss {
+                // Boss 的奖励界面:到了策略允许的最后一幕就在这里收尾
+                // (奖励行按离开前的局面打)
+                if is_boss && run.act >= policy.acts {
                     out.push(line(step, "reward", &payload, &state_json(&run)));
                     step += 1;
                     out.push(line(step, "end", "\"result\":\"boss\"", &state_json(&run)));
                     return Ok(out.join("\n") + "\n");
+                }
+                if is_boss {
+                    // 第一、二幕的 Boss 奖励离开时切下一幕:奖励行按切幕前的局面打
+                    out.push(line(step, "reward", &payload, &state_json(&run)));
+                    step += 1;
+                    run.leave_reward();
+                    continue;
                 }
                 run.leave_reward();
                 out.push(line(step, "reward", &payload, &state_json(&run)));
@@ -662,12 +689,19 @@ pub fn run_jsonl(seed: u64, policy: &Policy) -> Result<String, String> {
 
             // ---- 营火 ----
             Screen::Rest => {
-                let opts: Vec<String> = run
-                    .rest_options()
+                let options = run.rest_options();
+                let opts: Vec<String> = options
                     .iter()
                     .map(|o| js(&o.name().to_lowercase()))
                     .collect();
-                let pick = policy.rest;
+                // 钥匙模式:营火优先"回忆"拿红钥匙;策略要的那项不在就退到休息
+                let mut pick = policy.rest;
+                if policy.keys && run.can_recall() {
+                    pick = RestOption::Recall;
+                }
+                if !options.contains(&pick) {
+                    pick = options.first().copied().unwrap_or(RestOption::Rest);
+                }
                 run.rest_choose(pick)
                     .map_err(|e| format!("营火 {} 做不了:{e}", pick.name()))?;
                 let payload = format!(
@@ -709,7 +743,12 @@ pub fn run_jsonl(seed: u64, policy: &Policy) -> Result<String, String> {
                 };
                 let gold_before = run.player.gold;
                 let relics_before = run.player.relics.len();
-                run.take_treasure();
+                // 钥匙模式:箱子还没开又还没有蓝钥匙,就拿蓝钥匙(那件遗物就作废了)
+                if policy.keys && run.chest_sapphire_available() {
+                    run.take_sapphire_key();
+                } else {
+                    run.take_treasure();
+                }
                 let gained: Vec<String> = run.player.relics[relics_before..]
                     .iter()
                     .map(|r| js(r.id))
@@ -818,16 +857,16 @@ mod e2e {
     /// 扫荡集合:seed 1..40 的逐字段对拍登记表(与 tools/e2e_diff.ts 的归一化一致,
     /// 比较时两侧都转小写 —— 现在唯一的大小写差异是 init 行的 seed_str).
     const SWEEP: &[Expected] = &[
-    Expected { seed: 1, lines: 31, ref_lines: 16, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], diff_digest: 0x118af3bb7b6aa795 },
+    Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x12703eae9af9546e },
     Expected { seed: 4, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 5, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28], diff_digest: 0x275af80e7d7076a8 },
+    Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 7, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 9, lines: 37, ref_lines: 34, aligned: 32, diff_steps: &[32, 33, 34, 35, 36], diff_digest: 0x7e495006a3dcd207 },
-    Expected { seed: 10, lines: 37, ref_lines: 21, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36], diff_digest: 0x8d76dee0c2a4f8e8 },
+    Expected { seed: 10, lines: 37, ref_lines: 21, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36], diff_digest: 0x9eef309630ca6c72 },
     Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20], diff_digest: 0x31589fa2901fcc99 },
     Expected { seed: 12, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -837,7 +876,7 @@ mod e2e {
     Expected { seed: 17, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 20, lines: 34, ref_lines: 34, aligned: 15, diff_steps: &[15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33], diff_digest: 0x76cde42d54ccab0f },
+    Expected { seed: 20, lines: 34, ref_lines: 34, aligned: 15, diff_steps: &[15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33], diff_digest: 0x2bf8e62623eca367 },
     Expected { seed: 21, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 22, lines: 44, ref_lines: 44, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0x4cb30134673753c8 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -854,19 +893,32 @@ mod e2e {
     Expected { seed: 34, lines: 28, ref_lines: 28, aligned: 28, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 35, lines: 36, ref_lines: 36, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35], diff_digest: 0x39a75410bfd5721a },
     Expected { seed: 36, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 37, lines: 29, ref_lines: 34, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33], diff_digest: 0x9a2ec73e8ca154ea },
+    Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 38, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xbd2e0139416d1b53 },
+    Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x486665cfaa299e93 },
+    Expected { seed: 42, lines: 43, ref_lines: 43, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42], diff_digest: 0x74091caeac0de459 },
+    Expected { seed: 54, lines: 43, ref_lines: 43, aligned: 25, diff_steps: &[25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xabde3528579e7910 },
 ];
 
     fn fixture_dir() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/golden/e2e")
     }
 
+    /// fixture 文件名跟脚本走:act1.script 是 seed<N>.ref.jsonl,
+    /// 其它脚本是 seed<N>.<脚本名>.ref.jsonl(与 tools/e2e_diff.ts 一致)
+    fn fixture_text_named(seed: u64, stem: &str) -> String {
+        let name = if stem == "act1" {
+            format!("seed{seed}.ref.jsonl")
+        } else {
+            format!("seed{seed}.{stem}.ref.jsonl")
+        };
+        std::fs::read_to_string(fixture_dir().join(&name))
+            .unwrap_or_else(|e| panic!("seed {seed}: 读不到 {name}: {e}"))
+    }
+
     fn fixture_text(seed: u64) -> String {
-        std::fs::read_to_string(fixture_dir().join(format!("seed{seed}.ref.jsonl")))
-            .unwrap_or_else(|e| panic!("seed {seed}: 读不到 fixture: {e}"))
+        fixture_text_named(seed, "act1")
     }
 
     fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
@@ -1090,5 +1142,174 @@ mod e2e {
             );
             assert!(lines.len() >= 30, "seed {}: fixture 太短", case.seed);
         }
+    }
+
+    // ---- 多幕(第一幕 → 第二幕;能活到后面就继续) ----
+
+    /// 多幕扫荡的登记表:acts.script 下的一整局,字段与第一章那张表相同.
+    /// 这四个种子是 1..3000 里唯四能靠自动打牌活到第二幕的(其余都死在第一幕).
+    const ACTS_CASES: &[Expected] = &[
+    Expected { seed: 12345, lines: 79, ref_lines: 79, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78], diff_digest: 0xab802424d47950d7 },
+    Expected { seed: 822, lines: 67, ref_lines: 67, aligned: 43, diff_steps: &[43, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64], diff_digest: 0x657c5bfb1f3cce59 },
+    Expected { seed: 295, lines: 63, ref_lines: 45, aligned: 43, diff_steps: &[43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62], diff_digest: 0xdfc18fb3d19e49cf },
+    Expected { seed: 2074, lines: 55, ref_lines: 55, aligned: 41, diff_steps: &[41, 42, 47, 48, 49, 50, 51, 52], diff_digest: 0xf584591076995ef7 },
+];
+
+    /// 多幕对拍:同一颗种子 + acts.script,本作与参考实现逐行比对(两侧都转小写).
+    /// 「击杀盗贼退还赃款」的差额会一直带着,所以和第一章一样分两段断言:
+    /// 前缀逐字节相同 + 差异步集合与内容指纹固定.
+    #[test]
+    fn acts_walk_matches_reference() {
+        let script = std::fs::read_to_string(fixture_dir().join("acts.script"))
+            .expect("tools/golden/e2e/acts.script 应该在");
+        let policy = Policy::parse(&script).expect("路径脚本要能解析");
+        for case in ACTS_CASES {
+            let ours = run_jsonl(case.seed, &policy)
+                .unwrap_or_else(|e| panic!("seed {}: 跑不完多幕: {e}", case.seed));
+            let a: Vec<String> = ours.lines().map(|l| l.to_lowercase()).collect();
+            let b: Vec<String> = fixture_text_named(case.seed, "acts")
+                .lines()
+                .map(|l| l.to_lowercase())
+                .collect();
+            assert_eq!(a.len(), case.lines, "seed {}: 本作步数与登记的不同", case.seed);
+            assert_eq!(b.len(), case.ref_lines, "seed {}: 参考 fixture 步数变了", case.seed);
+            let mut diff_steps: Vec<usize> = Vec::new();
+            for i in 0..a.len().max(b.len()) {
+                let ours_line = a.get(i).map(String::as_str).unwrap_or("null");
+                let ref_line = b.get(i).map(String::as_str).unwrap_or("null");
+                if ours_line != ref_line {
+                    diff_steps.push(i);
+                }
+            }
+            let aligned = diff_steps.first().copied().unwrap_or(a.len().max(b.len()));
+            assert_eq!(
+                aligned, case.aligned,
+                "seed {}: 对齐前缀从 {} 步变成 {} 步",
+                case.seed, case.aligned, aligned
+            );
+            assert_eq!(
+                diff_steps.as_slice(),
+                case.diff_steps,
+                "seed {}: 差异步集合变了",
+                case.seed
+            );
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for &i in &diff_steps {
+                let line = format!(
+                    "{i}\t{}\t{}\n",
+                    a.get(i).map(String::as_str).unwrap_or("null"),
+                    b.get(i).map(String::as_str).unwrap_or("null")
+                );
+                h = fnv1a(line.as_bytes(), h);
+            }
+            assert_eq!(
+                h,
+                case.diff_digest,
+                "seed {}: 差异步的内容变了(指纹 {h:#x}, 登记 {:#x})",
+                case.seed,
+                case.diff_digest
+            );
+        }
+    }
+
+    /// 多幕这条尺子要真的量到第二幕:两边步流(各个界面出现的先后)完全一致,
+    /// 而且每一步 move 的 from/to/node/resolved/怪物阵容逐字节相同 ——
+    /// 这等于把切幕时机、第二幕地图生成与第二幕遭遇名单都比了一遍.
+    #[test]
+    fn the_walk_crosses_into_the_second_act() {
+        let script = std::fs::read_to_string(fixture_dir().join("acts.script")).unwrap();
+        let policy = Policy::parse(&script).unwrap();
+        // move 行只比动作部分(from/to/node/resolved/monsters),不比结束后的局面
+        let moves = |text: &str| -> Vec<String> {
+            text.lines()
+                .filter(|l| l.contains("\"kind\":\"move\""))
+                .map(|l| {
+                    let start = l.find("\"from\"").expect("move 行里有 from");
+                    let end = l.find(",\"s\":").expect("move 行里有 s");
+                    l[start..end].to_lowercase()
+                })
+                .collect()
+        };
+        let mut crossed = 0;
+        for case in ACTS_CASES {
+            let ours = run_jsonl(case.seed, &policy).unwrap();
+            let ref_text = fixture_text_named(case.seed, "acts");
+            assert!(ours.contains("\"act\":2"), "seed {}: 本作没走到第二幕", case.seed);
+            assert!(ours.contains("\"row\":15"), "seed {}: 本作没打满第一幕", case.seed);
+            // 有一边可能死在第一幕,那就只在共同前缀上比
+            if ref_text.contains("\"act\":2") {
+                crossed += 1;
+            }
+            // 两边步数可能不同(有一边死得早,后面的界面序列自然对不上),
+            // 但共同走过的那些"移动"必须一步不差 —— 这就是地图与遭遇名单的比对
+            let (om, rm) = (moves(&ours), moves(&ref_text));
+            let n = om.len().min(rm.len());
+            assert!(
+                n >= 16,
+                "seed {}: 共同前缀里只有 {n} 次移动,量不到第一幕",
+                case.seed
+            );
+            assert_eq!(
+                &om[..n],
+                &rm[..n],
+                "seed {}: 前 {n} 次移动(from/to/node/遭遇)不一致",
+                case.seed
+            );
+        }
+        assert!(
+            crossed >= 3,
+            "只有 {crossed} 个种子两边都走到了第二幕,切幕没被量到"
+        );
+    }
+
+    /// 第二、三章的地图排版与燃烧精英:fixture 由 `bun tools/gen_act_maps.ts`
+    /// 从参考实现的 generateMap 直接掷出来.顺带验了按幕重种 mapRng 的偏移
+    /// (第二章 seed+200,第三章 seed+600).
+    #[test]
+    fn act_maps_match_reference() {
+        use crate::core::map::ActMap;
+        use crate::rng::RngRegistry;
+        let text = std::fs::read_to_string(fixture_dir().join("act_maps.tsv"))
+            .expect("tools/golden/e2e/act_maps.tsv 应该在(跑 bun tools/gen_act_maps.ts 生成)");
+        let mut n = 0;
+        for line in text.lines() {
+            if line.trim().is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let c: Vec<&str> = line.split('\t').collect();
+            assert_eq!(c.len(), 7, "act_maps.tsv 的列数不对: {line}");
+            let seed: u64 = c[0].parse().expect("seed 要是数字");
+            let act: u32 = c[1].parse().expect("act 要是数字");
+            let set_burning = c[2] == "1";
+            let bx: i32 = c[3].parse().unwrap();
+            let by: i32 = c[4].parse().unwrap();
+            let buff: i32 = c[5].parse().unwrap();
+            let want = c[6].split('|').collect::<Vec<_>>().join("\n");
+            let mut reg = RngRegistry::new(seed);
+            reg.reseed_map(act);
+            let map = ActMap::generate(reg.map_rng(), set_burning);
+            assert_eq!(
+                map.to_rows_string(),
+                want,
+                "seed {seed} act {act} set_burning {set_burning}: 地图对不上"
+            );
+            match map.burning_node() {
+                Some(i) => assert_eq!(
+                    (
+                        map.node(i).col as i32,
+                        map.node(i).floor as i32,
+                        map.burning_buff
+                    ),
+                    (bx, by, buff),
+                    "seed {seed} act {act}: 燃烧精英对不上"
+                ),
+                None => assert!(
+                    !set_burning,
+                    "seed {seed} act {act}: 该标燃烧精英却没标"
+                ),
+            }
+            n += 1;
+        }
+        assert!(n >= 90, "act_maps.tsv 的用例太少: {n}");
     }
 }

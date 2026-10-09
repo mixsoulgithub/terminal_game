@@ -14,6 +14,7 @@ macro_rules! up {
             retain: None,
             ethereal: None,
             innate: None,
+            on_end_turn: None,
         })
     };
 }
@@ -29,6 +30,7 @@ macro_rules! up_no_exhaust {
             retain: None,
             ethereal: None,
             innate: None,
+            on_end_turn: None,
         })
     };
 }
@@ -173,7 +175,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Status,
         rarity: Rarity::Special,
         target: Target::None,
-        text: "Unplayable.",
+        text: "Unplayable. At the end of your turn, take 2 damage.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -181,10 +183,19 @@ pub static CARDS: &[CardDef] = &[
         multi_upgrade: false,
         unremovable: false,
         on_draw: &[],
-        on_end_turn: &[],
+        on_end_turn: &[Effect::DamageSelf { amount: 2 }],
         in_hand: &[],
         effects: &[],
-        upgrade: None,
+        upgrade: Some(CardUpgrade {
+            cost: None,
+            text: "Unplayable. At the end of your turn, take 4 damage.",
+            effects: Some(&[]),
+            exhaust: None,
+            retain: None,
+            ethereal: None,
+            innate: None,
+            on_end_turn: Some(&[Effect::DamageSelf { amount: 4 }]),
+        }),
     },
     CardDef {
         id: "void",
@@ -3792,7 +3803,12 @@ mod tests {
                 assert!(c.upgradable(), "{} 基础牌应可升级", c.id);
             }
             if matches!(c.kind, CardType::Status | CardType::Curse) {
-                assert!(!c.upgradable(), "{} 状态/诅咒不可升级", c.id);
+                // 灼伤是唯一能升级的状态牌(原作里有 Burn+:回合末掉 4 点)
+                assert!(
+                    !c.upgradable() || c.id == "burn",
+                    "{} 状态/诅咒不可升级",
+                    c.id
+                );
             }
         }
     }
@@ -3812,8 +3828,12 @@ mod tests {
             // 数值型升级改效果,费用型升级(如 Body Slam)改费用,
             // 只有 Exhaust 变化的(秘密技巧/秘密武器/先想后做)也算真变化
             let exhaust_changed = u.exhaust.map_or(false, |e| e != c.exhaust);
+            // 只改"回合结束结算"的(灼伤:Burn+ 从回合末 2 点变 4 点)
+            let on_end_turn_changed = u
+                .on_end_turn
+                .map_or(false, |e| !std::ptr::eq(e, c.on_end_turn));
             assert!(
-                up_effects != c.effects || cost_changed || exhaust_changed,
+                up_effects != c.effects || cost_changed || exhaust_changed || on_end_turn_changed,
                 "{} 的升级没有任何变化",
                 c.id
             );

@@ -701,7 +701,12 @@ fn summary(buf: &mut Buffer, area: Rect, app: &App, victory: bool) {
     let lines: Vec<(String, Style)> = vec![
         (
             if victory {
-                "You climbed the spire and struck it down."
+                // 第四章打掉心脏和第三章"推门离开尖塔"是两种胜利
+                if run.act >= 4 {
+                    "The Corrupt Heart lies still. The climb is over."
+                } else {
+                    "You step through the door and leave the Spire behind."
+                }
             } else {
                 "The spire claims another climber."
             }
@@ -710,6 +715,7 @@ fn summary(buf: &mut Buffer, area: Rect, app: &App, victory: bool) {
         ),
         (String::new(), dim),
         (format!("seed          {}", run.seed), fg),
+        (format!("act           {}", run.act), fg),
         (
             format!("floor         {}/{}", run.floor() + 1, run.map.total_floors()),
             fg,

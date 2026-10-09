@@ -145,7 +145,7 @@ mod content_tests {
                 "事件 {event_id} 引用了未知遭遇 {id}"
             );
         }
-        for (_, sub) in o.roll.unwrap_or(&[]) {
+        for sub in o.roll.map(|(t, _)| t).unwrap_or(&[]) {
             check_outcome(event_id, sub);
         }
     }

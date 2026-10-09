@@ -15,7 +15,17 @@ import { dirname, join } from "node:path";
 const HERE = dirname(new URL(import.meta.url).pathname);
 const ROOT = join(HERE, "..");
 const FIXTURE_DIR = join(HERE, "golden", "e2e");
-const SCRIPT = join(FIXTURE_DIR, "act1.script");
+const DEFAULT_SCRIPT = join(FIXTURE_DIR, "act1.script");
+
+// 路径脚本可以用 --script 指定;fixture 文件名跟着脚本走:
+//   act1.script -> seed<N>.ref.jsonl(既有的一套,不许改名)
+//   其它脚本     -> seed<N>.<脚本名>.ref.jsonl
+let SCRIPT = DEFAULT_SCRIPT;
+function fixturePath(seed: string): string {
+  const stem = SCRIPT.split("/").pop()!.replace(/\.script$/, "");
+  const name = stem === "act1" ? `seed${seed}.ref.jsonl` : `seed${seed}.${stem}.ref.jsonl`;
+  return join(FIXTURE_DIR, name);
+}
 
 /** 名字归一:两边叫法不同但指的是同一个东西 */
 function normId(value: string): string {
@@ -217,19 +227,21 @@ function compareSeed(seed: string): { lines: string[]; diffs: number; aligned: n
 }
 
 function writeFixture(seed: string): void {
-  const script = readFileSync(SCRIPT, "utf8");
   const ref = runReference(seed, SCRIPT);
   if (!ref.ok) throw new Error(`参考实现跑不通: ${ref.err}`);
   mkdirSync(FIXTURE_DIR, { recursive: true });
-  writeFileSync(join(FIXTURE_DIR, `seed${seed}.ref.jsonl`), ref.lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-  console.log(`wrote tools/golden/e2e/seed${seed}.ref.jsonl`);
+  const path = fixturePath(seed);
+  writeFileSync(path, ref.lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  console.log(`wrote ${path.slice(ROOT.length + 1)}`);
 }
 
 function fixtureSeeds(): string[] {
+  const stem = SCRIPT.split("/").pop()!.replace(/\.script$/, "");
+  const re = stem === "act1" ? /^seed(\d+)\.ref\.jsonl$/ : new RegExp(`^seed(\\d+)\\.${stem}\\.ref\\.jsonl$`);
   try {
     return readdirSync(FIXTURE_DIR)
-      .filter((f) => /^seed\d+\.ref\.jsonl$/.test(f))
-      .map((f) => f.replace(/^seed/, "").replace(/\.ref\.jsonl$/, ""))
+      .map((f) => f.match(re)?.[1])
+      .filter((s): s is string => s !== undefined)
       .sort((x, y) => Number(x) - Number(y));
   } catch {
     return [];
@@ -241,11 +253,21 @@ if (import.meta.main) {
   const write = argv.includes("--write");
   const pin = argv.includes("--pin");
   const all = argv.includes("--all");
+  // --script <file> 选路径脚本(默认 act1.script);fixture 的名字跟着脚本走
+  const si = argv.indexOf("--script");
+  if (si !== -1) {
+    const p = argv[si + 1];
+    if (!p) {
+      console.error("usage: --script <path>");
+      process.exit(2);
+    }
+    SCRIPT = p.startsWith("/") ? p : join(ROOT, p);
+  }
   const seeds = all
     ? fixtureSeeds()
     : argv.filter((a) => /^\d+$/.test(a));
   if (seeds.length === 0) {
-    console.error("usage: bun tools/e2e_diff.ts <seed...> [--write] [--all]");
+    console.error("usage: bun tools/e2e_diff.ts <seed...> [--write] [--all] [--script <file>]");
     process.exit(2);
   }
   let diffTotal = 0;

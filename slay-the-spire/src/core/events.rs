@@ -49,8 +49,6 @@ pub const DEAD_ADVENTURER_AMBUSH_GOLD: (i32, i32) = (25, 35);
 pub enum RemoveRule {
     /// 随机移除一张该类型的牌(坠落)
     OfType(CardType),
-    /// 随机移除一张非基础、非诅咒的牌(再会)
-    NonBasicNonCurse,
 }
 
 /// 事件战斗胜利后的奖励方案:覆盖 run.rs 平时按遭遇等级发的奖励
@@ -96,6 +94,8 @@ pub struct Outcome {
     pub max_hp_pct: i32,
     /// 金币变化(可负)
     pub gold: i32,
+    /// 先金币后扣血(脸商人:原作先给金再挨打,满血时配"得金回血"遗物能看出来)
+    pub gold_first: bool,
     /// 随机给的金币区间
     pub gold_range: Option<(i32, i32)>,
     /// 随机扣的金币区间(扣不到就扣到 0)
@@ -112,8 +112,6 @@ pub struct Outcome {
     pub random_relic_any: bool,
     /// 移除指定遗物
     pub remove_relic: Option<&'static str>,
-    /// 随机移除一件身上的遗物
-    pub remove_random_relic: bool,
     /// 加入牌组的具体卡牌
     pub add_card: Option<&'static str>,
     /// 加入 n 张指定卡牌
@@ -172,8 +170,8 @@ pub struct Outcome {
     pub fight_reward: Option<&'static CombatReward>,
     /// 打赢这场战斗后回到事件的这一屏
     pub fight_next: Option<&'static EventDef>,
-    /// 结算后再按权重随机结算一个结果(权重, 结果)
-    pub roll: Option<&'static [(u32, Outcome)]>,
+    /// 结算后再掷一次,从这张表里挑一条结果结算
+    pub roll: Option<(&'static [Outcome], RollKind)>,
     /// 废料泥怪的可反复尝试:扣 3 点血后掷一次(25% 起,每次失败 +10%),
     /// 中了给一件随机遗物并结束事件,没中留在本屏(EventState.attempts 加一)
     pub ooze: bool,
@@ -183,6 +181,14 @@ pub struct Outcome {
     pub set_screen: Option<&'static str>,
     /// dead_adventurer 的 Search:掷一次伏击,没中领当前阶段的奖池
     pub adv_search: bool,
+    /// "再会"事件的三种交易(1 药水 2 金币 3 牌):数值都在进房时按参考实现 onEnter 掷好,
+    /// 结算时直接用,保证随机流与参考一致
+    pub wma: u8,
+    /// N'loth 的供奉:吃掉进房时掷定的那件遗物(1 = offerA,2 = offerB;0 不用)
+    pub nloth_offer: u8,
+    /// Designer In-Spire 的服务(1 = Adjustments,2 = Clean up;0 不用):
+    /// 具体走"自己选一张"还是"随机两张"按进房时掷的布尔(参考实现 onEnter)决定
+    pub designer_service: u8,
     /// 直接跳到本层 Boss 房开打
     pub jump_to_boss: bool,
     /// 直接死亡
@@ -202,6 +208,7 @@ impl Outcome {
         max_hp: 0,
         max_hp_pct: 0,
         gold: 0,
+        gold_first: false,
         gold_range: None,
         gold_lose_range: None,
         gold_lose_all: false,
@@ -210,7 +217,6 @@ impl Outcome {
         random_relic_rarity: None,
         random_relic_any: false,
         remove_relic: None,
-        remove_random_relic: false,
         add_card: None,
         add_cards: None,
         add_curse: None,
@@ -245,6 +251,9 @@ impl Outcome {
         next: None,
         set_screen: None,
         adv_search: false,
+        wma: 0,
+        nloth_offer: 0,
+        designer_service: 0,
         jump_to_boss: false,
         dead: false,
     };
@@ -259,6 +268,18 @@ macro_rules! outcome {
             ..$crate::core::events::Outcome::NONE
         }
     };
+}
+
+/// `roll` 那次掷点怎么掷(对齐参考实现里各个事件各不相同的掷法)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RollKind {
+    /// 等概率整数 miscRng.random(n-1),按表下标取(变化之轮六格 / 魔咒之书三本)
+    Uniform,
+    /// miscRng.randomBoolean(num/den):掷中取 true_idx 那条,没中取另一条(表只有两条;
+    /// 骑士对决赛两边押注方向相反)
+    Coin { num: u32, den: u32, true_idx: u8 },
+    /// 无参 miscRng.randomBoolean()(取最低位):掷中取第 0 条(陵墓的诅咒)
+    HalfBit,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -570,15 +591,15 @@ static REWARD_PHANTOM: CombatReward = CombatReward {
     potion_pct: 40,
 };
 
-/// 变化之轮:六个结果等概率
-static WHEEL: [(u32, Outcome); 6] = [
+/// 变化之轮:六个结果等概率(参考实现 miscRng.random(5))
+static WHEEL: [Outcome; 6] = [
     // 金币那一格是"本章 100 金币",本作只有第一幕,所以就是 100
-    (1, outcome!(gold: 100, text: "The wheel stops on a pile of gold.")),
-    (1, outcome!(relic_reward: true, text: "The wheel grants a relic.")),
-    (1, outcome!(full_heal: true, text: "The wheel pours warm light over you.")),
-    (1, outcome!(add_curse: Some("decay"), text: "The wheel leaves a curse in your deck.")),
-    (1, outcome!(remove_card: true, text: "The wheel takes one card away.")),
-    (1, outcome!(hp_frac: 0.1, text: "The wheel snaps back and hurts you.")),
+    outcome!(gold: 100, text: "The wheel stops on a pile of gold."),
+    outcome!(relic_reward: true, text: "The wheel grants a relic."),
+    outcome!(full_heal: true, text: "The wheel pours warm light over you."),
+    outcome!(add_curse: Some("decay"), text: "The wheel leaves a curse in your deck."),
+    outcome!(remove_card: true, text: "The wheel takes one card away."),
+    outcome!(hp_frac: 0.1, text: "The wheel snaps back and hurts you."),
 ];
 
 /// 脸商人的交易能从这几件"脸"里挑(参考实现 FACE_RELICS)
@@ -590,22 +611,22 @@ static FACE_RELICS: [&str; 5] = [
     "ssserpent_head",
 ];
 
-/// 陵墓:50% 再送一个纠葛诅咒
-static MAUSOLEUM_CURSE: [(u32, Outcome); 2] = [
-    (1, outcome!(add_curse: Some("writhe"), text: "Writhe crawls out of the coffin too.")),
-    (1, outcome!(text: "The coffin holds nothing else.")),
+/// 陵墓:50% 再送一个纠葛诅咒(参考实现 miscRng.randomBoolean() 无参那颗硬币)
+static MAUSOLEUM_CURSE: [Outcome; 2] = [
+    outcome!(add_curse: Some("writhe"), text: "Writhe crawls out of the coffin too."),
+    outcome!(text: "The coffin holds nothing else."),
 ];
 
-/// 骑士对决赛:押凶手,七成赢
-static JOUST_MURDERER: [(u32, Outcome); 2] = [
-    (70, outcome!(gold: 100, text: "The murderer wins: you collect 100 gold.")),
-    (30, outcome!(text: "The knight wins: your wager is gone.")),
+/// 骑士对决赛:两边都掷同一颗 randomBoolean(0.3) 的硬币(0.3 = 骑士赢);
+/// 押凶手时骑士赢才输,押骑士时骑士赢才赢
+static JOUST_MURDERER: [Outcome; 2] = [
+    outcome!(gold: 100, text: "The murderer wins: you collect 100 gold."),
+    outcome!(text: "The knight wins: your wager is gone."),
 ];
 
-/// 押骑士,三成赢
-static JOUST_OWNER: [(u32, Outcome); 2] = [
-    (30, outcome!(gold: 250, text: "The knight wins: you collect 250 gold.")),
-    (70, outcome!(text: "The murderer wins: your wager is gone.")),
+static JOUST_OWNER: [Outcome; 2] = [
+    outcome!(gold: 250, text: "The knight wins: you collect 250 gold."),
+    outcome!(text: "The murderer wins: your wager is gone."),
 ];
 
 pub static EVENTS: &[EventDef] = &[
@@ -1219,7 +1240,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Open coffin: obtain a random relic; 50% chance to also obtain the Writhe curse",
                 outcome: outcome!(
                     random_relic_any: true,
-                    roll: Some(&MAUSOLEUM_CURSE),
+                    roll: Some((&MAUSOLEUM_CURSE, RollKind::HalfBit)),
                     text: "You pry the lid open."
                 )
             ),
@@ -1560,7 +1581,7 @@ pub static EVENTS: &[EventDef] = &[
         // 参考实现只有转一次这一个选项,没有"离开"
         choices: &[choice!(
             label: "Spin: uniform roll over gold / relic / full heal / Decay curse / card removal / HP loss",
-            outcome: outcome!(roll: Some(&WHEEL), text: "The gremlin spins the wheel.")
+            outcome: outcome!(roll: Some((&WHEEL, RollKind::Uniform)), text: "The gremlin spins the wheel.")
         )],
     },
     // ---- 一次性事件 ----
@@ -1596,18 +1617,27 @@ pub static EVENTS: &[EventDef] = &[
         ],
         choices: &[
             choice!(
-                label: "Adjustments: pay 40 gold; upgrade a chosen card OR upgrade 2 random cards (variant rolled at setup)",
+                label: "Adjustments: pay 40 gold; upgrade a chosen card",
                 cost_gold: 40,
-                outcome: outcome!(upgrade_card: true, text: "The designer adjusts one of your cards.")
+                req_upgradeable: true,
+                outcome: outcome!(
+                    designer_service: 1,
+                    text: "The designer adjusts one of your cards."
+                )
             ),
             choice!(
-                label: "Clean up: pay 60 gold; remove a chosen card OR transform 2 random cards (variant rolled at setup)",
+                label: "Clean up: pay 60 gold; remove a chosen card",
                 cost_gold: 60,
-                outcome: outcome!(remove_card: true, text: "The designer cleans one card out of your deck.")
+                req_removable: true,
+                outcome: outcome!(
+                    designer_service: 2,
+                    text: "The designer cleans one card out of your deck."
+                )
             ),
             choice!(
                 label: "Full service: pay 90 gold; remove a chosen card, then upgrade a random card",
                 cost_gold: 90,
+                req_removable: true,
                 outcome: outcome!(
                     remove_card: true,
                     upgrade_random_n: 1,
@@ -1646,6 +1676,7 @@ pub static EVENTS: &[EventDef] = &[
                     hp_frac: 0.1,
                     hp_pct_min: 1,
                     gold: 75,
+                    gold_first: true,
                     text: "The peddler's touch stings, but the gold is real."
                 )
             ),
@@ -1740,7 +1771,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Offer relic A: lose that relic, obtain N'loth's Gift",
                 outcome: outcome!(
-                    remove_random_relic: true,
+                    nloth_offer: 1,
                     relic_id: Some("nloths_gift"),
                     text: "N'loth eats a relic and leaves its gift."
                 )
@@ -1748,7 +1779,7 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Offer relic B: lose that relic, obtain N'loth's Gift",
                 outcome: outcome!(
-                    remove_random_relic: true,
+                    nloth_offer: 2,
                     relic_id: Some("nloths_gift"),
                     text: "N'loth eats a relic and leaves its gift."
                 )
@@ -1802,7 +1833,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Bet on the murderer: pay 50 gold; 70% chance to win 100 gold",
                 outcome: outcome!(
                     gold: -50,
-                    roll: Some(&JOUST_MURDERER),
+                    roll: Some((&JOUST_MURDERER, RollKind::Coin { num: 3, den: 10, true_idx: 1 })),
                     text: "You put 50 gold on the murderer."
                 )
             ),
@@ -1810,7 +1841,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Bet on the owner: pay 50 gold; 30% chance to win 250 gold",
                 outcome: outcome!(
                     gold: -50,
-                    roll: Some(&JOUST_OWNER),
+                    roll: Some((&JOUST_OWNER, RollKind::Coin { num: 3, den: 10, true_idx: 0 })),
                     text: "You put 50 gold on the knight."
                 )
             ),
@@ -1828,7 +1859,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Give potion: lose a random held potion, obtain a random relic",
                 req_potion: true,
                 outcome: outcome!(
-                    lose_random_potion: true,
+                    wma: 1,
                     random_relic_any: true,
                     text: "The stranger takes a potion and hands over a relic."
                 )
@@ -1837,7 +1868,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Give gold: lose a random 50-150 gold amount, obtain a random relic",
                 req_gold: 50,
                 outcome: outcome!(
-                    gold_lose_range: Some((50, 150)),
+                    wma: 2,
                     random_relic_any: true,
                     text: "The stranger takes a purse of gold and hands over a relic."
                 )
@@ -1850,7 +1881,7 @@ pub static EVENTS: &[EventDef] = &[
                 req_removable: false,
                 req_upgradeable: false,
                 outcome: outcome!(
-                    remove_random: Some(RemoveRule::NonBasicNonCurse),
+                    wma: 3,
                     random_relic_any: true,
                     text: "The stranger takes a card and hands over a relic."
                 )
@@ -1946,7 +1977,7 @@ static TOME_FINAL: EventDef = EventDef {
             label: "Take: lose 10 HP; obtain Necronomicon, Enchiridion, or Nilry's Codex (uniform)",
             outcome: outcome!(
                 hp: -10,
-                roll: Some(&TOME_RELICS),
+                roll: Some((&TOME_RELICS, RollKind::Uniform)),
                 text: "You reach into the spine of the book."
             )
         ),
@@ -1957,11 +1988,11 @@ static TOME_FINAL: EventDef = EventDef {
     ],
 };
 
-/// 魔咒之书的三选一:三件书遗物等概率
-static TOME_RELICS: [(u32, Outcome); 3] = [
-    (1, outcome!(relic_id: Some("necronomicon"), text: "The Necronomicon is yours.")),
-    (1, outcome!(relic_id: Some("enchiridion"), text: "The Enchiridion is yours.")),
-    (1, outcome!(relic_id: Some("nilrys_codex"), text: "Nilry's Codex is yours.")),
+/// 魔咒之书的三选一:三件书遗物等概率(参考实现 miscRng.random(2))
+static TOME_RELICS: [Outcome; 3] = [
+    outcome!(relic_id: Some("necronomicon"), text: "The Necronomicon is yours."),
+    outcome!(relic_id: Some("enchiridion"), text: "The Enchiridion is yours."),
+    outcome!(relic_id: Some("nilrys_codex"), text: "Nilry's Codex is yours."),
 ];
 
 /// 斗兽场:第一场之后
@@ -2094,6 +2125,7 @@ macro_rules! event_up {
             retain: None,
             ethereal: None,
             innate: None,
+            on_end_turn: None,
         })
     };
 }
@@ -2572,6 +2604,9 @@ mod tests {
             attempts: 0,
             screen: None,
             adv: None,
+            wma: None,
+            nloth: None,
+            designer: None,
         });
         r.screen = Screen::Event;
     }
@@ -3174,24 +3209,86 @@ mod tests {
 
     #[test]
     fn we_meet_again_needs_a_potion_for_the_potion_trade() {
+        // 药水格在进房时(参考实现 onEnter)就定好了,所以要先带着药水进事件
         let mut r = Run::new(43);
-        let def = event_def("we_meet_again").unwrap();
-        open(&mut r, def);
-        assert!(!r.event_choice_available(0), "没药水就不能给药水");
-        assert!(r.event_choice_available(1), "有 99 金币就能给钱");
         let potion = crate::core::potions::POTIONS.first().unwrap();
         r.add_potion(potion);
-        assert!(r.event_choice_available(0), "有药水之后就能给");
+        r.debug_open_event("we_meet_again").unwrap();
+        assert!(r.event_choice_available(0), "带药水进房就能给药水");
+        assert!(r.event_choice_available(1), "有 99 金币就能给钱");
         r.choose_event(0).unwrap();
         assert!(r.player.potions.iter().all(|p| p.is_none()), "药水被拿走");
         assert_eq!(r.player.relics.len(), 2);
     }
 
     #[test]
-    fn nloth_takes_a_relic_and_leaves_a_gift() {
-        let r = apply("nloth", 44, 0);
-        assert_eq!(r.player.relics.len(), 2, "吃一件给一件");
-        assert!(r.player.relics.iter().any(|x| x.id == "nloths_gift"));
+    fn we_meet_again_rolls_targets_at_entry() {
+        // 没药水就不给药水选项;金币数额在进房时掷定;交牌目标也定好
+        let mut r = Run::new(43);
+        r.debug_open_event("we_meet_again").unwrap();
+        assert!(!r.event_choice_available(0), "没药水就不能给药水");
+        let data = r.event.as_ref().unwrap().wma.expect("进房应掷好交易目标");
+        assert!(data.potion_slot.is_none());
+        let g = data.gold_amount.expect("金币 >= 50 时应掷定数额");
+        assert!((50..=99).contains(&g), "数额应落在 50..=min(150,金币)");
+        assert!(
+            data.card_idx.is_none(),
+            "起手牌全是基础牌,没有可交出去的牌"
+        );
+    }
+
+    #[test]
+    fn nloth_takes_the_offered_relic_and_leaves_a_gift() {
+        // 进房时(参考实现 onEnter)把身上遗物的下标洗一遍,前两件当 offerA/offerB;
+        // 每个供奉选项只丢对应那一件,并留下 N'loth's Gift.
+        let mut r = Run::new(44);
+        r.debug_add_relic("anchor").unwrap();
+        r.debug_add_relic("vajra").unwrap();
+        let before: Vec<&'static str> = r.player.relics.iter().map(|x| x.id).collect();
+        assert_eq!(before.len(), 3, "起始 1 + 加 2");
+        r.debug_open_event("nloth").unwrap();
+        let d = r.event.as_ref().unwrap().nloth.expect("进房应掷好两件供奉遗物");
+        let a = d.offer_a.expect("offerA");
+        let b = d.offer_b.expect("offerB");
+        assert_ne!(a, b, "两件供奉应是不同的遗物");
+        assert!(before.contains(&a) && before.contains(&b), "供奉来自身上已有的遗物");
+        assert!(r.event_choice_available(0) && r.event_choice_available(1), "两件都在就都能选");
+
+        // 选 A:offerA 被吃掉,offerB 与礼物留下,数量不变(吃一件给一件)
+        r.choose_event(0).unwrap();
+        let after: Vec<&'static str> = r.player.relics.iter().map(|x| x.id).collect();
+        assert!(!after.contains(&a) || a == b, "被供奉的那件没了");
+        assert!(after.contains(&b), "没被供奉的那件还在");
+        assert!(after.contains(&"nloths_gift"), "留下 N'loth's Gift");
+        assert_eq!(after.len(), before.len(), "吃一件给一件");
+    }
+
+    #[test]
+    fn nloth_offer_b_eats_its_own_relic() {
+        // 第二个供奉选项丢的是 offerB,不是 offerA
+        let mut r = Run::new(44);
+        r.debug_add_relic("anchor").unwrap();
+        r.debug_add_relic("vajra").unwrap();
+        r.debug_open_event("nloth").unwrap();
+        let d = r.event.as_ref().unwrap().nloth.unwrap();
+        let a = d.offer_a.unwrap();
+        let b = d.offer_b.unwrap();
+        r.choose_event(1).unwrap();
+        let after: Vec<&'static str> = r.player.relics.iter().map(|x| x.id).collect();
+        assert!(after.contains(&a), "offerA 没被碰");
+        assert!(!after.contains(&b) || a == b, "offerB 被吃掉");
+        assert!(after.contains(&"nloths_gift"));
+    }
+
+    #[test]
+    fn nloth_needs_two_relics_to_offer() {
+        // 只有一件遗物时洗出 offerB 为空,第二个供奉选项不可选(原版生成条件也要两件)
+        let mut r = Run::new(44);
+        r.debug_open_event("nloth").unwrap();
+        let d = r.event.as_ref().unwrap().nloth.unwrap();
+        assert!(d.offer_a.is_some() && d.offer_b.is_none(), "一件遗物只够凑一个供品");
+        assert!(r.event_choice_available(0));
+        assert!(!r.event_choice_available(1), "凑不出第二件就不能点");
     }
 
     #[test]
@@ -3200,28 +3297,28 @@ mod tests {
         // (抽到"随机遗物"那一格的种子,落点是当前池子里量出来的那件)
         // 无界面随机遗物不落地"瓶装/磨刀石"这类还要再开一次界面的遗物(参考实现的 screenlessRelicOfTier)
         // 遗物那一格照参考实现开奖励屏,所以遗物先摆在奖励屏里(还没进背包)
-        let relic = apply("wheel_of_change", 6, 0);
+        let relic = apply("wheel_of_change", 2, 0);
         let screened = relic.reward.as_ref().expect("遗物那一格要开奖励屏");
         let got = screened.relic.expect("奖励屏里摆着那件遗物").id;
-        assert_eq!(got, "pear");
+        assert_eq!(got, "shuriken");
         assert!(!relic.player.relics.iter().any(|r| r.id == "bottled_lightning"));
         assert_eq!(relic.player.gold, 99, "随机遗物那一格不该动金币");
-        let berry = apply("wheel_of_change", 1, 0);
+        let berry = apply("wheel_of_change", 13, 0);
         let got = berry.reward.as_ref().unwrap().relic.unwrap().id;
-        assert_eq!(got, "tiny_chest");
+        assert_eq!(got, "ceramic_fish");
         assert_eq!(berry.player.max_hp, 80, "随机遗物那一格不动生命上限");
-        let bowl = apply("wheel_of_change", 2, 0);
+        let bowl = apply("wheel_of_change", 14, 0);
         assert!(bowl.reward.as_ref().unwrap().relic.is_some(), "遗物那一格");
         assert_eq!(bowl.player.gold, 99, "随机遗物那一格不该动金币");
-        let heal = apply("wheel_of_change", 4, 0);
+        let heal = apply("wheel_of_change", 17, 0);
         assert_eq!((heal.player.hp, heal.player.max_hp), (80, 80));
         assert_eq!(heal.player.relics.len(), 1, "满血那一格不该给别的东西");
-        let curse = apply("wheel_of_change", 12, 0);
+        let curse = apply("wheel_of_change", 4, 0);
         assert_eq!(curse.player.deck.len(), 11, "诅咒那一格多一张牌");
         assert!(curse.player.deck.iter().any(|c| c.def.id == "decay"));
         let toke = apply("wheel_of_change", 10, 0);
         assert!(toke.picker.is_some(), "移除那一格该开选牌");
-        let hurt = apply("wheel_of_change", 3, 0);
+        let hurt = apply("wheel_of_change", 1, 0);
         assert_eq!((hurt.player.hp, hurt.player.max_hp), (72, 80), "掉血那一格");
         assert_eq!(hurt.player.deck.len(), 10);
     }
@@ -3539,6 +3636,65 @@ mod tests {
         let before = r.player.deck.len();
         r.picker_confirm().unwrap();
         assert_eq!(r.player.deck.len(), before - 1);
+    }
+
+    #[test]
+    fn designer_service_variants_follow_the_setup_roll() {
+        // Adjustments / Clean up 各有两种变体,进房时(参考实现 onEnter)各掷一个布尔决定.
+        // 这里把掷好的两个布尔改写成两个取值,逐条验证结算与选项文本.
+        let open_designer = |seed: u64, upgrade: bool, cleanup: bool| {
+            let mut r = Run::new(seed);
+            r.player.gold = 200;
+            r.debug_open_event("designer_in_spire").unwrap();
+            assert!(r.event.as_ref().unwrap().designer.is_some(), "进房应掷好服务变体");
+            r.event.as_mut().unwrap().designer = Some(crate::core::run::DesignerData {
+                upgrade_choice: upgrade,
+                cleanup_choice: cleanup,
+            });
+            r
+        };
+
+        // Adjustments:"自己选一张" -> 开升级界面
+        let mut r = open_designer(51, true, true);
+        let (label, cost, _) = r.event_choice_row(0).unwrap();
+        assert!(label.contains("upgrade a chosen card"), "标签: {label}");
+        assert_eq!(cost, 40);
+        r.choose_event(0).unwrap();
+        assert_eq!(r.player.gold, 160, "Adjustments 收 40 金币");
+        assert_eq!(r.screen, Screen::Pick, "自己选一张要开升级界面");
+
+        // Adjustments:"随机升两张" -> 不开界面,直接升两张
+        let mut r = open_designer(51, false, true);
+        let upgraded0 = r.player.deck.iter().filter(|c| c.upgraded).count();
+        let (label, _, _) = r.event_choice_row(0).unwrap();
+        assert!(label.contains("upgrade 2 random cards"), "标签: {label}");
+        r.choose_event(0).unwrap();
+        assert_eq!(r.player.gold, 160);
+        assert_eq!(
+            r.player.deck.iter().filter(|c| c.upgraded).count(),
+            upgraded0 + 2,
+            "随机升两张"
+        );
+        assert_eq!(r.screen, Screen::Event, "随机升级不开界面");
+
+        // Clean up:"自己删一张" -> 开移除界面
+        let mut r = open_designer(51, true, true);
+        let (label, cost, _) = r.event_choice_row(1).unwrap();
+        assert!(label.contains("remove a chosen card"), "标签: {label}");
+        assert_eq!(cost, 60);
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.gold, 140, "Clean up 收 60 金币");
+        assert_eq!(r.screen, Screen::Pick, "自己删一张要开移除界面");
+
+        // Clean up:"随机变形两张" -> 不开界面,牌数不变
+        let mut r = open_designer(51, true, false);
+        let deck0 = r.player.deck.len();
+        let (label, _, _) = r.event_choice_row(1).unwrap();
+        assert!(label.contains("transform 2 random cards"), "标签: {label}");
+        r.choose_event(1).unwrap();
+        assert_eq!(r.player.gold, 140);
+        assert_eq!(r.screen, Screen::Event, "随机变形不开界面");
+        assert_eq!(r.player.deck.len(), deck0, "变形不改变牌数,只是换牌");
     }
 
     #[test]

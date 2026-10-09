@@ -3,6 +3,7 @@
 
 用法:
     python3 tools/smoke.py [二进制路径] [种子...]
+    python3 tools/smoke.py 7 42     # 不给二进制就用 ./target/debug/spire
 
 它读取底栏的 `-- SCREEN --` 判断当前界面,然后发对应的按键,最后要求这一局
 落到 VICTORY 或 DEATH(不做策略,死了也算通过:重点是流程不能卡住)。
@@ -109,17 +110,29 @@ def current(screen_text: str) -> str:
     return "?"
 
 
+def map_legend_present(text: str) -> bool:
+    """地图右上角的图例画出来了没(当前渲染:每个符号一行,竖排在右侧)。
+
+    不看底栏的 `-- MAP --`(别处也可能出现),而是认图例里现在真实存在的两行:
+    当前位置的 "[] you" 与燃烧精英的 "E  Burning"(宽度不够时图例退化成
+    底栏一行,那两行就对不上,也算没到位)。
+    """
+    return "[] you" in text and re.search(r"E\s+Burning", text) is not None
+
+
 def enter_the_game() -> None:
     """从开始界面进一局:new game -> 第一个角色 -> Neow 的第一个祝福。
 
     抓屏偶尔会抓到半帧,所以认不出界面时不要直接返回,歇一下重来。
+    Neow 的祝福有的会开奖励屏(三张牌)或选牌屏(升级/移除/变形),
+    这些也要按掉才能走到地图。
     """
-    for step in range(40):
+    for step in range(80):
         text = screen()
         if os.environ.get("SMOKE_DEBUG"):
             head = [l for l in text.splitlines() if l.strip()][:2]
             print(f"  [enter {step}] {head}", file=sys.stderr)
-        if "Merchant" in text:
+        if map_legend_present(text):
             return
         if "slay the spire" in text and "new game" in text:
             send("j")          # 光标默认停在 continue,挪到 new game
@@ -130,6 +143,10 @@ def enter_the_game() -> None:
             send("Enter")      # 第一个祝福
         elif "press enter" in text:
             send("Enter")
+        elif current(text) == "REWARD":
+            send("Escape")     # Neow 发的牌可跳过(esc leave),跳过后回地图
+        elif current(text) == "PICK":
+            send("Enter")      # 确认选中的那张(两选的会再进一次)
         else:
             time.sleep(0.2)
 
@@ -138,18 +155,18 @@ def wait_for_map(timeout: float = 8.0) -> str:
     """等第一帧画出来:启动瞬间抓屏可能抓到空屏或半帧。"""
     deadline = time.time() + timeout
     text = screen()
-    while "merchant" not in text and time.time() < deadline:
+    while not map_legend_present(text) and time.time() < deadline:
         time.sleep(0.2)
         text = screen()
     return text
 
 
-def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
+def play(binary: str, seed: int, steps: int = 800) -> tuple[str, set[str], str]:
     start(binary, seed)
     enter_the_game()
     seen: set[str] = set()
     text = wait_for_map()
-    if "merchant" not in text.lower():
+    if not map_legend_present(text):
         raise AssertionError(f"seed {seed}: 地图没有图例,首屏如下:\n{text}")
     seen.add("MAP")
     # 战斗里的节奏:打最多 4 张攻击牌,找不到攻击牌连续挪 5 次就结束回合
@@ -215,8 +232,16 @@ def play(binary: str, seed: int, steps: int = 220) -> tuple[str, set[str], str]:
 
 
 def main() -> int:
-    binary = sys.argv[1] if len(sys.argv) > 1 else "./target/debug/spire"
-    seeds = [int(a) for a in sys.argv[2:]] or [7, 42]
+    args = sys.argv[1:]
+    # 第一个参数全是数字就当它是种子(留出 `smoke.py 7` 这种简写),
+    # 否则按 [二进制路径] [种子...] 解析.
+    if args and args[0].isdigit():
+        binary = "./target/debug/spire"
+        seeds = [int(a) for a in args]
+    else:
+        binary = args[0] if args else "./target/debug/spire"
+        seeds = [int(a) for a in args[1:]]
+    seeds = seeds or [7, 42]
     ok = True
     for seed in seeds:
         try:
