@@ -1,6 +1,33 @@
 // 药水:一次性消耗品,配方同样是数据.
 // 池子顺序与语料一致(语料按 id 字母序),发放时按"共享池 + 职业池"筛出来,
 // 与参考实现的 bundle 插入顺序对齐.
+//
+// 42 瓶效果对照反编译逐条核过(数值/目标/树皮翻倍/禁疗交互),结论与登记:
+//   数值与目标:base/targeted 与语料 potions.json 全一致(42/42).神圣树皮只翻
+//     `doubled()` 里列出的那几类,与语料 sacredBarkDoubles=false 的那几瓶(万灵药/
+//     赌徒之酿/锻造祝福/烟雾弹/熵能酿剂/姿态类)一一对上.
+//   禁疗:血药水/再生/玩具鸟都走 heal_player,花开彼岸(no_heal)把它们连同仙女的保命
+//     一起归零;果汁走 increaseMaxHp(直接改血,和原版一样不过 heal,所以不被花开彼岸挡).
+//   本轮修:仙女在瓶中原先是 out_of_combat=true + fx=Nothing,能在地图/战斗里被主动喝掉
+//     —— 喝下去什么都不做,却会把它的死亡保护一起丢掉.反编译里它根本没有"喝"这条路径
+//     (sts_lightspeed src/combat/BattleContext.cpp:2430 对 FAIRY_POTION 直接 assert;
+//     src/game/GameContext.cpp:2184 与 src/sim/search/GameAction.cpp:263-270 在非战斗场景
+//     只放行血药水/熵能酿剂/果汁),参考实现 potions/index.ts:316 也自注
+//     "non-drinkable death-save" → 现改成 PotionFx::Passive,quaff_potion/use_potion 一律拒绝.
+// 参考侧登记(本作不改,依据都是反编译里两处自相矛盾/缺口):
+//   BLOOD_POTION:战斗内 BattleContext.cpp:2268 的树皮三元写反了(hasBark ? 20 : 40),
+//     战斗外 GameContext.cpp:2185 与语料 desc "Heal for [20%|40%]" 都是 20/40,
+//     本作按 20/40.
+//   ENTROPIC_BREW:战斗内 BattleContext.cpp:2314 传 limited=true
+//     (Game.cpp:309 returnRandomPotionOfRarity 的循环会把果汁重掷掉,永不给出),
+//     战斗外 GameContext.cpp:2188 走默认 limited=false(允许果汁);本作两处统一,
+//     与战斗外那条一致.原版这两处自己打架,先按现状登记,不猜.
+//   COLORLESS_POTION 的牌池:反编译 CombatColorlessCardPool(CardPools.h:189,34 张)不含
+//     Bandage Up,而商店池 ColorlessRarityCardPool(CardPools.h:133,35 张)含;本作与参考
+//     实现一样,取 colorless 里 uncommon|rare 的全部.
+//   ATTACK_POTION 的牌池:反编译 CombatTypeCardPool 的攻击表(CardPools.h:150)只有 28 张
+//     (漏了 FEED/REAPER),语料里红卡非基础攻击有 30 张;本作与参考实现都收全 30 张,
+//     池子顺序按语料(bundle)序.
 use crate::core::card::{Rarity, Target};
 use crate::core::status::Status;
 use crate::rng::Rng;
@@ -57,8 +84,14 @@ pub enum PotionFx {
     Escape,
     /// 用随机药水填满空槽(熵能酿剂)
     FillPotionSlots,
-    /// 饮下时无事发生:机制在本作里不存在,或是引擎被动触发(仙女的死亡保护)
+    /// 饮下时无事发生:机制在本作里不存在(别的职业专属)
     Nothing,
+    /// 没有"喝"这个动作,只在被打死的那一刻自动触发(仙女在瓶中).
+    /// 依据:反编译 BattleContext::drinkPotion 把 FAIRY_POTION 归进 default 分支直接
+    /// assert(注释 "invalid drink potion");GameContext::drinkPotion 与
+    /// isValidPotionAction(GameAction.cpp:263-270) 在非战斗场景只认血药水/熵能酿剂/果汁;
+    /// 参考实现 potions/index.ts:316 的 FAIRY_POTION 也自注 "non-drinkable death-save".
+    Passive,
 }
 
 impl PotionFx {
@@ -111,6 +144,14 @@ pub struct PotionDef {
     /// 能否在地图界面使用
     pub out_of_combat: bool,
     pub fx: PotionFx,
+}
+
+impl PotionDef {
+    /// 能不能主动喝.只有仙女在瓶中例外:它没有"喝"这个动作,防止玩家在
+    /// 地图/战斗里把它白白喝掉(那样会连带丢掉它的死亡保护).
+    pub fn drinkable(&self) -> bool {
+        !matches!(self.fx, PotionFx::Passive)
+    }
 }
 
 /// 全 42 瓶,顺序与语料一致(参考实现的 bundle 顺序)
@@ -312,8 +353,8 @@ pub static POTIONS: &[PotionDef] = &[
         rarity: Rarity::Rare,
         class: "shared",
         target: Target::None,
-        out_of_combat: true,
-        fx: PotionFx::Nothing,
+        out_of_combat: false,
+        fx: PotionFx::Passive,
     },
     PotionDef {
         id: "fear_potion",
@@ -722,6 +763,31 @@ mod tests {
         assert!(POTIONS
             .iter()
             .any(|p| p.out_of_combat && matches!(p.fx, PotionFx::HealPercent { .. })));
+    }
+
+    /// 地图上能主动喝的只有血药水/熵能酿剂/果汁:反编译 GameContext::drinkPotion 只处理
+    /// 这三瓶,isValidPotionAction(GameAction.cpp:263-270) 也只放行这三瓶,其余只能丢.
+    #[test]
+    fn only_three_potions_are_usable_on_the_map() {
+        let mut ids: Vec<&str> = POTIONS
+            .iter()
+            .filter(|p| p.out_of_combat)
+            .map(|p| p.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["blood_potion", "entropic_brew", "fruit_juice"]);
+    }
+
+    /// 仙女在瓶中是被动药水:没有"喝"这个动作(反编译里 BattleContext::drinkPotion 对它
+    /// 直接 assert;参考实现也自注 non-drinkable death-save).
+    #[test]
+    fn fairy_in_a_bottle_is_not_drinkable() {
+        assert!(!by_id("fairy_potion").unwrap().drinkable(), "仙女在瓶中不该能主动喝");
+        assert_eq!(
+            POTIONS.iter().filter(|p| !p.drinkable()).count(),
+            1,
+            "只有仙女在瓶中是被动药水"
+        );
     }
 
     #[test]

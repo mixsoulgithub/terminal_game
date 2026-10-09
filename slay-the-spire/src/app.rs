@@ -2842,6 +2842,11 @@ mod tests {
         app.handle_key(key('p'));
         app.handle_key(key('3'));
         assert!(app.run.player.potions[2].is_some(), "战斗专用药水不该在地图上被喝掉");
+        // 仙女在瓶中是"死时自动触发"的被动药水,地图上按了也喝不掉(喝掉等于白丢保命符)
+        app.run.player.potions[2] = Some(crate::core::potions::by_id("fairy_potion").unwrap());
+        app.handle_key(key('p'));
+        app.handle_key(key('3'));
+        assert!(app.run.player.potions[2].is_some(), "仙女在瓶中不该被主动喝掉");
     }
 
     #[test]

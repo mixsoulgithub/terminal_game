@@ -1639,16 +1639,21 @@ mod e2e {
     /// 这 19 个种子在 1..30000 里参考实现都能靠智能打牌走到第二幕 Boss(第二幕 Boss
     /// 是堵墙,过了它的目前没有).本作按原版重掷了开战随机阵容之后,战斗走向与参考
     /// 分叉,其中 4 个种子活不到第二幕,其余依次列出各自的差异步.
+    /// seed 4327(51→54 步)与 seed 12691(51→60 步)两行随"仙女在瓶中不许主动喝"重钉:
+    /// 对拍驱动每回合都按格子次序试喝药水(见 try_drink_once),参考把 FAIRY_POTION 当成
+    /// no-op 药水喝掉(它的 onUse 是空的,也没有死亡保命这张牌),本作现在跳过仙女改喝
+    /// 后面那瓶有用的药,于是活过了参考活不过的那一下,步流比参考长 —— 归类 (c) 参考缺口,
+    /// 本作按原版(反编译 BattleContext::drinkPotion 对 FAIRY_POTION 直接 assert).
     const ACTS_CASES: &[Expected] = &[
     Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xc785cdc1b1cf221 },
     Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xf28cd9b0aa241e08 },
     Expected { seed: 2474, lines: 50, ref_lines: 50, aligned: 42, diff_steps: &[42, 43], diff_digest: 0x68589ce8642de114 },
     Expected { seed: 3605, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 4327, lines: 51, ref_lines: 51, aligned: 40, diff_steps: &[40, 41, 46, 47, 48, 49, 50], diff_digest: 0x56e51b5536e5ee25 },
+    Expected { seed: 4327, lines: 54, ref_lines: 51, aligned: 40, diff_steps: &[40, 41, 46, 47, 48, 49, 50, 51, 52, 53], diff_digest: 0x31b828abe6c093d7 },
     Expected { seed: 7140, lines: 51, ref_lines: 51, aligned: 51, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 10242, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11535, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 12691, lines: 51, ref_lines: 51, aligned: 20, diff_steps: &[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50], diff_digest: 0x25dd779eeff1a1b1 },
+    Expected { seed: 12691, lines: 60, ref_lines: 51, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59], diff_digest: 0x6f4deee6fd2e84d4 },
     Expected { seed: 12835, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 20703, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 21075, lines: 49, ref_lines: 49, aligned: 49, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2092,28 +2097,42 @@ mod e2e {
     //   seed 22(14 处):盗贼退赃.原版打死偷过钱的怪会把赃款吐回来(A20 的 looter 每偷 20),
     //     参考实现只在 goldStolen 里记账、奖励层从不退(与第二幕 ASC2 的 (b)1 同一条,
     //     seed 31/36 同理没登记).
-    // 第三幕还有分叉(42 → 31 → 33 处).先修掉一条:怪物回合末能力里,只有祭礼(Ritual)
-    // 是"刚挂上当回合不结算"(原版 RitualPower 的 skipFirst);金属化/板甲/再生/力量渐增
-    // 都在自己回合末按当前层数无条件结算 —— 依据反编译:Monster::applyEndOfTurnTriggers
-    // 在 afterMonsterTurns 里跑(排在移动效果之后),PLATED_ARMOR/METALLICIZE 没有
-    // justApplied 检查,而 RITUAL 有;参考实现自己给灯怪写的测试也要求
-    // "stance block + end-of-turn metallicize"(15+5=20)。于是 seed 237 的顿努与德卡
-    // 一战对齐了(迪卡 A19 团队护盾当回合就吃 3 点板甲),seed 30 反而多出 3 处:
-    // 参考实现把"团队护盾给板甲"排在回合末钩子之后(迪卡当回合只有 16 格挡),按上面的
-    // 反编译依据那是参考的错,不是本作的。
-    // 剩下三颗的差异全部是参考侧的已知缺口,本作按原版:
-    //   seed 30(3 处)/ seed 237(2 处):参考把团队护盾的板甲排在回合末钩子之后(见上);
-    //   seed 284(14 处):本作按反编译实现了靴子 The Boot(sts_lightspeed
-    //     src/combat/Monster.cpp 的 attackedUnblockedHelper:把"挡后未格挡的攻击伤害"
-    //     1..4 抬到 5,这一步排在格挡与目标侧飞行/慢速/无形之后),参考 relics/common.ts
-    //     的 THE_BOOT 是 ENGINE-GAP(空实现),爬虫法师+匕首与 writhing_mass 两战里
-    //     低伤那一击因此 4/5 分叉,整场随之错开(改成 post-block 之后步集合仍是这 14 步,
-    //     只有 hp 轨迹的内容指纹变了);
-    //   seed 510(14 处):半死暗灵"照常占自己那一回合"(原版 MonsterGroup::doMonsterTurn
-    //     条件里 isHalfDead 也要出招,REGROW/REINCARNATE 的处理器各消耗一次 aiRng),
-    //     掷点在槽位顺序里发生;参考 powers/monstersAct34.ts 的 REGROW 自己注明
-    //     "ENGINE-GAP: those rolls happen at end of round instead of in slot order",
-    //     于是尸体在活怪前面时掷点先后不同,回合 6 起分叉。
+    // 第三幕:表里 7 颗 seed,29/121/494 三颗逐字节全对齐,其余 4 颗共 30 处差异.
+    // 逐条归因(每颗有差异的 seed 都能对回下面某一条;步号是含 init 行的 0 起行号):
+    //   1) seed 30 步 [42, 43, 44](3 处)、seed 237 步 [41, 42](2 处)
+    //      归类:(c) 参考自相矛盾 —— 顿努与德卡"团队护盾→板甲"的结算时点.
+    //      原版 MonsterSpecific.cpp 的 DECA_SQUARE_OF_PROTECTION 在出招那一刻就把板甲
+    //      `deca.buff<MS::PLATED_ARMOR>(3)`(A19+)挂上,而板甲给的格挡在
+    //      Monster::applyEndOfTurnTriggers 里同一轮回合末结算,于是迪卡当回合就有 19 格挡;
+    //      参考 donuDeca.ts 把这次板甲排到回合末钩子之后,迪卡当回合只有 16 格挡.两边都
+    //      没有"漏实现",是参考内部两个时点自相矛盾,按反编译那是参考的错.
+    //   2) seed 284 步 [29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45](14 处)
+    //      归类:(c) 参考未实现 —— 靴子 The Boot.
+    //      本作按反编译 Monster::attackedUnblockedHelper 把"挡后未格挡的攻击伤害"1..4 抬到 5
+    //      (排在格挡与目标侧的飞行/慢速/无形之后);参考 relics/common.ts 的 THE_BOOT 是
+    //      ENGINE-GAP 空实现.这颗 seed 在步 29 前已经拿到 the_boot,爬虫法师+匕首与
+    //      writhing_mass 两战里低伤那一击因此 4/5 分叉,整段 hp 轨迹从此偏移(改成 post-block
+    //      之后步集合仍是这 14 步,只有内容指纹变了).
+    //   3) seed 510 步 [34, 35, 36, 37, 38, 39](6 处)
+    //      归类:(c) 参考未实现 —— 史莱姆族每回合那次 aiRng 掷点.
+    //      seed 510 的步 33 是 mindbloom 事件"I am War",两边抽到的幻影 Act1 Boss 都是
+    //      史莱姆首领(参考侧实测 SLIME_BOSS;两侧洗牌同源).参考自己注明它的史莱姆首领与
+    //      史莱姆"consumes no aiRng.random(99) after turn 1"(monsters/act1/slimeBoss.ts:60、
+    //      monsters/act1/slimes.ts:73,ENGINE-GAP rng parity),而原版每个怪物回合都要掷一次,
+    //      于是分裂出来的小史莱姆"首招掷点"落到不同的值上,这一战差 4 hp.
+    //   4) seed 510 步 [11, 12, 13, 14, 15](5 处)
+    //      归类:(c) 参考表示差异 —— 半死暗灵的掷点挪到回合末.
+    //      原版 MonsterGroup::doMonsterTurn 里 isHalfDead 的暗灵也照常占自己那一回合出招
+    //      (REGROW/REINCARNATE 各消耗一次 aiRng),掷点发生在槽位顺序里;参考
+    //      powers/monstersAct34.ts 的 REGROW 自己注明 "ENGINE-GAP: those rolls happen at
+    //      end of round instead of in slot order".掷点次数一样,只是同一轮里换了归属,回合末
+    //      计数就对齐,所以只在这一战差 3 hp,后面几间不动(42..44 那 3 处已由上一轮的
+    //      鸟居/荆棘修复一并收掉).
+    // 已修的一条(留作记录):怪物回合末能力里,只有祭礼(Ritual)是"刚挂上当回合不结算"
+    //   (原版 RitualPower 的 skipFirst);金属化/板甲/再生/力量渐增都在自己回合末按当前层数
+    //   无条件结算 —— 依据反编译 Monster::applyEndOfTurnTriggers 在 afterMonsterTurns 里跑
+    //   (排在移动效果之后),PLATED_ARMOR/METALLICIZE 没有 justApplied 检查而 RITUAL 有.
+    //   修完 seed 237 的顿努与德卡一战随之对齐,代价是 seed 30 多出上面第 1 条那 3 处.
     // 表里把当前的对齐前缀、差异步与内容指纹登记下来,修好一条就重跑
     // `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
     // 第四幕(A20)25 颗种子(见 ASC4_CASES 上方):24 颗逐字节全对齐,seed 33 只差进入

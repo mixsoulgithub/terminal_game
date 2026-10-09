@@ -5063,6 +5063,11 @@ impl Run {
         let Some(Some(def)) = self.player.potions.get(slot).copied() else {
             return Err("no potion in that slot".to_string());
         };
+        // 仙女在瓶中这类被动药水喝不掉:它只在被打死的那一刻自动触发,
+        // 允许主动喝只会白白把死亡保护丢掉(反编译里没有这条使用路径).
+        if !def.drinkable() {
+            return Err(format!("{} only triggers when you would die", def.name));
+        }
         let in_combat = self.screen == Screen::Combat;
         if !in_combat && (!def.out_of_combat || def.target.needs_enemy()) {
             return Err(format!("{} only works in combat", def.name));
@@ -7752,6 +7757,18 @@ mod tests {
         r.sync_combat();
         assert_eq!(r.screen, Screen::Combat, "保住了就还在战斗里");
         assert!(r.player.potions[0].is_none(), "仙女该被消耗掉");
+    }
+
+    /// 仙女在瓶中喝不掉:地图与战斗里主动喝都报错,药水留在格子里
+    #[test]
+    fn fairy_potion_cannot_be_drunk() {
+        let mut r = run(61);
+        r.player.potions[0] = Some(potions::by_id("fairy_potion").unwrap());
+        assert!(r.quaff_potion(0, None).is_err(), "地图上喝不掉");
+        assert!(r.player.potions[0].is_some(), "拒绝了就不该消耗");
+        r.debug_room("enemy cultist").unwrap();
+        assert!(r.quaff_potion(0, None).is_err(), "战斗里也喝不掉");
+        assert!(r.player.potions[0].is_some(), "拒绝了就该留在格子里");
     }
 
     /// 熵能酿剂:空槽用随机药水填满,走 potionRng

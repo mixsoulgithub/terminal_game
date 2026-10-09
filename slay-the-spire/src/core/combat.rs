@@ -4901,6 +4901,10 @@ impl Combat {
 
     /// 战斗中用药水
     pub fn use_potion(&mut self, def: &'static PotionDef, target: Option<usize>) {
+        // 仙女在瓶中这类被动药水没有"喝"这个动作(反编译 BattleContext::drinkPotion 对它 assert)
+        if !def.drinkable() {
+            return;
+        }
         self.push_log(LogKind::Player, format!("you drink {}", def.name));
         // 神圣树皮:药水数值翻倍
         let fx = if self.relic_sum(|f| f.potion_potency_pct) > 0 {
@@ -5054,8 +5058,10 @@ impl Combat {
                     }
                 }
             }
-            // 这两瓶由 run 层结算:脱战要换界面,填药水要动跑图状态
-            PotionFx::Escape | PotionFx::FillPotionSlots | PotionFx::Nothing => {}
+            // 这两瓶由 run 层结算:脱战要换界面,填药水要动跑图状态;
+            // Passive(仙女在瓶中)在函数开头就返回了,这里只是把 match 补全
+            PotionFx::Escape | PotionFx::FillPotionSlots | PotionFx::Nothing | PotionFx::Passive => {
+            }
         }
         // 玩具鸟:每次喝药回血
         let bird = self.relic_sum(|fx| fx.heal_on_potion_use);
