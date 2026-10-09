@@ -2139,7 +2139,9 @@ impl Combat {
                 }
             }
             EnemyFx::DrawReduction { n } => {
-                self.player.statuses.add(Status::DrawReduction, n);
+                // 走"怪物给玩家挂减益"那条路:神器照样顶掉,且本轮结束不递减
+                // (参考实现 applyPower 的 justApplied),否则下回合根本少抽不到牌.
+                self.add_player_status_from_enemy(Status::DrawReduction, n);
                 self.push_log(
                     LogKind::Enemy,
                     format!("{name} clouds your next draw"),
@@ -3733,6 +3735,11 @@ impl Combat {
         if self.phase != Phase::PlayerTurn {
             return Err("not your turn");
         }
+        // 时间扭曲:第 12 张牌已经把这一回合掐掉了,之后不能再出牌
+        // (参考实现的 queueEndTurn 立刻排入 endPlayerTurn)
+        if self.force_end_turn {
+            return Err("your turn has already ended");
+        }
         let Some(card) = self.hand.get(hand_idx) else {
             return Err("no such card");
         };
@@ -4260,10 +4267,10 @@ impl Combat {
                     );
                 }
                 Effect::AddRandomAttackToHand => {
-                    let pool: Vec<&'static crate::core::card::CardDef> = cards::CARDS
-                        .iter()
-                        .filter(|c| c.kind == crate::core::card::CardType::Attack)
-                        .collect();
+                    // 本职业攻击牌池(不含基础/特殊/无色):原版的
+                    // returnTrulyRandomCardInCombat(ATTACK) 就是从本职业牌池里抽.
+                    let mut pool = cards::class_pool_of_kind(crate::core::card::CardType::Attack);
+                    pool.sort_by_key(|c| c.id);
                     if !pool.is_empty() {
                         let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
                         let mut inst = CardInstance::new(def);
@@ -4445,14 +4452,25 @@ impl Combat {
                     );
                 }
                 Effect::FreeRandomInHand => {
-                    if !self.hand.is_empty() {
-                        let pick = self.streams.floor(FloorStream::CardRandomRng).below(self.hand.len() as u32) as usize;
-                        self.hand[pick].free_combat = true;
-                        let name = self.hand[pick].label();
-                        self.push_log(
-                            LogKind::Info,
-                            format!("{name} costs 0 for the rest of combat"),
-                        );
+                    // 疯狂:把手牌里随机一张"仍要花费用"的牌降到 0.
+                    // 原版 MadnessAction 会反复掷点直到抽到 eligible 的牌
+                    // (0 费与 X 费都重掷),整手牌都没有能降的就一次也不掷.
+                    let eligible = |c: &CardInstance| matches!(c.fixed_cost(), Some(n) if n > 0);
+                    if self.hand.iter().any(&eligible) {
+                        let mut guard = 0;
+                        loop {
+                            guard += 1;
+                            let pick = self.streams.floor(FloorStream::CardRandomRng).below(self.hand.len() as u32) as usize;
+                            if eligible(&self.hand[pick]) || guard >= 1000 {
+                                self.hand[pick].free_combat = true;
+                                let name = self.hand[pick].label();
+                                self.push_log(
+                                    LogKind::Info,
+                                    format!("{name} costs 0 for the rest of combat"),
+                                );
+                                break;
+                            }
+                        }
                     }
                 }
                 Effect::CapHandCost { cap, combat } => {
@@ -5660,6 +5678,18 @@ mod tests {
         assert_eq!(b.fixed_cost(), Some(0), "本场战斗的 0 费不该被回合开始清掉");
     }
 
+    /// 疯狂只挑"还花费用"的牌:掷到 0 费/不可打出的会重掷
+    #[test]
+    fn madness_skips_zero_and_unplayable_cards() {
+        let mut c = staged(&["madness", "wound", "bludgeon"], &["madness", "wound", "bludgeon"]);
+        let idx = hand_idx(&c, "madness");
+        c.play_card(idx, None).unwrap();
+        let w = c.hand.iter().find(|x| x.def.id == "wound").unwrap();
+        assert_eq!(w.fixed_cost(), None, "伤口不可打出,不该被选为目标");
+        let b = c.hand.iter().find(|x| x.def.id == "bludgeon").unwrap();
+        assert_eq!(b.fixed_cost(), Some(0), "重掷到要花费用的打击并降成 0");
+    }
+
     #[test]
     fn enlightenment_caps_hand_cost() {
         // 基础版:只到回合结束
@@ -6475,9 +6505,10 @@ mod monster_tests {
         c.enemies[i].def.moves[c.enemies[i].next_move].name
     }
 
-    /// 扭动巨物:开局那一次掷招走 33/33/33(多段/重击/枯萎);
+    /// 扭动巨物:开局那一次掷招走 33/33/33(多段/连枷/枯萎,按语料 ai.firstTurn
+    /// 记的 lightspeed 招式 1/2/3);
     /// 挨打后的 Reactive 重掷走的是级联(参考实现 firstTurn 看 moveHistory 空不空,
-    /// 首招掷出后它就不空了),所以重掷能掷出开局分支掷不到的连枷/寄生.
+    /// 首招掷出后它就不空了),所以重掷能掷出开局分支掷不到的寄生.
     #[test]
     fn writhing_mass_rerolls_into_cascade_moves_on_turn_one() {
         let mut saw_flail = false;
@@ -6487,7 +6518,7 @@ mod monster_tests {
             let opener = move_name(&c, 0);
             assert!(
                 matches!(opener, "Multi Strike" | "Strong Strike" | "Wither"),
-                "开场不该是 {opener}(seed {seed})"
+                "开场应是 多段/重击/枯萎(wiki),实得 {opener}(seed {seed})"
             );
             c.damage_enemy(0, 3);
             let now = move_name(&c, 0);
@@ -7224,11 +7255,14 @@ mod power_tests {
         assert!(c.enemies[0].hp > 0);
     }
 
-    /// 扭动巨物开场三选一是 多段/重击/枯萎,不会摆出连枷(防御攻击)
+    /// 扭动巨物开场三选一:多段 / 连枷(格挡攻击) / 枯萎.
+    /// 语料 ai.firstTurn 记的是 lightspeed 的 33/66 分档落在招式 1,2,3,
+    /// wiki 那句"重击"是笔误(冲突已登记);开场也绝不会是重击/寄生/连枷之外的怪招.
     #[test]
-    fn writhing_mass_never_opens_with_block_attack() {
-        let mut seen_strong = false;
+    fn writhing_mass_opens_with_multi_big_hit_or_debuff() {
+        let mut seen_flail = false;
         let mut seen_multi = false;
+        let mut seen_wither = false;
         for seed in 0..200u64 {
             let enc = crate::core::enemies::encounter_def("writhing_mass_solo").unwrap();
             let setup = CombatSetup {
@@ -7243,12 +7277,17 @@ mod power_tests {
             };
             let c = Combat::new(enc, setup, RngRegistry::new(seed));
             let name = c.enemies[0].def.moves[c.enemies[0].next_move].name;
-            assert_ne!(name, "Flail", "开场不会是连枷(seed {seed})");
-            seen_strong |= name == "Strong Strike";
+            assert!(
+                matches!(name, "Multi Strike" | "Strong Strike" | "Wither"),
+                "开场应是 多段/重击/枯萎(wiki),实得 {name}(seed {seed})"
+            );
+            seen_flail |= name == "Strong Strike";
             seen_multi |= name == "Multi Strike";
+            seen_wither |= name == "Wither";
         }
-        assert!(seen_strong, "开场该掷得到重击");
+        assert!(seen_flail, "开场该掷得到重击(wiki 的 Big Hit)");
         assert!(seen_multi, "开场该掷得到多段");
+        assert!(seen_wither, "开场该掷得到枯萎");
     }
 
     #[test]
@@ -7307,6 +7346,29 @@ mod power_tests {
         assert!(c.force_end_turn, "第 12 张牌打完就该结束回合");
         assert_eq!(c.enemies[0].statuses.get(Status::TimeWarp), 0, "计数清零");
         assert!(c.enemies[0].statuses.get(Status::Strength) >= 2, "时间扭曲还给力量");
+        // 时间扭曲已经把这一回合掐掉了:再出牌要被拦下(参考实现 queueEndTurn)
+        c.hand.push(cards::card("strike"));
+        assert!(c.play_card(c.hand.len() - 1, Some(0)).is_err(), "第 12 张之后再出牌无效");
+    }
+
+    /// 时间吞噬者的重击:少抽一次要撑到下一个玩家回合,用掉之后才消失
+    #[test]
+    fn head_slam_draw_reduction_costs_a_card_next_turn() {
+        let mut c = lock("time_eater");
+        c.player.hp = 999;
+        let hs = c.enemies[0].def.move_index("Head Slam").unwrap();
+        c.enemies[0].next_move = hs;
+        c.end_turn();
+        assert_eq!(
+            c.player.statuses.get(Status::DrawReduction),
+            1,
+            "怪物回合挂上的少抽一次本轮结束不该递减"
+        );
+        assert_eq!(c.hand.len(), 4, "这一回合抽 4 张(5 减 1)");
+        // 用掉之后再过一个回合就该消失
+        c.end_turn();
+        assert_eq!(c.player.statuses.get(Status::DrawReduction), 0, "只影响一个回合");
+        assert_eq!(c.hand.len(), 5, "下一回合恢复正常抽牌");
     }
 
     #[test]

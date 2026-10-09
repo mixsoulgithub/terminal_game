@@ -379,14 +379,17 @@ impl Statuses {
     }
 
     /// 叠加 n,n 可以为负;多数状态层数降到 0 就移除,
-    /// 力量/敏捷/集中这类"强度"状态允许压到负数(见 can_go_negative)
+    /// 力量/敏捷/集中这类"强度"状态允许压到负数(见 can_go_negative).
+    /// 它们回到 0 也留着那一条:原版的 ApplyPowerAction 只在 !canGoNegative
+    /// 时把 0 层的强度摘掉,留着才能保住它在 powers 列表里的位置(伤害折叠
+    /// 按挂载顺序走,重挂会让顺序变、同一场伤害算出来差 1)
     pub fn add(&mut self, s: Status, n: i32) {
         if n == 0 {
             return;
         }
         if let Some(slot) = self.list.iter_mut().find(|(k, _)| *k == s) {
             slot.1 += n;
-            if slot.1 == 0 || (slot.1 < 0 && !s.can_go_negative()) {
+            if slot.1 <= 0 && !s.can_go_negative() {
                 self.list.retain(|(k, _)| *k != s);
             }
             return;
@@ -446,7 +449,8 @@ mod tests {
         assert_eq!(s.get(Status::Strength), 3);
         s.add(Status::Strength, -3);
         assert!(!s.has(Status::Strength));
-        assert_eq!(s.iter().count(), 0);
+        // 强度类回到 0 仍留着那一条(保住它在 powers 列表里的位置)
+        assert_eq!(s.iter().count(), 1);
     }
 
     #[test]
@@ -456,8 +460,9 @@ mod tests {
         assert_eq!(s.iter().count(), 0);
     }
 
-    /// 力量/敏捷可以压到 0 以下(拉格文的汲魂在 0 力量时把你压成 -1),
-    /// 0 到 0 仍是消失
+    /// 力量/敏捷可以压到 0 以下(拉格文的汲魂在 0 力量时把你压成 -1);
+    /// 回到 0 也留着那一条(原版 canGoNegative 的强度不在 0 层被摘掉,
+    /// 位置保住后伤害折叠顺序才对)
     #[test]
     fn strength_can_go_negative() {
         let mut s = Statuses::new();
@@ -465,9 +470,10 @@ mod tests {
         assert_eq!(s.get(Status::Strength), -1);
         s.add(Status::Dexterity, -2);
         assert_eq!(s.get(Status::Dexterity), -2);
-        // 负的加上正的回到 0 就消失
+        // 负的加上正的回到 0:层数是 0,但条目还在
         s.add(Status::Strength, 1);
-        assert!(!s.holds(Status::Strength));
+        assert!(!s.has(Status::Strength));
+        assert!(s.holds(Status::Strength));
         // 减益类的状态仍旧不允许为负
         s.add(Status::Vulnerable, 2);
         s.add(Status::Vulnerable, -5);
