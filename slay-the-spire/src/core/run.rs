@@ -1924,16 +1924,19 @@ impl Run {
                 EnemyKind::Boss | EnemyKind::Normal => None,
             },
         };
-        // 药水:先掷一次 d100 看掉不掉(带保底),掉了再掷稀有度
-        let potion = if let Some(p) = plan {
-            if self.streams.run(RunStream::PotionRng).chance(p.potion_pct as u32) {
-                potions::random_potion(self.streams.run(RunStream::PotionRng), potions::class_color(self.character))
-            } else {
-                None
+        // 药水:先掷一次 d100 看掉不掉(带保底),掉了再掷稀有度.
+        // 事件战斗(plan)走的也是同一条:参考实现 eventCombatRewards → rollPotionReward(ctx, entries.length),
+        // 保底累加与"已有奖励条目 ≥4 就不掉"都照旧,所以这里把已有条目数传进去.
+        let potion = match plan {
+            Some(p) if p.potion_pct > 0 => {
+                let so_far = usize::from(gold > 0) + usize::from(relic.is_some());
+                self.roll_potion_reward(so_far)
             }
-        } else {
-            let categories = if matches!(kind, EnemyKind::Elite) { 2 } else { 1 };
-            self.roll_potion_reward(categories)
+            Some(_) => None,
+            None => {
+                let categories = if matches!(kind, EnemyKind::Elite) { 2 } else { 1 };
+                self.roll_potion_reward(categories)
+            }
         };
         let no_cards = plan.map(|p| p.no_cards).unwrap_or(false);
         let cards: Vec<CardInstance> = if no_cards {
@@ -3800,7 +3803,14 @@ impl Run {
         }
         let fight_id = match (o.fight, o.fight_pool) {
             (Some(id), _) => Some(id),
-            (None, Some(pool)) if !pool.is_empty() => Some(*self.streams.floor(FloorStream::MiscRng).pick(pool)),
+            (None, Some(pool)) if !pool.is_empty() => {
+                // 原版是 Collections.shuffle(候选, new Random(miscRng.randomLong())) 之后取第一个
+                // (语料 events.json 的 MINDBLOOM:RANDOM_ACT1_BOSS),不是单抽一个下标.
+                let mut order: Vec<&'static str> = pool.to_vec();
+                let seed = self.streams.floor(FloorStream::MiscRng).random_long();
+                java_shuffle(&mut order, &mut JavaRandom::new(seed));
+                Some(order[0])
+            }
             _ => None,
         };
         if let Some(enc_id) = fight_id {
@@ -6486,6 +6496,17 @@ mod tests {
                     .all(|p| !r.player.relics.iter().any(|o| o.id == p.id)));
             }
         }
+    }
+
+    /// 事件战斗奖励的药水走的也是带保底的掉落(参考实现 eventCombatRewards →
+    /// rollPotionReward):保底叠到 60 时必掉,掉完把保底减回去
+    #[test]
+    fn potion_reward_roll_gets_the_pity_bonus() {
+        let mut r = Run::new(9);
+        assert_eq!(r.potion_chance, 0);
+        r.potion_chance = 60;
+        assert!(r.roll_potion_reward(2).is_some(), "保底叠满必掉药水");
+        assert_eq!(r.potion_chance, 50, "掉了要把保底减一格");
     }
 
     /// 三选一不该出现同一张牌(抽很多局来看)

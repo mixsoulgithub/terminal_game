@@ -905,10 +905,10 @@ pub static CARDS: &[CardDef] = &[
         ],
         upgrade: up!(
             None,
-            "Gain 9 Block. Exhaust a random card in your hand.",
+            "Gain 9 Block. Exhaust a card in your hand.",
             [
                 Effect::Block { amount: 9 },
-                Effect::ExhaustRandomInHand { n: 1 }
+                Effect::ExhaustFromHand
             ]
         ),
     },

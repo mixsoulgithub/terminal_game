@@ -474,6 +474,11 @@ impl Combat {
                 }
                 block += p.block;
                 state.turns = p.acted_turns;
+                // 预置了"已经行动过"的招式历史:首招已经掷过,不能再走开局分支
+                // (参考实现里这些怪的 moveHistory 非空,firstTurn 为假)
+                if p.acted_turns > 0 || p.last_move.is_some() {
+                    state.move_rolled = true;
+                }
                 if let Some(name) = p.last_move {
                     state.last = Some(def.move_index(name).unwrap_or_else(|| {
                         panic!("enemy {} has no move named {name}", def.id)
@@ -2183,6 +2188,9 @@ impl Combat {
                 self.push_log(LogKind::Enemy, format!("{name} escapes"));
                 self.check_win();
             }
+            EnemyFx::MarkImplantUsed => {
+                self.enemies[idx].state.implant_used = true;
+            }
         }
     }
 
@@ -2588,6 +2596,9 @@ impl Combat {
         let len = def.moves.len();
         // 被上一招指定的后继
         if let Some(f) = self.enemies[idx].state.forced.take() {
+            // 参考实现的 rollMove 无论如何都会先掷一次 aiRng.random(99)(值可能不用),
+            // 写死的后继(巨口的 NOM→DROOL)也一样,不掷就会让后面所有掷点错位
+            self.streams.floor(FloorStream::AiRng).random(99);
             self.enemies[idx].next_move = f.min(len - 1);
             return;
         }
@@ -2601,6 +2612,9 @@ impl Combat {
         let len = def.moves.len();
         let m = self.run_script(idx, def.pick);
         self.enemies[idx].next_move = m.min(len - 1);
+        // 首招一旦掷出,参考实现的 moveHistory 就非空了:之后的重掷(Reactive)
+        // 与常规选招都走级联,不再走"开局三选一"分支.
+        self.enemies[idx].state.move_rolled = true;
     }
 
     /// 跑一遍某只怪的选招函数.状态是副本,跑完写回(选招里可以记账)
@@ -4149,7 +4163,8 @@ impl Combat {
                         if self.hand.is_empty() {
                             break;
                         }
-                        let i = self.streams.floor(FloorStream::CardRandomRng).below(self.hand.len() as u32) as usize;
+                        let i = self.streams.floor(FloorStream::CardRandomRng).below(self.hand.len() as u32)
+                            as usize;
                         let c = self.hand.remove(i);
                         ctx.exhausted += 1;
                         self.exhaust_card(c);
@@ -6412,6 +6427,49 @@ mod monster_tests {
     /// 敌人这一招的名字
     fn move_name(c: &Combat, i: usize) -> &'static str {
         c.enemies[i].def.moves[c.enemies[i].next_move].name
+    }
+
+    /// 扭动巨物:开局那一次掷招走 33/33/33(多段/重击/枯萎);
+    /// 挨打后的 Reactive 重掷走的是级联(参考实现 firstTurn 看 moveHistory 空不空,
+    /// 首招掷出后它就不空了),所以重掷能掷出开局分支掷不到的连枷/寄生.
+    #[test]
+    fn writhing_mass_rerolls_into_cascade_moves_on_turn_one() {
+        let mut saw_flail = false;
+        let mut saw_implant = false;
+        for seed in 0..400u64 {
+            let mut c = lock_seed("writhing_mass_solo", seed);
+            let opener = move_name(&c, 0);
+            assert!(
+                matches!(opener, "Multi Strike" | "Strong Strike" | "Wither"),
+                "开场不该是 {opener}(seed {seed})"
+            );
+            c.damage_enemy(0, 3);
+            let now = move_name(&c, 0);
+            saw_flail |= now == "Flail";
+            saw_implant |= now == "Implant";
+        }
+        assert!(saw_flail, "挨打重掷应该掷得到连枷");
+        assert!(saw_implant, "挨打重掷应该掷得到寄生");
+    }
+
+    /// 寄生只算"真的出手用过"那一次:选中又被重掷掉的不算
+    /// (参考实现把 usedImplant 记在 Implant 的 execute 里,不是选招时)
+    #[test]
+    fn writhing_mass_implant_counts_only_when_it_is_used() {
+        let mut found = None;
+        for seed in 0..400u64 {
+            let mut c = lock_seed("writhing_mass_solo", seed);
+            c.damage_enemy(0, 3);
+            if move_name(&c, 0) == "Implant" && c.enemies[0].hp > 0 {
+                found = Some(c);
+                break;
+            }
+        }
+        let mut c = found.expect("应该能重掷到寄生");
+        assert!(!c.enemies[0].state.implant_used, "还没出手,不算用过");
+        // 让它把这招真的打出来
+        c.end_turn();
+        assert!(c.enemies[0].state.implant_used, "出手过就该记成用过");
     }
 
     #[test]

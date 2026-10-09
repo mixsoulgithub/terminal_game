@@ -191,11 +191,6 @@ impl Rng {
         }
     }
 
-    /// 百分比命中:random(99) < pct
-    pub fn chance(&mut self, pct: u32) -> bool {
-        self.random(99) < pct.min(100)
-    }
-
     /// 从切片里随机取一个,调用方保证非空
     pub fn pick<'a, T>(&mut self, v: &'a [T]) -> &'a T {
         &v[self.random(v.len() as u32 - 1) as usize]

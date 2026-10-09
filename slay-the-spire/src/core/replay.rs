@@ -1918,10 +1918,14 @@ mod e2e {
 //   hand/draw/discard/exhaust  ["strike","defend+"] 显式牌堆,顶牌在数组开头
 //   enemies    [{id,hp,max_hp,block,powers,move}]
 //   actions    [{"op":"play","hand":0,"target":0},{"op":"end_turn"},...]
+//   combats    [{"encounter":...,"hand":...,"enemies":...,"actions":...}, ...]
+//              多场连打:血量与跨战斗遗物计数器接着上一场走;给了 combats 就
+//              忽略根上的那场,每行多带 "c"(场次号)与 st.counters(计数器)
 //
 // 输出每行:`{"step":n,"op":"...",<state>}`;动作出错就 `{"step":n,"op":"...","error":"..."}`。
 // state:turn/phase/energy/max_energy/player{hp,max_hp,block,powers}/
 //        hand/draw/discard/exhaust(牌记号)/enemies[{id,hp,max_hp,block,dead,move,powers}]
+//        (多场连打时另带 counters{pen_nib,happy_flower,incense,sundial,attacks_total,cards_total})
 pub mod sandbox {
     use crate::core::card::CardInstance;
     use crate::core::combat::{Combat, CombatSetup, Phase};
@@ -2306,8 +2310,18 @@ pub mod sandbox {
         Noop,
     }
 
-    struct Scenario {
+    /// 单场战斗的现场(多场连打时按顺序来)
+    struct CombatSc {
         encounter: String,
+        hand: Option<Vec<CardInstance>>,
+        draw: Option<Vec<CardInstance>>,
+        discard: Option<Vec<CardInstance>>,
+        exhaust: Option<Vec<CardInstance>>,
+        enemies: Vec<EnemySpec>,
+        actions: Vec<Action>,
+    }
+
+    struct Scenario {
         hp: i32,
         max_hp: i32,
         gold: i32,
@@ -2316,12 +2330,8 @@ pub mod sandbox {
         relics: Vec<&'static RelicDef>,
         potions: Vec<Option<&'static PotionDef>>,
         deck: Vec<CardInstance>,
-        hand: Option<Vec<CardInstance>>,
-        draw: Option<Vec<CardInstance>>,
-        discard: Option<Vec<CardInstance>>,
-        exhaust: Option<Vec<CardInstance>>,
-        enemies: Vec<EnemySpec>,
-        actions: Vec<Action>,
+        /// 一场或多场战斗:写了 combats 就按数组顺序连打,否则根上那场单独打
+        combats: Vec<CombatSc>,
     }
 
     fn need_str<'a>(v: &'a Json, key: &str) -> Result<&'a str, String> {
@@ -2357,12 +2367,94 @@ pub mod sandbox {
         }
     }
 
+    /// 解析一场战斗的现场(encounter/enemies/牌堆/动作)
+    fn parse_combat(v: &Json) -> Result<CombatSc, String> {
+        let mut cs = CombatSc {
+            encounter: String::new(),
+            hand: None,
+            draw: None,
+            discard: None,
+            exhaust: None,
+            enemies: Vec::new(),
+            actions: Vec::new(),
+        };
+        if let Some(e) = v.get("encounter") {
+            cs.encounter = e.as_str().ok_or("encounter 要是字符串")?.to_string();
+        }
+        cs.hand = cards_from_arr(v, "hand")?;
+        cs.draw = cards_from_arr(v, "draw")?;
+        cs.discard = cards_from_arr(v, "discard")?;
+        cs.exhaust = cards_from_arr(v, "exhaust")?;
+        if let Some(arr) = v.get("enemies").and_then(|x| x.as_arr()) {
+            for x in arr {
+                let id = need_str(x, "id")?.to_string();
+                let hp = x.get("hp").and_then(|y| y.as_i64()).map(|n| n as i32);
+                let max_hp = x.get("max_hp").and_then(|y| y.as_i64()).map(|n| n as i32);
+                let block = x.get("block").and_then(|y| y.as_i64()).map(|n| n as i32);
+                let powers = match x.get("powers") {
+                    Some(p) => powers_from_json(p)?,
+                    None => Vec::new(),
+                };
+                let move_name = match x.get("move") {
+                    None | Some(Json::Null) => None,
+                    Some(m) => Some(m.as_str().ok_or("enemy.move 要是字符串")?.to_string()),
+                };
+                let slot = match x.get("slot") {
+                    None | Some(Json::Null) => None,
+                    Some(s) => Some(s.as_i64().ok_or("enemy.slot 要是数字")? as usize),
+                };
+                cs.enemies.push(EnemySpec {
+                    id,
+                    hp,
+                    max_hp,
+                    block,
+                    powers,
+                    move_id: move_name,
+                    slot,
+                });
+            }
+        }
+        if let Some(arr) = v.get("actions").and_then(|x| x.as_arr()) {
+            for x in arr {
+                let op = need_str(x, "op")?;
+                let choose: Vec<usize> = match x.get("choose").and_then(|y| y.as_arr()) {
+                    None => vec![0],
+                    Some(a) => a
+                        .iter()
+                        .map(|y| y.as_i64().unwrap_or(0) as usize)
+                        .collect(),
+                };
+                match op {
+                    "play" => {
+                        let hand = num_or(x, "hand", 0)? as usize;
+                        let target = match x.get("target") {
+                            None | Some(Json::Null) => None,
+                            Some(t) => Some(t.as_i64().ok_or("action.target 要是数字")? as usize),
+                        };
+                        cs.actions.push(Action::Play { hand, target, choose });
+                    }
+                    "end_turn" | "endTurn" => cs.actions.push(Action::EndTurn),
+                    "potion" => {
+                        let slot = num_or(x, "slot", 0)? as usize;
+                        let target = match x.get("target") {
+                            None | Some(Json::Null) => None,
+                            Some(t) => Some(t.as_i64().ok_or("action.target 要是数字")? as usize),
+                        };
+                        cs.actions.push(Action::Potion { slot, target, choose });
+                    }
+                    "noop" | "snapshot" => cs.actions.push(Action::Noop),
+                    other => return Err(format!("不认识的动作: {other}")),
+                }
+            }
+        }
+        Ok(cs)
+    }
+
     fn parse_scenario(root: &Json) -> Result<Scenario, String> {
         if !matches!(root, Json::Obj(_)) {
             return Err("scenario 根要是个对象".to_string());
         }
         let mut sc = Scenario {
-            encounter: String::new(),
             hp: 80,
             max_hp: 80,
             gold: 99,
@@ -2371,16 +2463,8 @@ pub mod sandbox {
             relics: Vec::new(),
             potions: Vec::new(),
             deck: Vec::new(),
-            hand: None,
-            draw: None,
-            discard: None,
-            exhaust: None,
-            enemies: Vec::new(),
-            actions: Vec::new(),
+            combats: Vec::new(),
         };
-        if let Some(v) = root.get("encounter") {
-            sc.encounter = v.as_str().ok_or("encounter 要是字符串")?.to_string();
-        }
         if let Some(p) = root.get("player") {
             sc.hp = num_or(p, "hp", sc.hp)?;
             sc.max_hp = num_or(p, "max_hp", sc.max_hp)?;
@@ -2402,82 +2486,28 @@ pub mod sandbox {
                 if matches!(x, Json::Null) {
                     sc.potions.push(None);
                 } else {
-                    let id = x
-                        .as_str()
-                        .ok_or("potions 里要放字符串或 null")?;
+                    let id = x.as_str().ok_or("potions 里要放字符串或 null")?;
                     let d = potion_def(id).ok_or_else(|| format!("不认识的药水: {id}"))?;
                     sc.potions.push(Some(d));
                 }
             }
         }
-        sc.hand = cards_from_arr(root, "hand")?;
-        sc.draw = cards_from_arr(root, "draw")?;
-        sc.discard = cards_from_arr(root, "discard")?;
-        sc.exhaust = cards_from_arr(root, "exhaust")?;
         if let Some(arr) = cards_from_arr(root, "deck")? {
             sc.deck = arr;
         }
-        if let Some(arr) = root.get("enemies").and_then(|v| v.as_arr()) {
-            for x in arr {
-                let id = need_str(x, "id")?.to_string();
-                let hp = x.get("hp").and_then(|v| v.as_i64()).map(|n| n as i32);
-                let max_hp = x.get("max_hp").and_then(|v| v.as_i64()).map(|n| n as i32);
-                let block = x.get("block").and_then(|v| v.as_i64()).map(|n| n as i32);
-                let powers = match x.get("powers") {
-                    Some(v) => powers_from_json(v)?,
-                    None => Vec::new(),
-                };
-                let move_name = match x.get("move") {
-                    None | Some(Json::Null) => None,
-                    Some(v) => Some(v.as_str().ok_or("enemy.move 要是字符串")?.to_string()),
-                };
-                let slot = match x.get("slot") {
-                    None | Some(Json::Null) => None,
-                    Some(v) => Some(v.as_i64().ok_or("enemy.slot 要是数字")? as usize),
-                };
-                sc.enemies.push(EnemySpec {
-                    id,
-                    hp,
-                    max_hp,
-                    block,
-                    powers,
-                    move_id: move_name,
-                    slot,
-                });
-            }
-        }
-        if let Some(arr) = root.get("actions").and_then(|v| v.as_arr()) {
-            for x in arr {
-                let op = need_str(x, "op")?;
-                let choose: Vec<usize> = match x.get("choose").and_then(|v| v.as_arr()) {
-                    None => vec![0],
-                    Some(a) => a
-                        .iter()
-                        .map(|y| y.as_i64().unwrap_or(0) as usize)
-                        .collect(),
-                };
-                match op {
-                    "play" => {
-                        let hand = num_or(x, "hand", 0)? as usize;
-                        let target = match x.get("target") {
-                            None | Some(Json::Null) => None,
-                            Some(v) => Some(v.as_i64().ok_or("action.target 要是数字")? as usize),
-                        };
-                        sc.actions.push(Action::Play { hand, target, choose });
-                    }
-                    "end_turn" | "endTurn" => sc.actions.push(Action::EndTurn),
-                    "potion" => {
-                        let slot = num_or(x, "slot", 0)? as usize;
-                        let target = match x.get("target") {
-                            None | Some(Json::Null) => None,
-                            Some(v) => Some(v.as_i64().ok_or("action.target 要是数字")? as usize),
-                        };
-                        sc.actions.push(Action::Potion { slot, target, choose });
-                    }
-                    "noop" | "snapshot" => sc.actions.push(Action::Noop),
-                    other => return Err(format!("不认识的动作: {other}")),
+        sc.combats = match root.get("combats") {
+            Some(Json::Arr(a)) => {
+                let mut v = Vec::new();
+                for x in a {
+                    v.push(parse_combat(x)?);
                 }
+                v
             }
+            Some(_) => return Err("combats 要是数组".to_string()),
+            None => vec![parse_combat(root)?],
+        };
+        if sc.combats.is_empty() {
+            return Err("scenario 至少要有一场战斗".to_string());
         }
         Ok(sc)
     }
@@ -2521,6 +2551,8 @@ pub mod sandbox {
             // 一直放充能,因为它以为还没出过手)。
             let mut state = EnemyState::default();
             state.last = Some(next_move);
+            // 参考实现里首招一掷出 moveHistory 就非空:之后不再走"开局三选一"分支
+            state.move_rolled = true;
             let hp = s.hp.or(base.map(|b| b.hp)).unwrap_or_else(|| def.hp.0);
             out.push(Enemy {
                 def,
@@ -2632,7 +2664,16 @@ pub mod sandbox {
         format!("{{{}}}", body.join(","))
     }
 
-    fn state_json(c: &Combat, potions: &[Option<&'static PotionDef>]) -> String {
+    /// 跨战斗的遗物计数器(多场连打时随输出走,单场不输出以保持与参考侧同 schema)
+    fn counters_json(c: &Combat) -> String {
+        let rc = c.rs.run_counters();
+        format!(
+            ",\"counters\":{{\"pen_nib\":{},\"happy_flower\":{},\"incense\":{},\"sundial\":{},\"attacks_total\":{},\"cards_total\":{}}}",
+            rc.pen_nib, rc.happy_flower, rc.incense, rc.sundial, rc.attacks_total, rc.cards_total
+        )
+    }
+
+    fn state_json(c: &Combat, potions: &[Option<&'static PotionDef>], extra: &str) -> String {
         let enemies: Vec<String> = (0..c.enemies.len())
             .map(|i| {
                 let e = &c.enemies[i];
@@ -2662,7 +2703,7 @@ pub mod sandbox {
             "{{\"turn\":{},\"phase\":{},\"energy\":{},\"max_energy\":{},\
              \"player\":{{\"hp\":{},\"max_hp\":{},\"block\":{},\"powers\":{}}},\
              \"hand\":{},\"draw\":{},\"discard\":{},\"exhaust\":{},\
-             \"potions\":[{}],\"enemies\":[{}]}}",
+             \"potions\":[{}],\"enemies\":[{}]{extra}}}",
             c.turn,
             js(phase),
             c.energy,
@@ -2680,12 +2721,21 @@ pub mod sandbox {
         )
     }
 
-    fn line(step: usize, op: &str, rest: &str) -> String {
-        format!("{{\"step\":{step},\"op\":{},{rest}}}\n", js(op))
+    fn line(step: usize, op: &str, ci: Option<usize>, rest: &str) -> String {
+        let tag = ci.map(|i| format!("\"c\":{i},")).unwrap_or_default();
+        format!("{{\"step\":{step},\"op\":{},{tag}{rest}}}\n", js(op))
     }
 
-    fn snapshot(step: usize, op: &str, c: &Combat, potions: &[Option<&'static PotionDef>]) -> String {
-        line(step, op, &format!("\"st\":{}", state_json(c, potions)))
+    /// ci 为 Some 时输出多场连打的场次号与遗物计数器
+    fn snapshot(
+        step: usize,
+        op: &str,
+        c: &Combat,
+        potions: &[Option<&'static PotionDef>],
+        ci: Option<usize>,
+    ) -> String {
+        let extra = if ci.is_some() { counters_json(c) } else { String::new() };
+        line(step, op, ci, &format!("\"st\":{}", state_json(c, potions, &extra)))
     }
 
     // ---- 跑一段 scenario ----
@@ -2715,26 +2765,29 @@ pub mod sandbox {
         }
     }
 
-    pub fn run(seed: u64, text: &str) -> Result<String, String> {
-        let root = parse_json(text)?;
-        let sc = parse_scenario(&root)?;
-        if sc.enemies.is_empty() {
+    /// 按 scenario 摆好一场战斗:牌堆 / 玩家 / 敌人覆盖,并把掷点流重置到同一颗种子.
+    fn build_combat(
+        cs: &CombatSc,
+        sc: &Scenario,
+        hp: i32,
+        max_hp: i32,
+        counters: crate::core::combat::RunRelicCounters,
+        seed: u64,
+    ) -> Result<Combat, String> {
+        if cs.enemies.is_empty() {
             return Err("scenario 至少要有一只敌人".to_string());
         }
-        let enc = if sc.encounter.is_empty() {
-            placeholder_encounter(sc.enemies.len())
+        let enc = if cs.encounter.is_empty() {
+            placeholder_encounter(cs.enemies.len())
         } else {
-            enemies::encounter_def(&sc.encounter)
-                .ok_or_else(|| format!("不认识的遭遇: {}", sc.encounter))?
+            enemies::encounter_def(&cs.encounter)
+                .ok_or_else(|| format!("不认识的遭遇: {}", cs.encounter))?
         };
         // 显式牌堆存在时,牌组原件 = hand+draw+discard+exhaust(顺序与参考侧一致)
-        let deck: Vec<CardInstance> = if sc.hand.is_some()
-            || sc.draw.is_some()
-            || sc.discard.is_some()
-            || sc.exhaust.is_some()
-        {
+        let explicit = cs.hand.is_some() || cs.draw.is_some() || cs.discard.is_some() || cs.exhaust.is_some();
+        let deck: Vec<CardInstance> = if explicit {
             let mut d = Vec::new();
-            for part in [&sc.hand, &sc.draw, &sc.discard, &sc.exhaust] {
+            for part in [&cs.hand, &cs.draw, &cs.discard, &cs.exhaust] {
                 if let Some(p) = part {
                     d.extend(p.iter().cloned());
                 }
@@ -2744,28 +2797,26 @@ pub mod sandbox {
             sc.deck.clone()
         };
         let setup = CombatSetup {
-            hp: sc.hp,
-            max_hp: sc.max_hp,
+            hp,
+            max_hp,
             deck,
             relics: sc.relics.clone(),
             gold: sc.gold,
             rested: sc.rested,
             lift_strength: 0,
-            relic_counters: Default::default(),
+            relic_counters: counters,
         };
         let mut c = Combat::new(enc, setup, RngRegistry::new(seed));
 
         // 覆盖:显式牌堆
-        if sc.hand.is_some() || sc.draw.is_some() || sc.discard.is_some() || sc.exhaust.is_some() {
-            c.hand = sc.hand.clone().unwrap_or_default();
-            c.draw = sc.draw.clone().unwrap_or_default();
-            c.discard = sc.discard.clone().unwrap_or_default();
-            c.exhaust = sc.exhaust.clone().unwrap_or_default();
+        if explicit {
+            c.hand = cs.hand.clone().unwrap_or_default();
+            c.draw = cs.draw.clone().unwrap_or_default();
+            c.discard = cs.discard.clone().unwrap_or_default();
+            c.exhaust = cs.exhaust.clone().unwrap_or_default();
         }
-        // 覆盖:玩家
+        // 覆盖:玩家(hp/max_hp 由 setup 带进来,多场连打时才能接着上一场)
         if let Some(p) = sc.player.as_ref() {
-            c.player.hp = num_or(p, "hp", c.player.hp)?;
-            c.player.max_hp = num_or(p, "max_hp", c.player.max_hp)?;
             c.player.block = num_or(p, "block", c.player.block)?;
             if let Some(e) = p.get("energy") {
                 c.energy = e.as_i64().ok_or("player.energy 要是数字")? as i32;
@@ -2781,8 +2832,8 @@ pub mod sandbox {
             }
         }
         // 覆盖:敌人(数量要对上)
-        if !sc.enemies.is_empty() {
-            let want = sc.enemies.len();
+        if !cs.enemies.is_empty() {
+            let want = cs.enemies.len();
             if c.enemies.len() != want {
                 return Err(format!(
                     "敌人数量对不上:遭遇给了 {},scenario 要 {want}",
@@ -2790,11 +2841,7 @@ pub mod sandbox {
                 ));
             }
             let init = c.enemies.clone();
-            c.enemies = build_enemies(&sc.enemies, &init)?;
-        }
-        let mut potions = sc.potions.clone();
-        while potions.len() < 3 {
-            potions.push(None);
+            c.enemies = build_enemies(&cs.enemies, &init)?;
         }
         // 初始化时挂起的选牌(赌徒筹码这类开战就选牌的遗物)一律按"一张不选"收掉:
         // scenario 已经把牌堆摆成想要的样子了,构造期的选择只是初始化副作用.
@@ -2804,49 +2851,77 @@ pub mod sandbox {
         // 掷点流重置:初始化阶段两边消耗的掷点数可能不同,重置成同一颗种子
         // 之后,动作阶段的随机(洗牌/随机目标/随机卡)才能逐步对齐。
         c.streams = RngRegistry::new(seed);
+        Ok(c)
+    }
 
+    pub fn run(seed: u64, text: &str) -> Result<String, String> {
+        let root = parse_json(text)?;
+        let sc = parse_scenario(&root)?;
+        // 写了 combats 就是多场连打:输出多带场次号与遗物计数器,血量与计数器跨场继承
+        let multi = root.get("combats").is_some();
+        let mut carried = crate::core::combat::RunRelicCounters::default();
+        let mut hp = sc.hp;
+        let mut max_hp = sc.max_hp;
+        let mut potions = sc.potions.clone();
+        while potions.len() < 3 {
+            potions.push(None);
+        }
         let mut out = String::new();
-        out.push_str(&snapshot(0, "init", &c, &potions));
-        for (i, a) in sc.actions.iter().enumerate() {
-            let step = i + 1;
-            // 开战就挂起的选牌(赌徒之骰/工具箱)先按动作给的 choose 收掉,
-            // 否则下一步打牌会被"还有选牌没选"挡住,与参考侧对不上。
-            let action_choose: Vec<usize> = match a {
-                Action::Play { choose, .. }
-                | Action::Potion { choose, .. } => choose.clone(),
-                _ => vec![0],
-            };
-            if c.choice.is_some() {
-                resolve_choice(&mut c, &action_choose);
-            }
-            match a {
-                Action::Play { hand, target, choose } => match c.play_card(*hand, *target) {
-                    Ok(()) => {
+        let mut step = 0usize;
+        for (ci, cs) in sc.combats.iter().enumerate() {
+            let tag = if multi { Some(ci) } else { None };
+            let mut c = build_combat(cs, &sc, hp, max_hp, carried.clone(), seed)?;
+            out.push_str(&snapshot(step, "init", &c, &potions, tag));
+            for a in cs.actions.iter() {
+                step += 1;
+                // 开战就挂起的选牌(赌徒之骰/工具箱)先按动作给的 choose 收掉,
+                // 否则下一步打牌会被"还有选牌没选"挡住,与参考侧对不上。
+                let action_choose: Vec<usize> = match a {
+                    Action::Play { choose, .. } | Action::Potion { choose, .. } => choose.clone(),
+                    _ => vec![0],
+                };
+                if c.choice.is_some() {
+                    resolve_choice(&mut c, &action_choose);
+                }
+                match a {
+                    Action::Play { hand, target, choose } => match c.play_card(*hand, *target) {
+                        Ok(()) => {
+                            resolve_choice(&mut c, choose);
+                            out.push_str(&snapshot(step, "play", &c, &potions, tag));
+                        }
+                        Err(e) => {
+                            out.push_str(&line(step, "play", tag, &format!("\"error\":{}", js(e))));
+                            break;
+                        }
+                    },
+                    Action::EndTurn => {
+                        c.end_turn();
+                        resolve_choice(&mut c, &[0]);
+                        out.push_str(&snapshot(step, "end_turn", &c, &potions, tag));
+                    }
+                    Action::Potion { slot, target, choose } => {
+                        let Some(Some(def)) = potions.get(*slot).copied() else {
+                            out.push_str(&line(
+                                step,
+                                "potion",
+                                tag,
+                                "\"error\":\"no potion in slot\"",
+                            ));
+                            break;
+                        };
+                        c.use_potion(def, *target);
+                        potions[*slot] = None;
                         resolve_choice(&mut c, choose);
-                        out.push_str(&snapshot(step, "play", &c, &potions));
+                        out.push_str(&snapshot(step, "potion", &c, &potions, tag));
                     }
-                    Err(e) => {
-                        out.push_str(&line(step, "play", &format!("\"error\":{}", js(e))));
-                        break;
-                    }
-                },
-                Action::EndTurn => {
-                    c.end_turn();
-                    resolve_choice(&mut c, &[0]);
-                    out.push_str(&snapshot(step, "end_turn", &c, &potions));
+                    Action::Noop => out.push_str(&snapshot(step, "noop", &c, &potions, tag)),
                 }
-                Action::Potion { slot, target, choose } => {
-                    let Some(Some(def)) = potions.get(*slot).copied() else {
-                        out.push_str(&line(step, "potion", "\"error\":\"no potion in slot\""));
-                        break;
-                    };
-                    c.use_potion(def, *target);
-                    potions[*slot] = None;
-                    resolve_choice(&mut c, choose);
-                    out.push_str(&snapshot(step, "potion", &c, &potions));
-                }
-                Action::Noop => out.push_str(&snapshot(step, "noop", &c, &potions)),
             }
+            // 结算这一场:血量与跨战斗遗物计数器带走,下一场接着来
+            carried = c.rs.run_counters();
+            hp = c.player.hp;
+            max_hp = c.player.max_hp;
+            step += 1;
         }
         Ok(out)
     }
@@ -2880,5 +2955,142 @@ pub mod sandbox {
             }
         }
         out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn rows(seed: u64, text: &str) -> Vec<Json> {
+            run(seed, text)
+                .expect("沙盒要能跑")
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| parse_json(l).expect("每行都要是 JSON"))
+                .collect()
+        }
+
+        fn dig<'a>(v: &'a Json, keys: &[&str]) -> &'a Json {
+            let mut cur = v;
+            for k in keys {
+                cur = cur.get(k).unwrap_or_else(|| panic!("少了字段 {k}"));
+            }
+            cur
+        }
+
+        fn num(v: &Json, keys: &[&str]) -> i64 {
+            dig(v, keys).as_i64().unwrap_or_else(|| panic!("{keys:?} 不是数字"))
+        }
+
+        fn find<'a>(rows: &'a [Json], op: &str) -> &'a Json {
+            rows.iter()
+                .find(|r| dig(r, &["op"]).as_str() == Some(op))
+                .unwrap_or_else(|| panic!("没有 op={op} 的行"))
+        }
+
+        fn enemy0_hp(v: &Json) -> i64 {
+            dig(v, &["st", "enemies"]).as_arr().unwrap()[0]
+                .get("hp")
+                .unwrap()
+                .as_i64()
+                .unwrap()
+        }
+
+        /// 跨战斗:遗物计数器与血量带着走(combats 模式下才输出场次号与 counters)
+        #[test]
+        fn multi_combat_carries_relic_counters() {
+            let text = r#"{"player":{"hp":80,"max_hp":80},
+                "relics":["incense_burner","pen_nib"],
+                "combats":[
+                  {"enemies":[{"id":"cultist","hp":50,"max_hp":50}],"hand":["strike"],"draw":["defend"],
+                   "actions":[{"op":"play","hand":0,"target":0},{"op":"end_turn"},{"op":"end_turn"}]},
+                  {"enemies":[{"id":"cultist","hp":50,"max_hp":50}],"hand":["defend"],"draw":[],
+                   "actions":[{"op":"noop"}]}
+                ]}"#;
+            let rows = rows(7, text);
+            let first_end = rows
+                .iter()
+                .filter(|r| r.get("c").and_then(|c| c.as_i64()) == Some(0))
+                .filter(|r| r.get("st").is_some())
+                .next_back()
+                .expect("第一场要有快照");
+            assert_eq!(num(first_end, &["st", "counters", "incense"]), 3, "第一场数到第 3 回合");
+            let second = rows
+                .iter()
+                .find(|r| r.get("c").and_then(|c| c.as_i64()) == Some(1))
+                .expect("要有第二场的行");
+            assert_eq!(num(second, &["st", "counters", "incense"]), 4, "薰香从上一场的 3 接上");
+            assert_eq!(num(second, &["st", "counters", "pen_nib"]), 1, "笔尖计数也跨场");
+        }
+
+        /// 极端叠加:力量 10 + 易伤 10 是 (6+10)*1.5 向下取整
+        #[test]
+        fn extreme_stack_math() {
+            let text = r#"{"player":{"hp":40,"max_hp":80,"energy":9,"max_energy":9,"powers":{"strength":10}},
+                "hand":["strike","defend"],"draw":[],"discard":[],"exhaust":[],
+                "enemies":[{"id":"cultist","hp":999,"max_hp":999,"move":"Incantation","powers":{"vulnerable":10}}],
+                "actions":[{"op":"play","hand":0,"target":0}]}"#;
+            let rows = rows(1, text);
+            let dealt = enemy0_hp(&rows[0]) - enemy0_hp(find(&rows, "play"));
+            assert_eq!(dealt, 24, "力量10+易伤10 该打 24");
+        }
+
+        /// X 费:3 点能量打旋风斩,打 3 次各 5 点,能量清零
+        #[test]
+        fn x_cost_uses_all_energy() {
+            let text = r#"{"player":{"hp":40,"max_hp":80,"energy":3,"max_energy":9},
+                "hand":["whirlwind"],"draw":[],"discard":[],"exhaust":[],
+                "enemies":[{"id":"cultist","hp":999,"max_hp":999,"move":"Incantation"}],
+                "actions":[{"op":"play","hand":0,"target":0}]}"#;
+            let rows = rows(1, text);
+            let play = find(&rows, "play");
+            assert_eq!(enemy0_hp(&rows[0]) - enemy0_hp(play), 15, "3 能量的旋风斩该打 5×3");
+            assert_eq!(num(play, &["st", "energy"]), 0, "X 费吃光能量");
+        }
+
+        /// 分裂:大史莱姆掉到半血以下,敌方回合结束时裂成两只中史莱姆
+        #[test]
+        fn large_slime_splits_on_its_turn() {
+            let text = r#"{"encounter":"large_slime","player":{"hp":40,"max_hp":80,"energy":9,"max_energy":9},
+                "hand":["bludgeon","strike","defend","defend","defend"],"draw":["strike","strike","strike"],
+                "discard":[],"exhaust":[],"enemies":[{"id":"acid_slime_large","hp":65,"max_hp":65}],
+                "actions":[{"op":"play","hand":0,"target":0},{"op":"play","hand":0,"target":0},{"op":"end_turn"}]}"#;
+            let rows = rows(1, text);
+            let enemies = dig(find(&rows, "end_turn"), &["st", "enemies"]).as_arr().unwrap();
+            assert_eq!(enemies.len(), 2, "该裂成两只");
+            for e in enemies {
+                assert_eq!(e.get("id").unwrap().as_str(), Some("acid_slime_medium"));
+            }
+        }
+
+        /// 手牌上限:手上 10 张时打出抽牌牌,手牌仍是 10 张
+        #[test]
+        fn hand_limit_caps_draws() {
+            let text = r#"{"player":{"hp":40,"max_hp":80,"energy":9,"max_energy":9},
+                "hand":["pommel_strike","defend","defend","defend","defend","defend","defend","defend","defend","defend"],
+                "draw":["strike","strike"],"discard":[],"exhaust":[],
+                "enemies":[{"id":"cultist","hp":999,"max_hp":999,"move":"Incantation"}],
+                "actions":[{"op":"play","hand":0,"target":0}]}"#;
+            let rows = rows(1, text);
+            let play = find(&rows, "play");
+            assert_eq!(dig(play, &["st", "hand"]).as_arr().unwrap().len(), 10, "手牌不能超 10 张");
+        }
+
+        /// 升级真言是"自选一张消耗",不是随机消耗:选第 2 张就消耗第 2 张
+        #[test]
+        fn true_grit_up_exhausts_the_chosen_card() {
+            let text = r#"{"player":{"hp":40,"max_hp":80,"energy":9,"max_energy":9},
+                "hand":["true_grit+","defend","bash"],"draw":[],"discard":[],"exhaust":[],
+                "enemies":[{"id":"cultist","hp":999,"max_hp":999,"move":"Incantation"}],
+                "actions":[{"op":"play","hand":0,"target":0,"choose":[1]}]}"#;
+            let rows = rows(1, text);
+            let play = find(&rows, "play");
+            let exhaust = dig(play, &["st", "exhaust"]).as_arr().unwrap();
+            assert_eq!(exhaust.len(), 1, "该消耗一张");
+            assert_eq!(exhaust[0].as_str(), Some("bash"), "消耗的是选中的那张");
+            let hand = dig(play, &["st", "hand"]).as_arr().unwrap();
+            assert_eq!(hand.len(), 1);
+            assert_eq!(hand[0].as_str(), Some("defend"), "没被选中的留在手里");
+        }
     }
 }

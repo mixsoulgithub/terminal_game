@@ -3459,6 +3459,9 @@ mod tests {
             .contains(&enc),
             "幻影 Boss 不对: {enc}"
         );
+        // 原版是"候选洗牌后取第一个"(miscRng.randomLong() 喂 JavaRandom),
+        // 不是单抽一个下标;这里把这颗种子的结果钉死,防止退回单抽
+        assert_eq!(enc, "event_phantom_hexaghost", "seed 46 的幻影 Boss 变了");
         r.debug_win_battle();
         let mut guard = 0;
         while r.screen == Screen::Combat && guard < 200 {

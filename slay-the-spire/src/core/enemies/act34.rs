@@ -574,11 +574,14 @@ pub const WRITHING_MASS: EnemyDef = EnemyDef {
             // 寄生:往牌组里永久塞一张寄生诅咒,一场只用一次
             name: "Implant",
             intent: Intent::StrongDebuff,
-            effects: &[EnemyFx::PlayerCard {
-                card: "parasite",
-                spot: CardSpot::Deck,
-                n: 1,
-            }],
+            effects: &[
+                EnemyFx::PlayerCard {
+                    card: "parasite",
+                    spot: CardSpot::Deck,
+                    n: 1,
+                },
+                EnemyFx::MarkImplantUsed,
+            ],
         },
     ],
     pick: pick_writhing_mass,
@@ -618,7 +621,6 @@ fn pick_writhing_mass(ctx: &mut PickCtx) -> usize {
         // 第二段(roll < 20):寄生一场一次,不许连二
         if r < 20 {
             if !used_implant && !ctx.last_is(IMPLANT) {
-                ctx.state.implant_used = true;
                 return IMPLANT;
             }
             if ctx.flip(1, 10) {
@@ -637,7 +639,6 @@ fn pick_writhing_mass(ctx: &mut PickCtx) -> usize {
                     return STRONG_STRIKE;
                 }
                 if !used_implant {
-                    ctx.state.implant_used = true;
                     return IMPLANT;
                 }
                 if ctx.flip(1, 10) {

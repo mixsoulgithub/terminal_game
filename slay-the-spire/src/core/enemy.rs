@@ -140,6 +140,9 @@ pub enum EnemyFx {
     Suicide,
     /// 从战斗中逃离(保留已偷的金币)
     Escape,
+    /// 把"寄生用过没有"记上(扭动巨物).原版是在 Implant 的 execute 里记账,
+    /// 所以选了这一招但随后被 Reactive 重掷掉的那次不算用过
+    MarkImplantUsed,
 }
 
 /// 一个招式:名字、意图、效果
@@ -158,6 +161,9 @@ pub type PickFn = fn(&mut PickCtx) -> usize;
 pub struct EnemyState {
     /// 已经行动过的回合数(参考实现里的 monsterTurnNumber)
     pub turns: u32,
+    /// 首招是否已经掷过(参考实现里 moveHistory 非空).开局的第一次掷招会置上;
+    /// Reactive 这类"挨打重掷意图"发生在首招之后,不能再走开局分支
+    pub move_rolled: bool,
     /// 上一招 / 上上招在招式表里的下标
     pub last: Option<usize>,
     pub prev: Option<usize>,
@@ -350,9 +356,9 @@ impl PickCtx<'_> {
         self.rng.floor(FloorStream::AiRng).random_long() & 1 != 0
     }
 
-    /// 这是开局第一掷(还没行动过)
+    /// 这是开局第一掷(首招还没掷过 / 还没行动过)
     pub fn first_turn(&self) -> bool {
-        self.state.turns == 0
+        !self.state.move_rolled
     }
 
     /// 参考实现里的 getMonsterTurnNumber():选这一招时已经行动过几回合
