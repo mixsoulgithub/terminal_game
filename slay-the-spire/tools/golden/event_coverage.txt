@@ -65,7 +65,7 @@ cursed_tome#1                    Leave                                无变化 
 cursed_tome#2                    Continue 第1页                         扣 1 血                                  与期望一致                                  ok
 cursed_tome#3                    Continue 第2页                         累计扣 3 血(1+2)                           与期望一致                                  ok
 cursed_tome#4                    Continue 第3页                         累计扣 6 血(1+2+3),到最后一屏                   与期望一致                                  ok
-cursed_tome#5                    Take                                 再扣 10 血,得一件书遗物                         与期望一致                                  ok
+cursed_tome#5                    Take                                 再扣 10 血,书遗物摆进奖励屏                       与期望一致                                  ok
 cursed_tome#5                    Take A15                             A15 最后一扣 15 血(总 21)                    与期望一致                                  ok
 cursed_tome#6                    Stop                                 不拿书,再扣 3 血(总 9)                        与期望一致                                  ok
 augmenter#0                      Test J.A.X.                          得 J.A.X. 牌                             与期望一致                                  ok

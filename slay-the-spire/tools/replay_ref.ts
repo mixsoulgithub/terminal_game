@@ -554,22 +554,34 @@ function restOptions(state: GameState): string[] {
   return REST_KINDS.filter((k) => restOptionAvailable(scratchCtx(state), k));
 }
 
+/** 事件屏当前"能选"的选项下标(参考实现的选项表是整个事件平铺的,可用性由 enabled 谓词给;
+ *  这里只保留当前这一屏真正能选的那些,折成与本作同粒度) */
+function eventEnabledOptions(state: GameState): number[] {
+  const room = state.run.room;
+  if (!room || room.kind !== "event") return [0];
+  const scr = buildEventScreen(scratchCtx(state));
+  if (!scr) return [0];
+  const out: number[] = [];
+  for (let i = 0; i < scr.options.length; i++) {
+    let ok = false;
+    try {
+      ok = scr.options[i]!.enabled(scratchCtx(state));
+    } catch {
+      ok = false;
+    }
+    if (ok) out.push(i);
+  }
+  return out;
+}
+
 /** 事件选项:从 preferred 往后找第一个能选的;都没有就退到第一项,再不行就最后一项 */
 function firstEventOption(state: GameState, preferred: number): number {
   const room = state.run.room;
-  if (!room || room.kind !== "event") return 0;
-  const scr = buildEventScreen(scratchCtx(state));
-  if (!scr) return 0;
-  const can = (i: number): boolean => {
-    try {
-      return scr.options[i]!.enabled(scratchCtx(state));
-    } catch {
-      return false;
-    }
-  };
-  for (let i = preferred; i < scr.options.length; i++) if (can(i)) return i;
-  for (let i = 0; i < scr.options.length; i++) if (can(i)) return i;
-  return Math.max(0, scr.options.length - 1);
+  const scr = room && room.kind === "event" ? buildEventScreen(scratchCtx(state)) : null;
+  const enabled = eventEnabledOptions(state);
+  for (const i of enabled) if (i >= preferred) return i;
+  if (enabled.length > 0) return enabled[0]!;
+  return Math.max(0, (scr?.options.length ?? 1) - 1);
 }
 
 /** 地图上列号最小的可达节点 */
@@ -1118,10 +1130,14 @@ export function replayRefl(seedStr: string, policy: Policy): string {
       }
       case "event": {
         const id = room.eventId;
-        const scr = id === null ? null : buildEventScreen(scratchCtx(s));
-        const count = scr ? scr.options.length : 1;
-        const pick = id === null ? 0 : firstEventOption(s, policy.event);
-        s = advance(s, { cmd: "eventOption", i: pick }, bundle);
+        // 参考实现的选项表是整个事件平铺的(如 cursed_tome 5 项、colosseum 3 项),
+        // 本作导出的是当前屏真正能选的项数;这里也只数"能选"的,把平铺表折成屏粒度.
+        // pick 同时换成"可选项里的序号",两边才是同一把尺子.
+        const enabled = id === null ? [0] : eventEnabledOptions(s);
+        const count = enabled.length;
+        const rawPick = id === null ? 0 : firstEventOption(s, policy.event);
+        const pick = Math.max(0, enabled.indexOf(rawPick));
+        s = advance(s, { cmd: "eventOption", i: rawPick }, bundle);
         out.push(line(step, "event", `"id":${JSON.stringify(id ?? "invalid")},"options":${count},"pick":${pick}`, stateJson(s)));
         step += 1;
         break;

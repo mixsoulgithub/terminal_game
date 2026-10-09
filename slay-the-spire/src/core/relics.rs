@@ -50,6 +50,9 @@ pub struct RelicFx {
     pub add_relics: i32,
     pub add_potions: i32,
     pub add_cards: i32,
+    /// 拾取时直接塞进牌组的一张指定牌(死灵之书:死灵诅咒).不走御守/蛋这些加牌钩子,
+    /// 与反编译 Necronomicon.onEquip 的 masterDeck.addToTop 一致.
+    pub add_card: Option<&'static str>,
     pub add_curse: bool,
     pub removes_starter_relic: bool,
     /// 小房子:拾取效果的掷点顺序/随机源很特别,由 Run::apply_relic_pickup 特判
@@ -243,6 +246,7 @@ impl RelicFx {
         add_relics: 0,
         add_potions: 0,
         add_cards: 0,
+        add_card: None,
         add_curse: false,
         removes_starter_relic: false,
         pickup_tiny_house: false,
@@ -2406,6 +2410,7 @@ pub static RELICS: &[RelicDef] = &[
         pool: "shared",
         fx: RelicFx {
             double_first_big_attack: true,
+            add_card: Some("necronomicurse"),
             ..RelicFx::ZERO
         },
         note: "",

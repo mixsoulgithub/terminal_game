@@ -182,6 +182,9 @@ pub struct Outcome {
     pub potion_reward_n: u8,
     /// 打开奖励屏,里面放一件随机遗物(参考实现 openRewards + screenlessRandomRelic)
     pub relic_reward: bool,
+    /// 把指定遗物摆进奖励屏(魔咒之书的 Take:反编译 GameContext.cpp 的 CURSED_TOME
+    /// 分支走 openCombatRewardScreen(Rewards + addRelic),遗物要玩家点一下才到手)
+    pub relic_reward_id: Option<&'static str>,
     /// 从这张表里挑一件自己没有的遗物(洗一遍取第一件);都有就给 Circlet
     pub pick_relic_from: Option<&'static [&'static str]>,
     /// 打开选牌界面:把选中的牌当祭品(篝火精灵,按烧掉的牌的稀有度领赏)
@@ -272,6 +275,7 @@ impl Outcome {
         random_potion_n: 0,
         potion_reward_n: 0,
         relic_reward: false,
+        relic_reward_id: None,
         pick_relic_from: None,
         offer_card: false,
         fight: None,
@@ -2184,18 +2188,12 @@ static TOME_PAGE_1: EventDef = EventDef {
     name: "Cursed Tome",
     body: &[
         "Page one turns by itself and bites into your hand.",
-        "Keep reading, or put the book down.",
+        "The book will not let you stop now.",
     ],
-    choices: &[
-        choice!(
-            label: "Continue: lose 1 HP",
-            outcome: outcome!(hp: -1, next: Some(&TOME_PAGE_2), text: "")
-        ),
-        choice!(
-            label: "Stop: put the book down",
-            outcome: outcome!(text: "You shut the book on page one.")
-        ),
-    ],
+    choices: &[choice!(
+        label: "Continue: lose 1 HP",
+        outcome: outcome!(hp: -1, next: Some(&TOME_PAGE_2), text: "")
+    )],
 };
 
 /// 魔咒之书:第二页
@@ -2204,18 +2202,12 @@ static TOME_PAGE_2: EventDef = EventDef {
     name: "Cursed Tome",
     body: &[
         "Page two drinks deeper.",
-        "Keep reading, or put the book down.",
+        "The book will not let you stop now.",
     ],
-    choices: &[
-        choice!(
-            label: "Continue: lose 2 HP",
-            outcome: outcome!(hp: -2, next: Some(&TOME_PAGE_3), text: "")
-        ),
-        choice!(
-            label: "Stop: put the book down",
-            outcome: outcome!(text: "You shut the book on page two.")
-        ),
-    ],
+    choices: &[choice!(
+        label: "Continue: lose 2 HP",
+        outcome: outcome!(hp: -2, next: Some(&TOME_PAGE_3), text: "")
+    )],
 };
 
 /// 魔咒之书:第三页
@@ -2224,18 +2216,12 @@ static TOME_PAGE_3: EventDef = EventDef {
     name: "Cursed Tome",
     body: &[
         "Page three drinks deepest.",
-        "Keep reading, or put the book down.",
+        "The book will not let you stop now.",
     ],
-    choices: &[
-        choice!(
-            label: "Continue: lose 3 HP",
-            outcome: outcome!(hp: -3, next: Some(&TOME_FINAL), text: "")
-        ),
-        choice!(
-            label: "Stop: put the book down",
-            outcome: outcome!(text: "You shut the book on page three.")
-        ),
-    ],
+    choices: &[choice!(
+        label: "Continue: lose 3 HP",
+        outcome: outcome!(hp: -3, next: Some(&TOME_FINAL), text: "")
+    )],
 };
 
 /// 魔咒之书:读完三页,书里掉出一件遗物
@@ -2266,11 +2252,12 @@ static TOME_FINAL: EventDef = EventDef {
     ],
 };
 
-/// 魔咒之书的三选一:三件书遗物等概率(参考实现 miscRng.random(2))
+/// 魔咒之书的三选一:三件书遗物等概率(参考实现 miscRng.random(2)),
+/// 选中的那件摆进奖励屏(原版 openCombatRewardScreen)
 static TOME_RELICS: [Outcome; 3] = [
-    outcome!(relic_id: Some("necronomicon"), text: "The Necronomicon is yours."),
-    outcome!(relic_id: Some("enchiridion"), text: "The Enchiridion is yours."),
-    outcome!(relic_id: Some("nilrys_codex"), text: "Nilry's Codex is yours."),
+    outcome!(relic_reward_id: Some("necronomicon"), text: "The Necronomicon is yours."),
+    outcome!(relic_reward_id: Some("enchiridion"), text: "The Enchiridion is yours."),
+    outcome!(relic_reward_id: Some("nilrys_codex"), text: "Nilry's Codex is yours."),
 ];
 
 /// 斗兽场:第一场之后
@@ -2863,6 +2850,19 @@ mod tests {
         assert!((50..=80).contains(&gained), "打碎雕像给 50-80 金币,实得 {gained}");
     }
 
+    /// 砸雕像按"单次伤害"判定:5x2 的双击(总伤 10)不算,单段 10 点才算
+    #[test]
+    fn wing_statue_destroy_counts_single_hit_not_total() {
+        let mut r = Run::new(11);
+        let def = event_def("wing_statue").unwrap();
+        open(&mut r, def);
+        r.player.deck.push(crate::core::cards::card("twin_strike"));
+        assert!(
+            !r.event_choice_available(1),
+            "双击每段只有 5 点,不该算 10 点以上的单次伤害"
+        );
+    }
+
     #[test]
     fn world_of_goop_gather_pays_hp_for_gold() {
         let r = apply("world_of_goop", 12, 0);
@@ -3386,6 +3386,8 @@ mod tests {
         open(&mut r, def);
         r.choose_event(0).unwrap();
         assert_eq!(r.screen, Screen::Combat);
+        let ids: Vec<&str> = r.combat().unwrap().enemies.iter().map(|e| e.def.id).collect();
+        assert_eq!(ids, ["blue_slaver", "red_slaver"], "第一场只有两只奴隶主(反编译 MonsterGroup.cpp:208-211)");
         r.debug_win_battle();
         // 胜利后要停留几帧才结算,这里直接把定格走完
         let mut guard = 0;
@@ -3415,12 +3417,32 @@ mod tests {
         assert_eq!(r.player.hp, hp0 - 3);
         r.choose_event(0).unwrap(); // 继续:第 3 页,3 点,读到最后一屏
         assert_eq!(r.player.hp, hp0 - 6);
+        assert_eq!(
+            r.event.as_ref().unwrap().def.choices.len(),
+            2,
+            "读到最后一屏才出现 Take / Stop 两项(中间三页只有 Continue)"
+        );
         // 最后一屏:留下或拿走书里的遗物
         assert!(r.event.as_ref().unwrap().def.choices[0].label.starts_with("Take"));
         let relics = r.player.relics.len();
         r.choose_event(0).unwrap();
         assert_eq!(r.player.hp, hp0 - 16, "拿走要再掉 10 点");
+        // 原版 Take 之后开的是奖励屏(反编译 GameContext.cpp 的 openCombatRewardScreen),
+        // 遗物要点一下才到手
+        assert_eq!(r.screen, Screen::Reward, "书里掉出的遗物摆在奖励屏上");
+        assert_eq!(r.player.relics.len(), relics, "还没点,遗物不算到手");
+        r.reward_take().unwrap();
         assert_eq!(r.player.relics.len(), relics + 1, "书里掉出一件遗物");
+    }
+
+    /// 死灵之书拿到手就塞一张死灵诅咒(反编译 Necronomicon.onEquip 的 masterDeck.addToTop)
+    #[test]
+    fn necronomicon_pickup_adds_necronomicurse() {
+        let mut r = Run::new(11);
+        let before = r.player.deck.len();
+        r.debug_add_relic("necronomicon").unwrap();
+        assert_eq!(r.player.deck.len(), before + 1, "拿书要带一张诅咒");
+        assert_eq!(r.player.deck.last().unwrap().def.id, "necronomicurse");
     }
 
     #[test]

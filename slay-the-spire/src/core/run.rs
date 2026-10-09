@@ -3408,13 +3408,15 @@ impl Run {
         self.player.deck.iter().any(|c| {
             c.kind() == crate::core::card::CardType::Attack
                 && c.effects().iter().any(|e| {
-                    let (amount, times) = match *e {
-                        CardEffect::Damage { amount, times }
-                        | CardEffect::DamageWithBonus { amount, times } => (amount, times),
-                        CardEffect::DamageAndKillBonusSelf { amount, .. } => (amount, 1),
+                    // 按"单次伤害"算,多段攻击不累加(语料 WING_STATUE 的
+                    // deckHasAttackWithSingleHitDamageAtLeast;参考实现 deckHasBigSingleHit 同)
+                    let amount = match *e {
+                        CardEffect::Damage { amount, .. }
+                        | CardEffect::DamageWithBonus { amount, .. }
+                        | CardEffect::DamageAndKillBonusSelf { amount, .. } => amount,
                         _ => return false,
                     };
-                    times.max(1) as i32 * amount + c.bonus >= 10
+                    amount + c.bonus >= 10
                 })
         })
     }
@@ -3864,6 +3866,13 @@ impl Run {
         if o.relic_reward {
             let mut r = RewardState::empty(Screen::Map);
             r.relic = self.take_relic_of_any();
+            r.relic_taken = false;
+            self.open_event_reward(r);
+        }
+        if let Some(id) = o.relic_reward_id {
+            // 指定遗物摆进奖励屏,不进遗物池
+            let mut r = RewardState::empty(Screen::Map);
+            r.relic = Some(relic_def_any(id));
             r.relic_taken = false;
             self.open_event_reward(r);
         }
@@ -5448,6 +5457,12 @@ impl Run {
         }
         if fx.add_cards > 0 {
             self.add_card_choice(fx.add_cards as usize);
+        }
+        if let Some(id) = fx.add_card {
+            // 原版走 masterDeck.addToTop,不经过御守/黑石护符/蛋那条加牌钩子
+            self.player
+                .deck
+                .push(CardInstance::new(card_def_any(id)));
         }
         if fx.add_curse {
             self.add_random_curse();

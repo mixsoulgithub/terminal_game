@@ -512,11 +512,18 @@ add({
   check: (r) => seq(eq(openSt(r).hp - lastSt(r).hp, 6, "扣血"), eq(lastSt(r).choices[0]!.label.startsWith("Take"), true, "到 Take 屏")),
 });
 add({
-  event: "cursed_tome", choice: 5, option: "Take", expected: "再扣 10 血,得一件书遗物",
+  event: "cursed_tome", choice: 5, option: "Take", expected: "再扣 10 血,书遗物摆进奖励屏",
   scenario: base({ actions: [{ op: "choose", i: 0 }, { op: "choose", i: 0 }, { op: "choose", i: 0 }, { op: "choose", i: 0 }, { op: "choose", i: 0 }] }),
   check: (r) => {
-    const id = lastSt(r).relics.find((x) => ["necronomicon", "enchiridion", "nilrys_codex"].includes(x));
-    return seq(eq(openSt(r).hp - lastSt(r).hp, 16, "总扣血"), id ? null : "没得到书遗物");
+    const st = lastSt(r);
+    // 原版 Take 之后走 openCombatRewardScreen(反编译 GameContext.cpp:2558-2598),
+    // 遗物摆在奖励屏上、要点一下才到手
+    const id = st.reward?.relic ?? null;
+    return seq(
+      eq(openSt(r).hp - st.hp, 16, "总扣血"),
+      eq(st.screen, "REWARD", "开奖励屏"),
+      id && ["necronomicon", "enchiridion", "nilrys_codex"].includes(id) ? null : "书遗物没摆上奖励屏",
+    );
   },
 });
 add({
@@ -1406,6 +1413,12 @@ push("  - 多个'删牌/升级/变形'选项缺条件(无牌可选仍可点)→ 
 push("  - the_joust:金币 <50 仍可下注 → 加 req_gold 50");
 push("  - vampires:升级过的起始打击没被删 → 一并删");
 push("  - face_trader:10% 扣血的下限 1 点没生效 → hp_frac 也吃 hp_pct_min");
+push("  - cursed_tome 的 Take:遗物直接进包 → 改成摆进奖励屏(反编译 GameContext.cpp:2558-2598 走 openCombatRewardScreen);");
+push("    同轮补上死灵之书拾取时的死灵诅咒(Necronomicon.onEquip);三页中间屏去掉多余的第 2 项 Stop");
+push("    (反编译 GameAction.cpp:727-731 中间三屏的位掩码只有 Continue)");
+push("  - colosseum 第一场:按地图上的 SLAVERS 遭遇摆了三只(多一只巡回官)→ 改成蓝/红奴隶主两只");
+push("    (反编译 MonsterGroup.cpp:208-211 的 COLOSSEUM_EVENT_SLAVERS);");
+push("  - wing_statue 的 Destroy:按'总伤'判定 → 改成按单次伤害(语料 deckHasAttackWithSingleHitDamageAtLeast)");
 push("");
 push("分类 (b) 无法测:");
 if (nUntestable === 0) push("  (无)");
@@ -1429,10 +1442,13 @@ push("  the_moai_head: \"回满\"受花开彼岸限制(本轮修:full_heal 改�
 push("  tomb_of_lord_red_mask: 本轮修 —— \"Offer gold\" 补 req_no_relic 门控(反编译两张位掩码互斥),");
 push("    断言 = events.rs::tomb_of_lord_stops_offering_the_mask_once_you_wear_it。");
 push("  knowing_skull: 本轮修 —— Success 的无色牌改走 shuffleRng 整池 java 洗牌取第一张非普通;");
-push("  cursed_tome / colosseum / n'loth: 与 corpus 一致(选项层已在前轮核过)。");
+push("  cursed_tome / colosseum / n'loth: 选项层与 corpus 一致;本轮按反编译修了 cursed_tome 的 Take 奖励屏");
+push("    与死灵之书拾取诅咒、colosseum 第一场的阵容(见上 (a) 分类)。");
 push("  secret_portal: 一致(跳 Boss 房,800 秒门槛抽象为 speedrunPace)。");
 push("登记(本轮不改,附理由):");
-push("  [d] colosseum 在反编译里是 stub(disableColosseum),第二场的奖励组成按 wiki/corpus;");
+push("  [d] colosseum 整体在反编译里是 stub(GameContext.cpp:2554-2556, spawn 被 disableColosseum 关掉),");
+push("      只有第一场阵容(MonsterGroup.cpp:208-211)与第二场奖励(MonsterGroup/Events)有反编译依据;");
+push("      其余流程按 wiki/corpus;");
 push("  [d] joust 赔率与掷点细节按 corpus(wiki)实现,反编译该事件的掷点语义未逐行核。");
 push("  [b] falling 的掷点时机:反编译在 onEnter 预选,本作在选项结算时删牌(牌与时机不同,结果集合一致)。");
 push("");

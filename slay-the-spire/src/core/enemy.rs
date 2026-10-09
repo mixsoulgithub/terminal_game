@@ -545,7 +545,10 @@ pub static EVENT_ENCOUNTERS: &[Encounter] = &[
     Encounter {
         id: "event_colosseum_slavers",
         kind: EnemyKind::Normal,
-        enemies: &["blue_slaver", "taskmaster", "red_slaver"],
+        // 斗兽场第一场只有蓝奴隶主 + 红奴隶主两只(反编译 MonsterGroup.cpp:208-211
+        // 的 COLOSSEUM_EVENT_SLAVERS;带巡回官的三只那组是地图上的 SLAVERS 遭遇,
+        // 只出现在第二场的 Taskmaster + Gremlin Nob 里)
+        enemies: &["blue_slaver", "red_slaver"],
         ..Encounter::PLAIN
     },
     Encounter {
