@@ -2074,9 +2074,24 @@ mod e2e {
     //   a20a4.script = act4.script + `asc 20`(smart on,hp 9999,deck burst,量飞升 18/19/20 的
     //                  精英盾与矛 / 心脏)
     //
-    // A20 第一幕现已逐字节全对齐(11/11):修掉了飞升 17 的敌人选招分支(史莱姆/虱子/
-    // 奴隶主/小鬼巫师)、飞升 15 的一次性事件池(去掉 note_for_yourself)、飞升 2+ 的虱子
-    // 咬伤区间,以及"自己回合内死掉的怪也要照常掷下一招"(参考实现里自爆的死亡是排队生效的).
+    // A20 第一幕扫了 seed 1..160,CASES 里登记 25 颗(23 颗逐字节全对齐,2 颗是参考缺口).
+    // 扩表时又修掉一条:飞升 18+ 的 Gremlin Nob 换固定节奏(头槌只在"最近两招里没有头槌"
+    // 时出,即 Bellow 之后 头槌/冲锋/冲锋 循环).反编译 MonsterSpecific.cpp 那段 asc18 分支
+    // 写成"恒为冲锋",是转写错误,依据见语料 monsters-act1.json 的 conflicts;修前
+    // seed 3/42/45 的头目小鬼精英战各差 17~21 hp(seed 44 也有这场,但它另外还撞上仙女
+    // 回血那条缺口,见下),修后 seed 3/42/45 全对齐.断言 = combat.rs
+    // gremlin_nob_a18_locks_the_skull_bash_rush_rush_pattern.
+    // 更早修掉的:飞升 17 的敌人选招分支(史莱姆/虱子/奴隶主/小鬼巫师)、飞升 15 的
+    // 一次性事件池(去掉 note_for_yourself)、飞升 2+ 的虱子咬伤区间,以及"自己回合内死掉的
+    // 怪也要照常掷下一招"(参考实现里自爆的死亡是排队生效的).
+    // 两颗新登记的参考缺口(本作按原版,不修):
+    //   seed 9(7 处):仙女在瓶中.原版被打死时会自动回 30% 上限血并消耗那瓶药水;
+    //     参考实现 potions/index.ts 的 FAIRY_POTION 自己写着 "ENGINE-GAP: non-drinkable
+    //     death-save; playerDeath has no hook yet",于是参考当场判死、本作续命到后面几间
+    //     (步流因此更长,seed 10/44 是同一回事,没登记).
+    //   seed 22(14 处):盗贼退赃.原版打死偷过钱的怪会把赃款吐回来(A20 的 looter 每偷 20),
+    //     参考实现只在 goldStolen 里记账、奖励层从不退(与第二幕 ASC2 的 (b)1 同一条,
+    //     seed 31/36 同理没登记).
     // 第三幕还有分叉(42 → 31 → 33 处).先修掉一条:怪物回合末能力里,只有祭礼(Ritual)
     // 是"刚挂上当回合不结算"(原版 RitualPower 的 skipFirst);金属化/板甲/再生/力量渐增
     // 都在自己回合末按当前层数无条件结算 —— 依据反编译:Monster::applyEndOfTurnTriggers
@@ -2101,15 +2116,30 @@ mod e2e {
     //     于是尸体在活怪前面时掷点先后不同,回合 6 起分叉。
     // 表里把当前的对齐前缀、差异步与内容指纹登记下来,修好一条就重跑
     // `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
-    // 第四幕(A20)16 个种子逐字节全对齐(飞升 18/19/20 的盾矛与心脏数值都过了).
+    // 第四幕(A20)25 颗种子(见 ASC4_CASES 上方):24 颗逐字节全对齐,seed 33 只差进入
+    // Boss 房那一行的回血时点(终局一致,不修,归类见上).
     const ASC_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 2, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 5, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 6, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 9, lines: 16, ref_lines: 11, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15], diff_digest: 0x2b7c707e3bfd3115 },
+    Expected { seed: 11, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 30, ref_lines: 30, aligned: 30, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 14, lines: 15, ref_lines: 15, aligned: 15, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 15, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 22, lines: 33, ref_lines: 33, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0xee14f10ea3d66b33 },
     Expected { seed: 23, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 24, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 28, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 30, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 33, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 34, lines: 31, ref_lines: 31, aligned: 31, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 37, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2131,27 +2161,34 @@ mod e2e {
     /// A17 的第二幕怪选招分支(被选中者/壳鹦鹉螺/神秘者/蛇形植物等)、A20 的 Boss 规则,
     /// 以及召唤/分裂在飞升档的血量.
     ///
-    /// 差异分类:
-    ///   (a) 已修:Book of Stabbing 的 A18 规则(单刺也自增刺击数).反编译 MonsterSpecific.cpp
+    /// 逐条归因(表里每颗差异 seed 都能对回下面某一条):
+    ///   1) (b) 退赃:击杀盗贼/强盗后本作把赃款退回来,参考不退,金币差从 45/60 起.
+    ///      seed 15/18 就是这一条.原版击杀偷过钱的怪会退还赃款(A20 的 looter/mugger
+    ///      每偷 20,退还也发生在奖励层);参考 looters.ts/mugger.ts 只把 goldStolen
+    ///      记下来,奖励层从不加回去(注释写着会退,代码里没有).依据 = 语料 + 参考源码.
+    ///   2) (b) 事件 cursed_tome 的选项数:本作 2、参考 5(seed 11 步 13 起;A0 的 act2 表里
+    ///      同一事件也差,不是 A20 才有).差的只是 event_choice_count 这个导出字段,两边
+    ///      选的还是同一项(步 13 的 pick 都是 0).
+    ///   3) (b) 事件 colosseum 的选项数:本作 1、参考 3(seed 4 步 27 起;A0 的 act2 表也
+    ///      1 vs 3).同样是两边把事件摊成几屏/几项的口径不同.
+    ///   4) (c) 神秘者 MYSTIC_HEAL 的结算时点:原版回血是同步结算、回合末选招在其后
+    ///      (反编译 MonsterSpecific.cpp 的 MYSTIC_HEAL 先 heal 再 rollMove,挂格挡的
+    ///      CENTURION_DEFEND 同理);参考实现把这些塞进动作队列,于是神秘者的 getMove 按
+    ///      血量差决定回不回血时,读到的是改状态之前的血量.本作按原版同步改血后再选招,
+    ///      所以 seed 3/19/17 的"百夫长+神秘者"战起点逐字段相同、终点 hp 不同.
+    ///   5) (c) 小鬼头目的开战摆位:参考实现把首领排在槽 2,随从只剩槽 0/1 两格;原版是
+    ///      首领槽 3 + 随从槽 0/1/2 三格(反编译 MonsterGroup.cpp 与语料槽位).seed 13 的
+    ///      头目小鬼战因此终点差 5 hp.
+    /// 已修的两条(不再是差异源,留作记录):
+    ///   (a) Book of Stabbing 的 A18 规则(单刺也自增刺击数):反编译 MonsterSpecific.cpp
     ///       把两句 `if (asc18) ++stabCount` 写在 return 之后成了死代码,但意图明确,参考实现
     ///       按 wiki/原版算进去 —— 修掉后 seed 6/25/33/16 的对齐前缀大幅前移(见下表).
-    ///   (b) 参考未实现/表示差异:
-    ///       1) 劫匪偷金币(seed 15/18;与 A0 act2 同点)、事件 cursed_tome 的选项数(seed 11;
-    ///          A0 也 5 vs 2)与 colosseum 的选项数(seed 4 步 27;A0 也 1 vs 3).
-    ///       2) 小鬼头目的开战摆位:参考实现把首领排在槽 2,随从只剩槽 0/1 两格;原版是首领
-    ///          槽 3 + 随从槽 0/1/2 三格(反编译 MonsterGroup.cpp / 语料槽位).seed 13 的头目
-    ///          小鬼战因此终点差 5 hp.
-    ///       3) 怪物非攻击招式的结算时点:原版回血/上增益/上格挡是同步结算、回合末选招在其后
-    ///          (MonsterSpecific.cpp 的 MYSTIC_HEAL 先 heal 再 rollMove,挂格挡的
-    ///          CENTURION_DEFEND 同理),参考实现把它们塞进动作队列,于是选招读到的是改状态前
-    ///          的血量.神秘者的 getMove 按血量差决定回不回血,所以 seed 3/19/17 的"百夫长+
-    ///          神秘者"战分叉(起点逐字段相同、终点 hp 不同).
-    ///   (c) 已修:小鬼头目"鼓励"少了原版那次挑台词掷点(反编译 GREMLIN_LEADER_ENCOURAGE 开头
+    ///   (c) 小鬼头目"鼓励"少了原版那次挑台词掷点(反编译 GREMLIN_LEADER_ENCOURAGE 开头
     ///       的 `bc.aiRng.random(0, 2)`),补上后 seed 4 的头目小鬼战全程对齐(前缀 22 -> 27,
-    ///       后面剩的是 (b)1 的 colosseum);断言 = combat.rs
+    ///       后面剩的就是第 3 条的 colosseum);断言 = combat.rs
     ///       gremlin_leader_encourage_consumes_the_quote_roll.
-    ///   原 (d) 的 5 颗 seed 全部落进上面三类:seed 3/19/17 = (b)3,seed 13 = (c) + (b)2,
-    ///   seed 4 = (c) + (b)1,没有来历不明的"多掷/少掷".
+    /// 原 (d) 的 5 颗 seed 全部落进上面几条:seed 3/19/17 = 第 4 条,seed 13 = 第 5 条 +
+    /// 已修的 (c),seed 4 = 已修的 (c) + 第 3 条,没有来历不明的"多掷/少掷".
     const ASC2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xe2574da2a43f9a1 },
     Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 39, 40, 41], diff_digest: 0x6eaf377dbb280199 },
@@ -2167,6 +2204,21 @@ mod e2e {
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40, 41, 42, 43], diff_digest: 0x2f88599cc8de562f },
 ];
 
+    /// 飞升 20 第四幕:在原有 16 颗的基础上扩到 25 颗(seed 1..24 + 33).
+    /// 量的是飞升 18(盾与矛)/19(心脏数值)在 A20 下的表现,顺便核对盾与矛的背袭朝向
+    /// (SPIRE_SHIELD/SURROUNDED)与心脏的死亡律动(Beat of Death)/无敌(Invincible).
+    /// 24 颗逐字节全对齐,只有 seed 33 差一处:
+    ///   (b) 进 Boss 房那一行的回血时点.Pantograph 在进入 Boss 房时回 25(参考实现把这次
+    ///   回血算在 move 那一行的快照里,本作要等战斗初始化才回,于是 move 行差 25 hp);
+    ///   同一颗 seed 的终局(hp/胜败)逐字段相同,纯粹是两边导出器对"刚进房间"这一刻的
+    ///   快照口径不同.seed 49 同型(没登记).改这一处要动 move 行的取快照时机,会影响
+    ///   全部已钉住的表,收益只是少一行中间态,所以留着.
+    /// 另:扩表时顺手抓到并修掉一条真 bug —— 镀甲(Thread and Needle)的掉层规则.原版只有
+    ///   没被格挡住的"攻击"伤害才掉一层(反编译 Player::attacked),死亡律动/荆棘/灼烧这些
+    ///   非攻击伤害走 Player::damage() 不掉层;本作原先在 hit_player 里见血就掉,于是 A20
+    ///   心脏战里 4 层镀甲被死亡律动几下吃光,连回合末那 4 点格挡都没了,seed 26 的整场差
+    ///   7 hp.修完 seed 26 全对齐;断言 = combat.rs
+    ///   plated_armor_only_shreds_on_unblocked_attack_damage.
     const ASC4_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2184,6 +2236,15 @@ mod e2e {
     Expected { seed: 14, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 15, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 16, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 17, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 18, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 19, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 20, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 21, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 22, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 23, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 24, lines: 11, ref_lines: 11, aligned: 11, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 33, lines: 11, ref_lines: 11, aligned: 8, diff_steps: &[8], diff_digest: 0x3da7d95815dae93f },
 ];
 
     /// A20 三条尺子共用:按 <script> 解析策略(必须 asc 20),逐种子对 fixture.

@@ -2304,7 +2304,7 @@ impl Combat {
         let mut blocked_total = 0;
         let mut hit_total = 0;
         for _ in 0..times.max(1) {
-            let (taken, blocked) = self.hit_player(per);
+            let (taken, blocked) = self.hit_player_attack(per);
             blocked_total += blocked;
             hit_total += taken;
             if taken > 0 {
@@ -3216,8 +3216,18 @@ impl Combat {
         self.push_log(LogKind::Info, "you have been defeated".to_string());
     }
 
-    /// 敌人打玩家一次;返回(实际掉血, 被格挡量)
+    /// 敌人打玩家一次(非攻击伤害:死亡律动、荆棘、缠绕、灼伤这些一并走这里);
+    /// 返回(实际掉血, 被格挡量).会掉镀甲的只有真正的攻击,见 hit_player_attack
     fn hit_player(&mut self, damage: i32) -> (i32, i32) {
+        self.hit_player_kind(damage, false)
+    }
+
+    /// 敌人"攻击"打玩家一次(原版的 AttackPlayer:掉血才掉一层镀甲)
+    fn hit_player_attack(&mut self, damage: i32) -> (i32, i32) {
+        self.hit_player_kind(damage, true)
+    }
+
+    fn hit_player_kind(&mut self, damage: i32, attack: bool) -> (i32, i32) {
         let mut dmg = damage.max(0);
         // 无形:受到的所有伤害降为 1(幽灵在瓶中)
         if dmg > 1 && self.player.statuses.has(Status::Intangible) {
@@ -3240,8 +3250,9 @@ impl Combat {
             self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, taken);
             self.note_hp_loss();
             self.on_hp_lost(taken);
-            // 镀甲:挨到没格挡住的伤害就掉一层
-            if self.player.statuses.get(Status::PlatedArmor) > 0 {
+            // 镀甲:只有没被格挡住的"攻击"伤害才掉一层(原版 Player::attacked;
+            // 死亡律动/荆棘/灼伤这些非攻击伤害走 Player::damage,不掉)
+            if attack && self.player.statuses.get(Status::PlatedArmor) > 0 {
                 self.player.statuses.add(Status::PlatedArmor, -1);
             }
         }
@@ -7013,6 +7024,76 @@ mod monster_tests {
         let defend = c.hand.iter().position(|x| x.def.id == "defend").unwrap();
         c.play_card(defend, None).unwrap();
         assert_eq!(c.enemies[0].statuses.get(Status::Strength), strength + 2);
+    }
+
+    /// 飞升 18+ 的 Gremlin Nob 换成固定节奏:头槌只在"最近两招里没有头槌"时出,
+    /// 于是 Bellow 之后是 头槌、冲锋、冲锋 循环,与掷点无关(原版/wiki;反编译那段
+    /// asc18 分支写成恒为冲锋是转写错误,见语料 monsters-act1.json 的 conflicts).
+    #[test]
+    fn gremlin_nob_a18_locks_the_skull_bash_rush_rush_pattern() {
+        use crate::core::cards::card;
+        let seq = |asc: u32, seed: u64| -> Vec<&'static str> {
+            let enc = crate::core::enemies::encounter_def("gremlin_nob_solo").unwrap();
+            let setup = CombatSetup {
+                rested: false,
+                hp: 999,
+                max_hp: 999,
+                deck: vec![card("defend"); 10],
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
+                asc,
+            };
+            let mut c = Combat::new(enc, setup, RngRegistry::new(seed));
+            let mut v = Vec::new();
+            for _ in 0..7 {
+                v.push(move_name(&c, 0));
+                c.end_turn();
+            }
+            v
+        };
+        let want = vec![
+            "Bellow",
+            "Skull Bash",
+            "Rush",
+            "Rush",
+            "Skull Bash",
+            "Rush",
+            "Rush",
+        ];
+        // 两个不同种子跑出同一条节奏 → 这个分支不掷点
+        assert_eq!(seq(18, 7), want, "A18 的节奏变了");
+        assert_eq!(seq(20, 12345), want, "A20 的节奏变了");
+    }
+
+    /// 镀甲(线轴遗物给的):只有没被格挡住的"攻击"伤害才掉一层,死亡律动这类
+    /// 非攻击伤害不掉.依据反编译:掉层的句子在 Player::attacked 里,而死亡律动走
+    /// Actions::DamagePlayer → Player::damage(),那条路上没有掉层.
+    #[test]
+    fn plated_armor_only_shreds_on_unblocked_attack_damage() {
+        let mut c = lock("cultist_solo");
+        c.player.statuses.set(Status::PlatedArmor, 4);
+        c.hit_player(3);
+        assert_eq!(
+            c.player.statuses.get(Status::PlatedArmor),
+            4,
+            "非攻击伤害不掉层"
+        );
+        c.hit_player_attack(3);
+        assert_eq!(
+            c.player.statuses.get(Status::PlatedArmor),
+            3,
+            "攻击伤害掉一层"
+        );
+        c.gain_block(50, false, false);
+        c.hit_player_attack(5);
+        assert_eq!(
+            c.player.statuses.get(Status::PlatedArmor),
+            3,
+            "被格挡的攻击不掉层"
+        );
     }
 
     #[test]

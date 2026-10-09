@@ -1153,13 +1153,19 @@ pub const GREMLIN_NOB: EnemyDef = EnemyDef {
     spawn: spawn_default,
 };
 
-/// 开场吼一嗓子(拿到狂怒),之后 1/3 头槌、2/3 冲锋,冲锋不许连三
+/// 开场吼一嗓子(拿到狂怒),之后 1/3 头槌、2/3 冲锋,冲锋不许连三.
+/// 飞升 18+ 换成固定节奏:最近两招里没有头槌就用头槌,否则冲锋
+/// (原版/wiki:第 2 回合头槌,之后 冲锋、冲锋 循环;反编译那段 asc18 分支
+///  写成恒为冲锋是转写错误,依据见语料 monsters-act1.json 的 conflicts).
 fn pick_gremlin_nob(ctx: &mut PickCtx) -> usize {
     const BELLOW: usize = 0;
     const RUSH: usize = 1;
     const SKULL: usize = 2;
     if ctx.first_turn() {
         return BELLOW;
+    }
+    if ctx.asc >= 18 {
+        return if ctx.last_two_has(SKULL) { RUSH } else { SKULL };
     }
     let roll = ctx.roll();
     if roll < 33 || ctx.last_two_is(RUSH) {
