@@ -789,7 +789,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Skill,
         rarity: Rarity::Common,
         target: Target::None,
-        text: "Gain 5 Block. Upgrade a random card in your hand.",
+        text: "Gain 5 Block. Upgrade a card in your hand.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -801,14 +801,14 @@ pub static CARDS: &[CardDef] = &[
         in_hand: &[],
         effects: &[
             Effect::Block { amount: 5 },
-            Effect::UpgradeRandomInHand { n: 1 },
+            Effect::UpgradeChosenInHand,
         ],
         upgrade: up!(
             None,
-            "Gain 5 Block. Upgrade 2 random cards in your hand.",
+            "Gain 5 Block. Upgrade all cards in your hand.",
             [
                 Effect::Block { amount: 5 },
-                Effect::UpgradeRandomInHand { n: 2 }
+                Effect::UpgradeAllInHand
             ]
         ),
     },
@@ -819,7 +819,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Skill,
         rarity: Rarity::Common,
         target: Target::None,
-        text: "Gain 2 Strength.",
+        text: "Gain 2 Strength.\nAt the end of this turn, lose 2 Strength.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -829,11 +829,17 @@ pub static CARDS: &[CardDef] = &[
         on_draw: &[],
         on_end_turn: &[],
         in_hand: &[],
-        effects: &[Effect::AddSelfStatus { status: Status::Strength, n: 2 }],
+        effects: &[
+            Effect::AddSelfStatus { status: Status::Strength, n: 2 },
+            Effect::AddSelfStatus { status: Status::LoseStrength, n: 2 },
+        ],
         upgrade: up!(
             None,
-            "Gain 4 Strength.",
-            [Effect::AddSelfStatus { status: Status::Strength, n: 4 }]
+            "Gain 4 Strength.\nAt the end of this turn, lose 4 Strength.",
+            [
+                Effect::AddSelfStatus { status: Status::Strength, n: 4 },
+                Effect::AddSelfStatus { status: Status::LoseStrength, n: 4 }
+            ]
         ),
     },
     CardDef {
@@ -1434,7 +1440,7 @@ pub static CARDS: &[CardDef] = &[
         kind: CardType::Power,
         rarity: Rarity::Uncommon,
         target: Target::None,
-        text: "Gain 3 Strength.",
+        text: "Gain 2 Strength.",
         exhaust: false,
         ethereal: false,
         innate: false,
@@ -1446,14 +1452,14 @@ pub static CARDS: &[CardDef] = &[
         in_hand: &[],
         effects: &[Effect::AddSelfStatus {
             status: Status::Strength,
-            n: 3,
+            n: 2,
         }],
         upgrade: up!(
             None,
-            "Gain 4 Strength.",
+            "Gain 3 Strength.",
             [Effect::AddSelfStatus {
                 status: Status::Strength,
-                n: 4
+                n: 3
             }]
         ),
     },
@@ -3519,8 +3525,9 @@ pub fn colorless_pool() -> Vec<&'static CardDef> {
         .collect()
 }
 
-/// 本职业牌在参考实现里的注册顺序:basics 切片排在最前,其余按 corpus id 顺序.
-/// 抽牌是按池子下标抽的,顺序不一样抽出来的牌就不一样,所以这几张要提到最前.
+/// 本职业牌在参考实现里的注册顺序:先是 basics.ts 那三张,再按
+/// common → uncommon → rare 三个文件、每个文件里按字母序(corpus 顺序).
+/// 抽牌是按池子下标抽的,顺序不一样抽出来的牌就不一样.
 const BUNDLE_HEAD: &[&str] = &["body_slam", "anger", "whirlwind"];
 
 /// 这张牌在语料里的位次(语料是按 corpus id 排的,和参考实现各卡文件里的顺序一致)
@@ -3531,13 +3538,23 @@ fn corpus_index(id: &str) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-/// 把池子排成参考实现那一套顺序:basics 切片里的那几张排最前,其余按语料位次
+/// 参考实现里各稀有度所在文件的先后(tier 越小越靠前)
+fn rarity_file_rank(r: Rarity) -> usize {
+    match r {
+        Rarity::Basic => 0,
+        Rarity::Common => 1,
+        Rarity::Uncommon => 2,
+        Rarity::Rare => 3,
+        Rarity::Special => 4,
+    }
+}
+
+/// 把池子排成参考实现那一套顺序:basics 切片那几张排最前,其余按稀有度文件
+/// (common → uncommon → rare)、文件内按语料位次.
 fn bundle_order(pool: &mut [&'static CardDef]) {
-    pool.sort_by_key(|c| {
-        match BUNDLE_HEAD.iter().position(|id| *id == c.id) {
-            Some(i) => (0usize, i),
-            None => (1, corpus_index(c.id)),
-        }
+    pool.sort_by_key(|c| match BUNDLE_HEAD.iter().position(|id| *id == c.id) {
+        Some(i) => (0usize, 0usize, i),
+        None => (1, rarity_file_rank(c.rarity), corpus_index(c.id)),
     });
 }
 

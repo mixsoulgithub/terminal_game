@@ -302,7 +302,7 @@ impl Status {
         if matches!(self, Confused | Hex | Surrounded | Constricted | Slow | Poison) {
             return false;
         }
-        self.is_debuff() || matches!(self, DoubleTap | Rage | FlameBarrier | NoBlock | Duplication)
+        self.is_debuff() || matches!(self, DoubleTap | NoBlock | Duplication)
     }
 
     /// 层数可以降到 0 以下(参考实现里 canGoNegative 的那几条):
@@ -338,6 +338,12 @@ impl Statuses {
             .find(|(k, _)| *k == s)
             .map(|(_, n)| *n)
             .unwrap_or(0)
+    }
+
+    /// 按挂载顺序遍历(原版把加成当 atDamageGive 钩子,按 powers 挂的顺序折叠,
+    /// 所以同一条状态先挂后挂会影响结果的第 1 点小数)
+    pub fn entries(&self) -> impl Iterator<Item = &(Status, i32)> {
+        self.list.iter()
     }
 
     pub fn has(&self, s: Status) -> bool {

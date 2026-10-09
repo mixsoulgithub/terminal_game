@@ -353,6 +353,10 @@ impl Player {
 pub struct RewardState {
     pub gold: i32,
     pub gold_taken: bool,
+    /// 拿 Boss 遗物时补进来的额外金币(小房子的 50 金):原版是往奖励屏再塞一条,
+    /// 所以第一笔已在手时它单独算一条,拿掉才算到手
+    pub extra_gold: i32,
+    pub extra_gold_taken: bool,
     pub cards: Vec<CardInstance>,
     pub card_taken: bool,
     /// 排队的后续卡牌三选一(浑天仪的五组、祈祷轮的额外一组):
@@ -378,6 +382,8 @@ impl RewardState {
         RewardState {
             gold: 0,
             gold_taken: true,
+            extra_gold: 0,
+            extra_gold_taken: true,
             cards: Vec::new(),
             card_taken: true,
             queued: Vec::new(),
@@ -397,6 +403,8 @@ impl RewardState {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RewardSlot {
     Gold,
+    /// 额外一条金币(小房子)
+    ExtraGold,
     Card(usize),
     /// 单件遗物奖励(精英/事件/宝箱给的那件)
     Relic,
@@ -1902,6 +1910,8 @@ impl Run {
         self.reward = Some(RewardState {
             gold,
             gold_taken: false,
+            extra_gold: 0,
+            extra_gold_taken: true,
             cards,
             card_taken: false,
             queued,
@@ -1938,6 +1948,9 @@ impl Run {
         let mut v = Vec::new();
         if !r.gold_taken {
             v.push(RewardSlot::Gold);
+        }
+        if r.extra_gold > 0 && !r.extra_gold_taken {
+            v.push(RewardSlot::ExtraGold);
         }
         if !r.card_taken {
             for i in 0..r.cards.len() {
@@ -1986,6 +1999,12 @@ impl Run {
                 let g = self.reward.as_ref().map(|r| r.gold).unwrap_or(0);
                 self.gain_gold(g);
                 self.mark_reward(|r| r.gold_taken = true);
+                Ok(format!("+${g}"))
+            }
+            RewardSlot::ExtraGold => {
+                let g = self.reward.as_ref().map(|r| r.extra_gold).unwrap_or(0);
+                self.gain_gold(g);
+                self.mark_reward(|r| r.extra_gold_taken = true);
                 Ok(format!("+${g}"))
             }
             RewardSlot::Card(i) => {
@@ -3843,6 +3862,8 @@ impl Run {
         self.reward = Some(RewardState {
             gold: 0,
             gold_taken: true,
+            extra_gold: 0,
+            extra_gold_taken: true,
             cards: cards_in,
             card_taken: false,
             queued: Vec::new(),
@@ -4545,19 +4566,46 @@ impl Run {
         // 小房子:顺序与掷点和参考实现 tinyHousePickup 一致 —— 先随机升级一张,
         // 再抬 5 点上限、+50 金、从药水池等概率摸一瓶(miscRng),最后排一组卡牌三选一
         if def.fx.pickup_tiny_house {
+            // 小房子:顺序与掷点和参考实现 tinyHousePickup 一致 —— 先随机升级一张,
+            // 再抬 5 点上限,然后把 50 金与一瓶药水塞进当前奖励屏,最后排一组卡牌三选一.
+            // 原版走的是 addGoldToRewards / addPotionToRewards:这两样是奖励屏上的条目,
+            // 不是当场结算(拿了遗物就不管奖励屏的话,这 50 金与原版一样会留在屏上不进口袋).
             self.upgrade_random_any(1);
             self.player.max_hp += 5;
             self.player.hp += 5;
-            self.gain_gold(50);
             let color = potions::class_color(self.character);
             let pool = potions::pool(color);
-            if !pool.is_empty() {
+            let potion = if pool.is_empty() {
+                None
+            } else {
                 let i = self
                     .streams
                     .floor(FloorStream::MiscRng)
                     .random(pool.len() as u32 - 1) as usize;
-                let def = pool[i];
-                self.add_potion(def);
+                Some(pool[i])
+            };
+            let mut gold_left = true;
+            if let Some(r) = self.reward.as_mut() {
+                if r.gold_taken {
+                    r.gold = 50;
+                    r.gold_taken = false;
+                } else {
+                    // 第一条金币还没拿:原版会显示成两条,这里也留成独立一条
+                    r.extra_gold = 50;
+                    r.extra_gold_taken = false;
+                }
+                if let Some(p) = potion {
+                    r.potions.push(p);
+                    r.potion_taken.push(false);
+                }
+                gold_left = false;
+            }
+            if gold_left {
+                // 不在奖励屏上(理论上不会发生):退回当场结算
+                self.gain_gold(50);
+                if let Some(p) = potion {
+                    self.add_potion(p);
+                }
             }
             self.add_card_choice(1);
             return;
@@ -4840,6 +4888,8 @@ impl Run {
             self.reward = Some(RewardState {
                 gold: 0,
                 gold_taken: true,
+                extra_gold: 0,
+                extra_gold_taken: true,
                 cards: first,
                 card_taken: false,
                 queued: groups,
@@ -7163,6 +7213,52 @@ mod tests {
         assert!(c.enemies[0].dead(), "15 伤打死 5 血的虫子");
         r.sync_combat();
         assert_eq!(r.player.deck[0].bonus, 3, "击杀要写回牌组原件");
+    }
+
+    /// 第三幕未知房只从第三幕事件池(外加神龛/一次性事件)抽;清空神龛池后
+    /// 走的必然是本章池,七个第三幕事件全都要能抽到.
+    #[test]
+    fn act3_unknown_rooms_pull_from_the_act3_pool() {
+        let mut r = run(7);
+        r.act = 3;
+        r.event_pool = act_event_pool(3);
+        r.shrine_pool = act_shrine_pool(3);
+        r.one_time_pool = ONE_TIME_EVENTS.to_vec();
+        let mut got: Vec<&str> = Vec::new();
+        for _ in 0..60 {
+            if let Some(ev) = r.debug_event_picks(1)[0] {
+                got.push(ev);
+            }
+        }
+        let act3: Vec<&str> = ACT3_EVENTS.to_vec();
+        let shrines: Vec<&str> = ACT23_SHRINES.to_vec();
+        let onetime: Vec<&str> = ONE_TIME_EVENTS.to_vec();
+        for ev in &got {
+            assert!(
+                act3.contains(ev) || shrines.contains(ev) || onetime.contains(ev),
+                "第三幕未知房抽到外池事件 {ev}"
+            );
+        }
+        // 清空神龛/一次性池,强制走本章池:可抽到的第三幕事件要全部抽到
+        r.event_pool = act_event_pool(3);
+        r.shrine_pool.clear();
+        r.one_time_pool.clear();
+        let spawnable: Vec<&str> = act3
+            .iter()
+            .copied()
+            .filter(|id| r.event_can_spawn(id))
+            .collect();
+        assert!(spawnable.len() >= 6, "第三幕事件池太小: {spawnable:?}");
+        let mut normal: Vec<&str> = Vec::new();
+        for _ in 0..spawnable.len() {
+            if let Some(ev) = r.debug_event_picks(1)[0] {
+                normal.push(ev);
+            }
+        }
+        assert_eq!(normal.len(), spawnable.len(), "第三幕本章池没抽干净");
+        for ev in spawnable {
+            assert!(normal.contains(&ev), "第三幕事件 {ev} 一次都没抽到");
+        }
     }
 }
 

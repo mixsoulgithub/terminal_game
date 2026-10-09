@@ -166,6 +166,8 @@ pub enum ChoiceFilter {
     AttackOrPower,
     AttackOnly,
     SkillOnly,
+    /// 只有还能升级的牌(武装)
+    Upgradeable,
 }
 
 impl ChoiceFilter {
@@ -178,6 +180,7 @@ impl ChoiceFilter {
             }
             ChoiceFilter::AttackOnly => card.kind() == CardType::Attack,
             ChoiceFilter::SkillOnly => card.kind() == CardType::Skill,
+            ChoiceFilter::Upgradeable => card.can_upgrade(),
         }
     }
 }
@@ -201,6 +204,8 @@ pub enum ChoiceAction {
     Remove,
     /// 洗进抽牌堆(尼尔瑞的抄本)
     ToDrawShuffled,
+    /// 升级这张牌(武装)
+    Upgrade,
 }
 
 /// 一次待选择:比如"从手牌选一张消耗"
@@ -633,14 +638,14 @@ impl Combat {
                 }
             }
             if fx.combat_start_enemy_vulnerable != 0 {
-                for e in c.enemies.iter_mut() {
-                    e.statuses
-                        .add(Status::Vulnerable, fx.combat_start_enemy_vulnerable);
+                // 走"上减益"那条路:原版的开战减益也是 ApplyPowerAction,神器照样顶掉
+                for i in 0..c.enemies.len() {
+                    c.add_enemy_status(i, Status::Vulnerable, fx.combat_start_enemy_vulnerable);
                 }
             }
             if fx.combat_start_enemy_weak != 0 {
-                for e in c.enemies.iter_mut() {
-                    e.statuses.add(Status::Weak, fx.combat_start_enemy_weak);
+                for i in 0..c.enemies.len() {
+                    c.add_enemy_status(i, Status::Weak, fx.combat_start_enemy_weak);
                 }
             }
             if fx.elite_hp_reduction_pct > 0 && enc.kind == EnemyKind::Elite {
@@ -707,6 +712,9 @@ impl Combat {
                 format!("relics grant +{extra_energy} energy this combat"),
             );
         }
+        // 红骷髅:开战就在半血以下的话,原版 atBattleStart 当场补上力量
+        // (不进这一步的话要等玩家先掉一次血才补,第一回合就少 3 点力量)
+        c.refresh_bloodied();
         c.start_turn(extra_draw);
         c
     }
@@ -1049,7 +1057,10 @@ impl Combat {
         self.resolve(&mut card, target, &mut top_ctx);
         self.havoc_depth = self.havoc_depth.saturating_sub(1);
         card.free_this_turn = false;
-        if exhaust_after || card.is_exhaust() {
+        if card.kind() == crate::core::card::CardType::Power {
+            // 能力牌一样是打完就退场(浩劫放出来的也不例外)
+            self.vanish_card(card);
+        } else if exhaust_after || card.is_exhaust() {
             self.exhaust_card(card);
         } else {
             self.discard.push(card);
@@ -1414,6 +1425,16 @@ impl Combat {
         }
     }
 
+    /// 能力牌打完就离开这一场战斗:既不进弃牌堆也不进消耗堆,所以
+    /// 不会触发任何"消耗时"的能力与遗物(参考实现里 powers vanish).
+    fn vanish_card(&mut self, card: CardInstance) {
+        let label = card.label();
+        self.push_log(
+            LogKind::Player,
+            format!("{label} is gone for the rest of the combat"),
+        );
+    }
+
     /// 玩家主动弃牌时触发的遗物(荆棘之环/结实绷带/风筝)
     fn on_manual_discard(&mut self) {
         let tingsha = self.relic_sum(|fx| fx.damage_random_on_discard);
@@ -1737,6 +1758,23 @@ impl Combat {
     fn decay_player_debuffs_round_end(&mut self) {
         let fresh = std::mem::take(&mut self.player.fresh_debuffs);
         self.player.statuses.decay_debuffs_except(&fresh);
+        // 再生药水的"每回合回复 X 点、X 每回合减 1":参考实现把玩家身上的这条
+        // 标成 turnBased,一轮结束时掉一层.怪物身上的再生(觉醒者)是常驻的,
+        // 不在递减之列,所以这里只动玩家的.
+        let regen = self.player.statuses.get(Status::Regenerate);
+        if regen > 0 {
+            self.player.statuses.add(Status::Regenerate, -1);
+        }
+        // 暴怒/火焰屏障的层数是"效果数值"而不是持续回合数:
+        // 参考实现里暴怒在回合末整条移除、火焰屏障在下回合开始时整条移除.
+        // 这里统一在"一轮结束"(怪物已经行动完、下个玩家回合之前)清掉,
+        // 火焰屏障的荆棘因此仍然覆盖整个怪物回合.
+        for s in [Status::Rage, Status::FlameBarrier] {
+            let n = self.player.statuses.get(s);
+            if n != 0 {
+                self.player.statuses.add(s, -n);
+            }
+        }
     }
 
     fn enemy_act(&mut self, idx: usize) {
@@ -2136,8 +2174,10 @@ impl Combat {
                 format!("{name} hit into {blocked_total} block"),
             );
         }
-        // 玩家的荆棘反伤(遗物 + 液态青铜给的荆棘)
-        let thorns = self.relic_thorns + self.player.statuses.get(Status::Thorns);
+        // 玩家的荆棘反伤(遗物 + 液态青铜给的荆棘 + 火焰屏障)
+        let thorns = self.relic_thorns
+            + self.player.statuses.get(Status::Thorns)
+            + self.player.statuses.get(Status::FlameBarrier);
         if thorns > 0 {
             self.damage_enemy_plain(idx, thorns);
             self.push_log(
@@ -2770,6 +2810,10 @@ impl Combat {
             (ChoiceSource::Hand, ChoiceAction::Remove) => {
                 self.hand.remove(idx);
             }
+            (ChoiceSource::Hand, ChoiceAction::Upgrade) => {
+                // 武装:升级手牌里选中的那张(升级完仍留在手上)
+                self.hand[idx].upgrade();
+            }
             _ => {}
         }
         ch.taken += 1;
@@ -2795,6 +2839,8 @@ impl Combat {
 
     /// 回合结束的尾巴:等着的选牌收完之后才把回合交给对面
     fn resume_after_choice(&mut self) {
+        // 选牌本身也可能打死最后一只(比如"选一张消耗掉"触发的后续伤害)
+        self.check_win();
         if self.pending_end_turn {
             self.pending_end_turn = false;
             self.finish_end_turn();
@@ -2839,6 +2885,11 @@ impl Combat {
         let Some((card, _)) = played else {
             return;
         };
+        // 能力牌落地就退场,这一条比"消耗"更彻底:弃牌堆和消耗堆都不进
+        if card.kind() == crate::core::card::CardType::Power {
+            self.vanish_card(card);
+            return;
+        }
         let relic_play = self.relic_playable(&card);
         if self.played_card_exhausts(&card, relic_play) {
             self.exhaust_card(card);
@@ -2872,9 +2923,9 @@ impl Combat {
         if !forced {
             return false;
         }
-        // 能力牌落地就消耗,奇异勺管不着
+        // 奇异勺:按概率把"该消耗的"改成进弃牌堆(能力牌压根不走这条路)
         let pct = self.relic_sum(|fx| fx.exhaust_to_discard_pct);
-        if pct <= 0 || card.kind() == crate::core::card::CardType::Power {
+        if pct <= 0 {
             return true;
         }
         let roll = self.streams.floor(FloorStream::CardRandomRng).random(99) as i32;
@@ -2999,38 +3050,56 @@ impl Combat {
     fn player_attack_damage(&self, raw: i32, target: usize, is_attack: bool) -> i32 {
         // 活力(Akabeko 的 8 点):只加在攻击牌的伤害上,和原版的 atDamageGive 一致
         let vigor = if is_attack { self.rs.vigor } else { 0 };
-        let mut d = raw + self.player.statuses.get(Status::Strength) + vigor;
-        if self.player.statuses.has(Status::Weak) {
-            // 纸风筝:虚弱只减 40% 伤害(默认 25%)
+        // 原版把加伤与乘伤一起按 float 连乘,末尾只向下取整一次,所以中间不能各自 floor
+        let mut d = (raw + vigor) as f32;
+        // 纸风筝:虚弱只减 40% 伤害(默认 25%)
+        let weak_pct = {
             let pct = self.relic_max(|fx| fx.weak_damage_pct);
-            let factor = if pct > 0 { pct as f32 / 100.0 } else { 0.75 };
-            d = (d as f32 * factor).floor() as i32;
+            if pct > 0 {
+                pct as f32 / 100.0
+            } else {
+                0.75
+            }
+        };
+        // 身上这些加成在原版都是 atDamageGive,按挂载顺序依次折叠:
+        // 力量加一次、虚弱乘一次,谁先挂谁先算(先虚弱后力量会比反过来少 1 点)
+        for (s, n) in self.player.statuses.entries() {
+            match s {
+                Status::Strength => d += *n as f32,
+                Status::Weak => d *= weak_pct,
+                _ => {}
+            }
         }
         if self.enemies[target].statuses.has(Status::Vulnerable) {
             // 纸蛙:易伤多受 75% 伤害(默认 50%)
             let pct = self.relic_max(|fx| fx.vulnerable_damage_pct);
-            let factor = if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
-            d = (d as f32 * factor).floor() as i32;
+            d *= if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
         }
-        d.max(0)
+        d.floor().max(0.0) as i32
     }
 
     /// 敌人攻击一次的计算
     fn enemy_attack_damage(&self, idx: usize, raw: i32) -> i32 {
-        let mut d = raw + self.enemies[idx].statuses.get(Status::Strength);
+        // 同样按 float 连乘,末尾只 floor 一次
+        let mut d = raw as f32;
+        // 怪物自己身上的力量/虚弱照挂载顺序折叠
+        for (s, n) in self.enemies[idx].statuses.entries() {
+            match s {
+                Status::Strength => d += *n as f32,
+                Status::Weak => d *= 0.75,
+                _ => {}
+            }
+        }
         // 被夹击:从背后打过来的多吃一半
         if self.player.statuses.has(Status::Surrounded) && idx != self.facing {
-            d = (d as f32 * 1.5).floor() as i32;
-        }
-        if self.enemies[idx].statuses.has(Status::Weak) {
-            d = (d as f32 * 0.75).floor() as i32;
+            d *= 1.5;
         }
         if self.player.statuses.has(Status::Vulnerable) {
             // 奇异蘑菇:自己身上的易伤只多受 25% 伤害(默认 50%)
             let pct = self.relic_max(|fx| fx.vulnerable_taken_pct);
-            let factor = if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
-            d = (d as f32 * factor).floor() as i32;
+            d *= if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
         }
+        let mut d = d.floor().max(0.0) as i32;
         // 鸟居:5 点以下(含)的未被格挡攻击伤害降为 1
         let torii = self.relic_max(|fx| fx.small_attack_reduce_to);
         if torii > 0 && d > 1 && d <= 5 {
@@ -3143,10 +3212,33 @@ impl Combat {
         self.hit_enemy(idx, damage, false)
     }
 
-    fn hit_enemy(&mut self, idx: usize, damage: i32, is_attack: bool) -> i32 {
+    /// 多段攻击:原版一张牌只算一次伤害(算完飞行/慢速/无形/靴子),之后每一段
+    /// 都拿这份值去打,逐段扣格挡、逐段触发挨打钩子(飞行层数就是这么掉的).
+    /// 只有随机选目标的多段(回旋镖)才逐段重算,因为它每一段可能打到不同的怪.
+    fn damage_enemy_times(&mut self, idx: usize, damage: i32, is_attack: bool, times: i32) -> i32 {
         if idx >= self.enemies.len() || !self.enemies[idx].alive() {
             return 0;
         }
+        // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5
+        let boost = self.relic_max(|fx| fx.small_attack_boost_to);
+        let damage = self.player_attack_damage(damage, idx, is_attack);
+        let damage = if is_attack && boost > 0 && damage > 0 && damage <= 4 && self.enemies[idx].block == 0
+        {
+            boost
+        } else {
+            damage
+        };
+        let dmg = self.reduce_incoming(idx, damage, is_attack);
+        let mut total = 0;
+        for _ in 0..times.max(1) {
+            total += self.hit_enemy_final(idx, dmg, is_attack);
+        }
+        total
+    }
+
+    /// 受伤侧的减免:飞行减半、慢速加伤、无形压到 1.原版在算伤害时结算这些,
+    /// 所以一张牌的多段伤害共用同一份算好的值(见 damage_enemy_times).
+    fn reduce_incoming(&self, idx: usize, damage: i32, is_attack: bool) -> i32 {
         let mut dmg = damage.max(0);
         if is_attack {
             // 飞行:受到的攻击伤害减半
@@ -3162,6 +3254,19 @@ impl Combat {
         // 无形:什么伤害都降到 1
         if self.enemies[idx].statuses.has(Status::Intangible) && dmg > 1 {
             dmg = 1;
+        }
+        dmg
+    }
+
+    fn hit_enemy(&mut self, idx: usize, damage: i32, is_attack: bool) -> i32 {
+        let dmg = self.reduce_incoming(idx, damage, is_attack);
+        self.hit_enemy_final(idx, dmg, is_attack)
+    }
+
+    /// 已经算过减免的一击:只扣格挡、掉血、走挨打触发的钩子
+    fn hit_enemy_final(&mut self, idx: usize, dmg: i32, is_attack: bool) -> i32 {
+        if idx >= self.enemies.len() || !self.enemies[idx].alive() {
+            return 0;
         }
         let had_block = self.enemies[idx].block > 0;
         let blocked = self.enemies[idx].block.min(dmg);
@@ -3494,6 +3599,10 @@ impl Combat {
             }
         }
         self.phase = Phase::Won;
+        // 参考实现:战斗一旦分出胜负,动作队列当场清空,挂起的选牌不再交付
+        // (decided fights leave no pending picks),所以这里也把待定的选牌丢掉.
+        self.choice = None;
+        self.pending_end_turn = false;
         self.push_log(LogKind::Info, "victory".to_string());
     }
 
@@ -3588,7 +3697,10 @@ impl Combat {
                     .or_else(|| self.first_alive())
                     .unwrap_or(0),
             ),
-            Target::Random => self.pick_random_alive(),
+            // 随机目标牌(回旋镖)不在这里掷点:原版这张牌的牌面目标是"所有敌人",
+            // 每一次命中才各自掷一只怪(见 Effect::DamageRandom),提前掷一次会把
+            // cardRandomRng 的计数器顶偏,后面所有随机都跟着错位
+            Target::Random => None,
             _ => None,
         };
         let label = card.label();
@@ -3647,8 +3759,12 @@ impl Combat {
             self.rs.vigor = 0;
         }
         // 有选牌待定:牌和花的能量先存着,等选完(choose)或取消(cancel)再收尾
-        if let Some(ch) = self.choice.as_mut() {
-            ch.played = Some((card, cost));
+        if self.choice.is_some() {
+            if let Some(ch) = self.choice.as_mut() {
+                ch.played = Some((card, cost));
+            }
+            // 这一刀如果已经砍死最后一只,后面的选牌就不该再给出去(见 check_win)
+            self.check_win();
             return Ok(());
         }
         // 蓝蜡烛:打出诅咒要掉血(掉死了这张牌也照样落地)
@@ -3659,12 +3775,8 @@ impl Combat {
                 self.lose_hp_player(hp, false);
             }
         }
-        // 结算完后决定去处
-        if self.played_card_exhausts(&card, relic_play) {
-            self.exhaust_card(card);
-        } else {
-            self.discard.push(card);
-        }
+        // 结算完后决定去处(与 finish_played 走同一条路:能力牌退场、该消耗的消耗)
+        self.finish_played(Some((card, cost)));
         self.check_win();
         Ok(())
     }
@@ -3710,17 +3822,11 @@ impl Combat {
             match *e {
                 Effect::Damage { amount, times } => {
                     if let Some(t) = target {
-                        for _ in 0..times.max(1) {
-                            if self.enemies[t].dead() {
-                                break;
-                            }
-                            let mut raw = amount + relic_add;
-                            if pen_nib_double {
-                                raw *= 2;
-                            }
-                            let d = self.player_attack_damage(raw, t, is_attack);
-                            ctx.unblocked += self.damage_enemy(t, d);
+                        let mut raw = amount + relic_add;
+                        if pen_nib_double {
+                            raw *= 2;
                         }
+                        ctx.unblocked += self.damage_enemy_times(t, raw, is_attack, times.max(1) as i32);
                     }
                 }
                 Effect::DamageAll { amount, times } => {
@@ -3777,8 +3883,12 @@ impl Combat {
                     }
                 }                Effect::DamagePerExhausted { per } => {
                     if let Some(t) = target {
-                        let d = self.player_attack_damage(per * ctx.exhausted, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        // 原版恶魔之焰是"每消耗一张牌打一段 7 点",段数 = 手牌数 - 自己;
+                        // 每段用同一份算好的伤害(飞行/无形按段结算层数,但减伤只算一次)
+                        if ctx.exhausted > 0 {
+                            ctx.unblocked +=
+                                self.damage_enemy_times(t, per, is_attack, ctx.exhausted);
+                        }
                     }
                 }
                 Effect::DamageAllX { per } => {
@@ -4058,22 +4168,30 @@ impl Combat {
                         self.discard.push(inst);
                     }
                 }
-                Effect::UpgradeRandomInHand { n } => {
-                    for _ in 0..n {
-                        let cands: Vec<usize> = self
-                            .hand
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, c)| c.can_upgrade())
-                            .map(|(i, _)| i)
-                            .collect();
-                        if cands.is_empty() {
-                            break;
+                Effect::UpgradeChosenInHand => {
+                    if self.hand.iter().any(|c| c.can_upgrade()) {
+                        self.begin_choice(
+                            ChoiceSource::Hand,
+                            ChoiceAction::Upgrade,
+                            ChoiceFilter::Upgradeable,
+                            1,
+                            "Armaments: upgrade a card",
+                        );
+                    }
+                }
+                Effect::UpgradeAllInHand => {
+                    let mut n = 0;
+                    for c in self.hand.iter_mut() {
+                        if c.can_upgrade() {
+                            c.upgrade();
+                            n += 1;
                         }
-                        let pick = cands[self.streams.floor(FloorStream::CardRandomRng).below(cands.len() as u32) as usize];
-                        self.hand[pick].upgrade();
-                        let name = self.hand[pick].label();
-                        self.push_log(LogKind::Info, format!("{name} is upgraded for this combat"));
+                    }
+                    if n > 0 {
+                        self.push_log(
+                            LogKind::Info,
+                            format!("{n} cards in your hand are upgraded"),
+                        );
                     }
                 }
                 Effect::Heal { amount } => {
@@ -4355,8 +4473,11 @@ impl Combat {
         if idx >= self.enemies.len() || self.enemies[idx].dead() {
             return;
         }
-        // 神器:先拿一层顶掉这次减益
-        if n > 0 && status.is_debuff() && self.enemies[idx].statuses.has(Status::Artifact) {
+        // 神器:减益,以及"可以压到负数的增益"的负数应用(Disarm 的 -力量按减益算),
+        // 都先拿一层顶掉这次施加(参考实现 applyPower 的同一条规则).
+        let debuff_application =
+            (status.is_debuff() && n > 0) || (status.can_go_negative() && n < 0);
+        if debuff_application && self.enemies[idx].statuses.has(Status::Artifact) {
             self.enemies[idx].statuses.add(Status::Artifact, -1);
             let name = self.enemies[idx].name.clone();
             self.push_log(
@@ -4398,6 +4519,15 @@ impl Combat {
             return;
         }
         if n > 0 && status.is_debuff() && self.player.statuses.has(Status::Artifact) {
+            self.player.statuses.add(Status::Artifact, -1);
+            self.push_log(
+                LogKind::Player,
+                format!("Artifact blocks {}", status.name()),
+            );
+            return;
+        }
+        // 同上:压到负数的力量/敏捷也算减益,玩家身上的神器一样顶掉
+        if n < 0 && status.can_go_negative() && self.player.statuses.has(Status::Artifact) {
             self.player.statuses.add(Status::Artifact, -1);
             self.push_log(
                 LogKind::Player,
@@ -6924,6 +7054,35 @@ mod power_tests {
             .position(|e| e.def.id == "the_collector")
             .unwrap();
         assert_eq!(c.enemies[her].def.moves[c.enemies[her].next_move].name, "Mega Debuff");
+    }
+
+    /// 多努&迪卡:多努开场给全队加力量,之后与光束交替;迪卡开场光束(塞 Dazed),
+    /// 之后与团队护盾交替.两只都带两层神器.
+    #[test]
+    fn donu_and_deca_alternate_buff_block_and_beam() {
+        let mut c = lock("donu_and_deca");
+        let donu = idx_of(&c, "donu");
+        let deca = idx_of(&c, "deca");
+        let move_of = |c: &Combat, i: usize| c.enemies[i].def.moves[c.enemies[i].next_move].name;
+        assert_eq!(c.enemies[donu].statuses.get(Status::Artifact), 2);
+        assert_eq!(c.enemies[deca].statuses.get(Status::Artifact), 2);
+        // 开场:多努加力量,迪卡光束(顺带塞 Dazed)
+        assert_eq!(move_of(&c, donu), "Circle of Power");
+        assert_eq!(move_of(&c, deca), "Beam");
+        c.end_turn();
+        assert!(c.enemies[donu].statuses.get(Status::Strength) >= 3, "多努给全队加力量");
+        assert!(c.enemies[deca].statuses.get(Status::Strength) >= 3, "力量是全队的");
+        assert!(
+            c.discard.iter().chain(c.hand.iter()).any(|x| x.def.id == "dazed"),
+            "迪卡的光束塞 Dazed"
+        );
+        // 之后严格交替
+        assert_eq!(move_of(&c, donu), "Beam");
+        assert_eq!(move_of(&c, deca), "Square of Protection");
+        c.end_turn();
+        assert_eq!(move_of(&c, donu), "Circle of Power");
+        assert_eq!(move_of(&c, deca), "Beam");
+        assert!(c.enemies[deca].block > 0, "迪卡的团队护盾给自己(和全队)格挡");
     }
 }
 

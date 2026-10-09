@@ -1,7 +1,7 @@
 # 多幕对拍的规范路径脚本:spire --replay <seed> --script tools/golden/e2e/acts.script
 # 每一步的语义见 src/core/replay.rs 的模块注释(参考侧同义实现见 tools/replay_ref.ts)
 # 与 act1.script 的区别:一路走到第四章(集齐三把钥匙才开得了门),
-# 营火优先"回忆"拿红钥匙、宝箱优先拿蓝钥匙(keys on).
+# 营火优先"回忆"拿红钥匙、宝箱优先拿蓝钥匙(keys on),打牌走智能策略(smart on).
 neow 1       # 第 2 个 Neow 祝福
 reward take  # 奖励全拿(金币/遗物/药水),卡牌三选一拿第 card 张
 card 2
@@ -9,5 +9,6 @@ event 0
 rest rest    # 营火一律睡觉(keys on 时会优先回忆拿红钥匙)
 shop skip
 keys on
+smart on
 acts 4
 steps 4000

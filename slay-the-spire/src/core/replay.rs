@@ -13,6 +13,7 @@
 //!     steps 400     最多走多少步
 //!     acts 1        最多走到第几幕(默认 1,即停在第一幕 Boss 奖励界面)
 //!     keys off      钥匙模式:开的话营火优先回忆、宝箱优先拿蓝钥匙
+//!     smart off     智能打牌:开的话按 smart_play 的策略出牌(默认关,act1 序列不变)
 //!
 //! 输出的每一行字段:
 //!   step   从 0 开始的步号
@@ -24,7 +25,7 @@
 //! 牌堆记号与存档一致:`strike`、`strike+`、`strike+2`.
 //! 参考实现的 id 是大写,对拍器(不在这里)负责大小写与少数别名归一.
 
-use crate::core::card::{CardInstance, CardType};
+use crate::core::card::{CardInstance, CardType, Cost};
 use crate::core::combat::Phase;
 use crate::core::enemy::EnemyKind;
 use crate::core::map::{NodeKind, COLS, FLOORS};
@@ -47,6 +48,9 @@ pub struct Policy {
     pub acts: u32,
     /// 钥匙模式:营火优先"回忆"拿红钥匙,宝箱优先拿蓝钥匙,燃烧精英的绿钥匙照常拿
     pub keys: bool,
+    /// 智能打牌(默认关).开了才走 smart_play,不开还是 auto_play,
+    /// 所以 act1 的既有 fixture 逐位不变.
+    pub smart: bool,
 }
 
 impl Default for Policy {
@@ -61,6 +65,7 @@ impl Default for Policy {
             max_steps: 400,
             acts: 1,
             keys: false,
+            smart: false,
         }
     }
 }
@@ -92,6 +97,13 @@ impl Policy {
                         "on" => true,
                         "off" => false,
                         _ => return Err(format!("第 {} 行:keys 只能是 on/off", i + 1)),
+                    }
+                }
+                "smart" => {
+                    p.smart = match val {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err(format!("第 {} 行:smart 只能是 on/off", i + 1)),
                     }
                 }
                 "reward" => {
@@ -306,8 +318,13 @@ fn auto_play(run: &mut Run) -> Result<(), String> {
         }
         let Some(c) = run.combat_mut() else { break };
         if c.choice.is_some() {
-            let cands = c.choice_candidates();
-            if let Some((i, _)) = cands.first().copied() {
+            // 参考实现导出器对"选 N 张"的请求只选前 min 张;本作 need==1 才是
+            // 必须选一张,其余(0/不限张数)都是可选,跟参考实现一样一张不选.
+            let need = c.choice.as_ref().map(|ch| ch.need).unwrap_or(0);
+            for _ in 0..if need == 1 { 1 } else { 0 } {
+                let Some((i, _)) = c.choice_candidates().first().copied() else {
+                    break;
+                };
                 let _ = c.choose(i);
             }
             c.finish_choice();
@@ -330,6 +347,181 @@ fn auto_play(run: &mut Run) -> Result<(), String> {
                 }
             }
             _ => c.end_turn(),
+        }
+        run.sync_combat();
+        if run.screen == Screen::Death {
+            break;
+        }
+    }
+    // 赢了要在战场上停 VICTORY_HOLD 帧才结算
+    if run.holding_victory() {
+        for _ in 0..=Run::VICTORY_HOLD {
+            run.tick_win_hold();
+            if !run.holding_victory() {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---- 智能打牌(acts.script 的 smart on 才走这条;默认关) ----
+
+/// 血最少的活敌人(平手取下标小的);攻击与指向敌人的药水都用它当目标
+fn lowest_hp_enemy(c: &crate::core::combat::Combat) -> Option<usize> {
+    (0..c.enemies.len())
+        .filter(|&i| c.enemies[i].alive())
+        .min_by_key(|&i| (c.enemies[i].hp, i))
+}
+
+/// 按优先级挑一张打得起的牌:
+///   1. 有人血量 <= 1 时这刀必杀,攻击优先;
+///   2. 即将被斩杀或意图总伤 > 格挡时,先用技能补防;
+///   3. 能力牌尽早铺开;
+///   4. 其余打攻击牌,费用从低到高;
+///   5. 再不济打技能(抽牌/降费之类).
+/// 同序实现见 tools/replay_ref.ts 的 pickSmartCard,两边必须一字不差.
+fn pick_smart_card(
+    c: &crate::core::combat::Combat,
+    about_to_die: bool,
+    threatened: bool,
+    can_kill: bool,
+) -> Option<usize> {
+    // 判据是牌面基础费用(升级/动态降费都不算),与 auto_play 一致
+    let affordable = |i: usize| matches!(c.hand[i].def.cost, Cost::Fixed(n) if (n as i32) <= c.energy);
+    let base_cost = |i: usize| match c.hand[i].def.cost {
+        Cost::Fixed(n) => n as i32,
+        _ => i32::MAX,
+    };
+    let group = |kind: CardType| -> Option<usize> {
+        (0..c.hand.len())
+            .filter(|&i| c.hand[i].kind() == kind && affordable(i))
+            .min_by_key(|&i| (base_cost(i), i))
+    };
+    if can_kill {
+        if let Some(i) = group(CardType::Attack) {
+            return Some(i);
+        }
+    }
+    if about_to_die || threatened {
+        if let Some(i) = group(CardType::Skill) {
+            return Some(i);
+        }
+    }
+    if let Some(i) = group(CardType::Power) {
+        return Some(i);
+    }
+    if let Some(i) = group(CardType::Attack) {
+        return Some(i);
+    }
+    if let Some(i) = group(CardType::Skill) {
+        return Some(i);
+    }
+    None
+}
+
+/// 危险时按格子顺序找第一瓶能喝的药水;喝到就返回 true.
+/// 指向敌人的药水打血最少的活敌人.
+fn try_drink_once(run: &mut Run) -> bool {
+    let n = run.player.potions.len();
+    for slot in 0..n {
+        let Some(Some(def)) = run.player.potions.get(slot).copied() else {
+            continue;
+        };
+        let target = if def.target.needs_enemy() {
+            match run.combat().and_then(lowest_hp_enemy) {
+                Some(t) => Some(t),
+                None => continue,
+            }
+        } else {
+            None
+        };
+        if run.quaff_potion(slot, target).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// 智能打牌:与参考实现的 smartPlay 同规则(见 tools/replay_ref.ts).
+fn smart_play(run: &mut Run) -> Result<(), String> {
+    let mut guard = 0;
+    // 已经试过药水的回合号(0 = 还没试过);每回合最多试一次
+    let mut potion_turn: u32 = 0;
+    loop {
+        guard += 1;
+        if guard > 20000 {
+            return Err("智能战斗打不完(超过 20000 次操作)".to_string());
+        }
+        // 战斗内挂起的选牌
+        let had_choice = {
+            let Some(c) = run.combat_mut() else { break };
+            if c.choice.is_some() {
+                // 参考实现导出器对"选 N 张"的请求只选前 min 张;本作 need==1
+                // 才是"必须选一张",其余(0/不限张数)都是可选,跟参考实现一样一张不选.
+                let need = c.choice.as_ref().map(|ch| ch.need).unwrap_or(0);
+                for _ in 0..if need == 1 { 1 } else { 0 } {
+                    let Some((i, _)) = c.choice_candidates().first().copied() else {
+                        break;
+                    };
+                    let _ = c.choose(i);
+                }
+                c.finish_choice();
+                true
+            } else {
+                false
+            }
+        };
+        if had_choice {
+            run.sync_combat();
+            continue;
+        }
+        // 快照本回合的局势(先读后写,避免同时借用 run 的 combat 与一局)
+        let (about_to_die, low_hp, turn, pick, target) = {
+            let Some(c) = run.combat() else { break };
+            if c.phase != Phase::PlayerTurn {
+                break;
+            }
+            let incoming: i32 = (0..c.enemies.len())
+                .filter(|&i| c.enemies[i].alive() && c.enemies[i].intent().attacks())
+                .map(|i| {
+                    let (d, t) = c.predicted_damage(i);
+                    d * t as i32
+                })
+                .sum();
+            let hp = c.player.hp;
+            let max_hp = c.player.max_hp;
+            let block = c.player.block;
+            let about_to_die = incoming >= hp + block;
+            let threatened = incoming > block;
+            let low_hp = hp * 2 <= max_hp;
+            let can_kill = (0..c.enemies.len()).any(|i| c.enemies[i].alive() && c.enemies[i].hp <= 1);
+            let pick = pick_smart_card(c, about_to_die, threatened, can_kill);
+            let target = lowest_hp_enemy(c);
+            (about_to_die, low_hp, c.turn, pick, target)
+        };
+        // 4) 危险或残血时先喝药水,每回合最多试一次
+        if (about_to_die || low_hp) && potion_turn != turn {
+            if try_drink_once(run) {
+                potion_turn = run.combat().map(|c| c.turn).unwrap_or(turn);
+                run.sync_combat();
+                if run.screen == Screen::Death {
+                    break;
+                }
+                continue;
+            }
+            potion_turn = turn;
+        }
+        {
+            let Some(c) = run.combat_mut() else { break };
+            match (pick, target) {
+                (Some(i), Some(t)) => {
+                    if c.play_card(i, Some(t)).is_err() {
+                        c.end_turn();
+                    }
+                }
+                _ => c.end_turn(),
+            }
         }
         run.sync_combat();
         if run.screen == Screen::Death {
@@ -636,7 +828,11 @@ pub fn run_jsonl(seed: u64, policy: &Policy) -> Result<String, String> {
 
             // ---- 战斗 ----
             Screen::Combat => {
-                auto_play(&mut run)?;
+                if policy.smart {
+                    smart_play(&mut run)?;
+                } else {
+                    auto_play(&mut run)?;
+                }
                 out.push(line(step, "fight", "\"result\":\"end\"", &state_json(&run)));
                 step += 1;
                 continue;
@@ -1147,14 +1343,29 @@ mod e2e {
     // ---- 多幕(第一幕 → 第二幕;能活到后面就继续) ----
 
     /// 多幕扫荡的登记表:acts.script 下的一整局,字段与第一章那张表相同.
-    /// 这四个种子是 1..3000 里唯四能靠自动打牌活到第二幕的(其余都死在第一幕).
+    /// 这 19 个种子在 1..30000 里两边都能靠智能打牌走到第二幕 Boss(第二幕 Boss 是堵墙,
+    /// 过了它的目前没有),按两边合计差异从少到多排:前 10 个逐字段完全一致.
     const ACTS_CASES: &[Expected] = &[
-    Expected { seed: 12345, lines: 79, ref_lines: 79, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78], diff_digest: 0xab802424d47950d7 },
-    Expected { seed: 822, lines: 67, ref_lines: 67, aligned: 43, diff_steps: &[43, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64], diff_digest: 0x657c5bfb1f3cce59 },
-    Expected { seed: 295, lines: 63, ref_lines: 45, aligned: 43, diff_steps: &[43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62], diff_digest: 0xdfc18fb3d19e49cf },
-    Expected { seed: 2074, lines: 55, ref_lines: 55, aligned: 41, diff_steps: &[41, 42, 47, 48, 49, 50, 51, 52], diff_digest: 0xf584591076995ef7 },
+    Expected { seed: 10242, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12691, lines: 60, ref_lines: 60, aligned: 60, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 20703, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 21075, lines: 49, ref_lines: 49, aligned: 49, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 24873, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 25365, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 28104, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 3605, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12835, lines: 56, ref_lines: 56, aligned: 56, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 26951, lines: 63, ref_lines: 63, aligned: 63, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 22882, lines: 52, ref_lines: 52, aligned: 41, diff_steps: &[41, 42], diff_digest: 0x60777e943eeccd9c },
+    Expected { seed: 23808, lines: 55, ref_lines: 55, aligned: 42, diff_steps: &[42, 43], diff_digest: 0x10d87ee5ff4faa7a },
+    Expected { seed: 7140, lines: 57, ref_lines: 57, aligned: 49, diff_steps: &[49, 50], diff_digest: 0x3defb055513ccebf },
+    Expected { seed: 26848, lines: 58, ref_lines: 58, aligned: 53, diff_steps: &[53, 54, 55], diff_digest: 0x8b8ac48ae1226bc5 },
+    Expected { seed: 11535, lines: 57, ref_lines: 57, aligned: 52, diff_steps: &[52, 53, 54, 55, 56], diff_digest: 0x242494e9e89df182 },
+    Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xf28cd9b0aa241e08 },
+    Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xc785cdc1b1cf221 },
+    Expected { seed: 4327, lines: 51, ref_lines: 51, aligned: 40, diff_steps: &[40, 41, 46, 47, 48, 49, 50], diff_digest: 0x337e42fcb6d82956 },
+    Expected { seed: 2474, lines: 50, ref_lines: 50, aligned: 42, diff_steps: &[42, 43, 44, 45, 46, 47], diff_digest: 0x37e5e8c818ba1cc },
 ];
-
     /// 多幕对拍:同一颗种子 + acts.script,本作与参考实现逐行比对(两侧都转小写).
     /// 「击杀盗贼退还赃款」的差额会一直带着,所以和第一章一样分两段断言:
     /// 前缀逐字节相同 + 差异步集合与内容指纹固定.
@@ -1257,7 +1468,7 @@ mod e2e {
             );
         }
         assert!(
-            crossed >= 3,
+            crossed >= 15,
             "只有 {crossed} 个种子两边都走到了第二幕,切幕没被量到"
         );
     }

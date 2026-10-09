@@ -1414,7 +1414,7 @@ fn pick_the_guardian(ctx: &mut PickCtx) -> usize {
         Some(WHIRLWIND) => CHARGING,
         Some(GUARD) => ROLL,
         Some(ROLL) => TWIN,
-        Some(TWIN) => GUARD,
+        Some(TWIN) => WHIRLWIND,
         _ => CHARGING,
     }
 }

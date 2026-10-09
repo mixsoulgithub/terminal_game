@@ -144,7 +144,10 @@ pub enum Effect {
     EnergyOnExhaust { n: i32 },
     /// 目标这回合打算攻击的话,给自己加力量(观察弱点)
     StrengthIfTargetAttacks { n: i32 },
-    UpgradeRandomInHand { n: u8 },
+    /// 从手牌选一张升级(武装)
+    UpgradeChosenInHand,
+    /// 升级手牌里所有能升级的牌(武装+)
+    UpgradeAllInHand,
     /// 回复生命(包扎)
     Heal { amount: i32 },
     /// 伤害等于抽牌堆张数 * per(心灵冲击)

@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { ActionQueue } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/queue.ts";
 import { RngRegistry } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rngRegistry.ts";
 import type { EffectCtx } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/content/defs.ts";
+import type { CombatState } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/combatState.ts";
 
 type Policy = {
   neow: number;
@@ -33,6 +34,8 @@ type Policy = {
   acts: number;
   /** 钥匙模式:营火优先回忆拿红钥匙,宝箱优先拿蓝钥匙 */
   keys: boolean;
+  /** 智能打牌(默认关).开了才走 smartPlay,不开还是 autoPlay */
+  smart: boolean;
 };
 
 function defaultPolicy(): Policy {
@@ -46,6 +49,7 @@ function defaultPolicy(): Policy {
     maxSteps: 400,
     acts: 1,
     keys: false,
+    smart: false,
   };
 }
 
@@ -62,6 +66,7 @@ function parsePolicy(text: string): Policy {
       case "steps": p.maxSteps = Number(val); break;
       case "acts": p.acts = Math.max(1, Number(val)); break;
       case "keys": p.keys = val === "on"; break;
+      case "smart": p.smart = val === "on"; break;
       case "reward": p.rewardTake = val === "take"; break;
       case "rest": p.rest = val === "smith" ? "smith" : "rest"; break;
       case "shop": p.shopSkip = val !== "buy"; break;
@@ -163,6 +168,191 @@ function autoPlay(state: GameState): GameState {
     if (atkIdx !== -1 && target !== -1) {
       try {
         s = advance(s, { cmd: "playCard", handIdx: atkIdx, target }, bundle);
+      } catch {
+        s = advance(s, { cmd: "endTurn" }, bundle);
+      }
+    } else {
+      s = advance(s, { cmd: "endTurn" }, bundle);
+    }
+  }
+  return s;
+}
+
+// ---- 智能打牌(smart on 才走;与 src/core/replay.rs 的 smart_play 同规则) ----
+
+/** 血最少的活敌人(平手取下标小的);攻击与指向敌人的药水都用它当目标 */
+function lowestHpEnemy(c: CombatState): number {
+  let best = -1;
+  for (let i = 0; i < c.monsters.length; i++) {
+    const m = c.monsters[i]!;
+    if (m.isDead || m.isEscaped || m.halfDead) continue;
+    if (best === -1 || m.hp < c.monsters[best]!.hp) best = i;
+  }
+  return best;
+}
+
+/** 按优先级挑一张打得起的牌(与 Rust 的 pick_smart_card 同序) */
+function pickSmartCard(c: CombatState, aboutToDie: boolean, threatened: boolean, canKill: boolean): number {
+  const hand = c.player.piles.hand.map((iid) => c.cards[iid]!);
+  const defAt = (i: number) => bundle.cards.get(hand[i]!.defId)!;
+  // 判据是牌面基础费用(与 Rust 一致)
+  const affordable = (i: number): boolean => {
+    const d = defAt(i);
+    return d.cost >= 0 && d.cost <= c.player.energy;
+  };
+  const group = (t: string): number => {
+    let best = -1;
+    for (let i = 0; i < hand.length; i++) {
+      const d = defAt(i);
+      if (d.type !== t || !affordable(i)) continue;
+      if (best === -1 || d.cost < defAt(best).cost) best = i;
+    }
+    return best;
+  };
+  if (canKill) {
+    const a = group("attack");
+    if (a !== -1) return a;
+  }
+  if (aboutToDie || threatened) {
+    const sk = group("skill");
+    if (sk !== -1) return sk;
+  }
+  const p = group("power");
+  if (p !== -1) return p;
+  const a = group("attack");
+  if (a !== -1) return a;
+  const sk = group("skill");
+  if (sk !== -1) return sk;
+  return -1;
+}
+
+/** 危险时按格子顺序找第一瓶能喝的药水;喝到就返回新状态,否则 null */
+function tryDrinkOnce(s: GameState): GameState | null {
+  const run = s.run;
+  for (let slot = 0; slot < run.potions.length; slot++) {
+    const id = run.potions[slot];
+    if (!id) continue;
+    const def = bundle.potions.get(id);
+    if (!def) continue;
+    let target: number | undefined = undefined;
+    if (def.targeted) {
+      const t = s.combat ? lowestHpEnemy(s.combat) : -1;
+      if (t === -1) continue;
+      target = t;
+    }
+    try {
+      return advance(s, { cmd: "usePotion", slot, target }, bundle);
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+// 参考实现的 computeIntent(intents.ts)是"拿一个必抛错的 rng 干跑一遍
+// move.execute",而且它在内部把 rng 硬换成那个必抛错的版本,外面传什么都拦不住.
+// 凡是 execute 里会先掷点/问选择的招(盗贼/强盗的 MUG:先掷台词点、再偷钱、才
+// 出手)就会半路抛错,damage=null.本作(Rust)是按静态招式数据算意图的,于是
+// 参考侧把"来袭伤害"当 0、不防御,本作算出真伤害、会防御 —— 从第一场盗贼战起
+// 走法全线分叉.
+//
+// 我们自己按招式数据算一遍:只对"会打人"的招(和 UI 的攻击类意图同四种),
+// 把它的 execute 干跑在一个"温和 rng"(掷点一律返回 0、选择直接返回)上,
+// 读队伍里排队的"对玩家攻击伤害"求和,就是这只怪下一击的来袭总伤.既跟本作
+// 看到同一份威胁值,又不改参考源码、也不降低本作保真度.
+const ATTACK_INTENTS: Record<string, true> = {
+  attack: true,
+  attackDefend: true,
+  attackDebuff: true,
+  attackBuff: true,
+};
+
+/** 一只怪下一击对玩家的来袭总伤(不打人就 0) */
+function previewIncoming(state: GameState, idx: number): number {
+  const c = state.combat!;
+  const m = c.monsters[idx]!;
+  const move = bundle.monsters.get(m.id)?.moves[m.move];
+  if (!move || !ATTACK_INTENTS[move.intent]) return 0;
+  const combatClone = structuredClone(c);
+  const runClone = structuredClone(state.run);
+  const queue = new ActionQueue();
+  const rngStream = new Proxy({}, { get: () => () => 0 }) as never;
+  const dry: EffectCtx = {
+    run: runClone,
+    combat: combatClone,
+    queue,
+    bundle,
+    rt: { pending: null, currentItem: null, combatOver: null },
+    rng: () => rngStream,
+    asc: state.run.ascension,
+    emit: () => {},
+    requestChoice: () => {},
+  };
+  try {
+    move.execute(dry, combatClone.monsters[idx]!);
+  } catch {
+    // 干跑半路抛错(要选择/要掷点):读到多少算多少
+  }
+  let total = 0;
+  for (let a = queue.pop(); a !== undefined; a = queue.pop()) {
+    if (a.kind === "damage" && a.target.kind === "player" && a.info.type === "attack") {
+      total += a.info.amount;
+    }
+  }
+  return total;
+}
+
+/** 智能打牌:与 src/core/replay.rs 的 smart_play 同规则 */
+function smartPlay(state: GameState): GameState {
+  let s = state;
+  let guard = 0;
+  // 已经试过药水的回合号(0 = 还没试过);每回合最多试一次
+  let potionTurn = 0;
+  while (s.combat && !s.outcome) {
+    if (guard++ > 20000) throw new Error("combat did not end");
+    // 战斗内挂起的选牌:跟 autoPlay 一样选前 min 张
+    if (s.pending) {
+      const req = s.pending.request;
+      const picks = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
+      s = advance(s, { cmd: "choose", indices: picks }, bundle);
+      continue;
+    }
+    const c = s.combat;
+    if (!c.playerTurn) break;
+    const alive: number[] = [];
+    for (let i = 0; i < c.monsters.length; i++) {
+      const m = c.monsters[i]!;
+      if (!m.isDead && !m.isEscaped && !m.halfDead) alive.push(i);
+    }
+    if (alive.length === 0) {
+      s = advance(s, { cmd: "endTurn" }, bundle);
+      continue;
+    }
+    // 敌方来袭总伤(按招式数据自算,绕开参考侧会抛错的干跑)
+    let incoming = 0;
+    for (const i of alive) incoming += previewIncoming(s, i);
+    const hp = s.run.hp;
+    const maxHp = s.run.maxHp;
+    const block = c.player.block;
+    const aboutToDie = incoming >= hp + block;
+    const threatened = incoming > block;
+    const lowHp = hp * 2 <= maxHp;
+    const canKill = alive.some((i) => c.monsters[i]!.hp <= 1);
+    const turn = c.turn;
+    const target = lowestHpEnemy(c);
+    const pick = pickSmartCard(c, aboutToDie, threatened, canKill);
+    if ((aboutToDie || lowHp) && potionTurn !== turn) {
+      const next = tryDrinkOnce(s);
+      if (next) {
+        potionTurn = next.combat ? next.combat.turn : turn;
+        s = next;
+        continue;
+      }
+      potionTurn = turn;
+    }
+    if (pick !== -1 && target !== -1) {
+      try {
+        s = advance(s, { cmd: "playCard", handIdx: pick, target }, bundle);
       } catch {
         s = advance(s, { cmd: "endTurn" }, bundle);
       }
@@ -375,7 +565,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
         break;
       }
       case "combat": {
-        s = autoPlay(s);
+        s = policy.smart ? smartPlay(s) : autoPlay(s);
         out.push(line(step, "fight", `"result":"end"`, stateJson(s)));
         step += 1;
         break;

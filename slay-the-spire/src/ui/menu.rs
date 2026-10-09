@@ -51,6 +51,7 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 RewardSlot::Relic
                     | RewardSlot::RelicChoice(_)
                     | RewardSlot::Potion(_)
+                    | RewardSlot::ExtraGold
                     | RewardSlot::EmeraldKey
             )
         })
@@ -151,6 +152,10 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
                 }
                 None => continue,
             },
+            RewardSlot::ExtraGold => (
+                format!("Gold  {}   from Tiny House", r.extra_gold),
+                theme::GOOD,
+            ),
             RewardSlot::EmeraldKey => (
                 "Emerald Key   from the burning elite".to_string(),
                 theme::GOOD,
