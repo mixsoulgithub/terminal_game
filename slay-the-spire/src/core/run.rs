@@ -1859,7 +1859,9 @@ impl Run {
         self.omamori_charges = omamori;
         for card in added {
             self.say(format!("{} is added to your deck", card.label()));
-            self.player.deck.push(card);
+            // 走统一入口:陶瓷鱼(每加一张 9 金)、蛋、黑石护符这些钩子
+            // (反编译 exitBattle 走 Deck::obtain,那里会触发它们)
+            self.push_card_to_deck(card);
         }
         if looted > 0 {
             self.gain_gold(looted);
@@ -2962,18 +2964,21 @@ impl Run {
         } else {
             NodeKind::Event
         };
-        // 十手镯:? 房间不再出普通战斗
+        // 十手镯:? 房间不再出普通战斗(反编译是掷出战斗后把房间改成事件,
+        // 但那一档概率的复位仍按"掷出来的战斗"算)
+        let mut chance_kind = kind;
         if kind == NodeKind::Monster && self.has_relic_fx(|fx| fx.no_normal_combat_in_unknown) {
             kind = NodeKind::Event;
         }
-        // 小箱子:每 4 个 ? 房间必出宝箱
+        // 小箱子:每 4 个 ? 房间必出宝箱(这条路径不参与掷点,复位按宝箱算)
         if self.has_relic_fx(|fx| fx.treasure_every_4_unknown) {
             self.unknown_rooms_seen += 1;
             if self.unknown_rooms_seen % 4 == 0 {
                 kind = NodeKind::Treasure;
+                chance_kind = NodeKind::Treasure;
             }
         }
-        self.monster_chance = if kind == NodeKind::Monster {
+        self.monster_chance = if chance_kind == NodeKind::Monster {
             UNKNOWN_ESCALATION.0
         } else {
             self.monster_chance + UNKNOWN_ESCALATION.0
@@ -3057,8 +3062,9 @@ impl Run {
     /// 这个事件现在能不能出现(参考实现各事件里的 canSpawn).act 是当前章号.
     fn event_can_spawn(&self, id: &str) -> bool {
         let act = self.act;
-        // 参考实现的 run.floor 从 1 起(全局层号),这里同样用全局的那个
-        let floor = self.floor_num as i32 + 1;
+        // floor_num 进第一房就是 1(每进一房 +1),与参考实现的 run.floor(全局层号,
+        // 1 起)是同一个数;这里不能再 +1,否则 dead_adventurer 这类门槛会提前一层
+        let floor = self.floor_num as i32;
         match id {
             "the_cleric" => self.player.gold >= 35,
             "dead_adventurer" | "hypnotizing_colored_mushrooms" => floor >= 7,
@@ -3230,6 +3236,11 @@ impl Run {
         }
         if let Some(id) = c.req_relic {
             if !self.player.relics.iter().any(|r| r.id == id) {
+                return false;
+            }
+        }
+        if let Some(id) = c.req_no_relic {
+            if self.player.relics.iter().any(|r| r.id == id) {
                 return false;
             }
         }
@@ -3735,7 +3746,9 @@ impl Run {
         if o.max_hp != 0 {
             self.player.max_hp = (self.player.max_hp + o.max_hp).max(1);
             if o.max_hp > 0 {
-                self.player.hp += o.max_hp;
+                // 上限涨多少就回多少(原版 increaseMaxHp = maxHp += n; heal(n)),
+                // 所以花开彼岸下只加上限、不回血
+                self.heal(o.max_hp);
             }
         }
         if o.max_hp_pct > 0 {
@@ -3778,7 +3791,8 @@ impl Run {
             self.heal(crate::core::events::frac_floor_of(max_hp0, o.heal_frac));
         }
         if o.full_heal {
-            self.player.hp = self.player.max_hp;
+            // 花开彼岸:回满也归零(原版走 heal())
+            self.heal(self.player.max_hp);
         }
         if o.gold != 0 && !o.gold_first {
             if o.gold > 0 {
@@ -4549,14 +4563,18 @@ impl Run {
 
     /// 随机一张无色牌
     fn random_colorless_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
-        let pool: Vec<&'static CardDef> = cards::colorless_pool()
-            .into_iter()
-            .filter(|c| rarity.map(|r| c.rarity == r).unwrap_or(true))
-            .collect();
+        // 原版 returnColorlessCard:整池用 shuffleRng 的 java 洗牌洗一遍,再取第一张
+        // 该稀有度(反编译 GameContext.cpp:1682-1687;不是"在子池里 pick")
+        let mut pool = cards::colorless_pool();
         if pool.is_empty() {
             return None;
         }
-        Some(*self.streams.floor(FloorStream::MiscRng).pick(&pool))
+        java_shuffle(
+            &mut pool,
+            &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()),
+        );
+        pool.into_iter()
+            .find(|c| rarity.map(|r| c.rarity == r).unwrap_or(true))
     }
 
     /// 移除身上的一件指定遗物
@@ -5158,8 +5176,9 @@ impl Run {
     }
 
     pub fn spend_gold(&mut self, n: i32) {
-        if n > 0 && self.screen == Screen::Shop {
-            // 银行家之躯:在商店花过钱就不再每层给钱
+        // 银行家之躯:在商店花过钱就不再每层给钱。买删牌走的是选牌屏
+        // (screen 已切到 Pick),所以按"人还在商店里"(self.shop)判
+        if n > 0 && (self.screen == Screen::Shop || self.shop.is_some()) {
             self.maw_bank_spent = true;
         }
         self.player.gold = (self.player.gold - n).max(0);
@@ -5251,13 +5270,17 @@ impl Run {
         }
         if fx.max_hp != 0 {
             self.player.max_hp += fx.max_hp;
-            self.player.hp += fx.max_hp;
+            if fx.max_hp > 0 {
+                // 原版 increaseMaxHp 里的 heal,花开彼岸下不回血
+                self.heal(fx.max_hp);
+            }
         }
         if fx.heal > 0 {
             self.heal(fx.heal);
         }
         if fx.full_heal {
-            self.player.hp = self.player.max_hp;
+            // 花开彼岸:回满也归零(原版走 heal())
+            self.heal(self.player.max_hp);
         }
         if fx.gold > 0 {
             self.gain_gold(fx.gold);
@@ -6279,6 +6302,19 @@ mod tests {
     }
 
     // ---- 本批新实现的遗物:一局流程侧的断言 ----
+
+    /// 事件门槛用的是全局层号本身(原版 dead_adventurer 要 floorNum > 6,
+    /// 本作的 floor_num 进第一房就是 1,不能再 +1)
+    #[test]
+    fn event_spawn_floor_uses_the_global_floor() {
+        let mut r = run(7);
+        r.debug_set_floor(6);
+        assert!(!r.event_can_spawn("dead_adventurer"), "第 6 层还不出");
+        assert!(!r.event_can_spawn("hypnotizing_colored_mushrooms"));
+        r.debug_set_floor(7);
+        assert!(r.event_can_spawn("dead_adventurer"), "第 7 层才出");
+        assert!(r.event_can_spawn("hypnotizing_colored_mushrooms"));
+    }
 
     /// 梦中情网:休息之后多一次卡牌三选一
     #[test]

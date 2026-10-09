@@ -1252,8 +1252,16 @@ impl Combat {
         // 候选只有"当前还真的要花费用"的牌(原版:cost>0 且本回合费用>0 且不是免费打出),
         // 已经 0 费/本回合已免费的牌不参选 —— 参选集合不同,掷点结果与后面整条链都会偏.
         if kind == CardType::Power && self.relic_any(|fx| fx.zero_hand_card_on_power) {
+            // 腐化之下技能本回合已是 0 费,不能参选(原版腐化会把技能的
+            // costForTurn 也改成 0,候选要求 costForTurn>0)
+            let corruption = self.player.statuses.has(Status::Corruption);
             let candidates: Vec<usize> = (0..self.hand.len())
-                .filter(|&i| self.hand[i].fixed_cost().unwrap_or(0) > 0)
+                .filter(|&i| {
+                    let c = &self.hand[i];
+                    let already_free =
+                        corruption && c.kind() == crate::core::card::CardType::Skill;
+                    !already_free && c.fixed_cost().unwrap_or(0) > 0
+                })
                 .collect();
             if !candidates.is_empty() {
                 let idx = candidates
@@ -1263,9 +1271,11 @@ impl Combat {
                 self.push_log(LogKind::Player, format!("Mummified Hand: {label} costs 0"));
             }
         }
-        // 橙皮:三种类型都打出过就清掉自己的减益
+        // 橙皮:三种类型都打出过就清掉自己的减益(清的范围见 remove_player_debuffs:
+        // 还要把 Flex/敏捷药水残留的 LoseStrength/LoseDexterity、紧急按钮的 NoBlock
+        // 一起清掉,负力量/敏捷归零)
         if self.relic_any(|fx| fx.clear_debuffs_on_all_types) && self.rs.types_played == 7 {
-            self.player.statuses.clear_debuffs();
+            self.player.statuses.remove_player_debuffs();
             self.push_log(LogKind::Player, "Orange Pellets clears your debuffs".to_string());
             self.rs.types_played = 0;
         }
@@ -2301,6 +2311,11 @@ impl Combat {
         }
         self.shake(ShakeWho::Enemy(idx), -1, ShakeKind::Attack, 0);
         let per = self.enemy_attack_damage(idx, amount);
+        // 玩家的荆棘反伤(遗物 + 液态青铜给的荆棘 + 火焰屏障):多段攻击是多次
+        // attacked,每段各反一次(反编译 Player::attacked 每次调用都反,且在掉血之前)
+        let thorns = self.relic_thorns
+            + self.player.statuses.get(Status::Thorns)
+            + self.player.statuses.get(Status::FlameBarrier);
         let mut blocked_total = 0;
         let mut hit_total = 0;
         for _ in 0..times.max(1) {
@@ -2326,6 +2341,14 @@ impl Combat {
                     format!("{name}'s stabs leave {stabs} Wound in your discard pile"),
                 );
             }
+            if thorns > 0 && self.enemies[idx].alive() {
+                self.damage_enemy_plain(idx, thorns);
+                self.push_log(
+                    LogKind::Player,
+                    format!("Thorns deal {thorns} to {name}"),
+                );
+                self.settle_deaths();
+            }
             if self.phase == Phase::Lost {
                 return;
             }
@@ -2336,18 +2359,6 @@ impl Combat {
                 LogKind::Info,
                 format!("{name} hit into {blocked_total} block"),
             );
-        }
-        // 玩家的荆棘反伤(遗物 + 液态青铜给的荆棘 + 火焰屏障)
-        let thorns = self.relic_thorns
-            + self.player.statuses.get(Status::Thorns)
-            + self.player.statuses.get(Status::FlameBarrier);
-        if thorns > 0 {
-            self.damage_enemy_plain(idx, thorns);
-            self.push_log(
-                LogKind::Player,
-                format!("Thorns deal {thorns} to {name}"),
-            );
-            self.settle_deaths();
         }
     }
 
@@ -2807,6 +2818,11 @@ impl Combat {
         if amount <= 0 {
             return;
         }
+        // 花开彼岸:原版 Player::heal 的第一句就是这里 return,战斗内的一切治疗
+        // (血瓶/鸟面坛/玩具鸟/再生/血药水)都归零
+        if self.relic_any(|fx| fx.no_heal) {
+            return;
+        }
         // 魔法花:战斗中的治疗多 50%
         let pct = self.relic_max(|fx| fx.combat_heal_pct);
         let amount = if pct > 100 { amount * pct / 100 } else { amount };
@@ -3164,11 +3180,9 @@ impl Combat {
         if amount <= 0 {
             return;
         }
-        if self.rs.helix > 0 {
-            self.rs.helix -= 1;
-            self.push_log(LogKind::Info, "Fossilized Helix prevents the damage".to_string());
-            return;
-        }
+        // 化石螺壳(Buffer)只拦"伤害",不拦卡牌/能力的直接掉血:
+        // 反编译里 Buffer 判在 Player::damage / Player::attacked,而 loseHp() 这条
+        // 直接掉血的路径(放血、献祭、蓝蜡烛、燃烧契约、缠绕、灼烧?)没有它
         let amount = (amount - self.relic_sum(|fx| fx.hp_loss_reduction)).max(0);
         if amount <= 0 {
             return;
@@ -3188,28 +3202,39 @@ impl Combat {
 
     /// 掉到 0 血时的收尾:仙女在瓶中 / 蜥蜴尾巴先保命,否则判负
     fn resolve_player_death(&mut self) {
-        // 蜥蜴尾巴:每场一次,致命伤改为按最大生命的百分比回血
-        let pct = self.relic_max(|fx| fx.death_save_pct);
-        if pct > 0 && !self.rs.lizard_used {
-            self.rs.lizard_used = true;
-            let back = (self.player.max_hp * pct / 100).max(1);
-            self.player.hp = back;
-            self.push_log(
-                LogKind::Info,
-                format!("Lizard Tail heals you to {back} HP"),
-            );
-            return;
-        }
-        if self.fairy_save {
-            self.fairy_save = false;
-            self.fairy_used = true;
-            let back = (self.player.max_hp * 30 / 100).max(1);
-            self.player.hp = back;
-            self.push_log(
-                LogKind::Info,
-                format!("Fairy in a Bottle heals you to {back} HP"),
-            );
-            return;
+        // 花开彼岸(不能回血)把两种保命符一起挡掉:反编译 Player::wouldDie 里
+        // 仙女与蜥蜴尾巴整段都包在 `if (!hasRelic<MARK_OF_THE_BLOOM>())` 里
+        if !self.relic_any(|fx| fx.no_heal) {
+            // 仙女在瓶中先判(反编译 wouldDie 先扫药水栏,再查蜥蜴尾巴)
+            if self.fairy_save {
+                self.fairy_save = false;
+                self.fairy_used = true;
+                // 神圣树皮让保命符的数值也翻倍:30% -> 60%
+                let pct = if self.relic_sum(|fx| fx.potion_potency_pct) > 0 {
+                    60
+                } else {
+                    30
+                };
+                let back = (self.player.max_hp * pct / 100).max(1);
+                self.player.hp = back;
+                self.push_log(
+                    LogKind::Info,
+                    format!("Fairy in a Bottle heals you to {back} HP"),
+                );
+                return;
+            }
+            // 蜥蜴尾巴:每场一次,致命伤改为按最大生命的百分比回血
+            let pct = self.relic_max(|fx| fx.death_save_pct);
+            if pct > 0 && !self.rs.lizard_used {
+                self.rs.lizard_used = true;
+                let back = (self.player.max_hp * pct / 100).max(1);
+                self.player.hp = back;
+                self.push_log(
+                    LogKind::Info,
+                    format!("Lizard Tail heals you to {back} HP"),
+                );
+                return;
+            }
         }
         self.player.hp = 0;
         self.phase = Phase::Lost;
@@ -3235,25 +3260,36 @@ impl Combat {
         }
         let blocked = self.player.block.min(dmg);
         self.player.block -= blocked;
-        let taken = dmg - blocked;
+        let mut taken = dmg - blocked;
         if taken > 0 {
-            // 化石螺壳:本场第一次掉血直接免掉
+            // 化石螺壳:本场第一次掉血直接免掉(原版是 Buffer,在鸟居/钨钢棒之前)
             if self.rs.helix > 0 {
                 self.rs.helix -= 1;
                 self.push_log(LogKind::Info, "Fossilized Helix prevents the damage".to_string());
                 return (0, blocked);
             }
+            // 鸟居:扣掉格挡后还剩 1..5 点的"攻击"伤害降到 1(反编译 Player::attacked:
+            // 格挡 -> 鸟居 -> 钨钢棒).非攻击伤害不走这里.
+            if attack {
+                let torii = self.relic_max(|fx| fx.small_attack_reduce_to);
+                if torii > 0 && taken > 1 && taken <= 5 {
+                    taken = torii;
+                }
+            }
             // 钨钢棒:每次掉血少掉 1
             let rod = self.relic_sum(|fx| fx.hp_loss_reduction);
-            let taken = (taken - rod).max(0);
-            self.player.hp -= taken;
-            self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, taken);
-            self.note_hp_loss();
-            self.on_hp_lost(taken);
-            // 镀甲:只有没被格挡住的"攻击"伤害才掉一层(原版 Player::attacked;
-            // 死亡律动/荆棘/灼伤这些非攻击伤害走 Player::damage,不掉)
-            if attack && self.player.statuses.get(Status::PlatedArmor) > 0 {
-                self.player.statuses.add(Status::PlatedArmor, -1);
+            taken = (taken - rod).max(0);
+            // 减到 0 就不算掉血(镀甲不掉层、嗜血不降费;反编译那句 if (damage > 0))
+            if taken > 0 {
+                self.player.hp -= taken;
+                self.shake(ShakeWho::Hero, -1, ShakeKind::Hurt, taken);
+                self.note_hp_loss();
+                self.on_hp_lost(taken);
+                // 镀甲:只有没被格挡住的"攻击"伤害才掉一层(原版 Player::attacked;
+                // 死亡律动/荆棘/灼伤这些非攻击伤害走 Player::damage,不掉)
+                if attack && self.player.statuses.get(Status::PlatedArmor) > 0 {
+                    self.player.statuses.add(Status::PlatedArmor, -1);
+                }
             }
         }
         if self.player.hp <= 0 {
@@ -3331,13 +3367,9 @@ impl Combat {
             let pct = self.relic_max(|fx| fx.vulnerable_taken_pct);
             d *= if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
         }
-        let mut d = d.floor().max(0.0) as i32;
-        // 鸟居:5 点以下(含)的未被格挡攻击伤害降为 1
-        let torii = self.relic_max(|fx| fx.small_attack_reduce_to);
-        if torii > 0 && d > 1 && d <= 5 {
-            d = torii;
-        }
-        d.max(0)
+        // 鸟居不在这一步做:它作用在"扣掉格挡之后"剩下的伤害上,见 hit_player_kind
+        // (反编译 Player::attacked 的顺序是 格挡 -> 鸟居 -> 钨钢棒)
+        (d.floor().max(0.0) as i32).max(0)
     }
 
     /// 开局写死的层数(每回合重置的延展/慢速/飞行要看它).飞升会换档(如鸟的飞行)
@@ -3685,7 +3717,12 @@ impl Combat {
 
     /// 结算本回合新死的敌人(死亡触发只在第一次结算)
     fn settle_deaths(&mut self) {
-        let done_before = self.enemies.iter().filter(|e| e.death_done).count();
+        // 逃跑的(首领倒下后散场的随从)不算击杀,不能触发"击杀类"遗物
+        let done_before = self
+            .enemies
+            .iter()
+            .filter(|e| e.death_done && !e.escaped)
+            .count();
         for i in 0..self.enemies.len() {
             if self.enemies[i].dead() && !self.enemies[i].death_done {
                 self.handle_death(i);
@@ -3695,7 +3732,7 @@ impl Combat {
         let died = self
             .enemies
             .iter()
-            .filter(|e| e.death_done)
+            .filter(|e| e.death_done && !e.escaped)
             .count()
             .saturating_sub(done_before) as i32;
         if died > 0 {
@@ -4026,7 +4063,8 @@ impl Combat {
             let hp = self.relic_sum(|fx| fx.playable_curses_hp);
             if hp > 0 {
                 self.push_log(LogKind::Player, format!("Blue Candle costs {hp} HP"));
-                self.lose_hp_player(hp, false);
+                // 自伤:反编译是 PlayerLoseHp(1, true),所以要触发破裂
+                self.lose_hp_player(hp, true);
             }
         }
         // 结算完后决定去处(与 finish_played 走同一条路:能力牌退场、该消耗的消耗)
@@ -4065,7 +4103,9 @@ impl Combat {
             if is_strike {
                 relic_add += self.relic_sum(|fx| fx.strike_damage_bonus);
             }
-            if matches!(card.cost(), crate::core::card::Cost::Fixed(0)) {
+            // 腕刃看的是"本回合实际费用"(反编译 costForTurn == 0),不是印刷费用:
+            // 被疯狂/化茧/木乃伊之手降到 0 费的攻击牌也算
+            if card.fixed_cost() == Some(0) {
                 relic_add += self.relic_sum(|fx| fx.zero_cost_attack_bonus);
             }
         }
@@ -8039,6 +8079,63 @@ mod power_tests {
 mod summon_tests {
     use super::*;
     use crate::core::cards::card;
+    use crate::core::relics::relic_def_or_panic;
+
+    /// 手牌里某张牌的下标(测试用)
+    fn hand_idx(c: &Combat, id: &str) -> usize {
+        c.hand
+            .iter()
+            .position(|x| x.def.id == id)
+            .unwrap_or_else(|| panic!("手里没有 {id}"))
+    }
+
+    /// 一场可摆布的战斗:手牌/抽牌堆按参数摆好,遗物挂上,能量 9
+    fn staged(deck: &[&str], hand: &[&str], relics: &[&'static RelicDef]) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: deck.iter().map(|id| card(id)).collect(),
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc: 0,
+        };
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
+        let mut c = Combat::new(enc, setup, RngRegistry::new(21));
+        c.hand.clear();
+        c.draw.clear();
+        c.discard.clear();
+        c.exhaust.clear();
+        for id in hand {
+            c.hand.push(card(id));
+        }
+        for id in deck {
+            c.draw.push(card(id));
+        }
+        c.energy = 9;
+        c
+    }
+
+    /// 指定遭遇的战斗:牌组 10 张打击、遗物挂上、能量 9
+    fn combat_of(encounter: &'static str, relics: &[&'static RelicDef]) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: vec![card("strike"); 10],
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc: 0,
+        };
+        let enc = crate::core::enemies::encounter_def(encounter).expect("遭遇应存在");
+        Combat::new(enc, setup, RngRegistry::new(21))
+    }
 
     /// 召集用的 8 只小鬼池(和 act2 里那张表一致)
     const POOL: &[&str] = &[
@@ -8346,6 +8443,161 @@ mod summon_tests {
         assert_eq!(ids(&c), vec![medium, medium]);
         assert_eq!(slots(&c), vec![0, 1], "两只子体占原来那一格和下一格");
     }
+
+    /// 鸟居:只把"扣掉格挡之后"剩下的 1..5 点攻击伤害降到 1
+    /// (反编译 Player::attacked 的顺序:格挡 -> 鸟居 -> 钨钢棒)
+    #[test]
+    fn torii_reduces_unblocked_attack_damage_only() {
+        let relics = vec![relic_def_or_panic("torii")];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        // 5 点攻击 3 点格挡 -> 剩 2 点,鸟居降到 1
+        c.player.block = 3;
+        c.player.hp = 50;
+        let (taken, blocked) = c.hit_player_attack(5);
+        assert_eq!(blocked, 3);
+        assert_eq!(taken, 1, "格挡后剩 2 点,鸟居降到 1");
+        assert_eq!(c.player.hp, 49);
+        // 完全被格挡时鸟居无从参与
+        c.player.block = 5;
+        c.player.hp = 50;
+        let (taken, _) = c.hit_player_attack(5);
+        assert_eq!(taken, 0);
+        assert_eq!(c.player.hp, 50);
+        // 6 点(超过 5)不降
+        c.player.hp = 50;
+        let (taken, _) = c.hit_player_attack(6);
+        assert_eq!(taken, 6);
+    }
+
+    /// 钨钢棒排在鸟居之后:被减到 0 就不算掉血(镀甲不掉层、嗜血不降费)
+    #[test]
+    fn tungsten_rod_applies_after_torii() {
+        let relics = vec![
+            relic_def_or_panic("torii"),
+            relic_def_or_panic("tungsten_rod"),
+        ];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.player.block = 2;
+        c.player.hp = 50;
+        c.player.statuses.add(Status::PlatedArmor, 3);
+        let (taken, _) = c.hit_player_attack(5);
+        assert_eq!(taken, 0, "5-2=3 -> 鸟居 1 -> 钨钢棒 0");
+        assert_eq!(c.player.hp, 50);
+        assert_eq!(
+            c.player.statuses.get(Status::PlatedArmor),
+            3,
+            "掉血被减到 0 就不掉镀甲"
+        );
+    }
+
+    /// 荆棘:多段攻击每段各反一次(反编译里每次 attacked 都反)
+    #[test]
+    fn thorns_reflect_each_hit_of_a_multi_attack() {
+        let relics = vec![relic_def_or_panic("bronze_scales")];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.enemies[0].hp = 999;
+        c.enemies[0].max_hp = 999;
+        c.player.hp = 80;
+        c.enemy_attack(0, 1, 3, "test", "triple");
+        assert_eq!(c.enemies[0].hp, 990, "3 段各反 3 点 = 9(不是整段只反一次)");
+    }
+
+    /// 小鬼号角:首领倒下后"逃跑"的随从不算击杀
+    #[test]
+    fn gremlin_horn_does_not_count_escaped_minions() {
+        let relics = vec![relic_def_or_panic("gremlin_horn")];
+        let mut c = combat_of("gremlin_gang", &relics);
+        // 一只逃跑(首领倒下带走的随从就是这个状态),另一只真死
+        c.enemies[1].escaped = true;
+        c.enemies[1].death_done = true;
+        c.enemies[0].hp = 0;
+        c.energy = 3;
+        let hand = c.hand.len();
+        c.settle_deaths();
+        assert_eq!(c.energy, 4, "只有真死的那一只给能量");
+        assert_eq!(c.hand.len(), hand + 1, "并抽 1 张");
+    }
+
+    /// 蓝蜡烛的掉血算自伤:会触发破裂(反编译 PlayerLoseHp(1, true))
+    #[test]
+    fn blue_candle_hp_loss_triggers_rupture() {
+        let relics = vec![relic_def_or_panic("blue_candle")];
+        let mut c = staged(&["injury"; 6], &["injury"], &relics);
+        c.player.statuses.add(Status::Rupture, 2);
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.statuses.get(Status::Strength), 2, "破裂加 2 力量");
+    }
+
+    /// 仙女在瓶中的保命回血吃神圣树皮(30% -> 60%),且排在蜥蜴尾巴之前
+    #[test]
+    fn fairy_potion_is_doubled_by_sacred_bark_and_wins_over_lizard_tail() {
+        let relics = vec![
+            relic_def_or_panic("sacred_bark"),
+            relic_def_or_panic("lizard_tail"),
+        ];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.fairy_save = true;
+        c.player.hp = 3;
+        c.hit_player(999);
+        assert_eq!(c.player.hp, 48, "最大生命 80 的 60%");
+        assert!(c.fairy_used, "先用药水");
+        assert!(!c.rs.lizard_used, "反过来蜥蜴尾巴留着");
+    }
+
+    /// 花开彼岸:两种保命符都不生效(反编译 wouldDie 整段被跳过)
+    #[test]
+    fn mark_of_the_bloom_blocks_fairy_and_lizard_tail() {
+        let relics = vec![relic_def_or_panic("mark_of_the_bloom")];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.fairy_save = true;
+        c.player.hp = 3;
+        c.hit_player(999);
+        assert_eq!(c.phase, Phase::Lost, "仙女救不了");
+    }
+
+    /// 花开彼岸:战斗内的一切治疗归零(反编译 Player::heal 第一句就 return)
+    #[test]
+    fn mark_of_the_bloom_blocks_in_combat_healing() {
+        let relics = vec![relic_def_or_panic("mark_of_the_bloom")];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.player.hp = 50;
+        c.heal_player(10);
+        assert_eq!(c.player.hp, 50, "鸟面坛/再生/血药水这些都回不了血");
+    }
+
+    /// 橙皮:连打三类型清减益时,连 Flex 挂的 "Lose Strength" 也要清掉
+    #[test]
+    fn orange_pellets_clears_lose_strength_and_negative_stats() {
+        let relics = vec![relic_def_or_panic("orange_pellets")];
+        let mut c = staged(&["inflame"; 5], &["inflame"], &relics);
+        c.player.statuses.add(Status::LoseStrength, 2);
+        c.player.statuses.add(Status::Vulnerable, 3);
+        c.player.statuses.add(Status::Strength, 2);
+        c.rs.types_played = 7;
+        c.play_card(0, None).unwrap();
+        assert!(!c.player.statuses.holds(Status::LoseStrength), "清掉 Lose Strength");
+        assert!(!c.player.statuses.holds(Status::Vulnerable), "清掉易伤");
+        assert_eq!(c.player.statuses.get(Status::Strength), 4, "正面力量留着(2+炽热攻击 2)");
+    }
+
+    /// 木乃伊之手:腐化之下技能本回合已是 0 费,不参选(原版候选要求 costForTurn>0)
+    #[test]
+    fn mummified_hand_skips_corrupted_skills() {
+        let relics = vec![relic_def_or_panic("mummified_hand")];
+        let mut c = staged(
+            &["inflame", "defend", "defend", "defend"],
+            &["inflame", "defend"],
+            &relics,
+        );
+        c.player.statuses.add(Status::Corruption, 1);
+        c.play_card(0, None).unwrap();
+        let defend = hand_idx(&c, "defend");
+        assert!(
+            !c.hand[defend].free_this_turn,
+            "腐化下技能本来就 0 费,不该被选成木乃伊之手的随机目标"
+        );
+    }
+
 }
 
 

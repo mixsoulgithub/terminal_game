@@ -366,8 +366,8 @@ S("runic_cube", "每次掉血(抽牌)", "每次掉血抽 1 张", board({ relics:
   (r) => (last(r).hand.length === 1 ? null : `掉血后手牌 ${last(r).hand.length},期望 1`));
 S("self_forming_clay", "掉血(下回合格挡)", "掉血后下回合 +3 格挡", board({ relics: ["self_forming_clay"], hand: ["hemokinesis"], enemies: [ENEMY({ powers: { strength: -20 } })], actions: [{ op: "play", hand: 0, target: 0 }, { op: "end_turn" }] }),
   (r) => (last(r).turn === 2 && last(r).player.block === 3 ? null : `第 2 回合格挡 ${last(r).player.block},期望 3`));
-S("fossilized_helix", "本场首次掉血(免伤)", "首次掉血完全免掉", board({ player: { hp: 40, max_hp: 80 }, relics: ["fossilized_helix"], hand: ["hemokinesis"], enemies: [ENEMY()], actions: playFirst }),
-  (r) => (last(r).player.hp === 40 ? null : `血量 ${last(r).player.hp},期望 40(免掉 2 点)`));
+S("fossilized_helix", "直接掉血不吃 Buffer(只有伤害才吃)", "放血的 2 点直接掉血不被 Buffer 免掉:40->38", board({ player: { hp: 40, max_hp: 80 }, relics: ["fossilized_helix"], hand: ["hemokinesis"], enemies: [ENEMY()], actions: playFirst }),
+  (r) => (last(r).player.hp === 38 ? null : `血量 ${last(r).player.hp},期望 38(反编译里 Buffer 只在 Player::damage/attacked,loseHp 不吃)`));
 S("tungsten_rod", "每次掉血(-1)", "每次掉血少掉 1:6->5", board({ relics: ["tungsten_rod"], enemies: [ENEMY({ move: "Dark Strike" })], actions: [{ op: "noop" }, { op: "end_turn" }] }),
   (r) => (hurt(r) === 5 ? null : `掉血 ${hurt(r)},期望 5`));
 S("torii", "<=5 点攻击(减为 1)", "5 点以下未格挡攻击降为 1:5->1", board({ relics: ["torii"], enemies: [ENEMY({ move: "Dark Strike", powers: { strength: -1 } })], actions: [{ op: "noop" }, { op: "end_turn" }] }),
@@ -646,6 +646,45 @@ report.push("    新增 push_card_to_deck 统一钩子,断言 = molten_egg_and_c
 report.push("    _shop_purchases,以及本表的 frozen_egg_upgrades_powers(商店买能力牌)。");
 report.push("  商店折扣(run.rs,主 agent 修): 信使 -20% 与会员卡 -50% 由相加改相乘(约 -60%,wiki 口径);");
 report.push("    断言 = courier_and_membership_card_discounts_multiply。");
+report.push("");
+report.push("本轮长尾钩子审计(反编译 Player.cpp / Monster.cpp / BattleContext.cpp + GameAction)新增修复:");
+report.push("  鸟居 torii(combat.rs): <=5 的判定原本排在扣格挡之前,现挪到扣格挡之后、钨钢棒之前");
+report.push("    (反编译 Player::attacked 顺序:格挡 -> 鸟居 -> 钨钢棒);断言 = torii_reduces_unblocked_attack_damage_only。");
+report.push("  钨钢棒 tungsten_rod(combat.rs): 减到 0 时不再视为掉血(不掉镀甲、不给嗜血降费);");
+report.push("    断言 = tungsten_rod_applies_after_torii。");
+report.push("  荆棘 bronze_scales(combat.rs): 多段攻击每段各反一次(反编译每次 attacked 都反);");
+report.push("    断言 = thorns_reflect_each_hit_of_a_multi_attack。");
+report.push("  小鬼号角 gremlin_horn(combat.rs): 首领倒下后\"逃跑\"的随从不再算击杀;");
+report.push("    断言 = gremlin_horn_does_not_count_escaped_minions。");
+report.push("  蓝蜡烛 blue_candle(combat.rs): 掉血改按自伤传(反编译 PlayerLoseHp(1,true)),会触发破裂;");
+report.push("    断言 = blue_candle_hp_loss_triggers_rupture。");
+report.push("  木乃伊之手 mummified_hand(combat.rs): 腐化之下技能本回合已是 0 费,不参选;");
+report.push("    断言 = mummified_hand_skips_corrupted_skills。");
+report.push("  橙皮 orange_pellets(status.rs): 清理范围补上 LoseStrength/LoseDexterity/NoBlock 与负力量/敏捷归零;");
+report.push("    断言 = orange_pellets_clears_lose_strength_and_negative_stats + status.rs 的 remove_player_debuffs。");
+report.push("  蜥蜴尾巴/仙女 fairy+lizard_tail(combat.rs): 顺序改为仙女先判、神圣树皮让保命符 30%->60%、");
+report.push("    花开彼岸(no_heal)下两种保命符都不生效;断言 = fairy_potion_is_doubled_by_sacred_bark_and_wins_over_lizard_tail /");
+report.push("    mark_of_the_bloom_blocks_fairy_and_lizard_tail。");
+report.push("  花开彼岸 mark_of_the_bloom(combat.rs/run.rs): 战斗内治疗、拾取/事件的上限回血与\"回满\"都受限;");
+report.push("    断言 = mark_of_the_bloom_blocks_in_combat_healing + mark_of_the_bloom_blocks_healing。");
+report.push("  银行家之躯 maw_bank(run.rs): 买删牌走选牌屏时也算\"在商店花过钱\";");
+report.push("  十手镯 juzu_bracelet(run.rs): 概率复位改按\"掷出来的房型\"算(原版同分支复位);");
+report.push("  陶瓷鱼 ceramic_fish(run.rs): 战斗里塞进牌组的牌也走 push_card_to_deck(蛋/陶瓷鱼/黑石护符);");
+report.push("  腕刃 wrist_blade(combat.rs): 判据由印刷费用改成本回合实际费用 fixed_cost() == Some(0)");
+report.push("    (free_this_turn 在伤害结算前已被清,本轮未配断言,登记待补)。");
+report.push("  事件层号门槛(run.rs): can_spawn 的层号不再 +1(参考实现 floorNum > 6,本作 floor_num 进首房即 1);");
+report.push("    断言 = event_spawn_floor_uses_the_global_floor。knowing_skull 的无色牌改走 shuffleRng 整池 java 洗牌。");
+report.push("  tomb_of_lord(events.rs/run.rs): \"Offer gold\" 补 req_no_relic 门控(反编译两张位掩码互斥);");
+report.push("    断言 = tomb_of_lord_stops_offering_the_mask_once_you_wear_it。");
+report.push("");
+report.push("登记(本轮不改,附理由):");
+report.push("  [d] smiling_mask 删牌价: 反编译 Shop::getRemoveCost 对 50 也叠信使/会员卡折扣、且不吃 A16;");
+report.push("      wiki 与参考实现(shop.ts 头注 DISPUTED)都取\"固定 50、吃 A16\";本作照 wiki(与 fixture 一致),待定夺。");
+report.push("  [b] fairy_potion 可被手动喝掉并消耗: 反编译把\"饮 FAIRY_POTION\"归入 assert(false) 的非法分支,");
+report.push("      refs/slay-the-cli 注释亦标 non-drinkable;本作当前允许(喝掉无效果),保留现状登记。");
+report.push("  [b] toy_ornithopter 在地图/事件上喝药是否回 5: 反编译未实现该遗物,证据弱,登记。");
+report.push("  [b] dingy_rug: 反编译/语料/本作都查不到,未核。");
+report.push("  [c] 26 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。");
 const text = report.join("\n") + "\n";
 process.stdout.write(text);
 if (OUT) writeFileSync(OUT, text);

@@ -419,6 +419,25 @@ impl Statuses {
         self.list.retain(|(k, _)| !k.is_debuff());
     }
 
+    /// 橙皮(Orange Pellets)用:对齐反编译 Player::removeDebuffs 的范围 ——
+    /// 比 is_debuff 多清 LoseStrength/LoseDexterity/NoBlock,并把负的力量/敏捷归零
+    /// (所以柔韧/力量药水残留的 "Lose Strength" 会被清掉,负力量也回到 0)
+    pub fn remove_player_debuffs(&mut self) {
+        if self.get(Status::Strength) < 0 {
+            self.set(Status::Strength, 0);
+        }
+        if self.get(Status::Dexterity) < 0 {
+            self.set(Status::Dexterity, 0);
+        }
+        self.list.retain(|(k, _)| {
+            !k.is_debuff()
+                && !matches!(
+                    k,
+                    Status::LoseStrength | Status::LoseDexterity | Status::NoBlock
+                )
+        });
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (Status, i32)> + '_ {
         self.list.iter().copied()
     }

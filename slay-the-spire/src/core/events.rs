@@ -328,6 +328,8 @@ pub struct EventChoice {
     pub req_gold: i32,
     /// 需要拥有这件遗物
     pub req_relic: Option<&'static str>,
+    /// 需要身上没有这件遗物(tomb_of_lord_red_mask 的 "Offer gold")
+    pub req_no_relic: Option<&'static str>,
     /// 需要身上至少有一瓶药水
     pub req_potion: bool,
     /// 需要牌组里有单次伤害 10 以上的攻击牌
@@ -381,6 +383,7 @@ impl EventChoice {
         cost_hp: 0,
         req_gold: 0,
         req_relic: None,
+        req_no_relic: None,
         req_potion: false,
         req_big_attack: false,
         req_non_basic: false,
@@ -751,6 +754,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -772,6 +776,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -793,6 +798,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -828,6 +834,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -849,6 +856,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -870,6 +878,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -957,6 +966,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -978,6 +988,7 @@ pub static EVENTS: &[EventDef] = &[
                 cost_hp: 0,
                 req_gold: 0,
                 req_relic: None,
+                req_no_relic: None,
                 req_potion: false,
                 req_big_attack: false,
                 req_non_basic: false,
@@ -1667,6 +1678,9 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Offer gold: lose ALL gold, obtain the Red Mask relic",
+                // 与 "Don the Red Mask" 互斥(反编译 GameAction.cpp:856-859:
+                // 有面具给 0b101,没有给 0b110)
+                req_no_relic: Some("red_mask"),
                 outcome: outcome!(
                     gold_lose_all: true,
                     relic_id: Some("red_mask"),
@@ -2810,6 +2824,17 @@ mod tests {
         open(&mut r, def);
         r.choose_event(choice).expect("选项应能结算");
         r
+    }
+
+    /// 红面具在身时,陵墓只给 222 金,不再卖面具(反编译 GameAction 的两张位掩码互斥)
+    #[test]
+    fn tomb_of_lord_stops_offering_the_mask_once_you_wear_it() {
+        let mut r = Run::new(11);
+        r.debug_add_relic("red_mask").unwrap();
+        let def = event_def("tomb_of_lord_red_mask").expect("事件应存在");
+        open(&mut r, def);
+        assert!(r.event_choice_available(0), "戴着面具可以领 222 金");
+        assert!(!r.event_choice_available(1), "戴着面具就不再卖面具");
     }
 
     #[test]

@@ -2153,7 +2153,7 @@ mod e2e {
     Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 41, diff_steps: &[41, 42], diff_digest: 0xa407897b9324d3c },
     Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0xb463229127031499 },
     Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xf382ade1687f98c5 },
+    Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39], diff_digest: 0xd031f152ee8f5222 },
 ];
 
     /// 飞升 20 第二幕:a20a2.script = act2.script + `asc 20`(路径/策略同第一幕那张

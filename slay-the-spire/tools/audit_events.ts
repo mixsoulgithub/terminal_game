@@ -1420,6 +1420,23 @@ for (const r of noted) push(`  [c] ${r.spec.event}#${r.spec.choice} ${r.spec.opt
 push("");
 push("分类 (d) wiki 与 lightspeed/参考冲突: 无(取整统一按参考实现各调用点的 floor/round/ceil)");
 push("");
+push("第三幕+ 事件复核对拍(反编译 GameContext.cpp / GameAction.cpp / ConsoleSimulator.cpp)结论:");
+push("  falling: 三类型分支与\"摔头\"保底一致;瓶装牌按 corpus(真实游戏排除)排除。");
+push("  mindbloom: 层号门控 <=40 / >=41 与 GameAction 一致。");
+push("  vampires: ceil(30%) 上限、min(maxHp-1)、删全部起始打击(含升级)、5 张 Bite 一致。");
+push("  the_mausoleum / living_wall / winding_halls / mysterious_sphere / sensory_stone / joust: 效果与分支一致。");
+push("  the_moai_head: \"回满\"受花开彼岸限制(本轮修:full_heal 改走 heal,不再直接赋 max_hp)。");
+push("  tomb_of_lord_red_mask: 本轮修 —— \"Offer gold\" 补 req_no_relic 门控(反编译两张位掩码互斥),");
+push("    断言 = events.rs::tomb_of_lord_stops_offering_the_mask_once_you_wear_it。");
+push("  knowing_skull: 本轮修 —— Success 的无色牌改走 shuffleRng 整池 java 洗牌取第一张非普通;");
+push("  cursed_tome / colosseum / n'loth: 与 corpus 一致(选项层已在前轮核过)。");
+push("  secret_portal: 一致(跳 Boss 房,800 秒门槛抽象为 speedrunPace)。");
+push("登记(本轮不改,附理由):");
+push("  [d] colosseum 在反编译里是 stub(disableColosseum),第二场的奖励组成按 wiki/corpus;");
+push("  [d] joust 赔率与掷点细节按 corpus(wiki)实现,反编译该事件的掷点语义未逐行核。");
+push("  [b] falling 的掷点时机:反编译在 onEnter 预选,本作在选项结算时删牌(牌与时机不同,结果集合一致)。");
+push("");
+push("");
 push("本轮实测未发现新的 mismatch:");
 if (nMismatch === 0) push("  (无)");
 for (const r of results.filter((x) => x.verdict === "mismatch")) {
