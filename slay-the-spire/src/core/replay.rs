@@ -1736,7 +1736,7 @@ mod e2e {
     Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x2aec5ce78b4a798e },
     Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35], diff_digest: 0xe67781a970da6824 },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 17, diff_steps: &[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0x9ee3dc12d09ebb12 },
-    Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x77f16697664c8a03 },
+    Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 35, 36, 37, 40, 41, 42], diff_digest: 0xc172d08ffcdc326c },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46], diff_digest: 0x988b6e1c6f0aa4f1 },
     Expected { seed: 4, lines: 46, ref_lines: 45, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45], diff_digest: 0xb5adcab9de0b2df5 },
     Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x11abdc8473601d2 },
@@ -2089,13 +2089,13 @@ mod e2e {
 ];
 
     const ASC3_CASES: &[Expected] = &[
-    Expected { seed: 29, lines: 44, ref_lines: 43, aligned: 41, diff_steps: &[41, 42, 43], diff_digest: 0x87a83439a0cb81e2 },
-    Expected { seed: 30, lines: 45, ref_lines: 44, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 25, 42, 43, 44], diff_digest: 0xff0ad933f8102e4c },
-    Expected { seed: 121, lines: 43, ref_lines: 42, aligned: 33, diff_steps: &[33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xf97ce7bd8120a148 },
-    Expected { seed: 237, lines: 43, ref_lines: 42, aligned: 14, diff_steps: &[14, 15, 16, 40, 41, 42], diff_digest: 0x5043a687ae0fdb33 },
-    Expected { seed: 284, lines: 46, ref_lines: 45, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45], diff_digest: 0x880820a419dd45cc },
-    Expected { seed: 494, lines: 42, ref_lines: 41, aligned: 38, diff_steps: &[38, 39, 40, 41], diff_digest: 0x982656cc0c6b1226 },
-    Expected { seed: 510, lines: 45, ref_lines: 44, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44], diff_digest: 0xc73995dae39630eb },
+    Expected { seed: 29, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], diff_digest: 0x103678f2ffe19c2f },
+    Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 40, diff_steps: &[40, 41, 42], diff_digest: 0xaa19366d72d4fbbb },
+    Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0x6c96de07441f5089 },
+    Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xf382ade1687f98c5 },
 ];
 
     const ASC4_CASES: &[Expected] = &[
@@ -3296,6 +3296,7 @@ pub mod sandbox {
             rested: sc.rested,
             lift_strength: 0,
             relic_counters: counters,
+            curse_negate: 0,
             asc: 0,
         };
         let mut c = Combat::new(enc, setup, RngRegistry::new(seed));

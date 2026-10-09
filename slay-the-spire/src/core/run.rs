@@ -1371,6 +1371,7 @@ impl Run {
                     gold: run.player.gold,
                     lift_strength: run.relic_lifts,
                     relic_counters: run.relic_counters,
+                    curse_negate: run.omamori_charges,
                     asc: run.ascension,
                 };
                 let mut c = Combat::new(enc, setup, run.streams.clone());
@@ -1684,6 +1685,8 @@ impl Run {
             lift_strength: self.relic_lifts,
             // 跨战斗的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)
             relic_counters: self.relic_counters,
+            // 御守:战斗里被怪物塞进牌组的诅咒也要挡
+            curse_negate: self.omamori_charges,
             asc: self.ascension,
         };
         self.combat = Some(Combat::new(enc, setup, self.streams.clone()));
@@ -1847,11 +1850,13 @@ impl Run {
         c.gold_gained = 0;
         // 抢劫类敌人会当场动玩家身上的金币
         let gold = c.player_gold;
-        // 战斗中永久塞进牌组的牌(寄生)在这里并进去
+        // 战斗中永久塞进牌组的牌(寄生)在这里并进去;御守挡掉的次数也收回来
         let added: Vec<_> = c.deck_cards.drain(..).collect();
+        let omamori = c.curse_negate;
         self.player.hp = hp;
         self.player.max_hp = max_hp;
         self.player.gold = gold;
+        self.omamori_charges = omamori;
         for card in added {
             self.say(format!("{} is added to your deck", card.label()));
             self.player.deck.push(card);

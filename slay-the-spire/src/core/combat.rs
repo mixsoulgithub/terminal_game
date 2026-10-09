@@ -126,6 +126,8 @@ pub struct CombatSetup {
     pub lift_strength: i32,
     /// 整局持续的遗物计数器(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)
     pub relic_counters: RunRelicCounters,
+    /// 御守剩的挡诅咒次数(战斗里"塞进牌组"的寄生也要被它挡掉)
+    pub curse_negate: i32,
     /// 这一局的飞升等级(0 = 关):怪物血量/招式/开局状态按它换档
     pub asc: u32,
 }
@@ -392,6 +394,8 @@ pub struct Combat {
     last_hit: i32,
     /// 战斗中永久塞进牌组的牌(寄生),一局流程在战斗结束后收走
     pub deck_cards: Vec<CardInstance>,
+    /// 御守剩的挡诅咒次数(战斗里塞进牌组的诅咒也走它),一局流程在同步时收走
+    pub curse_negate: i32,
     /// 时间吞噬者的时间扭曲:这一张牌打完就要结束回合
     pub force_end_turn: bool,
     /// 玩家最近一次指向的敌人(被夹击时判断从哪边挨打)
@@ -586,6 +590,7 @@ impl Combat {
             stasis: Vec::new(),
             last_hit: 0,
             deck_cards: Vec::new(),
+            curse_negate: setup.curse_negate,
             force_end_turn: false,
             facing: 1,
             next_uid: enemies_len as u64,
@@ -701,9 +706,9 @@ impl Combat {
             if fx.elite_hp_reduction_pct > 0 && enc.kind == EnemyKind::Elite {
                 let pct = fx.elite_hp_reduction_pct;
                 for e in c.enemies.iter_mut() {
-                    let cut = e.max_hp * pct / 100;
-                    e.max_hp = (e.max_hp - cut).max(1);
-                    e.hp = (e.hp - cut).max(1);
+                    // 原版只降当前血量,上限不动(wiki:"Max HP 不受影响",
+                    // 当前血量像挨了伤害一样立刻降低).取整按 floor(hp*0.75).
+                    e.hp = (e.hp * (100 - pct) / 100).max(1);
                 }
             }
             if fx.boss_combat_heal > 0 && enc.kind == EnemyKind::Boss {
@@ -1265,6 +1270,18 @@ impl Combat {
                 continue;
             }
             let name = self.enemies[i].name.clone();
+            // 尖刺外壳:打攻击牌就挨刺
+            let hide = self.enemies[i].statuses.get(Status::SharpHide);
+            if hide > 0 && kind == CardType::Attack {
+                let (taken, _) = self.hit_player(hide);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name}'s Sharp Hide deals {taken}"),
+                );
+                if self.phase == Phase::Lost {
+                    return;
+                }
+            }
             // 慢速:每打一张牌就让巨大头颅多挨一成
             if self.enemies[i].statuses.holds(Status::Slow) {
                 let slow = self.enemies[i].statuses.get(Status::Slow);
@@ -1277,18 +1294,6 @@ impl Combat {
                 self.push_log(
                     LogKind::Enemy,
                     format!("{name}'s Beat of Death deals {taken}"),
-                );
-                if self.phase == Phase::Lost {
-                    return;
-                }
-            }
-            // 尖刺外壳:打攻击牌就挨刺
-            let hide = self.enemies[i].statuses.get(Status::SharpHide);
-            if hide > 0 && kind == CardType::Attack {
-                let (taken, _) = self.hit_player(hide);
-                self.push_log(
-                    LogKind::Enemy,
-                    format!("{name}'s Sharp Hide deals {taken}"),
                 );
                 if self.phase == Phase::Lost {
                     return;
@@ -1658,7 +1663,7 @@ impl Combat {
         for dmg in boom {
             for i in self.alive_enemies() {
                 let d = self.player_attack_damage(dmg, i, false);
-                self.damage_enemy_plain(i, d);
+                self.damage_enemy_plain(i, d.floor() as i32);
             }
             self.push_log(LogKind::Player, format!("The Bomb explodes for {dmg}"));
             self.settle_deaths();
@@ -2059,7 +2064,20 @@ impl Combat {
                         }
                         // 抽牌堆顶:不掷点,直接插到最前面
                         CardSpot::DrawTop => self.draw.insert(0, inst),
-                        CardSpot::Deck => self.deck_cards.push(inst),
+                        // 塞进牌组:御守还能挡掉这一张诅咒(原版 Implant 就是这么判的)
+                        CardSpot::Deck => {
+                            if inst.kind() == crate::core::card::CardType::Curse
+                                && self.curse_negate > 0
+                            {
+                                self.curse_negate -= 1;
+                                self.push_log(
+                                    LogKind::Enemy,
+                                    format!("Omamori negates {label}"),
+                                );
+                                continue;
+                            }
+                            self.deck_cards.push(inst)
+                        }
                     }
                     self.push_log(
                         LogKind::Enemy,
@@ -2092,7 +2110,20 @@ impl Combat {
                         }
                         // 抽牌堆顶:不掷点,直接插到最前面
                         CardSpot::DrawTop => self.draw.insert(0, inst),
-                        CardSpot::Deck => self.deck_cards.push(inst),
+                        // 塞进牌组:御守还能挡掉这一张诅咒(原版 Implant 就是这么判的)
+                        CardSpot::Deck => {
+                            if inst.kind() == crate::core::card::CardType::Curse
+                                && self.curse_negate > 0
+                            {
+                                self.curse_negate -= 1;
+                                self.push_log(
+                                    LogKind::Enemy,
+                                    format!("Omamori negates {label}"),
+                                );
+                                continue;
+                            }
+                            self.deck_cards.push(inst)
+                        }
                     }
                     self.push_log(
                         LogKind::Enemy,
@@ -3198,8 +3229,10 @@ impl Combat {
         }
     }
 
-    /// 玩家攻击一次的计算:力量、虚弱、目标易伤
-    fn player_attack_damage(&self, raw: i32, target: usize, is_attack: bool) -> i32 {
+    /// 玩家攻击一次的计算:力量、虚弱、目标易伤.原版把加伤与乘伤放在同一条
+    /// float 链上,末尾(连同目标侧的飞行/慢速)只向下取整一次,所以这里不取整,
+    /// 把 float 交给 damage_enemy_f32(卡牌路径).
+    fn player_attack_damage(&self, raw: i32, target: usize, is_attack: bool) -> f32 {
         // 活力(Akabeko 的 8 点):只加在攻击牌的伤害上,和原版的 atDamageGive 一致
         let vigor = if is_attack { self.rs.vigor } else { 0 };
         // 原版把加伤与乘伤一起按 float 连乘,末尾只向下取整一次,所以中间不能各自 floor
@@ -3227,7 +3260,7 @@ impl Combat {
             let pct = self.relic_max(|fx| fx.vulnerable_damage_pct);
             d *= if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
         }
-        d.floor().max(0.0) as i32
+        d.max(0.0)
     }
 
     /// 敌人攻击一次的计算
@@ -3350,13 +3383,19 @@ impl Combat {
         m.intent.attacks()
     }
 
-    /// 打敌人:damage 是算好的最终值;返回扣格挡后实际造成的伤害.
-    /// 卡牌打出来的是"攻击伤害",会走飞行/慢速/无形/无敌这一整套.
+    /// 打敌人(整数入口:测试与少数按整数算好的地方).转发到 float 版.
     fn damage_enemy(&mut self, idx: usize, damage: i32) -> i32 {
-        // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5
+        self.damage_enemy_f32(idx, damage as f32)
+    }
+
+    /// 打敌人:damage 是玩家侧算完的 float(还没过目标侧的飞行/慢速),末尾只取整一次.
+    /// 卡牌打出来的是"攻击伤害",会走飞行/慢速/无形/无敌这一整套.
+    fn damage_enemy_f32(&mut self, idx: usize, damage: f32) -> i32 {
+        // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5(判断用取整后的值,与原实现一致)
         let boost = self.relic_max(|fx| fx.small_attack_boost_to);
-        let damage = if boost > 0 && damage > 0 && damage <= 4 && self.enemies[idx].block == 0 {
-            boost
+        let face = damage.floor() as i32;
+        let damage = if boost > 0 && face > 0 && face <= 4 && self.enemies[idx].block == 0 {
+            boost as f32
         } else {
             damage
         };
@@ -3365,7 +3404,7 @@ impl Combat {
 
     /// 非攻击伤害(中毒、燃烧、荆棘之类):不吃飞行/慢速这些减免
     fn damage_enemy_plain(&mut self, idx: usize, damage: i32) -> i32 {
-        self.hit_enemy(idx, damage, false)
+        self.hit_enemy(idx, damage as f32, false)
     }
 
     /// 多段攻击:原版一张牌只算一次伤害(算完飞行/慢速/无形/靴子),之后每一段
@@ -3377,14 +3416,14 @@ impl Combat {
         }
         // 靴子:未被格挡的攻击伤害只有 4 点以下时提到 5
         let boost = self.relic_max(|fx| fx.small_attack_boost_to);
-        let damage = self.player_attack_damage(damage, idx, is_attack);
-        let damage = if is_attack && boost > 0 && damage > 0 && damage <= 4 && self.enemies[idx].block == 0
-        {
-            boost
+        let raw = self.player_attack_damage(damage, idx, is_attack);
+        let face = raw.floor() as i32;
+        let raw = if is_attack && boost > 0 && face > 0 && face <= 4 && self.enemies[idx].block == 0 {
+            boost as f32
         } else {
-            damage
+            raw
         };
-        let dmg = self.reduce_incoming(idx, damage, is_attack);
+        let dmg = self.reduce_incoming(idx, raw, is_attack);
         let mut total = 0;
         for _ in 0..times.max(1) {
             total += self.hit_enemy_final(idx, dmg, is_attack);
@@ -3392,29 +3431,31 @@ impl Combat {
         total
     }
 
-    /// 受伤侧的减免:飞行减半、慢速加伤、无形压到 1.原版在算伤害时结算这些,
-    /// 所以一张牌的多段伤害共用同一份算好的值(见 damage_enemy_times).
-    fn reduce_incoming(&self, idx: usize, damage: i32, is_attack: bool) -> i32 {
-        let mut dmg = damage.max(0);
+    /// 受伤侧的减免:飞行减半、慢速加伤、无形压到 1.原版把飞行与慢速放在同一条
+    /// float 链上(玩家侧的加/乘伤也在里面),末尾只向下取整一次,所以这里收 float.
+    /// 一张牌的多段伤害共用同一份算好的值(见 damage_enemy_times).
+    fn reduce_incoming(&self, idx: usize, damage: f32, is_attack: bool) -> i32 {
+        let mut dmg = damage.max(0.0);
         if is_attack {
             // 飞行:受到的攻击伤害减半
             if self.enemies[idx].statuses.has(Status::Flight) {
-                dmg = (dmg as f32 * 0.5).floor() as i32;
+                dmg *= 0.5;
             }
             // 慢速:这回合每打出一张牌就多吃 10%
             let slow = self.enemies[idx].statuses.get(Status::Slow);
             if slow > 0 {
-                dmg = (dmg as f32 * (1.0 + 0.1 * slow as f32)).floor() as i32;
+                dmg *= 1.0 + 0.1 * slow as f32;
             }
         }
+        let mut out = dmg.floor().max(0.0) as i32;
         // 无形:什么伤害都降到 1
-        if self.enemies[idx].statuses.has(Status::Intangible) && dmg > 1 {
-            dmg = 1;
+        if self.enemies[idx].statuses.has(Status::Intangible) && out > 1 {
+            out = 1;
         }
-        dmg
+        out
     }
 
-    fn hit_enemy(&mut self, idx: usize, damage: i32, is_attack: bool) -> i32 {
+    fn hit_enemy(&mut self, idx: usize, damage: f32, is_attack: bool) -> i32 {
         let dmg = self.reduce_incoming(idx, damage, is_attack);
         self.hit_enemy_final(idx, dmg, is_attack)
     }
@@ -4022,7 +4063,7 @@ impl Combat {
                                 raw *= 2;
                             }
                             let d = self.player_attack_damage(raw, t, is_attack);
-                            ctx.unblocked += self.damage_enemy(t, d);
+                            ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                     }
                 }
@@ -4032,14 +4073,14 @@ impl Combat {
                             break;
                         };
                         let d = self.player_attack_damage(amount, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                     }
                 }
                 Effect::DamageEqualBlock => {
                     if let Some(t) = target {
                         let raw = self.player.block;
                         let d = self.player_attack_damage(raw, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                     }
                 }
                 Effect::DamageWithBonus { amount, times } => {
@@ -4050,7 +4091,7 @@ impl Combat {
                                 break;
                             }
                             let d = self.player_attack_damage(raw, t, is_attack);
-                            ctx.unblocked += self.damage_enemy(t, d);
+                            ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                     }
                 }
@@ -4064,7 +4105,7 @@ impl Combat {
                             n += 1;
                         }
                         let d = self.player_attack_damage(base + per * n, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                     }
                 }                Effect::DamagePerExhausted { per } => {
                     if let Some(t) = target {
@@ -4081,7 +4122,7 @@ impl Combat {
                     if raw > 0 {
                         for t in self.alive_enemies() {
                             let d = self.player_attack_damage(raw, t, is_attack);
-                            ctx.unblocked += self.damage_enemy(t, d);
+                            ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                     }
                 }
@@ -4093,7 +4134,7 @@ impl Combat {
                     if let Some(t) = target {
                         let vuln = self.enemies[t].statuses.has(Status::Vulnerable);
                         let d = self.player_attack_damage(amount, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                         if vuln && self.enemies[t].alive() {
                             self.energy += energy;
                             self.draw_cards(draw as usize);
@@ -4112,7 +4153,7 @@ impl Combat {
                                 break;
                             }
                             let d = self.player_attack_damage(amount, t, is_attack);
-                            ctx.unblocked += self.damage_enemy(t, d);
+                            ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                         // 击杀随从不算数:只有非随从(含精英与首领)才给最大生命
                         if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
@@ -4143,7 +4184,7 @@ impl Combat {
                     let mut total = 0;
                     for t in self.alive_enemies() {
                         let d = self.player_attack_damage(amount, t, is_attack);
-                        total += self.damage_enemy(t, d);
+                        total += self.damage_enemy_f32(t, d);
                     }
                     ctx.unblocked += total;
                     if total > 0 {
@@ -4157,7 +4198,11 @@ impl Combat {
                     self.gain_block(amount, false, true);
                 }
                 Effect::BlockPerExhausted { per } => {
-                    self.gain_block(per * ctx.exhausted, false, true);
+                    // 原版是一张牌一发 GainBlockAction:每发各过一次敏捷/虚弱(取整按张算,
+                    // 不是先乘张数再取整一次),Juggernaut 这类"获得格挡"的钩子也每发一次
+                    for _ in 0..ctx.exhausted.max(0) {
+                        self.gain_block(per, false, true);
+                    }
                 }
                 Effect::DoubleBlock => {
                     let b = self.player.block;
@@ -4246,7 +4291,7 @@ impl Combat {
                     ctx.exhausted += n;
                     if let Some(t) = target {
                         let d = self.player_attack_damage(damage, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                     }
                 }
                 Effect::ExhaustSelf => {
@@ -4399,7 +4444,7 @@ impl Combat {
                     if let Some(t) = target {
                         let raw = per * self.draw.len() as i32;
                         let d = self.player_attack_damage(raw, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                     }
                 }
                 Effect::DamageAndGoldOnKill {
@@ -4414,7 +4459,7 @@ impl Combat {
                                 break;
                             }
                             let d = self.player_attack_damage(amount, t, is_attack);
-                            ctx.unblocked += self.damage_enemy(t, d);
+                            ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                         // 击杀随从不算数:只有非随从才掉金币
                         if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
@@ -4430,7 +4475,7 @@ impl Combat {
                     if let Some(t) = target {
                         let before = self.enemies[t].hp;
                         let d = self.player_attack_damage(amount + card_bonus, t, is_attack);
-                        ctx.unblocked += self.damage_enemy(t, d);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                         // 击杀随从不算数:只有非随从(含精英与首领)才让这张牌成长
                         if before > 0 && self.enemies[t].dead() && !self.enemies[t].is_minion() {
                             card.bonus += bonus;
@@ -5035,6 +5080,7 @@ mod tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
         asc: 0,
         }
     }
@@ -5860,6 +5906,7 @@ mod tests {
                 gold: 0,
                 lift_strength: 0,
                 relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
             asc: 0,
             };
             let mut c = Combat::new(enc(encounter), setup, RngRegistry::new(9));
@@ -6540,6 +6587,7 @@ mod monster_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
         asc: 0,
         };
         Combat::new(enc, setup, RngRegistry::new(seed))
@@ -6572,8 +6620,8 @@ mod monster_tests {
             let mut c = lock_seed("writhing_mass_solo", seed);
             let opener = move_name(&c, 0);
             assert!(
-                matches!(opener, "Multi Strike" | "Strong Strike" | "Wither"),
-                "开场应是 多段/重击/枯萎(wiki),实得 {opener}(seed {seed})"
+                matches!(opener, "Multi Strike" | "Flail" | "Wither"),
+                "开场应是 多段/连枷/枯萎(语料+反编译),实得 {opener}(seed {seed})"
             );
             c.damage_enemy(0, 3);
             let now = move_name(&c, 0);
@@ -7166,6 +7214,7 @@ mod power_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
         asc: 0,
         };
         Combat::new(enc, setup, RngRegistry::new(11))
@@ -7453,19 +7502,20 @@ mod power_tests {
                 gold: 0,
                 lift_strength: 0,
                 relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
             asc: 0,
             };
             let c = Combat::new(enc, setup, RngRegistry::new(seed));
             let name = c.enemies[0].def.moves[c.enemies[0].next_move].name;
             assert!(
-                matches!(name, "Multi Strike" | "Strong Strike" | "Wither"),
-                "开场应是 多段/重击/枯萎(wiki),实得 {name}(seed {seed})"
+                matches!(name, "Multi Strike" | "Flail" | "Wither"),
+                "开场应是 多段/连枷/枯萎(语料+反编译),实得 {name}(seed {seed})"
             );
-            seen_flail |= name == "Strong Strike";
+            seen_flail |= name == "Flail";
             seen_multi |= name == "Multi Strike";
             seen_wither |= name == "Wither";
         }
-        assert!(seen_flail, "开场该掷得到重击(wiki 的 Big Hit)");
+        assert!(seen_flail, "开场该掷得到连枷");
         assert!(seen_multi, "开场该掷得到多段");
         assert!(seen_wither, "开场该掷得到枯萎");
     }
@@ -7711,6 +7761,7 @@ mod summon_tests {
                 gold: 0,
                 lift_strength: 0,
                 relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
             asc: 0,
             },
             RngRegistry::new(seed),
@@ -7991,6 +8042,7 @@ mod relic_hook_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
         asc: 0,
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
@@ -8028,6 +8080,7 @@ mod relic_hook_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
         asc: 0,
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");
@@ -8072,6 +8125,7 @@ mod relic_hook_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
             asc: 0,
         };
         let enc = crate::core::enemies::encounter_def("jaw_worm_solo").expect("jaw worm");

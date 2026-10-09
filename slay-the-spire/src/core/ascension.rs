@@ -126,6 +126,9 @@ static HP_ASC: &[(&str, u32, (i32, i32))] = &[
     ("giant_head", 8, (520, 520)),
     ("nemesis", 8, (200, 200)),
     ("reptomancer", 8, (190, 200)),
+    // 觉醒者的飞升档是"开局掷一次"的区间:飞升 9+ 是 300..320(照语料,掷点
+    // 要消耗一次 monsterHpRng);一阶段重伤复活时 REBIRTH 再把上限盖成定值 320.
+    ("awakened_one", 9, (300, 320)),
     ("time_eater", 9, (480, 480)),
     ("donu", 9, (265, 265)),
     ("deca", 9, (265, 265)),
@@ -304,6 +307,11 @@ static MOVE_ASC: &[(&str, &[(&str, &[MoveAsc])])] = &[
         ]),
         ("rollattack", &[
             MoveAsc { level: 4, damage: Some(10), hits: None, block: None, fx: None },
+        ]),
+        // 双连击打完后重新装上形态切换额度:额度 = 本档基础 + 10(30/35/40 各 +10)
+        ("twinslam", &[
+            MoveAsc { level: 9, damage: None, hits: None, block: None, fx: Some(&[FxAsc { power: "MODE_SHIFT", amount: 45, target: "self" }]) },
+            MoveAsc { level: 19, damage: None, hits: None, block: None, fx: Some(&[FxAsc { power: "MODE_SHIFT", amount: 50, target: "self" }]) },
         ]),
     ]),
     ("hexaghost", &[
@@ -628,7 +636,7 @@ static MOVE_ASC: &[(&str, &[(&str, &[MoveAsc])])] = &[
             MoveAsc { level: 4, damage: Some(12), hits: None, block: None, fx: None },
         ]),
         ("squareofprotection", &[
-            MoveAsc { level: 19, damage: None, hits: None, block: None, fx: Some(&[FxAsc { power: "Block", amount: 16, target: "allies" }, FxAsc { power: "PLATED_ARMOR", amount: 3, target: "allies" }]) },
+            MoveAsc { level: 19, damage: None, hits: None, block: None, fx: Some(&[FxAsc { power: "Block", amount: 16, target: "team" }, FxAsc { power: "PLATED_ARMOR", amount: 3, target: "team" }]) },
         ]),
     ]),
     ("spire_shield", &[
@@ -897,6 +905,7 @@ fn status_key(s: Status) -> &'static str {
         Status::Anger => "ANGER",
         Status::Thorns => "THORNS",
         Status::Artifact => "ARTIFACT",
+        Status::ModeShift => "MODE_SHIFT",
         _ => "",
     }
 }
@@ -915,7 +924,7 @@ fn asc_key(f: &FxAsc) -> (&'static str, String) {
         "HEAL_FOR_UNBLOCKED_DAMAGE" => ("healfromdmg", String::new()),
         "STRENGTH" | "DEXTERITY" | "WEAK" | "FRAIL" | "VULNERABLE" | "CONSTRICTED" | "RITUAL"
         | "ENRAGE" | "METALLICIZE" | "FLIGHT" | "SHARP_HIDE" | "PLATED_ARMOR" | "ANGER"
-        | "THORNS" | "ARTIFACT" => ("status", p),
+        | "THORNS" | "ARTIFACT" | "MODE_SHIFT" => ("status", p),
         // 塞牌:统一归到 card,按卡名匹配
         _ if p.starts_with("CARD:") => ("card", p["CARD:".len()..].to_string()),
         _ if p.starts_with("ADDCARD:") => {

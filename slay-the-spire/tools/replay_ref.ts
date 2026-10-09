@@ -209,11 +209,21 @@ function line(step: number, kind: string, payload: string, state: string): strin
 
 // ---- 战斗:与 autoWinCombat 同规则 ----
 
+/** 当前战斗的遭遇 id(null = 不在战斗里).A20 双 Boss 是"同一个 smartPlay 里
+ *  连着两场战斗",驱动层要按"一场战斗一条 fight 行"出料,所以用它认边界:
+ *  一旦 run.room 的 encounterId 换了,就停下这次调用,交给驱动层再出一行. */
+function combatEncounters(state: GameState): string | null {
+  const room = state.run.room;
+  return room && room.kind === "combat" ? room.encounterId : null;
+}
+
 function autoPlay(state: GameState): GameState {
   let s = state;
   let guard = 0;
+  const enc0 = combatEncounters(state);
   while (s.combat && !s.outcome) {
     if (guard++ > 5000) throw new Error("combat did not end");
+    if (combatEncounters(s) !== enc0) break; // 又开了一场(双 Boss):这一行到此为止
     // 战斗内挂起的选牌:跟本作一样选前 min 张(位置下标),不给它单独一步
     if (s.pending) {
       const req = s.pending.request;
@@ -379,10 +389,12 @@ function previewIncoming(state: GameState, idx: number): number {
 function smartPlay(state: GameState): GameState {
   let s = state;
   let guard = 0;
+  const enc0 = combatEncounters(state);
   // 已经试过药水的回合号(0 = 还没试过);每回合最多试一次
   let potionTurn = 0;
   while (s.combat && !s.outcome) {
     if (guard++ > 20000) throw new Error("combat did not end");
+    if (combatEncounters(s) !== enc0) break; // 又开了一场(双 Boss):这一行到此为止
     // 战斗内挂起的选牌:跟 autoPlay 一样选前 min 张
     if (s.pending) {
       const req = s.pending.request;

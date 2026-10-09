@@ -604,16 +604,14 @@ fn pick_writhing_mass(ctx: &mut PickCtx) -> usize {
     const IMPLANT: usize = 4;
     let mut r = ctx.roll();
     if ctx.first_turn() {
-        // 开场三选:多段 / 重击 / 枯萎(wiki: "On its first turn, it has an
-        // (approximately) equal chance to use Multi Hit, Big Hit, or Debuff
-        // Attack").语料 ai.firstTurn 记的是 lightspeed 反编译里的 连枷,
-        // 与 wiki 冲突且语料自己也标了 unresolved:按"wiki 为准"取重击,
-        // 参考实现按 lightspeed 出 连枷,登记为按原版的有意差异.
+        // 开场三选:多段 / 连枷(格挡攻击) / 枯萎.语料 ai.firstTurn 与反编译的
+        // MonsterSpecific.cpp(WRITHING_MASS 的 getMove)都是 33/66 两档落在
+        // 招式 1/2/3 = 多段/连枷/枯萎;wiki 那句"Big Hit"是笔误(冲突已登记).
         if r < 33 {
             return MULTI_STRIKE;
         }
         if r < 66 {
-            return STRONG_STRIKE;
+            return FLAIL;
         }
         return WITHER;
     }

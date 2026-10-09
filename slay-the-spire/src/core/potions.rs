@@ -756,6 +756,7 @@ mod effect_tests {
             gold: 0,
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
         asc: 0,
         };
         Combat::new(enc(encounter), setup, RngRegistry::new(7))
