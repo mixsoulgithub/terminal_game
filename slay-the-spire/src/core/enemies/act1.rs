@@ -1445,16 +1445,13 @@ pub const THE_GUARDIAN: EnemyDef = EnemyDef {
                     amount: 8,
                     times: 2,
                 },
-                // 打完之后收起尖刺,并把形态切换的额度重新装上(比原来多 10)
+                // 打完之后收起尖刺,并把形态切换的额度重新装上(比上一次多 10:
+                // 开场 30,第一次装回去 40,第二次 50,……)
                 EnemyFx::LoseStatus {
                     status: Status::SharpHide,
                     scope: Scope::SelfOnly,
                 },
-                EnemyFx::GainStatus {
-                    status: Status::ModeShift,
-                    n: 40,
-                    scope: Scope::SelfOnly,
-                },
+                EnemyFx::RearmModeShift { first: 0 },
             ],
         },
     ],

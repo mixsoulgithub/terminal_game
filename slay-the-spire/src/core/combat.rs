@@ -2321,6 +2321,31 @@ impl Combat {
                     }
                 }
             }
+            EnemyFx::RearmModeShift { first } => {
+                // 反编译 MonsterSpecific.cpp:1344-1351(双拳合击)先把 miscInfo 抬 10,
+                // 再以它重装 MODE_SHIFT;miscInfo 开局是 Special::ModeShift 的 d(随飞升
+                // 变 30/35/40),所以第 n 次装回去的额度是 d + 10n.
+                let def = self.enemies[idx].def;
+                let d = match def.special {
+                    Special::ModeShift { d, .. } => d,
+                    _ => 30,
+                };
+                let base = crate::core::ascension::innate_amount(
+                    def.id,
+                    Status::ModeShift,
+                    d,
+                    self.enemies[idx].asc,
+                );
+                let armed = if first > 0 { first } else { base + 10 };
+                let last = self.enemies[idx].state.mode_shift_base;
+                let next = if last > 0 { last + 10 } else { armed };
+                self.enemies[idx].state.mode_shift_base = next;
+                self.enemies[idx].statuses.set(Status::ModeShift, next);
+                self.push_log(
+                    LogKind::Enemy,
+                    format!("{name} re-arms mode shift at {next} ({mname})"),
+                );
+            }
             EnemyFx::ForceNext { idx: next } => {
                 self.enemies[idx].state.forced = Some(next);
             }
@@ -4262,10 +4287,13 @@ impl Combat {
                     draw,
                 } => {
                     if let Some(t) = target {
+                        // 易伤看的是"出牌这一刻"(反编译 Actions.cpp:1036-1045 的
+                        // DropkickAction:先按当前状态决定要不要给能量/抽牌,再把这一击
+                        // 压进动作队列),所以这一刀把敌人打死也照样回能量、抽牌.
                         let vuln = self.enemies[t].statuses.has(Status::Vulnerable);
                         let d = self.player_attack_damage(amount, t, is_attack);
                         ctx.unblocked += self.damage_enemy_f32(t, d);
-                        if vuln && self.enemies[t].alive() {
+                        if vuln {
                             self.energy += energy;
                             self.draw_cards(draw as usize);
                         }
@@ -5632,6 +5660,47 @@ mod tests {
     fn unplayable_card_is_rejected() {
         let mut c = combat_with("jaw_worm_solo", &["wound"; 10]);
         assert_eq!(c.play_card(0, None), Err("unplayable"));
+    }
+
+    #[test]
+    fn dropkick_pays_out_even_when_it_kills_the_vulnerable_enemy() {
+        // 易伤是"出牌这一刻"看的:反编译 Actions.cpp:1036-1045 的 DropkickAction 先按当前
+        // 状态决定要不要回能量/抽牌(addToTop),再把这 5 点伤害压进队列 —— 先判后打,
+        // 所以这一刀把敌人打死也照样回 1 能量、抽 1 张.
+        let mut c = combat_with(
+            "jaw_worm_solo",
+            &[
+                "dropkick", "dropkick", "dropkick", "dropkick", "dropkick", "strike", "strike",
+            ],
+        );
+        c.enemies[0].statuses.add(Status::Vulnerable, 2);
+        c.enemies[0].hp = 1;
+        let energy = c.energy;
+        let hand = c.hand.len();
+        let draw = c.draw.len();
+        let i = c.hand.iter().position(|x| x.def.id == "dropkick").unwrap();
+        c.play_card(i, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 0, "这一刀打死它");
+        assert_eq!(c.energy, energy, "花的 1 费被易伤那条补回来");
+        assert_eq!(c.draw.len(), draw - 1, "照样抽 1 张");
+        assert_eq!(c.hand.len(), hand, "打出一张、抽回一张");
+    }
+
+    #[test]
+    fn dropkick_on_a_healthy_enemy_gives_nothing_extra() {
+        let mut c = combat_with(
+            "jaw_worm_solo",
+            &[
+                "dropkick", "dropkick", "dropkick", "dropkick", "dropkick", "strike", "strike",
+            ],
+        );
+        c.enemies[0].hp = 44;
+        let energy = c.energy;
+        let draw = c.draw.len();
+        let i = c.hand.iter().position(|x| x.def.id == "dropkick").unwrap();
+        c.play_card(i, Some(0)).unwrap();
+        assert_eq!(c.energy, energy - 1, "没易伤就只花 1 费");
+        assert_eq!(c.draw.len(), draw, "没易伤就不抽牌");
     }
 
     #[test]
@@ -7299,6 +7368,38 @@ mod monster_tests {
         c.enemies[0].next_move = twin;
         c.end_turn();
         assert!(!c.enemies[0].statuses.has(Status::SharpHide));
+    }
+
+    #[test]
+    fn guardian_twin_slam_arms_the_next_shift_ten_higher() {
+        // 反编译 MonsterSpecific.cpp:1344-1351(双拳合击):miscInfo += 10 之后才以它重装
+        // MODE_SHIFT,而 miscInfo 开局就是 30,所以额度按 40/50/60 一路长.此前本作把它钉死
+        // 成 40:守护者第二次以后都提前切换,act1 的守护者战(acts seed 22882/26951)整条
+        // hp 轨迹跟着偏.
+        let twin = |c: &Combat| {
+            c.enemies[0]
+                .def
+                .moves
+                .iter()
+                .position(|m| m.name == "Twin Slam")
+                .expect("守护者要有双拳合击")
+        };
+        let mut c = lock("the_guardian");
+        c.damage_enemy(0, 30); // 第一次切换
+        assert!(!c.enemies[0].statuses.has(Status::ModeShift));
+        let twin = twin(&c);
+        c.enemies[0].next_move = twin;
+        c.end_turn(); // 第一记双拳合击:装回 30 + 10
+        assert_eq!(c.enemies[0].statuses.get(Status::ModeShift), 40);
+        // 掉 39 点还差一点才切,再掉 1 点才切 —— 说明阈值确实是 40 而不是更小
+        c.damage_enemy(0, 39);
+        assert_eq!(c.enemies[0].statuses.get(Status::ModeShift), 1);
+        c.damage_enemy(0, 1);
+        assert!(!c.enemies[0].statuses.has(Status::ModeShift), "掉够 40 才切");
+        // 第二记双拳合击:50
+        c.enemies[0].next_move = twin;
+        c.end_turn();
+        assert_eq!(c.enemies[0].statuses.get(Status::ModeShift), 50);
     }
 
     #[test]

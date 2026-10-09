@@ -109,6 +109,52 @@ function parsePolicy(text: string): Policy {
 
 const bundle = buildBaseContentBundle();
 
+// ---- 参考侧缺口的驱动补偿:蛋类遗物 ----
+//
+// 参考实现的 MOLTEN_EGG/TOXIC_EGG/FROZEN_EGG(src/content/relics/*.ts)都是
+// `hooks: {}` 的空壳,只留了一条 "RUN-LAYER" 注释 —— 往牌组里加攻击/技能/能力牌时
+// 该给的强化它没给(原版:card.canUpgrade() 就升一级;语料 relics 的 text 与
+// 本作 relics.rs 的 egg 实现一致).任其带着走,fixture 会把"参考缺口"当成整串
+// 战斗的 hp/抽牌差异(acts seed 12691 的 128 处就是它).这里在驱动侧按原版规则
+// 补上:每一步 advance 之后,把这一步新加进牌组的牌按身上的蛋升一级.
+// 本作引擎不动.
+const EGG_TYPE: Record<string, string> = {
+  MOLTEN_EGG: "attack",
+  TOXIC_EGG: "skill",
+  FROZEN_EGG: "power",
+};
+
+/** 新加进牌组(追加在队尾)的牌按蛋升级;返回被升级的卡 id(调试/断言用) */
+export function applyEggUpgrades(state: GameState, deckLenBefore: number): string[] {
+  const deck = state.run?.deck;
+  if (!deck || deck.length <= deckLenBefore) return [];
+  const types: Record<string, true> = {};
+  for (const r of state.run.relics) {
+    const t = EGG_TYPE[r.defId];
+    if (t) types[t] = true;
+  }
+  const upgraded: string[] = [];
+  if (Object.keys(types).length === 0) return upgraded;
+  for (let i = deckLenBefore; i < deck.length; i++) {
+    const card = deck[i]!;
+    if (card.upgrades > 0) continue;
+    const def = bundle.cards.get(card.defId);
+    if (def && types[def.type]) {
+      card.upgrades = 1;
+      upgraded.push(card.defId);
+    }
+  }
+  return upgraded;
+}
+
+/** 与引擎的 advance 同义,只是给新加的牌补上蛋类遗物的强化 */
+function advanceWithEggs(s: GameState, cmd: Command): GameState {
+  const n = s.run.deck.length;
+  const out = advance(s, cmd, bundle);
+  applyEggUpgrades(out, n);
+  return out;
+}
+
 /** 调试钩子 `act n`:从当前幕切到第 n 幕开头.
  *  借参考实现自己的幕切换 —— 先把房间换成"Boss 奖励屏",再 skipRewards,
  *  runFlow 的 leaveRewards 就会调用它自己的 actTransition(与 Rust 侧 begin_act
@@ -232,7 +278,7 @@ function autoPlay(state: GameState): GameState {
         req.kind === "cards"
           ? req.iids.map((_, i) => i).slice(0, req.min)
           : [0];
-      s = advance(s, { cmd: "choose", indices: picks }, bundle);
+      s = advanceWithEggs(s, { cmd: "choose", indices: picks });
       continue;
     }
     const target = s.combat.monsters.findIndex((m) => !m.isDead && !m.isEscaped);
@@ -244,12 +290,12 @@ function autoPlay(state: GameState): GameState {
     });
     if (atkIdx !== -1 && target !== -1) {
       try {
-        s = advance(s, { cmd: "playCard", handIdx: atkIdx, target }, bundle);
+        s = advanceWithEggs(s, { cmd: "playCard", handIdx: atkIdx, target });
       } catch {
-        s = advance(s, { cmd: "endTurn" }, bundle);
+        s = advanceWithEggs(s, { cmd: "endTurn" });
       }
     } else {
-      s = advance(s, { cmd: "endTurn" }, bundle);
+      s = advanceWithEggs(s, { cmd: "endTurn" });
     }
   }
   return s;
@@ -325,7 +371,7 @@ function tryDrinkOnce(s: GameState): GameState | null {
       target = t;
     }
     try {
-      return advance(s, { cmd: "usePotion", slot, target }, bundle);
+      return advanceWithEggs(s, { cmd: "usePotion", slot, target });
     } catch {
       continue;
     }
@@ -400,7 +446,7 @@ function smartPlay(state: GameState): GameState {
     if (s.pending) {
       const req = s.pending.request;
       const picks = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
-      s = advance(s, { cmd: "choose", indices: picks }, bundle);
+      s = advanceWithEggs(s, { cmd: "choose", indices: picks });
       continue;
     }
     const c = s.combat;
@@ -411,7 +457,7 @@ function smartPlay(state: GameState): GameState {
       if (!m.isDead && !m.isEscaped && !m.halfDead) alive.push(i);
     }
     if (alive.length === 0) {
-      s = advance(s, { cmd: "endTurn" }, bundle);
+      s = advanceWithEggs(s, { cmd: "endTurn" });
       continue;
     }
     // 敌方来袭总伤(按招式数据自算,绕开参考侧会抛错的干跑)
@@ -461,12 +507,12 @@ function smartPlay(state: GameState): GameState {
       const cardTarget =
         pdef && (pdef.target === "enemy" || pdef.target === "selfandenemy") ? target : undefined;
       try {
-        s = advance(s, { cmd: "playCard", handIdx: pick, target: cardTarget }, bundle);
+        s = advanceWithEggs(s, { cmd: "playCard", handIdx: pick, target: cardTarget });
       } catch {
-        s = advance(s, { cmd: "endTurn" }, bundle);
+        s = advanceWithEggs(s, { cmd: "endTurn" });
       }
     } else {
-      s = advance(s, { cmd: "endTurn" }, bundle);
+      s = advanceWithEggs(s, { cmd: "endTurn" });
     }
   }
   return s;
@@ -519,7 +565,7 @@ function takeRewards(state: GameState, policy: Policy): { state: GameState; take
     if (i === -1) { i = idxOf((e) => e.kind === "emeraldKey"); tag = "emerald_key"; }
     if (i === -1) break;
     try {
-      s = advance(s, { cmd: "takeReward", i }, bundle);
+      s = advanceWithEggs(s, { cmd: "takeReward", i });
       taken.push(tag);
     } catch {
       // 药水格满了之类:标记掉这一项,免得卡死
@@ -977,7 +1023,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
         req.kind === "cards"
           ? req.iids.map((_, i) => i).slice(0, req.min)
           : [0];
-      s = advance(s, { cmd: "choose", indices: picks }, bundle);
+      s = advanceWithEggs(s, { cmd: "choose", indices: picks });
       out.push(line(step, "pick", `"candidates":${n},"pick":0`, stateJson(s)));
       step += 1;
       continue;
@@ -987,7 +1033,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
     switch (room.kind) {
       case "neow": {
         const opts = room.options.map((o) => `[${JSON.stringify(o.bonus)},${JSON.stringify(o.drawback)}]`);
-        s = advance(s, { cmd: "neowPick", i: policy.neow }, bundle);
+        s = advanceWithEggs(s, { cmd: "neowPick", i: policy.neow });
         out.push(line(step, "neow", `"options":[${opts.join(",")}],"pick":${policy.neow}`, stateJson(s)));
         step += 1;
         break;
@@ -1006,7 +1052,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
           injectLineup(s.run.act, encId, plan.ids);
           unstaged = stagePlan(plan);
         }
-        s = advance(s, { cmd: "mapPick", x: target.x, y: target.y }, bundle);
+        s = advanceWithEggs(s, { cmd: "mapPick", x: target.x, y: target.y });
         unstaged?.();
         if (plan) fixStreams(s, plan);
         const resolved = roomKindAfter(s);
@@ -1047,7 +1093,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
               const req = s.pending.request;
               const n = req.kind === "cards" ? req.iids.length : 0;
               const sel = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
-              s = advance(s, { cmd: "choose", indices: sel }, bundle);
+              s = advanceWithEggs(s, { cmd: "choose", indices: sel });
               out.push(line(step, "pick", `"candidates":${n},"pick":0`, stateJson(s)));
               step += 1;
             }
@@ -1063,10 +1109,10 @@ export function replayRefl(seedStr: string, policy: Policy): string {
             out.push(line(step, "end", `"result":"boss"`, stateJson(s)));
             return finish(out, policy);
           }
-          s = advance(s, { cmd: "skipRewards" }, bundle);
+          s = advanceWithEggs(s, { cmd: "skipRewards" });
           break;
         }
-        s = advance(s, { cmd: "skipRewards" }, bundle);
+        s = advanceWithEggs(s, { cmd: "skipRewards" });
         out.push(line(step, "reward", payload, stateJson(s)));
         step += 1;
         break;
@@ -1075,7 +1121,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
         const opts = restOptions(s);
         // 钥匙模式:营火优先"回忆"拿红钥匙
         if (policy.keys && restOptionAvailable(scratchCtx(s), "recall")) {
-          s = advance(s, { cmd: "restOption", kind: "recall" }, bundle);
+          s = advanceWithEggs(s, { cmd: "restOption", kind: "recall" });
           out.push(line(step, "rest", `"options":[${opts.map((v) => JSON.stringify(v)).join(",")}],"pick":"recall"`, stateJson(s)));
           step += 1;
         } else if (policy.rest === "smith") {
@@ -1087,13 +1133,13 @@ export function replayRefl(seedStr: string, policy: Policy): string {
             if (canSmith(ctx, i)) { deckIdx = i; break; }
           }
           const candidates = s.run.deck.filter((_, i) => canSmith(ctx, i)).length;
-          s = advance(s, { cmd: "restOption", kind: "smith", deckIdx }, bundle);
+          s = advanceWithEggs(s, { cmd: "restOption", kind: "smith", deckIdx });
           out.push(line(step, "rest", `"options":[${opts.map((v) => JSON.stringify(v)).join(",")}],"pick":"smith"`, stateJson(s)));
           step += 1;
           out.push(line(step, "pick", `"purpose":"upgrade","candidates":${candidates},"pick":0`, stateJson(s)));
           step += 1;
         } else {
-          s = advance(s, { cmd: "restOption", kind: "rest" }, bundle);
+          s = advanceWithEggs(s, { cmd: "restOption", kind: "rest" });
           out.push(line(step, "rest", `"options":[${opts.map((v) => JSON.stringify(v)).join(",")}],"pick":"rest"`, stateJson(s)));
           step += 1;
           // 梦中情网(原版"休息后可以加一张牌")在参考实现里是 hooks: {} 的空实现.
@@ -1109,18 +1155,18 @@ export function replayRefl(seedStr: string, policy: Policy): string {
             const res = takeRewards(s, policy);
             s = res.state;
             const taken = [...res.taken].sort((a, b) => rewardRank(a) - rewardRank(b));
-            s = advance(s, { cmd: "skipRewards" }, bundle);
+            s = advanceWithEggs(s, { cmd: "skipRewards" });
             const payload = `"source":"monster","entries":[${entries.join(",")}],"taken":[${taken.map((v) => JSON.stringify(v)).join(",")}]`;
             out.push(line(step, "reward", payload, stateJson(s)));
             step += 1;
           }
         }
-        if (s.run.room?.kind === "rest" && !s.pending) s = advance(s, { cmd: "proceed" }, bundle);
+        if (s.run.room?.kind === "rest" && !s.pending) s = advanceWithEggs(s, { cmd: "proceed" });
         break;
       }
       case "shop": {
         const items = shopItems(s);
-        s = advance(s, { cmd: "proceed" }, bundle);
+        s = advanceWithEggs(s, { cmd: "proceed" });
         out.push(line(step, "shop", `"items":[${items.join(",")}],"bought":[]`, stateJson(s)));
         step += 1;
         break;
@@ -1135,9 +1181,9 @@ export function replayRefl(seedStr: string, policy: Policy): string {
           : takeKey
             ? { cmd: "takeSapphireKey" }
             : { cmd: "openChest" };
-        s = advance(s, cmd, bundle);
+        s = advanceWithEggs(s, cmd);
         if (s.run.room?.kind === "treasure" && s.run.room.chest.opened && !s.pending) {
-          s = advance(s, { cmd: "proceed" }, bundle);
+          s = advanceWithEggs(s, { cmd: "proceed" });
         }
         const gained = s.run.relics.slice(before.relics).map((r) => JSON.stringify(r.defId));
         const payload =
@@ -1156,7 +1202,7 @@ export function replayRefl(seedStr: string, policy: Policy): string {
         const count = enabled.length;
         const rawPick = id === null ? 0 : firstEventOption(s, policy.event);
         const pick = Math.max(0, enabled.indexOf(rawPick));
-        s = advance(s, { cmd: "eventOption", i: rawPick }, bundle);
+        s = advanceWithEggs(s, { cmd: "eventOption", i: rawPick });
         out.push(line(step, "event", `"id":${JSON.stringify(id ?? "invalid")},"options":${count},"pick":${pick}`, stateJson(s)));
         step += 1;
         break;

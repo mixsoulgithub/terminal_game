@@ -308,7 +308,9 @@ static MOVE_ASC: &[(&str, &[(&str, &[MoveAsc])])] = &[
         ("rollattack", &[
             MoveAsc { level: 4, damage: Some(10), hits: None, block: None, fx: None },
         ]),
-        // 双连击打完后重新装上形态切换额度:额度 = 本档基础 + 10(30/35/40 各 +10)
+        // 双连击打完后重新装上形态切换额度:额度 = 本档基础 + 10(30/35/40 各 +10).
+        // 这三个值是"第一次装回去"的额度,之后每次再 +10(见 EnemyFx::RearmModeShift);
+        // 传进 effects() 时会认领基础招式里那一格 RearmModeShift.first
         ("twinslam", &[
             MoveAsc { level: 9, damage: None, hits: None, block: None, fx: Some(&[FxAsc { power: "MODE_SHIFT", amount: 45, target: "self" }]) },
             MoveAsc { level: 19, damage: None, hits: None, block: None, fx: Some(&[FxAsc { power: "MODE_SHIFT", amount: 50, target: "self" }]) },
@@ -890,6 +892,8 @@ pub fn intent(id: &str, move_name: &str, base: Intent, asc: u32) -> Intent {
 fn fx_key(fx: &EnemyFx) -> (&'static str, String) {
     match fx {
         EnemyFx::GainStatus { status, .. } => ("status", status_key(*status).to_string()),
+        // 双拳合击的重装与"获得状态"在语料里是同一条 MODE_SHIFT,只是数值按次数长
+        EnemyFx::RearmModeShift { .. } => ("status", status_key(Status::ModeShift).to_string()),
         EnemyFx::PlayerStatus { status, .. } => ("status", status_key(*status).to_string()),
         EnemyFx::Block { .. } => ("block", String::new()),
         EnemyFx::BlockFromDamage => ("blockfromdmg", String::new()),
@@ -963,6 +967,8 @@ fn set_amount(fx: &mut EnemyFx, n: i32) {
         | EnemyFx::DrawReduction { n: v }
         | EnemyFx::PlayerCard { n: v, .. } => *v = n,
         EnemyFx::Block { amount, .. } => *amount = n,
+        // 双拳合击装回的额度:飞升表给的是"第一次装回去"的值
+        EnemyFx::RearmModeShift { first } => *first = n,
         _ => {}
     }
 }

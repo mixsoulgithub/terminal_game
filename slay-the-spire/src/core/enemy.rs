@@ -138,6 +138,10 @@ pub enum EnemyFx {
     RollDamage { div: i32, add: i32 },
     /// 去掉某个状态(守护者的双拳合击会打散尖刺外壳)
     LoseStatus { status: Status, scope: Scope },
+    /// 守护者的双拳合击:把形态切换的额度重新装上,且比上一次多 10
+    /// (反编译 MonsterSpecific.cpp 的 Twin Slam:先 miscInfo += 10,再 BuffEnemy<MODE_SHIFT>).
+    /// `first` = 第一次装回去的额度,A20 覆盖表按飞升给(0 = 按开场额度 +10 现算)
+    RearmModeShift { first: i32 },
     /// 指定下一招(巨口的 NOM 之后必接 DROOL 之类)
     ForceNext { idx: usize },
     /// 大史莱姆分裂:自己被两只小史莱姆替换(种类见 EnemyDef::special)
@@ -184,6 +188,9 @@ pub struct EnemyState {
     pub charge: i32,
     /// 勇士:防守姿态用过几次
     pub guard_uses: u32,
+    /// 守护者:上次双拳合击装上的切换额度(0 = 还没装过,首次按开场额度 +10).
+    /// 原版把这个数记在 Monster::miscInfo 上,每次 Twin Slam 自增 10.
+    pub mode_shift_base: i32,
     /// 二阶段(勇士 / 觉醒者)
     pub phase2: bool,
     /// 觉醒者:一阶段被打死、还没复活

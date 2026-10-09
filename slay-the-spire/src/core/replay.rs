@@ -1346,7 +1346,7 @@ mod e2e {
     Expected { seed: 35, lines: 29, ref_lines: 29, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], diff_digest: 0x10dc5af3c3590af8 },
     Expected { seed: 36, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38], diff_digest: 0x90c10984bb725557 },
+    Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 39, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x486665cfaa299e93 },
     Expected { seed: 42, lines: 43, ref_lines: 43, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42], diff_digest: 0xf7e5bbf37042caf5 },
@@ -1393,7 +1393,7 @@ mod e2e {
     Expected { seed: 35, lines: 29, ref_lines: 29, aligned: 12, diff_steps: &[12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], diff_digest: 0x10dc5af3c3590af8 },
     Expected { seed: 36, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 37, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38], diff_digest: 0x90c10984bb725557 },
+    Expected { seed: 38, lines: 39, ref_lines: 39, aligned: 39, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x486665cfaa299e93 },
 ];
@@ -1651,19 +1651,80 @@ mod e2e {
     /// 这 19 个种子在 1..30000 里参考实现都能靠智能打牌走到第二幕 Boss(第二幕 Boss
     /// 是堵墙,过了它的目前没有).本作按原版重掷了开战随机阵容之后,战斗走向与参考
     /// 分叉,其中 4 个种子活不到第二幕,其余依次列出各自的差异步.
-    /// seed 4327(51→54 步)与 seed 12691(51→60 步)两行随"仙女在瓶中不许主动喝"重钉:
-    /// 对拍驱动每回合都按格子次序试喝药水(见 try_drink_once),参考把 FAIRY_POTION 当成
-    /// no-op 药水喝掉(它的 onUse 是空的,也没有死亡保命这张牌),本作现在跳过仙女改喝
-    /// 后面那瓶有用的药,于是活过了参考活不过的那一下,步流比参考长 —— 归类 (c) 参考缺口,
-    /// 本作按原版(反编译 BattleContext::drinkPotion 对 FAIRY_POTION 直接 assert).
-    /// 其余带差异的种子归到两类:
-    ///   (b) 退赃:seed 8/1815 从 Boss 战起只差金币(参考 looters/mugger 不退赃,同
-    ///       ASC2 的 (b)1).
-    ///   (b) 六角幽魂的"炼狱"多塞灼伤:原版实体里 Inferno(2x6)还会往弃牌堆塞 3 张 Burn+
-    ///       并把已有灼伤全部升级,本作照实体实现(见 enemies/act1.rs 的 HEXAGHOST_INFERNO);
-    ///       反编译灯光速与参考都省了这部分(参考 theHexaghost.ts 头部自己注明 "omitted here
-    ///       as in the transcription"),于是 seed 2474/22882/23808/26951 在第一次 Inferno
-    ///       之后抽牌堆整体错开、整条 hp 轨迹差几个点.本作不改.
+    ///
+    /// 本轮把这张表的差异逐条反查过一遍(逐颗 seed 跑 + SPIRE_TRACE=1 两侧对 trace).
+    /// 历史数字:19 颗合计差异 194 处 → 修掉两条本作真 bug 后 182 处 → 参考驱动补上
+    /// 蛋类遗物再生成 fixture 后 92 处.下面按 seed 列出:对齐前缀 / 首分叉步 / 成因 / 归类.
+    ///   全对齐(0 处):3605 7140 10242 11535 12835 20703 21075 24873 25365 26848 28104
+    ///   seed 8    : 47 步 / 步 47(fight,盗贼+强盗那场打完)/ 退赃 +45 金币 / (b)1
+    ///   seed 1815 : 47 步 / 步 47(同型)/ 退赃 +30 金币 / (b)1
+    ///   seed 2474 : 42 步 / 步 42(六角幽魂首领战收尾)/ (c)1 炼狱的灼伤,本作多挨几下 / hp 差
+    ///   seed 23808: 42 步 / 步 42(六角幽魂首领战收尾)/ (c)1 同上(手里那张 Burn+ 回合末
+    ///               打 4 点而不是 2 点,整场差 2 hp)
+    ///   seed 4327 : 40 步 / 步 40(六角幽魂首领战收尾)/ 三条叠加:
+    ///               步 40-41 是本作多挨 2 hp —— (c)1 炼狱;
+    ///               步 46-49 是金币 +30 —— (b)1 退赃;
+    ///               步 49-53 是"本作靠仙女瓶保命活了下来,参考死在那场":参考每回合试喝
+    ///               药水时把 FAIRY_POTION 当空药喝掉,本作跳过它留着保命(步数 54 vs 51).
+    ///   seed 12691: 19 步 / 步 19(哨卫战)/ 同一条仙女瓶:参考从步 19 起把仙女喝掉,
+    ///               potions 数组此后整串错开一位(38 处随机流错位);步 49 那一场本作有两瓶
+    ///               仙女、连保两次命活下来,参考死在当场(59 处里的其余部分是这场之后的
+    ///               9 步单边行).本作按原版(见 (c)2).
+    ///   seed 22882/26951:本轮查出是本作真 bug —— 守护者双拳合击把"下一次切换额度"钉死成
+    ///               40,而原版是每次 +10(40/50/60…),于是第二次以后的形态切换来得偏早,
+    ///               Boss 战 hp 轨迹偏 3/6 点.已修(见 (a)1),这两行现在 0 处.
+    ///
+    /// (a) 本作真 bug(本轮修,断言见括号):
+    ///   1) 守护者的双拳合击:反编译 MonsterSpecific.cpp:315-327 把开局额度记进 miscInfo,
+    ///      1344-1351 的 Twin Slam 先 miscInfo += 10 再以此重装 MODE_SHIFT,所以额度是
+    ///      40/50/60 一路长(随飞升的开场值 30/35/40 各 +10).本作此前把这一段写成固定的
+    ///      "MODE_SHIFT 40",第二次起的切换都早一步.修法 = 新效果 EnemyFx::RearmModeShift
+    ///      (enemy.rs)+ EnemyState::mode_shift_base 记账(combat.rs),守护者招式表改用它
+    ///      (enemies/act1.rs);断言 = combat.rs
+    ///      guardian_twin_slam_arms_the_next_shift_ten_higher.这条差异先前只登记成"差异步"
+    ///      (22882 的 41-42、26951 的 43-44),没归过因 —— 已登记不等于没问题.
+    ///   2) 猛踢(Dropkick)的易伤判定时点:反编译 Actions.cpp:1036-1045 的 DropkickAction
+    ///      先看目标当前有没有易伤、决定回不回 1 能量/抽 1 张,再把这 5 点伤害压进动作队列
+    ///      (先判后打),所以这一脚把目标踢死也照样给.本作此前多一个 `alive()` 守卫,踢死
+    ///      时就不给,战斗里的手牌/能量从此错开.断言 = combat.rs
+    ///      dropkick_pays_out_even_when_it_kills_the_vulnerable_enemy(反例:
+    ///      dropkick_on_a_healthy_enemy_gives_nothing_extra).seed 23808 的 10 处因此降到 2.
+    ///
+    /// 驱动侧补偿(本作引擎不动):参考实现的蛋类遗物是空壳 —— MOLTEN_EGG/TOXIC_EGG/
+    ///   FROZEN_EGG 在 src/content/relics/uncommon.ts 等处都是 `hooks: {}` 加一句 "RUN-LAYER",
+    ///   往牌组里加攻击/技能/能力牌时该给的强化它没给(原版规则与语料 relics 的 text、
+    ///   本作 relics.rs 的 egg 一致).这属于上轮 dream_catcher 那一类参考缺口,带着走会把
+    ///   "参考没实现"变成整串战斗的 hp/抽牌差异.做法 = tools/replay_ref.ts 里包一层
+    ///   advanceWithEggs,每一步之后把新追加进牌组的牌按身上的蛋升一级(applyEggUpgrades),
+    ///   再重新生成 fixture(`bun tools/e2e_diff.ts <seed> --write`).折掉后 acts seed 12691
+    ///   的 149 处降到 59 处(128 处 deck 级联消失),act1 seed 38 的 10 处降到 0 处.
+    ///
+    /// (b) 参考缺口(参考侧没实现,本作按原版,不改本作):
+    ///   1) 退赃:原版击杀偷过钱的怪会把赃款还回来.反编译 BattleContext.cpp:494-506 的
+    ///      updateMonstersOnExit 把"没逃跑的 LOOTER/MUGGER"的 miscInfo 汇总成 info.stolenGold;
+    ///      本作照此在击杀时还钱(combat.rs:3881-3890 "drops the N gold it stole"),逃跑则不还
+    ///      (断言 = combat.rs:7448-7450).参考 looters.ts/mugger.ts 只把 goldStolen 记在
+    ///      data 上、注释写着"reward layer refunds it",runFlow.ts 的奖励层却从不加回去,
+    ///      于是金币差 45/60 起、一路带到底(seed 8/1815/4327;同 ASC2 的 (b)1).
+    ///
+    /// (c) 参考侧反着来 / 缺一块(本作按原版/反编译,不改本作):
+    ///   1) 六角幽魂的炼狱(Inferno):原版这一招除了 2x6 还会往弃牌堆塞 3 张 Burn+、并把
+    ///      已有的灼伤全部升级(之后 Sear 再塞的也是 Burn+).语料
+    ///      refs/slay-the-cli/data/corpus/monsters-act1.json 的 HEXAGHOST.conflicts[0] 明确记着
+    ///      "lightspeed omits the 3 added Burn+ and the retroactive upgrade of existing Burns"
+    ///      (灯光速与参考都省了;参考 theHexaghost.ts 头部也自己注明 omitted).本作照原版实现
+    ///      (enemies/act1.rs 的 HEXAGHOST INFERNO:PlayerCardUpgraded{burn,3} + UpgradePlayerBurns),
+    ///      抽牌堆因此整体错开、hp 轨迹差几个点(seed 2474/23808/4327).
+    ///   2) 仙女在瓶中(FAIRY_POTION):反编译 BattleContext.cpp:2430-2434 的 drinkPotion 走到
+    ///      FAIRY_POTION 直接 assert(它喝不得,原版是"要死时自动顶掉一瓶、回到 30% 血").
+    ///      参考 potions/index.ts:317-325 的 FAIRY_POTION 是 `onUse: () => {}` 的空壳、
+    ///      也没有保命钩子,对拍驱动每回合按格子次序试喝(见 try_drink_once)就把仙女当空药
+    ///      喝掉了,本作跳过它留着保命.种子 12691/4327 的 potions 错位与"参考先死"都由它来.
+    ///   附带(不影响任何登记表,只在对 trace 时看得见):sentries 战里参考的 Liquid Memories
+    ///      选择屏是 min 0(驱动按"可选"选 0 张),本作按反编译 Actions.cpp:663-676 的
+    ///      BetterDiscardPileToHandAction 是"必须拿 1 张",于是一局战斗内手牌流向短暂不同;
+    ///      战斗收尾两边局面又合回来,fixture 与各张表都没被它影响到(seed 4327 的 trace 里
+    ///      能看到),本作不改.
     const ACTS_CASES: &[Expected] = &[
     Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xc785cdc1b1cf221 },
     Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 47, diff_steps: &[47, 48, 49, 50, 51], diff_digest: 0xf28cd9b0aa241e08 },
@@ -1673,16 +1734,16 @@ mod e2e {
     Expected { seed: 7140, lines: 51, ref_lines: 51, aligned: 51, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 10242, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11535, lines: 22, ref_lines: 22, aligned: 22, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 12691, lines: 60, ref_lines: 51, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59], diff_digest: 0x2f93daba7f2fad84 },
+    Expected { seed: 12691, lines: 60, ref_lines: 51, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59], diff_digest: 0xe6080f2a8af42e74 },
     Expected { seed: 12835, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 20703, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 21075, lines: 49, ref_lines: 49, aligned: 49, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 22882, lines: 55, ref_lines: 55, aligned: 41, diff_steps: &[41, 42], diff_digest: 0x19960778821c2228 },
-    Expected { seed: 23808, lines: 55, ref_lines: 55, aligned: 34, diff_steps: &[34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0xb819deb2cb8b5d08 },
+    Expected { seed: 22882, lines: 55, ref_lines: 55, aligned: 55, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 23808, lines: 55, ref_lines: 55, aligned: 42, diff_steps: &[42, 43], diff_digest: 0x81566ff37e352c96 },
     Expected { seed: 24873, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25365, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26848, lines: 58, ref_lines: 58, aligned: 58, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 26951, lines: 63, ref_lines: 63, aligned: 43, diff_steps: &[43, 44], diff_digest: 0x664f19f5cdacbe10 },
+    Expected { seed: 26951, lines: 63, ref_lines: 63, aligned: 63, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 28104, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
     /// 多幕对拍:同一颗种子 + acts.script,本作与参考实现逐行比对(两侧都转小写).
