@@ -916,6 +916,9 @@ pub const GREMLIN_LEADER: EnemyDef = EnemyDef {
             name: "Encourage",
             intent: Intent::DefendBuff { block: 6 },
             effects: &[
+                // 原版鼓励先掷一次 aiRng.random(0, 2) 挑台词(= 反编译 MonsterSpecific.cpp
+                // GREMLIN_LEADER_ENCOURAGE 里的 bc.aiRng.random(0, 2)),不掷会让后面所有掷点错位
+                EnemyFx::ParityRand { n: 2 },
                 EnemyFx::GainStatus {
                     status: Status::Strength,
                     n: 3,

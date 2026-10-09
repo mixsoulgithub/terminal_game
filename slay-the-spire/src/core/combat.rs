@@ -712,8 +712,9 @@ impl Combat {
             if fx.elite_hp_reduction_pct > 0 && enc.kind == EnemyKind::Elite {
                 let pct = fx.elite_hp_reduction_pct;
                 for e in c.enemies.iter_mut() {
-                    // 原版只降当前血量,上限不动(wiki:"Max HP 不受影响",
-                    // 当前血量像挨了伤害一样立刻降低).取整按 floor(hp*0.75).
+                    // 反编译(sts_lightspeed BattleContext.cpp):`m.curHp = (int)(m.maxHp * .75)`,
+                    // 即把当前血量截断到上限的 75%,上限不动(开战满血,所以用 hp 与 max_hp 等价).
+                    // 只降当前血量,不做 max_hp - floor(max_hp*25/100) 那种算法(83 -> 62 而非 63).
                     e.hp = (e.hp * (100 - pct) / 100).max(1);
                 }
             }
@@ -8159,6 +8160,33 @@ mod summon_tests {
         assert_eq!(slots(&c), vec![0, 1, 2, 3], "满了就不再召");
         let after: Vec<String> = c.enemies.iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, after, "阵容没变");
+    }
+
+    #[test]
+    fn gremlin_leader_encourage_consumes_the_quote_roll() {
+        // 原版 GREMLIN_LEADER_ENCOURAGE 出手时先掷一次 aiRng.random(0, 2) 挑台词
+        // (= 反编译 MonsterSpecific.cpp 里的 `bc.aiRng.random(0, 2); // for in game quote`),
+        // 再上增益/格挡. 这一掷不补,后面所有 aiRng 掷点都会错位(A20 第二幕头目小鬼
+        // 种子 13/4 就是这样分叉的).
+        let mut c = fight("gremlin_leader_gang", 7);
+        assert_eq!(c.enemies.len(), 3, "两只开战小鬼 + 首领");
+        let before = c.streams.floor(FloorStream::AiRng).counter();
+        use_move(&mut c, "gremlin_leader", 1); // Encourage
+        let used = c.streams.floor(FloorStream::AiRng).counter() - before;
+        assert_eq!(used, 2, "鼓励应掷 2 次 aiRng(台词 + 回合末选招)");
+        // 顺带确认增益/格挡照常落到自己和小鬼身上
+        let leader = idx_of(&c, "gremlin_leader");
+        assert_eq!(c.enemies[leader].statuses.get(Status::Strength), 3, "首领 +3 力量");
+        for e in c.enemies.iter().filter(|e| e.def.id != "gremlin_leader") {
+            assert_eq!(e.statuses.get(Status::Strength), 3, "{} +3 力量", e.def.id);
+            assert_eq!(e.block, 6, "{} +6 格挡", e.def.id);
+        }
+        // 对照:捅刺只掷回合末选招那一次
+        let mut c2 = fight("gremlin_leader_gang", 7);
+        let before2 = c2.streams.floor(FloorStream::AiRng).counter();
+        use_move(&mut c2, "gremlin_leader", 2); // Stab
+        let used2 = c2.streams.floor(FloorStream::AiRng).counter() - before2;
+        assert_eq!(used2, 1, "捅刺只掷选招那一次");
     }
 
     /// 一次召集抽到的两只(按抽取顺序)

@@ -238,11 +238,13 @@ S("sling_of_courage", "精英战斗力量", "仅精英开战 +2 力量", {
   });
 S("pantograph", "首领战斗回血", "首领战开局回 25:40->65", board({ player: { hp: 40, max_hp: 80 }, relics: ["pantograph"], encounter: "the_guardian", enemies: [ENEMY({ id: "the_guardian", hp: 400, max_hp: 400, move: null })], actions: [{ op: "noop" }] }),
   (r) => (init(r).player.hp === 65 ? null : `首领战开局血量 ${init(r).player.hp},期望 65`));
-S("preserved_insect", "精英战斗减血", "精英敌人血量 -25%", board({ relics: ["preserved_insect"], encounter: "gremlin_nob_solo", enemies: [{ id: "gremlin_nob", move: null }], actions: [{ op: "noop" }] }),
+S("preserved_insect", "精英战斗减血", "精英敌人当前血量降到上限的 75%(截断):83->62", board({ relics: ["preserved_insect"], encounter: "gremlin_nob_solo", enemies: [{ id: "gremlin_nob", move: null }], actions: [{ op: "noop" }] }),
   (r, all) => {
     const base = all.get("preserved_insect/base")!;
     const b = init(base).enemies[0]!;
-    const want = b.hp - Math.floor(b.max_hp * 25 / 100);
+    // 反编译(sts_lightspeed BattleContext.cpp PRESERVED_INSECT):curHp = (int)(maxHp * .75),
+    // 即当前血量直接截断到上限的 75%(不是 maxHp - floor(maxHp*25/100)).83 -> floor(62.25) = 62.
+    const want = Math.floor(b.max_hp * 75 / 100);
     const got = init(r).enemies[0]!.hp;
     return got === want ? null : `精英血量 ${got},期望 ${want}(基数 ${b.hp}/${b.max_hp})`;
   }, { baseScenario: board({ relics: [], encounter: "gremlin_nob_solo", enemies: [{ id: "gremlin_nob", move: null }], actions: [{ op: "noop" }] }) });

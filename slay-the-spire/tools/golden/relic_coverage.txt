@@ -110,7 +110,7 @@
              期望 首领战开局回 25:40->65
              oracle pantograph
   [ok      ] preserved_insect         hook=精英战斗减血
-             期望 精英敌人血量 -25%
+             期望 精英敌人当前血量降到上限的 75%(截断):83->62
              oracle preserved_insect
   [ok      ] art_of_war               hook=回合开始(无攻击补能量)
              期望 上回合没打攻击则 +1 能量:3->4

@@ -1729,18 +1729,21 @@ mod e2e {
     /// 收集者 4/11/15/16.第二幕两边分叉比第一/三幕多(战斗里的 hp、被偷的金币、
     /// 事件选项数、召唤物的血量与站位),所以这张尺子和 acts 那张一样,连差异步与
     /// 内容指纹一起登记.分类见 report.
+    /// 修掉"小鬼头目鼓励少掷一次台词掷点"后,seed 4/13/15/19 的对齐前缀大幅前移
+    /// (4:29->41,13:22->33,15:18->40,19:28->40),剩下的多是头目小鬼摆位/事件选项数
+    /// 这类参考表示差异(见 ASC2_CASES 的分类注释).
     const ACT2_CASES: &[Expected] = &[
-    Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45], diff_digest: 0x35c048c12f3a91fd },
-    Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 22, diff_steps: &[22, 23, 24, 25, 26, 27, 28, 33, 41, 42, 43], diff_digest: 0x1b3fe4bdbca217c5 },
-    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 28, diff_steps: &[28, 29, 30, 40], diff_digest: 0x4cadbd46ae889299 },
-    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x2aec5ce78b4a798e },
+    Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45], diff_digest: 0xf2b5f8db28da67f0 },
+    Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 41, 42, 43], diff_digest: 0xec4d2485f4448232 },
+    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40], diff_digest: 0x18db065dfd5ce919 },
+    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 40, 41, 42], diff_digest: 0x664f5d82fe38755b },
     Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35], diff_digest: 0xe67781a970da6824 },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 17, diff_steps: &[17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32], diff_digest: 0x9ee3dc12d09ebb12 },
-    Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 35, 36, 37, 40, 41, 42], diff_digest: 0xc172d08ffcdc326c },
+    Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 40, 41, 42], diff_digest: 0x1ea5af3dfb8afa54 },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 43, 44, 45, 46], diff_digest: 0x988b6e1c6f0aa4f1 },
-    Expected { seed: 4, lines: 46, ref_lines: 45, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44, 45], diff_digest: 0xb5adcab9de0b2df5 },
+    Expected { seed: 4, lines: 46, ref_lines: 45, aligned: 41, diff_steps: &[41, 42, 43, 44, 45], diff_digest: 0x7387b1ab31891131 },
     Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x11abdc8473601d2 },
-    Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 18, diff_steps: &[18, 19, 20, 21, 22, 23, 24, 25, 40, 41, 42, 43], diff_digest: 0x6c12df903dcb8e9d },
+    Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40, 41, 42, 43], diff_digest: 0x7001bbf9f1362919 },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 26, diff_steps: &[26, 27, 28, 33, 34, 35, 36, 37, 38, 40, 41, 42, 43], diff_digest: 0x436132dc5db675f9 },
 ];
 
@@ -2132,23 +2135,35 @@ mod e2e {
     ///   (a) 已修:Book of Stabbing 的 A18 规则(单刺也自增刺击数).反编译 MonsterSpecific.cpp
     ///       把两句 `if (asc18) ++stabCount` 写在 return 之后成了死代码,但意图明确,参考实现
     ///       按 wiki/原版算进去 —— 修掉后 seed 6/25/33/16 的对齐前缀大幅前移(见下表).
-    ///   (b) 参考未实现/表示差异:劫匪偷金币(seed 15/18;与 A0 act2 同点)与事件 cursed_tome
-    ///       的选项数(seed 11;A0 也 5 vs 2).
-    ///   (d) 未定论:被选中者+神秘者(3/19/17)与头目小鬼(13/4)的战斗起点逐字段相同、终点 hp
-    ///       不同;已核对 A2/A17/A18 数值与参考一致,根因未定位(疑为对局内掷点流在 A20 档的
-    ///       某处多/少一次).
+    ///   (b) 参考未实现/表示差异:
+    ///       1) 劫匪偷金币(seed 15/18;与 A0 act2 同点)、事件 cursed_tome 的选项数(seed 11;
+    ///          A0 也 5 vs 2)与 colosseum 的选项数(seed 4 步 27;A0 也 1 vs 3).
+    ///       2) 小鬼头目的开战摆位:参考实现把首领排在槽 2,随从只剩槽 0/1 两格;原版是首领
+    ///          槽 3 + 随从槽 0/1/2 三格(反编译 MonsterGroup.cpp / 语料槽位).seed 13 的头目
+    ///          小鬼战因此终点差 5 hp.
+    ///       3) 怪物非攻击招式的结算时点:原版回血/上增益/上格挡是同步结算、回合末选招在其后
+    ///          (MonsterSpecific.cpp 的 MYSTIC_HEAL 先 heal 再 rollMove,挂格挡的
+    ///          CENTURION_DEFEND 同理),参考实现把它们塞进动作队列,于是选招读到的是改状态前
+    ///          的血量.神秘者的 getMove 按血量差决定回不回血,所以 seed 3/19/17 的"百夫长+
+    ///          神秘者"战分叉(起点逐字段相同、终点 hp 不同).
+    ///   (c) 已修:小鬼头目"鼓励"少了原版那次挑台词掷点(反编译 GREMLIN_LEADER_ENCOURAGE 开头
+    ///       的 `bc.aiRng.random(0, 2)`),补上后 seed 4 的头目小鬼战全程对齐(前缀 22 -> 27,
+    ///       后面剩的是 (b)1 的 colosseum);断言 = combat.rs
+    ///       gremlin_leader_encourage_consumes_the_quote_roll.
+    ///   原 (d) 的 5 颗 seed 全部落进上面三类:seed 3/19/17 = (b)3,seed 13 = (c) + (b)2,
+    ///   seed 4 = (c) + (b)1,没有来历不明的"多掷/少掷".
     const ASC2_CASES: &[Expected] = &[
-    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xd6f6514046f14c0 },
-    Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 39, 40, 41], diff_digest: 0xbbea817f9888376d },
-    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x3cf5d6cb108e7e3d },
-    Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xdf6ab5b159df8dbc },
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44], diff_digest: 0xe2574da2a43f9a1 },
+    Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 19, diff_steps: &[19, 20, 21, 22, 23, 24, 25, 39, 40, 41], diff_digest: 0x6eaf377dbb280199 },
+    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 8, diff_steps: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x86ae10273e6c61e2 },
+    Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 26, diff_steps: &[26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0x70b10e426e8964fa },
     Expected { seed: 6, lines: 52, ref_lines: 53, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52], diff_digest: 0x98f743945c957f29 },
     Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 14, diff_steps: &[14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 41, 42, 43], diff_digest: 0xf5dca7770e705a38 },
-    Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x92dde8248532a178 },
+    Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0xf2b6ae1d03e4dc15 },
     Expected { seed: 25, lines: 47, ref_lines: 46, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0x4fb240ce3fd98222 },
-    Expected { seed: 4, lines: 50, ref_lines: 49, aligned: 22, diff_steps: &[22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49], diff_digest: 0x5500cbee5b6b33a5 },
+    Expected { seed: 4, lines: 50, ref_lines: 49, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45, 46, 47, 48, 49], diff_digest: 0xc9453db8b90b73f4 },
     Expected { seed: 11, lines: 47, ref_lines: 48, aligned: 13, diff_steps: &[13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0xd44adbf85aaf8f04 },
-    Expected { seed: 15, lines: 45, ref_lines: 44, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xe5b4ac9e9f9c5fc8 },
+    Expected { seed: 15, lines: 45, ref_lines: 44, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x2ab901282429ff63 },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 40, diff_steps: &[40, 41, 42, 43], diff_digest: 0x2f88599cc8de562f },
 ];
 
