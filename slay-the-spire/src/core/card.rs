@@ -459,7 +459,31 @@ impl CardInstance {
         if self.multi_upgrade() {
             return true;
         }
+        // 诅咒与状态牌一律不可升级:反编译 Card::canUpgrade()
+        // (refs/sts_lightspeed/src/game/Card.cpp:67-80)与 CardInstance::canUpgrade()
+        // (refs/sts_lightspeed/src/combat/CardInstance.cpp:55-59)对 CURSE/STATUS 都直接 false.
+        // 灼伤在语料里确实带一条升级数据(magic 2->4),但那条只由六火幽魂的炼狱走
+        // UpgradePlayerBurns 这条专路塞进来(见 combat.rs 的 UpgradePlayerBurns),
+        // 军备/营火锻造/事件升级都不该把它列进候选.
+        if matches!(self.def.kind, CardType::Curse | CardType::Status) {
+            return false;
+        }
         !self.upgraded && self.def.upgradable()
+    }
+
+    /// 无视类型直接升级:六火幽魂的炼狱"把每一张灼伤就升级"走的就是这条专路
+    /// (反编译 MonsterSpecific.cpp 的 HEXAGHOST_INFERNO 直接对灼伤调 upgrade,
+    /// 不看 canUpgrade).诅咒/状态牌没有别的升级途径,别的场景一律走 can_upgrade 闸门.
+    pub fn upgrade_forced(&mut self) -> bool {
+        if self.upgraded && !self.multi_upgrade() {
+            return false;
+        }
+        self.upgraded = true;
+        if self.multi_upgrade() {
+            self.plus += 1;
+            self.bonus += self.plus as i32 + 3;
+        }
+        true
     }
 
     /// 成功升级返回 true
@@ -467,13 +491,7 @@ impl CardInstance {
         if !self.can_upgrade() {
             return false;
         }
-        self.upgraded = true;
-        if self.multi_upgrade() {
-            // 每升一级 += 当前等级 + 3(1 级 +4、2 级 +5……),和原作一致
-            self.plus += 1;
-            self.bonus += self.plus as i32 + 3;
-        }
-        true
+        self.upgrade_forced()
     }
 
     /// 生效的伤害值(bonus 计入)用于展示

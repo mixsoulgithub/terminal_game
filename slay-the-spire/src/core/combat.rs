@@ -1253,7 +1253,7 @@ impl Combat {
         let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
         let mut inst = CardInstance::new(def);
         if upgraded {
-            inst.upgrade();
+            inst.upgrade_forced();
         }
         self.fix_new_card(&mut inst);
         inst.free_this_turn = free;
@@ -2376,7 +2376,7 @@ impl Combat {
                     let mut inst = CardInstance::new(cards::card_def_or_panic(card));
                     self.fix_new_card(&mut inst);
                     if upgrade {
-                        inst.upgrade();
+                        inst.upgrade_forced();
                     }
                     let label = inst.label();
                     match spot {
@@ -2409,7 +2409,8 @@ impl Combat {
                 }
             }
             EnemyFx::UpgradePlayerBurns => {
-                // 参考实现:把玩家各堆里的灼伤就地升级(已经升过的不动)
+                // 参考实现:把玩家各堆里的灼伤就地升级(已经升过的不动).
+                // 走 upgrade_forced:诅咒/状态牌被 can_upgrade 挡着,只有炼狱这条专路能升灼伤.
                 for pile in [
                     &mut self.hand,
                     &mut self.draw,
@@ -2419,7 +2420,7 @@ impl Combat {
                 ] {
                     for c in pile.iter_mut() {
                         if c.def.id == "burn" {
-                            c.upgrade();
+                            c.upgrade_forced();
                         }
                     }
                 }
@@ -5619,7 +5620,7 @@ impl Combat {
                         }
                         let mut inst = CardInstance::new(card_def);
                         if upgraded {
-                            inst.upgrade();
+                            inst.upgrade_forced();
                         }
                         self.fix_new_card(&mut inst);
                         self.hand.push(inst);
@@ -11563,6 +11564,53 @@ mod branch_assertions {
         assert!(
             c.hand.iter().any(|x| x.def.id == "wound" && !x.upgraded),
             "伤口不可升级,保持原样"
+        );
+    }
+
+    /// 军备(以及一切"选一张升级"的屏)都不该把诅咒/状态牌列进候选:反编译
+    /// CardInstance::canUpgrade()(refs/sts_lightspeed/src/combat/CardInstance.cpp:55-59)
+    /// 与 Card::canUpgrade()(同仓 src/game/Card.cpp:67-80)对 CURSE/STATUS 直接 false.
+    /// 灼伤虽然在语料里带一条升级数据(magic 2->4),但只有六火幽魂的炼狱走
+    /// UpgradePlayerBurns 那条专路能升它.原先 can_upgrade 只认"有没有升级数据",
+    /// 于是军备会把灼伤升成 4 点,act3 seed 197 那一场由此整段错开.
+    #[test]
+    fn armaments_never_offers_a_curse_or_status_to_upgrade() {
+        // 灼伤带升级数据,但类型是状态 -> 不进候选;炼狱的专路照样能升它
+        let mut burn = card("burn");
+        assert!(burn.def.upgradable(), "灼伤确实带一条升级数据");
+        assert!(!burn.can_upgrade(), "状态牌不列进升级候选");
+        assert!(burn.upgrade_forced(), "炼狱那条专路照样能升它");
+        assert!(burn.upgraded);
+
+        // 手里只剩灼伤"能升"时,军备不开选牌窗口(等同没有可升级的牌)
+        let mut c = board(&["armaments", "strike"], &[], 0);
+        let mut up_strike = card("strike");
+        up_strike.upgraded = true;
+        c.hand = vec![card("armaments"), card("burn"), up_strike];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "只剩灼伤可升时不开屏");
+        assert!(
+            !c.hand.iter().find(|x| x.def.id == "burn").unwrap().upgraded,
+            "灼伤没被升"
+        );
+
+        // 有真能升级的牌时,候选里只该有它(单候选时本作会直接结算,两条路都认)
+        let mut c = board(&["armaments", "strike"], &[], 0);
+        c.hand = vec![card("armaments"), card("burn"), card("strike")];
+        c.play_card(0, None).unwrap();
+        if let Some(ch) = c.choice.as_ref() {
+            let cands = c.candidates_of(ch);
+            assert_eq!(cands.len(), 1, "灼伤不算候选");
+            assert_eq!(cands[0].1.def.id, "strike");
+        } else {
+            assert!(
+                c.hand.iter().find(|x| x.def.id == "strike").unwrap().upgraded,
+                "单候选直接升打击"
+            );
+        }
+        assert!(
+            !c.hand.iter().find(|x| x.def.id == "burn").unwrap().upgraded,
+            "灼伤始终没被升"
         );
     }
 

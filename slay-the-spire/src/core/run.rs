@@ -872,7 +872,8 @@ fn parse_cards(text: &str) -> Result<Vec<CardInstance>, String> {
             .ok_or_else(|| format!("存档里的卡 {id} 不认识"))?;
         let mut inst = CardInstance::new(def);
         for _ in 0..plus {
-            inst.upgrade();
+            // 存档里记的等级要照原样恢复(灼伤这类状态牌也走这条,不受 can_upgrade 闸门限制)
+            inst.upgrade_forced();
         }
         inst.bonus = bonus;
         out.push(inst);
@@ -4724,7 +4725,8 @@ impl Run {
         let (def, plus) = self.note_stored_card();
         let mut inst = CardInstance::new(def);
         for _ in 0..plus {
-            inst.upgrade();
+            // 便条里存的牌照原等级取回(状态牌也照原样)
+            inst.upgrade_forced();
         }
         let egg = match def.kind {
             CardType::Attack => self.has_relic_fx(|fx| fx.egg_attack_upgrade),

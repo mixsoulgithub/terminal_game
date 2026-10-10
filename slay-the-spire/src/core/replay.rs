@@ -1351,6 +1351,23 @@ mod e2e {
     ///     遗物之前;断言 = run.rs matryoshka_from_a_chest_does_not_double_that_chest。
     ///
     /// 收尾后 CASES(42 颗)/ SWEEP(40 颗)全部逐字节对齐,0 处差异。
+    ///
+    /// 本轮(A0 各幕扩种子)把这张表从 42 颗扩到 52 颗:新增
+    /// 135/156/179/193/202/236/255/286/295/305 十颗,按"新增特征覆盖最多、同覆盖优先
+    /// 对齐"从 1..400 里挑(补上此前没量到的事件与遭遇);其余部分沿用原 42 颗。
+    /// 新种子逐字段对拍后:
+    ///   全对齐(0 处):135 156 179 202 236 255 295 305
+    ///   seed 193: 第 27 步起 15 步 —— 玩家身上有 The Boot 时,本作把"未被格挡的 1..4 点
+    ///     攻击伤害抬到 5"(反编译 refs/sts_lightspeed/src/combat/Monster.cpp:339-341 的
+    ///     attackedUnblockedHelper),参考实现 refs/slay-the-cli/src/content/relics/common.ts:436-441
+    ///     是空实现不抬;五只小史莱姆那一场本作清得更快、少挨 5 血,后面整段错开
+    ///     | (b) 参考空实现 | combat.rs boot_boosts_unblocked_damage_after_reductions
+    ///   seed 286: 第 28 步起 18 步 —— 玩家有 Lizard Tail 时,本作靠它"要死时回 50% 上限"
+    ///     活过两只真菌兽那一场(46 步),参考的 LIZARD_TAIL 是 hooks:{} 空实现
+    ///     (refs/slay-the-cli/src/content/relics/rare.ts:226-231),没有这条保命钩子当场阵亡
+    ///     (30 步) | (b) 参考缺口(与上面仙女瓶同一条"参考侧没有 wouldDie 钩子")|
+    ///     combat.rs lizard_tail_saves_you_once_per_combat
+    /// 全表合计差异 50 处(193 的 23 + 286 的 27)。SWEEP(seed 1..40)不变,仍是 0 处。
     const CASES: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1394,6 +1411,16 @@ mod e2e {
     Expected { seed: 40, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 42, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 54, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 135, lines: 32, ref_lines: 32, aligned: 32, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 156, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 179, lines: 37, ref_lines: 37, aligned: 37, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 193, lines: 42, ref_lines: 32, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41], diff_digest: 0xbcd92332bf1034ed },
+    Expected { seed: 202, lines: 25, ref_lines: 25, aligned: 25, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 236, lines: 24, ref_lines: 24, aligned: 24, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 255, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 286, lines: 46, ref_lines: 30, aligned: 28, diff_steps: &[28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], diff_digest: 0xad07130df23e0396 },
+    Expected { seed: 295, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 305, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     /// 扫荡集合:seed 1..40 的逐字段对拍登记表(与 tools/e2e_diff.ts 的归一化一致,
@@ -1977,19 +2004,62 @@ mod e2e {
     ///   seed 16 的笔尖计数为何少一张(参考把哪一张攻击漏计了)本轮没定死;本作侧的翻倍
     ///   路径已由 pen_nib_doubles_every_attack_damage_effect 钉住,sandbox 的卡片场景也
     ///   逐字段一致,所以不改本作.
+    ///
+    /// 本轮(A0 各幕扩种子)把这张表从 12 颗扩到 40 颗:保留原 12 颗,按"新增特征覆盖最多、
+    /// 同覆盖优先对齐"从 1..400 里再挑 28 颗(只挑走到第二幕 Boss 奖励屏的),补上此前
+    /// 没量到的事件/精英/遭遇.新种子逐字段对拍后:
+    ///   全对齐(0 处):1 4 5 6 8 9 10 11 12 15 17 18 19 24 25 27 28 29 30 32 33 35 36
+    ///     37 39 40 41 43 79 141 166 187 253 323 330(原 12 颗全部保持原状)
+    ///   seed 92: 第 18 步起 3 步 —— 手里有"幽影"时,本作重放策略的来袭估算没把玩家侧
+    ///     无形(Intangible)算进去(参考那一回合的 in 是 2、本作算 10),同一回合选牌分家,
+    ///     那一场结尾差 2 血 | (a) 本作策略侧新缺口(本轮定位到,未修;见 report)|
+    ///     replay.rs 的 incoming 走 combat.rs predicted_damage→enemy_attack_damage,
+    ///     那里没折玩家的无形,而实际结算 combat.rs hit_player_kind:3717 折了
+    ///   seed 110: 第 23 步起 21 步 —— 被选中者(Chosen)那一场:两边的抽牌堆顺序在此分家
+    ///     (手牌内容从这一步起换成"少一张狂怒多一张痛苦"),之后整段错开 | (b)/(c) 参考侧
+    ///     随机流错位 | 复跑 `bun tools/e2e_diff.ts 110 --script tools/golden/e2e/act2.script`
+    /// 全表合计差异 66 处(原 9 处:3 的 5 + 13 的 1 + 16 的 3;新 57 处:92 的 3 + 110 的 54).
     const ACT2_CASES: &[Expected] = &[
+    Expected { seed: 1, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
     Expected { seed: 4, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 5, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 8, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 9, lines: 55, ref_lines: 55, aligned: 55, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 10, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33], diff_digest: 0x1f0000150cee864d },
     Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 41, diff_steps: &[41, 42, 43], diff_digest: 0x613321b605962808 },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 24, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 28, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 29, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 30, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 32, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 35, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 36, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 37, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 39, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 40, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 41, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 43, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 79, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 18, diff_steps: &[18, 19, 20], diff_digest: 0x3b312b931327483a },
+    Expected { seed: 110, lines: 44, ref_lines: 44, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0x16ed143fb3d0dd1c },
+    Expected { seed: 141, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 166, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 187, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 253, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 323, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 330, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     /// 第二幕对拍:同一颗种子 + act2.script,逐行比对(两侧都转小写).
@@ -2142,12 +2212,80 @@ mod e2e {
     ///   (参考既没预置、也不按"已行动过"重掷第一招);Mind Bloom 的"打一个 Boss"选项
     ///   (参考开战时抛 unknown monster DONU_AND_DECA);暗灵半死复活的历史归属
     ///   (参考侧 ENGINE-GAP,见 ASC3 注释的 (c)2).
+    ///
+    /// 本轮(A0 各幕扩种子)把这张表从 7 颗扩到 40 颗:原 7 颗全保留,按"新增特征覆盖最多、
+    /// 同覆盖优先对齐"从 1..400 里再挑 33 颗(排掉参考会崩的 13/134/238/261/373 五颗,见文末 (d)).
+    /// 新种子逐字段对拍后,分叉几乎全部落在下面三条参考侧已知成因上(少数几条单独列):
+    ///   (b)1 颚虫三连的开局预置:反编译 MonsterGroup.cpp:274-290 的 JAW_WORM_HORDE 给三只
+    ///     各 STRENGTH(asc<2?3:asc<17?4:5) + addBlock(asc<2?5:asc<17?6:9),并写一次
+    ///     moveHistory[0](于是 firstTurn 为假、不再锁死"咬一口"),本作照此实现(enemies.rs
+    ///     的 JAW_WORM_HORDE_PRESETS + combat.rs 的预置),参考实现只有遭遇表
+    ///     (refs/slay-the-cli/src/content/acts.ts:120 的 JAW_WORM_HORDE)没有这条预置,三只
+    ///     都是裸颚虫、首招锁死 Chomp → 整场对不上 | 依据同上 | 断言 combat.rs
+    ///     jaw_worm_horde_starts_buffed_and_rolls_its_first_move
+    ///     实例:seed 27(步 30 起 11 处)、seed 43(步 14 起 6 处)
+    ///   (c)2 半死暗灵的掷点归属:见 ASC3 注释的 (c)2(参考自述 ENGINE-GAP,把半死那只从
+    ///     怪物阶段整只跳过、掷点挪到回合末).实例:seed 39(步 44 起 2 处)、40(42 起 2)、
+    ///     61(5 起 20)、103(23 起 70)、155(2 起 78)、187(41 起 2)、219(20 起 14)、227(28 起 7)
+    ///   (b)2 靴子 The Boot:挡后剩的 1..4 点攻击伤害本作抬到 5、参考空实现不抬.实例:
+    ///     seed 69(步 30 起 21 处)、seed 284(步 29 起 11 处,原表那条).
+    /// 其余各一条:
+    ///   seed 131 | 26 | 26 | 休整后 Dream Catcher 给的那屏奖励,本作标的 source 是 elite、
+    ///     参考是 monster(条目本身逐字节一致,就标签不同) | (b) 参考侧表示差 |
+    ///     run.rs 的 dream_catcher 奖励来源标记
+    ///   seed 137 | 27 | 27 | Secret Portal 事件把地图行挪到 Boss 那层:本作 s.row 变 15、
+    ///     参考仍是 10 | (b) 参考侧表示差(行标未随传送更新)|
+    ///     src/core/events.rs 的 secret_portal
+    ///   seed 197 | 32 | 32 | 瞬变体那一场:本作来袭比参考多 3(瞬变体 Shifting 的"临时力量
+    ///     回补时点"两边不同;本轮把军备升诅咒/状态牌那条真 bug 修掉后,这颗种子的前缀
+    ///     已从 17 前移到 32) | (b)/(c) 参考侧口径差 |
+    ///     combat.rs 的 Shifting + refs/slay-the-cli/src/content/powers/monstersAct34.ts
+    /// 全表合计差异 257 处(原 284 一颗的 11 处 + 新 246 处).
+    ///
+    /// (d) 参考侧跑不动的种子:13/134/238/261/373 —— Mind Bloom 的"我是战争"选项要开
+    ///   一个 Boss 战,参考的怪物表里没有 DONU_AND_DECA 这个 id,开战时直接
+    ///   `throw new Error("unknown monster DONU_AND_DECA")`(setup.ts:110),整局崩掉、
+    ///   落不了 fixture,故不进这张表.工具侧已给 tools/e2e_diff.ts 加 --seed-timeout(默认
+    ///   单侧 60s),这一颗是快崩、不是卡死,超时用来兜其它卡死的种子.
     const ACT3_CASES: &[Expected] = &[
+    Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 27, lines: 43, ref_lines: 43, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42], diff_digest: 0x44590893267a563b },
     Expected { seed: 29, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 39, lines: 46, ref_lines: 46, aligned: 44, diff_steps: &[44, 45], diff_digest: 0x7025df3e32497260 },
+    Expected { seed: 40, lines: 44, ref_lines: 44, aligned: 42, diff_steps: &[42, 43], diff_digest: 0x2be2561f745e8a44 },
+    Expected { seed: 43, lines: 43, ref_lines: 43, aligned: 14, diff_steps: &[14, 15, 16, 32, 33, 34], diff_digest: 0x33b5c64c4b81f48b },
+    Expected { seed: 57, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 61, lines: 45, ref_lines: 45, aligned: 5, diff_steps: &[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 43, 44], diff_digest: 0xc92a4c3f495d2166 },
+    Expected { seed: 69, lines: 45, ref_lines: 45, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x43120d70519dc5f },
+    Expected { seed: 72, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 101, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 103, lines: 48, ref_lines: 48, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x2547fa8edede471d },
+    Expected { seed: 105, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 121, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 131, lines: 45, ref_lines: 45, aligned: 26, diff_steps: &[26], diff_digest: 0x2b20ebaa4b5c0814 },
+    Expected { seed: 137, lines: 30, ref_lines: 30, aligned: 27, diff_steps: &[27, 28, 29], diff_digest: 0x16910d43ca5522a2 },
+    Expected { seed: 141, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 155, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xa9e166c3adbc89ac },
+    Expected { seed: 185, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 186, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 187, lines: 43, ref_lines: 43, aligned: 41, diff_steps: &[41, 42], diff_digest: 0x662f9e084650a91a },
+    Expected { seed: 197, lines: 45, ref_lines: 45, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xe63100661d33042c },
+    Expected { seed: 219, lines: 40, ref_lines: 40, aligned: 20, diff_steps: &[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33], diff_digest: 0x3f7fc7c95ddeeb39 },
+    Expected { seed: 227, lines: 52, ref_lines: 52, aligned: 28, diff_steps: &[28, 29, 30, 31, 32, 33, 34], diff_digest: 0xa667cd9a371f5b9f },
+    Expected { seed: 230, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 235, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 237, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 244, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 252, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 263, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 284, lines: 44, ref_lines: 44, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39], diff_digest: 0x6d06df7ccc4c7f06 },
+    Expected { seed: 296, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 328, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 337, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 352, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 368, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 393, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 494, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 510, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];

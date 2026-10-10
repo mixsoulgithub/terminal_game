@@ -7,6 +7,8 @@
 //   bun tools/e2e_diff.ts --tables --jobs 6      # 九张表一次跑完(种子并发),给 check_all 用
 //                                                #   --only-tables a20,act4 只跑其中几张
 //   bun tools/e2e_diff.ts --tables --json        # 上者再加机器可读的 E2E_SUMMARY(每表一行)
+//   bun tools/e2e_diff.ts 13 --script tools/golden/e2e/act3.script --seed-timeout 30
+//                                                # 单颗种子单侧跑超 30s 就 SIGKILL 当"跑不通"(默认 60s,0=不限)
 //
 // 归一化:参考实现的 id 是大写,本作是小写;这里统一小写,并补一张别名表
 // (史莱姆的 S/M/L 与铁甲战士的两张基础牌).归一化只改"名字",不改数值.
@@ -27,6 +29,8 @@ const DEFAULT_SCRIPT = join(FIXTURE_DIR, "act1.script");
 let SCRIPT = DEFAULT_SCRIPT;
 /** --raw-ref:参考侧不做补掷(直接比原样的参考实现) */
 let RAW_REF = false;
+/** --seed-timeout <秒>:单颗种子本作/参考任一侧跑超这个时间就 SIGKILL 当"跑不通"(默认 60) */
+let SEED_TIMEOUT_MS = 60_000;
 function fixturePath(seed: string): string {
   const stem = SCRIPT.split("/").pop()!.replace(/\.script$/, "");
   const name = stem === "act1" ? `seed${seed}.ref.jsonl` : `seed${seed}.${stem}.ref.jsonl`;
@@ -112,24 +116,37 @@ function show(v: unknown): string {
 
 type Line = Record<string, any>;
 
-/** 跑一个子进程并收全 stdout/stderr(逐颗串行与 --tables 并发都走这里) */
-function spawnCollect(cmd: string[]): Promise<{ status: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn(cmd[0]!, cmd.slice(1), { env: { ...process.env, NO_COLOR: "1" } });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (d: string) => { stdout += d; });
-    child.stderr.on("data", (d: string) => { stderr += d; });
-    child.on("error", (e) => resolve({ status: -1, stdout, stderr: `${stderr}${e.message}` }));
-    child.on("close", (code) => resolve({ status: code ?? -1, stdout, stderr }));
-  });
+/** 跑一个子进程并收全 stdout/stderr(逐颗串行与 --tables 并发都走这里).
+ *  timeoutMs > 0 时到点 SIGKILL 并返回 status -2:单颗种子卡死/参考侧跑飞时,
+ *  不让它把整批拖住(原因写进 stderr,由调用方当成"跑不通"登记). */
+function spawnCollect(cmd: string[], timeoutMs = 0): Promise<{ status: number; stdout: string; stderr: string }> {
+  const { promise, resolve } = Promise.withResolvers<{ status: number; stdout: string; stderr: string }>();
+  const child = spawn(cmd[0]!, cmd.slice(1), { env: { ...process.env, NO_COLOR: "1" } });
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  const timer = timeoutMs > 0
+    ? setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, timeoutMs)
+    : undefined;
+  const done = (status: number): void => {
+    clearTimeout(timer);
+    resolve({ status, stdout, stderr: timedOut ? `${stderr}\n(timeout ${timeoutMs}ms, killed)`.trim() : stderr });
+  };
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (d: string) => { stdout += d; });
+  child.stderr.on("data", (d: string) => { stderr += d; });
+  child.on("error", (e) => { stderr += e.message; done(-1); });
+  child.on("close", (code) => done(timedOut ? -2 : (code ?? -1)));
+  return promise;
 }
 
 async function runOurs(seed: string, script: string): Promise<{ ok: boolean; lines: Line[]; err: string }> {
   const bin = join(ROOT, "target", "debug", "spire");
-  const r = await spawnCollect([bin, "--replay", seed, "--script", script]);
+  const r = await spawnCollect([bin, "--replay", seed, "--script", script], SEED_TIMEOUT_MS);
   if (r.status !== 0) return { ok: false, lines: [], err: r.stderr.trim() };
   return { ok: true, lines: parseJsonl(r.stdout), err: "" };
 }
@@ -145,7 +162,7 @@ async function runReference(seed: string, script: string): Promise<{ ok: boolean
   // 默认让参考侧按原版补掷;--raw-ref 直接比原样的参考实现(不补偿)
   const args = [join(HERE, "replay_ref.ts"), seed, script];
   if (RAW_REF) args.push("--raw-ref");
-  const r = await spawnCollect(["bun", ...args]);
+  const r = await spawnCollect(["bun", ...args], SEED_TIMEOUT_MS);
   if (r.status !== 0) return { ok: false, lines: [], err: r.stderr.trim().split("\n").slice(0, 6).join("\n") };
   return { ok: true, lines: parseJsonl(r.stdout), err: "" };
 }
@@ -353,6 +370,12 @@ if (import.meta.main) {
       process.exit(2);
     }
     SCRIPT = p.startsWith("/") ? p : join(ROOT, p);
+  }
+  // --seed-timeout <秒>:单侧跑超就杀(0 = 不限时);默认 60 秒
+  const sti = argv.indexOf("--seed-timeout");
+  if (sti !== -1) {
+    const secs = Number(argv[sti + 1]);
+    SEED_TIMEOUT_MS = Number.isFinite(secs) && secs > 0 ? secs * 1000 : 0;
   }
   if (tablesMode) {
     // 九张表 = fixture 目录下的全部 *.script(表名就是脚本干名);--only-tables a,b 只跑其中几张
