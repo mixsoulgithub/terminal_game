@@ -251,18 +251,15 @@ fn render_floor(
                 _ => buf.area.width.saturating_sub(x),
             };
             let name = run.boss_name();
-            let block_h = COLS as u16 * ROW_H - 1;
             let w = ((display_width(name) + 2) as u16).min(room);
-            if w >= 3 && y0 + block_h <= buf.area.height {
+            if w >= 3 {
                 let mut style = theme::kind_chip(NodeKind::Boss);
                 if is_sel {
                     style = style.add_modifier(Modifier::SLOW_BLINK);
                 }
-                for yy in y0..y0 + block_h {
-                    put_padded(buf, x, yy, "", w as usize, style);
-                }
+                // 只有一行:名字左右各留一格,底色也就铺满这一行
                 let label = truncate(name, (w - 2) as usize);
-                put(buf, x + 1, y, &label, style);
+                put_padded(buf, x, y, &format!(" {label} "), w as usize, style);
             } else {
                 // 右边放不下整块就退回一行红字
                 put(
