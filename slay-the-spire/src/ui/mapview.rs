@@ -111,27 +111,67 @@ fn chosen_future(app: &App) -> Option<Vec<bool>> {
     Some(app.run.map.forward_reachable(chosen))
 }
 
-/// 地图上的房间记号。精英与休息:色底铺三格(左右各多一格);
-/// 燃烧精英在右边多一个 *(也就是 E*)
-fn map_glyph_text(kind: NodeKind, burning: bool) -> (&'static str, u16) {
-    match kind {
-        NodeKind::Rest => (" R ", 1),
-        NodeKind::Shop => ("$", 0),
-        NodeKind::Elite if burning => (" E*", 1),
-        NodeKind::Elite => (" E ", 1),
-        NodeKind::Monster => ("e", 0),
-        NodeKind::Event => ("?", 0),
-        NodeKind::Treasure => ("T", 0),
-        NodeKind::Boss => ("B", 0),
-    }
-}
-
-/// 房间的配色。精英(含燃烧精英)统一红底;其它照类型
-fn map_glyph_style(kind: NodeKind) -> Style {
-    if kind == NodeKind::Elite {
-        theme::kind_style(NodeKind::Elite)
-    } else {
-        theme::kind_style(kind)
+/// 没选中时是单个字符(燃烧精英多一个 *);选中时左右各铺一格,
+/// 好让色块正好铺满三格
+fn map_glyph(kind: NodeKind, burning: bool, wide: bool) -> &'static str {
+    let k = if burning { NodeKind::Elite } else { kind };
+    match k {
+        NodeKind::Monster => {
+            if wide {
+                " e "
+            } else {
+                "e"
+            }
+        }
+        NodeKind::Elite if burning => {
+            if wide {
+                " E*"
+            } else {
+                "E*"
+            }
+        }
+        NodeKind::Elite => {
+            if wide {
+                " E "
+            } else {
+                "E"
+            }
+        }
+        NodeKind::Event => {
+            if wide {
+                " ? "
+            } else {
+                "?"
+            }
+        }
+        NodeKind::Rest => {
+            if wide {
+                " R "
+            } else {
+                "R"
+            }
+        }
+        NodeKind::Shop => {
+            if wide {
+                " $ "
+            } else {
+                "$"
+            }
+        }
+        NodeKind::Treasure => {
+            if wide {
+                " T "
+            } else {
+                "T"
+            }
+        }
+        NodeKind::Boss => {
+            if wide {
+                " B "
+            } else {
+                "B"
+            }
+        }
     }
 }
 
@@ -211,16 +251,18 @@ fn render_floor(
                 }
                 _ => buf.area.width.saturating_sub(x),
             };
-            let style = if on_path {
-                theme::kind_style(NodeKind::Boss)
-            } else {
-                theme::dim()
-            };
             let name = run.boss_name();
-            let label = if is_sel {
-                format!("[{name}]")
+            // 选中时名字左右各留一格,好让色块铺满;没选中就只有字色
+            let (style, label) = if is_sel {
+                (
+                    theme::kind_chip(NodeKind::Boss)
+                        .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+                    format!(" {name} "),
+                )
+            } else if on_path {
+                (theme::kind_style(NodeKind::Boss), name.to_string())
             } else {
-                name.to_string()
+                (theme::dim(), name.to_string())
             };
             if room as usize >= crate::ui::display_width(&label) {
                 put(buf, x, y, &truncate(&label, room as usize), style);
@@ -230,79 +272,58 @@ fn render_floor(
             }
             continue;
         }
-        // 记号:精英红底铺三格(左右各多一格),燃烧精英右边多一个 *;休息/商店是 emoji
-        let (glyph, indent) = map_glyph_text(node.kind, node.burning);
-        let kind_style = map_glyph_style(node.kind);
+        // 只有选中的房间有色块,而且左右各铺一格(map_glyph 的宽字形);
+        // 其余一律只有字色:走过的是绿字,选中的未来加粗,其它岔路闪,走不到压暗
+        let burning = node.burning;
+        let k = if burning { NodeKind::Elite } else { node.kind };
         let visited = run.path.contains(i);
-        // 选中的房间用 [ ] 框出来:符号仍然落在本列,方括号借用左右各一格
-        let sel_text = if indent > 0 {
-            // 本来就铺了三格的(精英/休息),选中时不再往两边撑
-            format!("[{}]", glyph.trim())
-        } else {
-            format!("[{glyph}]")
-        };
-        let (px, text, style) = if is_sel && x > indent {
+        let plain = map_glyph(k, burning, false).to_string();
+        let (px, text, style) = if is_sel && x > 0 {
             (
-                if indent > 0 {
-                    x.saturating_sub(1)
-                } else {
-                    x - 1 - indent
-                },
-                sel_text,
-                // 选中保留自己的色底,只把前景提亮 + 加粗闪烁
-                kind_style
+                x - 1,
+                map_glyph(k, burning, true).to_string(),
+                theme::kind_chip(k).add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+            )
+        } else if is_sel {
+            // 最左那一列借不到左边的格子:不铺色块,只把字色提亮
+            (
+                x,
+                plain.clone(),
+                theme::kind_style(k)
                     .fg(theme::SEL_FG)
                     .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
             )
         } else if visited {
-            // 走过的房间(含现在这间)统一绿底
             (
-                x.saturating_sub(indent),
-                glyph.to_string(),
-                Style::default()
-                    .fg(theme::BG)
-                    .bg(theme::GOOD)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else if is_sel {
-            // 最左那一列没法往左借格子,只提亮前景
-            (
-                x.saturating_sub(indent),
-                glyph.to_string(),
-                kind_style
-                    .fg(theme::SEL_FG)
-                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+                x,
+                plain.clone(),
+                theme::fg(theme::GOOD).add_modifier(Modifier::BOLD),
             )
         } else if on_path {
-            // 选了它之后能走到的房间
             (
-                x.saturating_sub(indent),
-                glyph.to_string(),
-                kind_style.add_modifier(Modifier::BOLD),
+                x,
+                plain.clone(),
+                theme::kind_style(k).add_modifier(Modifier::BOLD),
             )
         } else if is_candidate {
-            // 别的岔路:现在就能选,跟着一起闪
             (
-                x.saturating_sub(indent),
-                glyph.to_string(),
-                kind_style.add_modifier(Modifier::SLOW_BLINK),
+                x,
+                plain.clone(),
+                theme::kind_style(k).add_modifier(Modifier::SLOW_BLINK),
             )
         } else {
-            // 现在走不到的压成暗色块:形状与其他房间一致,只是暗
-            (
-                x.saturating_sub(indent),
-                glyph.to_string(),
-                Style::default().fg(theme::DIM).bg(theme::CHIP_OFF),
-            )
+            (x, plain, theme::dim())
         };
         put(buf, px, y, &text, style);
     }
 }
 
-/// 连线的样式:选中那条路上的连线比房间暗一点(只是微微亮),其余压暗
+/// 连线的样式:选中那条路上的连线跟着亮(和房间同色),其余压暗
 fn edge_style(on_path: bool) -> Style {
     if on_path {
-        theme::fg(theme::INFO)
+        Style::default()
+            .fg(theme::SEL_FG)
+            .add_modifier(Modifier::BOLD)
     } else {
         theme::dim()
     }

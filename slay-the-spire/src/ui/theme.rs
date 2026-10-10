@@ -20,10 +20,13 @@ pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
 pub const WARN: Color = Color::Rgb(240, 170, 90);
-/// 普通怪的色底:低饱和的蓝灰,和精英/休息的红底区分
+/// 选中色块用到的几个底色
 pub const MONSTER_BG: Color = Color::Rgb(58, 66, 88);
-/// 现在走不到的房间:同样是色块,只是压成暗底
-pub const CHIP_OFF: Color = Color::Rgb(30, 34, 46);
+pub const ELITE_BG: Color = Color::Rgb(150, 30, 42);
+pub const REST_BG: Color = Color::Rgb(236, 96, 108);
+pub const BOSS_BG: Color = Color::Rgb(255, 86, 104);
+/// 精英与 Boss 的字色(比休息那只血红更亮一点)
+pub const ELITE_FG: Color = Color::Rgb(255, 86, 104);
 
 pub fn fg(c: Color) -> Style {
     Style::default().fg(c)
@@ -37,28 +40,38 @@ pub fn selected() -> Style {
     Style::default().fg(SEL_FG).bg(SEL_BG).add_modifier(Modifier::BOLD)
 }
 
-/// 地图上各类房间的颜色与底色:
-/// E 红字 = 普通怪,E 红底 = 精英,R 红底(更亮)= 休息,? 黄 = 未知
-/// 地图记号与图例共用的配色:每个类型都给一个色底,前景取和它拉得开对比的那个,
-/// 这样地图上的记号与右边图例是同一套色块,选中时也保留自己的色底(只换前景)
+/// 地图上各类房间的前景色:没选中的房间只有字色,没有底色
 pub fn kind_style(kind: NodeKind) -> Style {
+    match kind {
+        NodeKind::Monster => Style::default().fg(FG),
+        NodeKind::Elite => Style::default().fg(ELITE_FG).add_modifier(Modifier::BOLD),
+        NodeKind::Event => Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
+        NodeKind::Rest => Style::default().fg(BLOOD).add_modifier(Modifier::BOLD),
+        NodeKind::Shop => Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+        NodeKind::Treasure => Style::default()
+            .fg(Color::Rgb(246, 226, 120))
+            .add_modifier(Modifier::BOLD),
+        NodeKind::Boss => Style::default().fg(ELITE_FG).add_modifier(Modifier::BOLD),
+    }
+}
+
+/// 选中时的色块:按类型给底色,前景换成和它对比得开的那个;
+/// 底色要左右各多铺一格,所以地图上选中时用三分宽的字形
+pub fn kind_chip(kind: NodeKind) -> Style {
     match kind {
         NodeKind::Monster => Style::default().fg(FG).bg(MONSTER_BG),
         NodeKind::Elite => Style::default()
             .fg(SEL_FG)
-            .bg(Color::Rgb(150, 30, 42))
+            .bg(ELITE_BG)
             .add_modifier(Modifier::BOLD),
         NodeKind::Event => Style::default().fg(BG).bg(YELLOW).add_modifier(Modifier::BOLD),
-        NodeKind::Rest => Style::default().fg(BG).bg(BLOOD).add_modifier(Modifier::BOLD),
+        NodeKind::Rest => Style::default().fg(BG).bg(REST_BG).add_modifier(Modifier::BOLD),
         NodeKind::Shop => Style::default().fg(BG).bg(GOLD).add_modifier(Modifier::BOLD),
         NodeKind::Treasure => Style::default()
             .fg(BG)
             .bg(Color::Rgb(246, 226, 120))
             .add_modifier(Modifier::BOLD),
-        NodeKind::Boss => Style::default()
-            .fg(BG)
-            .bg(Color::Rgb(255, 86, 104))
-            .add_modifier(Modifier::BOLD),
+        NodeKind::Boss => Style::default().fg(BG).bg(BOSS_BG).add_modifier(Modifier::BOLD),
     }
 }
 
