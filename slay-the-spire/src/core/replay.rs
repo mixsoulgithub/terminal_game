@@ -1098,8 +1098,16 @@ fn run_raw(seed: u64, policy: &Policy) -> Result<Vec<String>, String> {
                     .reward
                     .as_ref()
                     .is_some_and(|r| r.next == Screen::Victory);
+                // 营火里梦中情网那一屏走的是 createCardReward(Room::REST)
+                // (反编译 GameContext.cpp:3706-3709),稀有度口径是非精英档
+                // (rollCardRarity 只在 ELITE/BOSS 上加,GameContext.cpp:1607-1629),
+                // 所以 source 按非精英报;沿用上一场的 combat_kind 会把打完精英
+                // 再去营火的这一屏错报成 elite.参考驱动同样是 monster
+                // (tools/replay_ref.ts 的 rest 分支).
                 let source = if is_boss {
                     "boss"
+                } else if run.reward.as_ref().is_some_and(|r| r.at_rest) {
+                    "monster"
                 } else {
                     combat_kind.as_str()
                 };
@@ -2244,17 +2252,28 @@ mod e2e {
     ///   (b)2 靴子 The Boot:挡后剩的 1..4 点攻击伤害本作抬到 5、参考空实现不抬.实例:
     ///     seed 69(步 30 起 21 处)、seed 284(步 29 起 11 处,原表那条).
     /// 其余各一条:
-    ///   seed 131 | 26 | 26 | 休整后 Dream Catcher 给的那屏奖励,本作标的 source 是 elite、
-    ///     参考是 monster(条目本身逐字节一致,就标签不同) | (b) 参考侧表示差 |
-    ///     run.rs 的 dream_catcher 奖励来源标记
     ///   seed 137 | 27 | 27 | Secret Portal 事件把地图行挪到 Boss 那层:本作 s.row 变 15、
-    ///     参考仍是 10 | (b) 参考侧表示差(行标未随传送更新)|
-    ///     src/core/events.rs 的 secret_portal
-    ///   seed 197 | 32 | 32 | 瞬变体那一场:本作来袭比参考多 3(瞬变体 Shifting 的"临时力量
-    ///     回补时点"两边不同;本轮把军备升诅咒/状态牌那条真 bug 修掉后,这颗种子的前缀
-    ///     已从 17 前移到 32) | (b)/(c) 参考侧口径差 |
-    ///     combat.rs 的 Shifting + refs/slay-the-cli/src/content/powers/monstersAct34.ts
-    /// 全表合计差异 257 处(原 284 一颗的 11 处 + 新 246 处).
+    ///     参考仍是 10 | (b) 参考侧表示差(参考的 Secret Portal 是空钩子,行标没随传送
+    ///     更新;反编译 GameContext.cpp:3200-3204 明写 `curMapNodeY = 14` 再
+    ///     transitionToMapNode)| 只登记,不改:本作与反编译一致 |
+    ///     断言 events.rs secret_portal_drops_you_at_the_boss(人站在 Boss 房、行号 15)
+    ///   seed 197 | 32 | 32 | 瞬变体那一场起(步 32 的 hp 差 30),紧接的颚虫三连那一场
+    ///     又叠上(步 35 再差 29).前者是瞬变体 Shifting 的"临时力量回补时点":本作按反编译
+    ///     (Monster.cpp:63-66 的回合末回补 + BattleContext.cpp:2152-2156 的调用点)在
+    ///     "怪物都行动完之后"把扣掉的力量整块补回,所以玩家荆棘每轮反伤那 3 点不累积;
+    ///     参考侧那份 SHACKLED 在怪物身上从不回补(逐 trace:它的力量是 -3/-6/-9/-12
+    ///     一路往下,差值正好等于累计的 3 点反伤,步 32 那场合计 3+6+9+12 = 30).
+    ///     后者是 (b)1 的颚虫三连预置(参考侧三只裸颚虫、首招锁 Chomp,本作三只都带
+    ///     3 力量/5 格挡且首招不锁) | (b)/(c) 参考侧口径差 | 断言 combat.rs 的
+    ///     transient_shifting_strength_is_temporary_and_returns_after_its_action
+    /// 本轮修掉的一条(表示层,已不再露头):seed 131 的休整后 Dream Catcher 奖励屏.
+    ///   它走的是 createCardReward(Room::REST)(反编译 GameContext.cpp:3706-3709),稀有度
+    ///   口径是非精英档(rollCardRarity 只在 ELITE/BOSS 上加,GameContext.cpp:1607-1629),
+    ///   导出却沿用了上一场的 combat_kind(打完精英再去营火就报成 elite).本轮给
+    ///   RewardState 加 at_rest 标记、导出按非精英报 monster,与参考驱动的写死值一致;
+    ///   奖励条目本身一直逐字节相同,所以这是纯表示差.断言 run.rs 的
+    ///   dream_catcher_rest_reward_is_marked_as_a_rest_reward.
+    /// 全表合计差异 256 处(上一轮 257 处,减掉 seed 131 那一条表示差).
     ///
     /// (d) 参考侧跑不动的种子:13/134/238/261/373 —— Mind Bloom 的"我是战争"选项要开
     ///   一个 Boss 战,参考的怪物表里没有 DONU_AND_DECA 这个 id,开战时直接
@@ -2277,7 +2296,7 @@ mod e2e {
     Expected { seed: 103, lines: 48, ref_lines: 48, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47], diff_digest: 0x2547fa8edede471d },
     Expected { seed: 105, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 121, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 131, lines: 45, ref_lines: 45, aligned: 26, diff_steps: &[26], diff_digest: 0x2b20ebaa4b5c0814 },
+    Expected { seed: 131, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 137, lines: 30, ref_lines: 30, aligned: 27, diff_steps: &[27, 28, 29], diff_digest: 0x16910d43ca5522a2 },
     Expected { seed: 141, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 155, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xa9e166c3adbc89ac },

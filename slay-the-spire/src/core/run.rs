@@ -381,6 +381,11 @@ pub struct RewardState {
     pub extra_gold_taken: bool,
     pub cards: Vec<CardInstance>,
     pub card_taken: bool,
+    /// 这屏卡牌奖励是营火里给的(梦中情网的"休息后再加一张").原版走的是
+    /// createCardReward(Room::REST)(反编译 GameContext.cpp:3706-3709),
+    /// 稀有度口径与普通房间相同(rollCardRarity 只在 ELITE/BOSS 上加档,
+    /// GameContext.cpp:1607-1629),导出的 source 要照"非精英"报 —— 见 replay.rs.
+    pub at_rest: bool,
     /// 排队的后续卡牌三选一(浑天仪的五组、祈祷轮的额外一组):
     /// 拿完(或跳过)当前这一组就把下一组顶上来
     pub queued: Vec<Vec<CardInstance>>,
@@ -408,6 +413,7 @@ impl RewardState {
             extra_gold_taken: true,
             cards: Vec::new(),
             card_taken: true,
+            at_rest: false,
             queued: Vec::new(),
             relic: None,
             relic_choices: Vec::new(),
@@ -2325,6 +2331,7 @@ impl Run {
             extra_gold_taken: true,
             cards,
             card_taken: false,
+            at_rest: false,
             queued,
             relic,
             relic_choices,
@@ -4651,6 +4658,7 @@ impl Run {
             extra_gold_taken: true,
             cards: cards_in,
             card_taken: false,
+            at_rest: false,
             queued: Vec::new(),
             relic: None,
             relic_choices: Vec::new(),
@@ -5833,6 +5841,8 @@ impl Run {
                 extra_gold_taken: true,
                 cards: first,
                 card_taken: false,
+                // 营火里那一组(梦中情网)要记下来:导出这一屏时 source 要按非精英报
+                at_rest,
                 queued: groups,
                 relic: None,
                 relic_choices: Vec::new(),
@@ -6630,6 +6640,42 @@ mod tests {
         let before = r.player.deck.len();
         r.reward_take().unwrap();
         assert_eq!(r.player.deck.len(), before + 1, "挑中的进牌组");
+    }
+
+    /// 营火里那屏卡牌奖励要打上 at_rest 标记(replay.rs 靠它把导出行的 source 报成
+    /// 非精英).依据:反编译 createCardReward(Room::REST)(GameContext.cpp:3706-3709)的
+    /// 稀有度口径与普通房间相同(rollCardRarity 只在 ELITE/BOSS 上加档,
+    /// GameContext.cpp:1607-1629),参考驱动那一屏同样报 monster
+    /// (tools/replay_ref.ts 的 rest 分支).战斗奖励不带这个标记,导出照旧按战斗房型报.
+    #[test]
+    fn dream_catcher_rest_reward_is_marked_as_a_rest_reward() {
+        let mut r = run(36);
+        r.debug_add_relic("dream_catcher").unwrap();
+        r.rest_heal();
+        assert!(
+            r.reward.as_ref().expect("休息后开三选一").at_rest,
+            "营火奖励要标记"
+        );
+
+        // 没梦中情网:休息不开这一屏
+        let mut plain = run(36);
+        plain.rest_heal();
+        assert!(plain.reward.is_none(), "没梦中情网就不开这一屏");
+
+        // 战斗奖励:不带这个标记
+        let mut c = run(37);
+        c.player.hp = 200;
+        c.player.max_hp = 200;
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").unwrap();
+        c.debug_start_combat(enc);
+        c.debug_win_battle();
+        for _ in 0..=Run::VICTORY_HOLD {
+            c.tick_win_hold();
+        }
+        assert!(
+            !c.reward.as_ref().expect("战斗奖励屏").at_rest,
+            "战斗奖励不是营火奖励"
+        );
     }
 
     /// 恩洛斯的礼物 ×3 稀有**不作用于营火房间**的奖励:反编译 rollCardRarity

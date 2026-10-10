@@ -3792,6 +3792,13 @@ mod tests {
         let r = apply("secret_portal", 33, 0);
         assert_eq!(r.screen, Screen::Combat);
         assert_eq!(r.pos, Some(r.map.boss), "人应该直接站在 Boss 房");
+        // 反编译 GameContext.cpp:3200-3204:选第一项就是 `curMapNodeY = 14;
+        // transitionToMapNode(0)` —— 站在本章第 15 行(1 起的行号)的 Boss 房.
+        // 本作 floor_reached 跟着跳到那一行,导出行的 `s.row` 因此是 15;
+        // 参考实现的 Secret Portal 是空钩子,它导出的 row 还停在第 10 行,于是
+        // act3 seed 137 只在 row 这一个表示字段上分叉(两边走的房间与状态一致).
+        assert_eq!(r.map.node(r.map.boss).floor, 15, "Boss 在第 15 行");
+        assert_eq!(r.floor_reached, 15, "行号跟着跳到 Boss 那一层");
     }
 
     #[test]

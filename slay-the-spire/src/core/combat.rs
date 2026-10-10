@@ -8183,6 +8183,77 @@ mod monster_tests {
         assert!(a7.iter().all(|h| (42..=46).contains(h)), "A7 血量: {a7:?}");
     }
 
+    /// 颚虫三连开局那条"招式历史"预置,以及它为什么让首招不再锁死 Chomp.
+    ///
+    /// 分支清单(全部落在"开怪"这一刻,与飞升无关):
+    ///   1. 反编译 MonsterGroup.cpp:274-290 的 JAW_WORM_HORDE:建三只 JAW_WORM,
+    ///      然后给每一只写一次 `moveHistory[0] = MMID::DARKLING_REGROW`
+    ///      (MonsterGroup.cpp:284-288,一个合法但颚虫永远掷不到的招,注释自述"是什么都行,
+    ///      只要不是 INVALID").`moveHistory[1]` 不动,还是 INVALID.
+    ///   2. `Monster::firstTurn()`(Monster.cpp:609-611)判的是
+    ///      `moveHistory[0] == MMID::INVALID`,所以被预置过的三只 firstTurn 为假;
+    ///      单只颚虫 moveHistory 空,firstTurn 为真 → 首招走
+    ///      MonsterSpecific.cpp:2451-2453 的"必定咬一口".
+    ///   3. 于是三连里每只的首招从第一回合起就走常规分布
+    ///      (MonsterSpecific.cpp:2456-2489):roll<25 时看 lastMove(CHOMP) —— 哨兵匹配不上,
+    ///      所以直接是 CHOMP;roll<55 时 lastTwoMoves(THRASH) 也不成立,给 THRASH;
+    ///      其余走 lastMove(BELLOW) 不成立的 else,给 BELLOW.三个分支都可能.
+    ///   4. 本作把这条预置记成 `acted_turns: 1, last_move: None`(enemies.rs 的
+    ///      JAW_WORM_HORDE_PRESETS):state.last/prev 都是 None,哨兵匹配不上任何一招,
+    ///      与参考侧等价;预置挂在**遭遇**上(MonsterGroup.cpp:274-290 是开怪按遭遇写的),
+    ///      不是 innate,所以单只颚虫身上没有.
+    ///   5. 与 PREBATTLE 钩子无关:颚虫在 `preBattleAction` 里没有分支
+    ///      (MonsterSpecific.cpp:131-300 那串 switch),它在 MonsterSpecific.cpp:52 出现
+    ///      是 initHp 的共用分支(掷血量);三连的力量/格挡/历史都在开怪循环里写,
+    ///      早于/独立于 PREBATTLE 那批状态(黑暗、觉醒者之类).
+    #[test]
+    fn jaw_worm_horde_move_history_preset_skips_the_locked_chomp() {
+        // 单只颚虫:没有预置,首招锁死咬一口,开局也没有力量/格挡
+        let solo_openers: std::collections::HashSet<&str> = (0..128u64)
+            .map(|s| move_name(&lock_seed("jaw_worm_solo", s), 0))
+            .collect();
+        assert_eq!(
+            solo_openers,
+            ["Chomp"].into_iter().collect(),
+            "单只颚虫的首招只有咬一口"
+        );
+        let solo = lock("jaw_worm_solo");
+        assert_eq!(solo.enemies[0].statuses.get(Status::Strength), 0, "预置不是 innate 的");
+        assert_eq!(solo.enemies[0].block, 0);
+        assert_eq!(solo.enemies[0].state.turns, 0, "没预置就不算行动过");
+        assert!(solo.enemies[0].state.last.is_none(), "没有招式历史");
+
+        // 三连:三只都记着"已经行动过一回合 + 一个匹配不到的上一招"
+        // (move_rolled 两边掷完首招都是 true,区别在预置先把 firstTurn 压成假,
+        //  于是 roll_first_move 里走的是常规分布那一支)
+        let horde = lock("jaw_worm_horde");
+        for (i, e) in horde.enemies.iter().enumerate() {
+            assert_eq!(e.state.turns, 1, "第 {i} 只算已经行动过一回合");
+            assert!(e.state.last.is_none(), "第 {i} 只的上一招是匹配不到的哨兵");
+            assert!(e.state.prev.is_none());
+        }
+
+        // 后果:三只的第一回合不再是清一色 Chomp,常规分布的三个分支都能掷出来
+        let openers: std::collections::HashSet<&str> = (0..128u64)
+            .map(|s| move_name(&lock_seed("jaw_worm_horde", s), 0))
+            .collect();
+        for m in ["Chomp", "Thrash", "Bellow"] {
+            assert!(openers.contains(m), "三连首招掷不出 {m}:{openers:?}");
+        }
+
+        // 那 3 点开局力量要真的进到伤害里(反编译 MonsterSpecific.cpp:850-852 的 11 点
+        // 咬一口 + STRENGTH 3;参考实现没有这条预置,首招咬一口是裸 11)
+        let mut checked = false;
+        for s in 0..128u64 {
+            let c = lock_seed("jaw_worm_horde", s);
+            if move_name(&c, 0) == "Chomp" {
+                assert_eq!(c.enemy_attack_damage(0, 11), 14, "咬一口 11 + 3 力量");
+                checked = true;
+            }
+        }
+        assert!(checked, "128 个种子里没掷出咬一口");
+    }
+
     #[test]
     fn shape_encounters_roll_the_lineup_per_seed() {
         // 同一种子两次进入,阵容要一致
@@ -8788,6 +8859,11 @@ mod power_tests {
 
     /// 打一场指定遭遇:80 血,牌组给几张打击/防御
     fn lock(id: &'static str) -> Combat {
+        lock_asc(id, 0)
+    }
+
+    /// 同上,但指定飞升等级(开局血量档、预置换档、招式换档都看它)
+    fn lock_asc(id: &'static str, asc: u32) -> Combat {
         let enc = crate::core::enemies::encounter_def(id)
             .unwrap_or_else(|| panic!("no such encounter {id}"));
         let deck = vec![
@@ -8812,7 +8888,7 @@ mod power_tests {
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
             curse_negate: 0,
-        asc: 0,
+            asc,
         };
         Combat::new(enc, setup, RngRegistry::new(11))
     }
@@ -9083,6 +9159,94 @@ mod power_tests {
         assert_eq!(c.player.hp, hp - 3, "直接掉血(灼烧/死亡律动)不被 Boot 抬");
     }
 
+    /// 靴子的 1..4 -> 5 在"真实怪 + 它自带的减伤/挨打机制"同时挂上时照样成立.
+    /// 反编译的落点是 Monster::attackedUnblockedHelper(Monster.cpp:339-342)的**最开头**,
+    /// 它排在无敌/镀甲/卷曲/飞行/延展/荆棘/睡眠/移形换影那串 else-if(Monster.cpp:348-396)
+    /// 之前 —— 那套机制一个都不改这一击的数值,只各自做副作用.本作把这步放在
+    /// hit_enemy_final 里(扣完格挡、过完飞行/慢速/无形之后,见 combat.rs 的
+    /// small_attack_boost_to),顺序与参考一致.
+    ///
+    /// 用真实怪把每种机制各枚举一遍(飞行/甲壳/卷曲在第一章、第二章的怪身上,
+    /// 无形是第三章精英复仇女神的),最后再把四种叠在一只第三章的怪身上看数值.
+    #[test]
+    fn boot_floor_holds_on_real_monsters_with_their_own_mechanics() {
+        let boot = relic_def_or_panic("the_boot");
+        let booted = |id: &'static str| {
+            let mut c = lock(id);
+            c.relics.push(boot);
+            c
+        };
+
+        // 无形(复仇女神,NEMESIS 的 special = Intangible):行动完自带两层;
+        // 4 点先被压成 1,再抬到 5
+        let mut c = booted("nemesis_solo");
+        c.player.hp = 999;
+        assert!(!c.enemies[0].statuses.has(Status::Intangible), "开场还不无形");
+        c.end_turn();
+        assert!(c.enemies[0].statuses.has(Status::Intangible), "行动完变无形");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "无形 + 靴子:压到 1 也得抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+
+        // 飞行(拜德,innate Flight 3):4 点先减半成 2,再抬到 5;飞行掉一层
+        let mut c = booted("three_byrds");
+        assert_eq!(c.enemies[0].statuses.get(Status::Flight), 3);
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "飞行 + 靴子:减半成 2 也得抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+        assert_eq!(c.enemies[0].statuses.get(Status::Flight), 2, "飞行掉一层");
+
+        // 甲壳(甲壳寄生虫,innate PlatedArmor 14,开局自带 14 格挡):
+        // 18 点先被格挡吃掉 14,剩 4 点照样抬到 5;掉血就掉一层甲
+        let mut c = booted("shelled_parasite_solo");
+        assert_eq!(c.enemies[0].statuses.get(Status::PlatedArmor), 14);
+        assert_eq!(c.enemies[0].block, 14, "开局自带 14 格挡");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 18), 5, "甲壳 + 靴子:格挡后剩 4 抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+        assert_eq!(c.enemies[0].block, 0, "14 点格挡照扣");
+        assert_eq!(c.enemies[0].statuses.get(Status::PlatedArmor), 13, "掉血就掉一层甲");
+
+        // 卷曲(虱子,spawn 时掷一个 Curl Up):这一击抬到 5,卷曲当场合上换格挡
+        let mut c = booted("two_louses");
+        let curl = c.enemies[0].statuses.get(Status::CurlUp);
+        assert!(curl > 0, "虱子开局带卷曲");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "卷曲 + 靴子");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+        assert_eq!(c.enemies[0].block, curl, "卷曲的格挡在挨打之后才补上");
+        assert_eq!(c.enemies[0].statuses.get(Status::CurlUp), 0, "一次性用完");
+
+        // 真实分叉那场:第三章的扭曲团块(Malleable 4 / Reactive 1,延展越打格挡越多).
+        // 它靠格挡把每一刀磨到 1..4,正是靴子"挡后剩 1..4 抬到 5"露头的场合
+        // (act3 seed 69/284 那两条差异就出在这只怪身上)
+        let mut c = booted("writhing_mass_solo");
+        assert_eq!(c.enemies[0].statuses.get(Status::Malleable), 4, "开局延展 4");
+        assert_eq!(c.damage_enemy(0, 10), 10, "第一刀:没格挡");
+        assert_eq!(c.enemies[0].block, 4, "延展补 4 格挡");
+        assert_eq!(c.damage_enemy(0, 10), 6, "第二刀:4 挡掉,剩 6 不抬");
+        assert_eq!(c.enemies[0].block, 5, "延展长到 5");
+        assert_eq!(c.damage_enemy(0, 10), 5, "第三刀:5 挡掉,正好剩 5 不抬");
+        assert_eq!(c.enemies[0].block, 6);
+        assert_eq!(c.damage_enemy(0, 10), 5, "第四刀:6 挡掉剩 4,抬到 5");
+        assert_eq!(c.enemies[0].block, 7);
+
+        // 四种机制同时挂在一只第三章的怪身上:这一击还是 5 点
+        // (靴子的抬升排在它们之后,不被它们摊薄)
+        let mut c = booted("nemesis_solo");
+        for (s, n) in [
+            (Status::Intangible, 2),
+            (Status::Flight, 3),
+            (Status::PlatedArmor, 9),
+            (Status::CurlUp, 8),
+        ] {
+            c.add_enemy_status(0, s, n);
+        }
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "四种机制叠一起也抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+    }
+
     /// Battle Trance 的"本回合不能再抽牌":反编译把闸门放在**唯一**的抽牌入口上
     /// —— refs/sts_lightspeed/src/combat/BattleContext.cpp:2439-2444 的
     /// `BattleContext::drawCards` 开头就是
@@ -9338,6 +9502,89 @@ mod power_tests {
             c.end_turn();
         }
         assert!(c.enemies[0].escaped, "倒计时走完就自己消失");
+        assert_eq!(c.phase, Phase::Won);
+    }
+
+    /// 瞬变体的移形换影(Shifting)是**临时**力量,以及它到底在哪一刻补回来.
+    ///
+    /// 分支清单:
+    ///   1. 开局 `buff<SHIFTING>()` + `buff<FADING>(asc17 ? 6 : 5)`
+    ///      (MonsterSpecific.cpp:172-174 的 preBattleAction).
+    ///   2. 挨打(攻击 `Monster::attacked` 与非攻击 `Monster::damage` 两条路都算)
+    ///      当下 `addDebuff<STRENGTH>(-damage)`,力量可以掉成负数;
+    ///      同时 `buff<SHACKLED>(damage)` 把这份损失记下来
+    ///      (Monster.cpp:393-395 与 453-455).
+    ///   3. 回补点在 `Monster::applyEndOfTurnTriggers`:`buff<STRENGTH>(SHACKLED)`
+    ///      + 清掉 SHACKLED(Monster.cpp:63-66).这个函数由
+    ///      `BattleContext::applyEndOfRoundPowers`(BattleContext.cpp:2132-2150)调用,
+    ///      后者的调用点在 `afterMonsterTurns`(BattleContext.cpp:2152-2156),
+    ///      也就是**怪物都行动完之后** —— 所以它这一轮的来袭仍然带着被削掉的力量,
+    ///      下一轮才恢复满力.
+    ///   4. 本作同构:当下真扣、损失记在 `Enemy::temp_strength`,在 `start_turn`
+    ///      (combat.rs,一层 end_turn 把敌人阶段走完之后)整块补回.
+    ///      这就是 seed 197 分叉那个"临时力量回补时点":本作按反编译把它放在怪物行动之后.
+    #[test]
+    fn transient_shifting_strength_is_temporary_and_returns_after_its_action() {
+        let mut c = lock("transient_solo");
+        c.player.hp = 999;
+        // 第 1 回合:力量 0,来袭 30
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 30);
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 0, "还没挨打");
+        // 玩家回合打它 40 点:力量当场 -40,另记 40 待回补
+        assert_eq!(c.damage_enemy(0, 40), 40);
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), -40, "当下真扣,允许为负");
+        assert_eq!(c.enemies[0].temp_strength, 40, "损失记着回补");
+        // 估算口径(UI/策略读的预估来袭)与结算同一条路:也带上被削掉的力量
+        assert_eq!(c.predicted_damage(0), (0, 1), "估算:基础 40 - 40 = 0");
+        // 它这一轮的攻击(基础 40)因此被削到 0:回补排在它行动之后
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 0, "同一轮来袭仍用被削掉的力量");
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 0, "行动完就补回来");
+        assert_eq!(c.enemies[0].temp_strength, 0);
+        assert_eq!(c.predicted_damage(0), (50, 1), "回补后预估跟着回到 50");
+        // 下一轮恢复满力:基础 50
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 50, "下一轮不再打折");
+    }
+
+    /// 瞬变体的倒计时与每回合加伤按飞升换档:
+    ///   Fading 层数 = asc >= 17 ? 6 : 5(MonsterSpecific.cpp:172-175)
+    ///   首击 = asc >= 2 ? 40 : 30,每回合 +10
+    ///   (MonsterSpecific.cpp:1500-1502 的 `(asc2 ? 40 : 30) + 10*(turnNumber-1)`)
+    /// 倒计时递减也在攻击里:打完这一击若 Fading == 1 就退场(MonsterSpecific.cpp:1502-1506),
+    /// 所以 5 层打 5 击、6 层打 6 击.
+    #[test]
+    fn transient_fading_and_damage_scale_with_ascension() {
+        for (asc, first, second, fading) in [(0u32, 30, 40, 5), (2, 40, 50, 5), (17, 40, 50, 6)] {
+            let mut c = lock_asc("transient_solo", asc);
+            c.player.hp = 999;
+            assert_eq!(c.enemies[0].statuses.get(Status::Fading), fading, "A{asc} 的倒计时");
+            let hp = c.player.hp;
+            c.end_turn();
+            assert_eq!(hp - c.player.hp, first, "A{asc} 首击");
+            let hp = c.player.hp;
+            c.end_turn();
+            assert_eq!(hp - c.player.hp, second, "A{asc} 第二击");
+        }
+        // A17 的 6 层多撑一击:前 5 击之后还在场,第 6 击(90)打完才消失
+        let mut c = lock_asc("transient_solo", 17);
+        c.player.hp = 999;
+        let mut taken = 0;
+        for _ in 0..5 {
+            let hp = c.player.hp;
+            c.end_turn();
+            taken += hp - c.player.hp;
+        }
+        assert_eq!(taken, 40 + 50 + 60 + 70 + 80);
+        assert!(c.enemies[0].up(), "A17 的倒计时还没走完");
+        let hp = c.player.hp;
+        c.end_turn();
+        assert_eq!(hp - c.player.hp, 90, "第 6 击");
+        assert!(c.enemies[0].escaped, "第 6 击打完才消失");
         assert_eq!(c.phase, Phase::Won);
     }
 
