@@ -2975,6 +2975,17 @@ impl Combat {
                 self.enemies[idx].state.regrow_used = false;
                 self.enemies[idx].death_done = false;
                 self.push_log(LogKind::Enemy, format!("{name} regrows ({half} HP)"));
+                // 哲学家的石头:REINCARNATE 里额外 +1 力量
+                // (反编译 MonsterSpecific.cpp:1472-1474;半死时力量已被
+                // resetAllStatusEffects 清零,所以这里加完就是它复活后的力量)
+                let stone = self.relic_sum(|fx| fx.enemy_revive_strength);
+                if stone != 0 {
+                    self.enemies[idx].statuses.add(Status::Strength, stone);
+                    self.push_log(
+                        LogKind::Enemy,
+                        format!("{name} regrows with {stone} Strength"),
+                    );
+                }
             }
         }
         // 倒计时:爆裂与消逝
@@ -4318,9 +4329,15 @@ impl Combat {
                 let e = &mut self.enemies[i];
                 e.state.half_dead = true;
                 e.state.regrow_used = true;
-                // 死在玩家回合:它这一轮还没行动,从下一轮开始数两轮复活;
-                // 死在自己回合(荆棘之类):这一轮已经算过,要多等一轮
-                e.state.regrow_ticks = if self.phase == Phase::EnemyTurn { 3 } else { 2 };
+                // 复活倒计时统一从 2 起数,由 enemy_end_of_turn 每过一个自己回合扣一格.
+                // 死在玩家回合:这一轮的怪兽阶段会照常执行 REGROW(空过)并掷出
+                // REINCARNATE,下一轮 REINCARNATE 半血站起来;
+                // 死在自己回合(荆棘/火焰屏障反伤):反编译把反伤 addToTop 排在同一回合
+                // 末尾 addToBot 的 RollMove 之前(Player.cpp:227-232),所以死亡先落地、
+                // 那一次 rollMove 直接看到 halfDead -> REINCARNATE(MonsterSpecific.cpp:
+                // 3014-3020),于是它下一轮就复活,不会多浪费一轮;死亡回合末这一格
+                // 已经在它自己的 enemy_end_of_turn 里扣掉,正好对齐.
+                e.state.regrow_ticks = 2;
                 e.statuses = Statuses::new();
                 e.statuses.add(Status::Regrow, 1);
                 e.block = 0;
@@ -9889,6 +9906,369 @@ mod power_tests {
         assert_eq!(c.phase, Phase::Won);
         for e in c.enemies.iter() {
             assert!(!e.state.half_dead, "最后一只倒下,半死的也真死");
+        }
+    }
+
+    /// 半死暗灵在自己回合被荆棘反杀时,复活倒计时不少算一轮.
+    /// 依据(反编译,不依赖参考):
+    ///  - Player::attacked 把荆棘反伤 addToTop(Player.cpp:227-232),排在 takeTurn 末尾
+    ///    addToBot(Actions::RollMove) 之前 -> 死亡先落地,那一次 rollMove 才轮得到;
+    ///  - 因此那一次选招已经看到 isHalfDead,getMove 直接返回 REINCARNATE
+    ///    (MonsterSpecific.cpp:3014-3020),意图当场就是 Reincarnate;
+    ///  - 下一轮它执行 REINCARNATE,以 maxHp/2 站起来(MonsterSpecific.cpp:1464-1469),
+    ///    不会再多空过一轮 REGROW.
+    /// 有同伴活着时死亡只是半死(Monster.cpp:296-306),骰子照常每回合烧一次.
+    #[test]
+    fn darkling_killed_by_thorns_revives_on_its_next_turn() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 9999;
+        c.player.max_hp = 9999;
+        c.player.statuses.add(Status::Thorns, 30);
+        let ai = |c: &mut Combat| c.streams.floor(FloorStream::AiRng).counter();
+        let move0 = |c: &Combat| c.enemies[0].def.moves[c.enemies[0].next_move].name;
+        let max0 = c.enemies[0].max_hp;
+        // 0 号首招定为 Nip(会攻击),残血保证被一次反伤打死;同伴后继写死少掺和
+        c.enemies[0].next_move = 0;
+        c.enemies[0].hp = 3;
+        let force = |c: &mut Combat| {
+            c.enemies[1].state.forced = Some(2);
+            c.enemies[2].state.forced = Some(2);
+        };
+        force(&mut c);
+        let before = ai(&mut c);
+        c.end_turn();
+        assert!(c.enemies[0].state.half_dead, "被反杀只是半死");
+        assert_eq!(c.enemies[0].hp, 0);
+        assert_eq!(move0(&c), "Reincarnate", "死在掷点之前,意图当场就是 Reincarnate");
+        assert_eq!(ai(&mut c) - before, 3, "两只 forced 各 1 次 + 半死那只 1 次");
+        // 下一轮就是 REINCARNATE:半血复活,不多摆一轮 REGROW
+        force(&mut c);
+        c.end_turn();
+        assert!(!c.enemies[0].state.half_dead, "下一轮就复活");
+        assert_eq!(c.enemies[0].hp, max0 / 2, "半血复活");
+        assert_ne!(move0(&c), "Regrow", "不再有 REGROW 意图");
+        assert_ne!(move0(&c), "Reincarnate", "复活后掷的是普通招");
+    }
+
+    /// 暗灵复活:原地复活(同槽位/同出生号,不是新怪)、半血、REGROW 重新挂上能再半死一次;
+    /// 哲学家的石头让 REINCARNATE 额外 +1 力量(MonsterSpecific.cpp:1472-1474).
+    #[test]
+    fn darkling_reincarnates_in_place_with_optional_stone_strength() {
+        // 不带石头:复活后力量 0
+        let mut plain = lock("three_darklings");
+        plain.player.hp = 999;
+        plain.enemies[0].hp = 10;
+        plain.damage_enemy_plain(0, 20);
+        plain.settle_deaths();
+        assert!(plain.enemies[0].state.half_dead);
+        let uid0 = plain.enemies[0].uid;
+        let slot0 = plain.enemies[0].slot;
+        let max0 = plain.enemies[0].max_hp;
+        for _ in 0..3 {
+            if plain.enemies[0].state.half_dead && plain.phase == Phase::PlayerTurn {
+                plain.end_turn();
+            }
+        }
+        assert!(!plain.enemies[0].state.half_dead, "两轮后复活");
+        assert_eq!(plain.enemies[0].hp, max0 / 2, "半血复活");
+        assert_eq!(plain.enemies[0].uid, uid0, "还是原来那只怪(出生号不变)");
+        assert_eq!(plain.enemies[0].slot, slot0, "槽位不变");
+        assert_eq!(
+            plain.enemies[0].statuses.get(Status::Strength),
+            0,
+            "没石头就没有额外力量"
+        );
+        assert_eq!(
+            plain.enemies[0].statuses.get(Status::Regrow),
+            1,
+            "复活后 REGROW 重新挂上"
+        );
+        // 第二次倒下还能半死(REGROW 被 REINCARNATE 重新武装)
+        plain.enemies[0].hp = 5;
+        plain.damage_enemy_plain(0, 20);
+        plain.settle_deaths();
+        assert!(plain.enemies[0].state.half_dead, "第二次倒下照样半死");
+
+        // 带石头:开战敌力 +1,半死清零,复活只看 REINCARNATE 的 +1
+        let stone = relic_def_or_panic("philosophers_stone");
+        let mut c = with_relics("three_darklings", 80, 80, vec![stone]);
+        c.player.hp = 999;
+        assert_eq!(
+            c.enemies[0].statuses.get(Status::Strength),
+            1,
+            "开战敌力 +1"
+        );
+        c.enemies[0].hp = 10;
+        c.damage_enemy_plain(0, 20);
+        c.settle_deaths();
+        assert_eq!(
+            c.enemies[0].statuses.get(Status::Strength),
+            0,
+            "半死清掉力量(含开战那 1 点)"
+        );
+        for _ in 0..3 {
+            if c.enemies[0].state.half_dead && c.phase == Phase::PlayerTurn {
+                c.end_turn();
+            }
+        }
+        assert!(!c.enemies[0].state.half_dead);
+        assert_eq!(
+            c.enemies[0].statuses.get(Status::Strength),
+            1,
+            "REINCARNATE 带石头 +1 力量"
+        );
+    }
+
+    /// 半死瞬间:清空全部状态与力量(反编译 resetAllStatusEffects,Monster.cpp:554-558),
+    /// 变成不可选中(isTargetable = !isDeadOrEscaped,Monster.cpp:237-255),
+    /// 群体攻击(顺劈)因此跳过它,不会再被"打死一次".
+    #[test]
+    fn half_dead_darkling_is_stripped_and_untargetable() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 9999;
+        c.player.max_hp = 9999;
+        c.enemies[0].statuses.add(Status::Strength, 5);
+        c.enemies[0].statuses.add(Status::Vulnerable, 4);
+        c.enemies[0].hp = 10;
+        c.damage_enemy_plain(0, 20);
+        c.settle_deaths();
+        assert!(c.enemies[0].state.half_dead);
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), 0, "半死清掉力量");
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 0, "半死清掉减益");
+        assert_eq!(c.enemies[0].statuses.get(Status::Regrow), 1, "只留 REGROW");
+        assert!(!c.enemies[0].alive(), "半死不可选中");
+        assert!(c.enemies[0].up(), "但仍在战斗里,还要回合");
+        // 顺劈打全体:半死那只不受影响,也不会被"再打死一次"
+        let hp1 = c.enemies[1].hp;
+        c.hand = vec![card("cleave")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert!(
+            c.enemies[0].state.half_dead && c.enemies[0].hp == 0,
+            "群体攻击跳过半死尸体"
+        );
+        assert!(c.enemies[1].hp < hp1, "活着的同伴照常吃顺劈");
+        assert_eq!(c.phase, Phase::PlayerTurn, "还有两只活着,没赢");
+    }
+
+    /// 开局:每只暗灵各掷一次 aiRng.random(99) 定首招,roll<50 摆 HARDEN 否则 NIP
+    /// (MonsterSpecific.cpp:3005-3010).镜像一条同种子的 aiRng 流核对阈值两侧.
+    #[test]
+    fn darkling_first_move_uses_the_half_threshold() {
+        let mut c = lock("three_darklings");
+        // 镜像流:同种子重放,取出引擎开局替三只怪各掷的那一次
+        let mut mirror = RngRegistry::new(11);
+        let rolls: Vec<i32> = (0..3)
+            .map(|_| mirror.floor(FloorStream::AiRng).random(99) as i32)
+            .collect();
+        for (i, r) in rolls.iter().enumerate() {
+            let want = if *r < 50 { "Harden" } else { "Nip" };
+            assert_eq!(
+                c.enemies[i].def.moves[c.enemies[i].next_move].name, want,
+                "第 {i} 只首招:roll {r} -> {want}"
+            );
+        }
+        assert_eq!(
+            c.streams.floor(FloorStream::AiRng).counter(),
+            3,
+            "开局只掷三次首招"
+        );
+    }
+
+    /// 常规选招级联的"逐掷点可执行规格":镜像一条同种子的 aiRng 流,按反编译的判定树
+    /// (MonsterSpecific.cpp:3012-3044)从同一段掷点推出期望招,与引擎每回合每只怪
+    /// 选出来的招逐条比对.镜像只要与引擎多掷或少掷一次就整段错位,所以这条同时钉住了
+    /// "每次 rollMove 必掷一次 aiRng.random(99),落进 40-99 补掷分支或整棵递归时额外掷".
+    #[test]
+    fn darkling_cascade_replays_the_decompiled_decision_tree() {
+        const NIP: usize = 0;
+        const CHOMP: usize = 1;
+        const HARDEN: usize = 2;
+        // 反编译 getMove 的判定树,掷点从镜像流取.counts 记两条"额外掷点"分支
+        // (40-99 补掷 / 整树递归)各被走到多少次,末尾用来确认这条规格不是空跑.
+        let expect = |rng: &mut RngRegistry,
+                      idx: usize,
+                      last: Option<usize>,
+                      prev: Option<usize>,
+                      counts: &mut [u32; 2]|
+         -> usize {
+            let mut r = rng.floor(FloorStream::AiRng).random(99) as i32;
+            if last.is_none() {
+                // 开局那一掷:roll<50 -> HARDEN,否则 NIP
+                return if r < 50 { HARDEN } else { NIP };
+            }
+            loop {
+                if r < 40 {
+                    if last != Some(CHOMP) && idx != 1 {
+                        return CHOMP;
+                    }
+                    // 不能用 Chomp 时补掷 40-99,继续往下走
+                    counts[0] += 1;
+                    r = rng.floor(FloorStream::AiRng).random_range(40, 99);
+                }
+                if r < 70 {
+                    return if last != Some(HARDEN) { HARDEN } else { NIP };
+                }
+                if !(last == Some(NIP) && prev == Some(NIP)) {
+                    return NIP;
+                }
+                // 两次 Nip 之后的兜底:整棵判定树拿新掷点重跑
+                counts[1] += 1;
+                r = rng.floor(FloorStream::AiRng).random(99) as i32;
+            }
+        };
+        let mut counts = [0u32; 2];
+
+        for seed in 0..24u64 {
+            let enc = crate::core::enemies::encounter_def("three_darklings").expect("三只暗灵");
+            let setup = CombatSetup {
+                rested: false,
+                hp: 9999,
+                max_hp: 9999,
+                deck: vec![card("defend"); 10],
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
+                asc: 0,
+            };
+            let mut c = Combat::new(enc, setup, RngRegistry::new(seed));
+            let mut mirror = RngRegistry::new(seed);
+            for i in 0..3 {
+                let want = expect(&mut mirror, i, None, None, &mut counts);
+                assert_eq!(c.enemies[i].next_move, want, "seed {seed}:第 {i} 只首招");
+            }
+            for round in 1..=6 {
+                c.end_turn();
+                for i in 0..3 {
+                    // 每只怪的选招发生在它自己行动之后,历史就是它当前的 last/prev
+                    let want = expect(
+                        &mut mirror,
+                        i,
+                        c.enemies[i].state.last,
+                        c.enemies[i].state.prev,
+                        &mut counts,
+                    );
+                    assert_eq!(
+                        c.enemies[i].next_move, want,
+                        "seed {seed} 第 {round} 轮:第 {i} 只"
+                    );
+                }
+            }
+            // 整场跑下来镜像与引擎掷点流应当正好同步
+            assert_eq!(
+                c.streams.floor(FloorStream::AiRng).counter(),
+                mirror.floor(FloorStream::AiRng).counter(),
+                "seed {seed}:掷点次数"
+            );
+        }
+        assert!(counts[0] > 20, "40-99 补掷分支没被走到:{}", counts[0]);
+        assert!(counts[1] > 0, "整树递归兜底没被走到:{}", counts[1]);
+    }
+
+    /// 常规选招的四条硬约束(MonsterSpecific.cpp:3022-3044;语料 historyRules):
+    ///  - CHOMP 不连续两次;
+    ///  - CHOMP 永不出现在中间那只(出生下标 1);
+    ///  - HARDEN 不连续两次;
+    ///  - NIP 不连续三次.
+    /// 多颗种子连打若干回合逐回合校验;顺带确认三只活怪每回合各至少掷一次(rollMove).
+    #[test]
+    fn darkling_move_history_rules_hold_over_many_turns() {
+        const NIP: usize = 0;
+        const CHOMP: usize = 1;
+        const HARDEN: usize = 2;
+        for seed in 0..40u64 {
+            let enc = crate::core::enemies::encounter_def("three_darklings").expect("三只暗灵");
+            let setup = CombatSetup {
+                rested: false,
+                hp: 9999,
+                max_hp: 9999,
+                deck: vec![card("defend"); 10],
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
+                asc: 0,
+            };
+            let mut c = Combat::new(enc, setup, RngRegistry::new(seed));
+            let n = c.enemies.len();
+            let mut hist: Vec<Vec<usize>> = vec![Vec::new(); n];
+            for turn in 1..=6 {
+                let before = c.streams.floor(FloorStream::AiRng).counter();
+                c.end_turn();
+                assert!(
+                    c.streams.floor(FloorStream::AiRng).counter() - before >= n as u32,
+                    "seed {seed} 第 {turn} 回合:三只活怪每只至少掷一次"
+                );
+                for (i, h) in hist.iter_mut().enumerate() {
+                    let last = c.enemies[i].state.last.expect("acted");
+                    if i == 1 {
+                        assert_ne!(last, CHOMP, "seed {seed}:中间那只从不用 Chomp");
+                    }
+                    if let Some(prev) = h.last() {
+                        assert!(
+                            !(*prev == CHOMP && last == CHOMP),
+                            "seed {seed} 第 {turn} 回合:Chomp 连着两次"
+                        );
+                        assert!(
+                            !(*prev == HARDEN && last == HARDEN),
+                            "seed {seed} 第 {turn} 回合:Harden 连着两次"
+                        );
+                    }
+                    if h.len() >= 2
+                        && last == NIP
+                        && h[h.len() - 1] == NIP
+                        && h[h.len() - 2] == NIP
+                    {
+                        panic!("seed {seed} 第 {turn} 回合:Nip 连着三次");
+                    }
+                    h.push(last);
+                }
+            }
+        }
+    }
+
+    /// "三只全半死 -> 全复活"在原版里不可达:die() 一进门 --monstersAlive,
+    /// 到 0 直接判 PLAYER_VICTORY 并 return(Monster.cpp:284-295),不会走半死那支.
+    /// 三种击杀顺序枚举:前两只半死之后第三只一死就结束,半死尸体一起作废.
+    #[test]
+    fn darklings_never_reach_three_half_dead_in_any_kill_order() {
+        for (first, second, last) in [(0usize, 1usize, 2usize), (0, 2, 1), (1, 2, 0)] {
+            let mut c = lock("three_darklings");
+            c.player.hp = 9999;
+            c.player.max_hp = 9999;
+            for i in [first, second] {
+                c.enemies[i].hp = 1;
+                c.damage_enemy_plain(i, 20);
+                c.settle_deaths();
+                assert!(c.enemies[i].state.half_dead, "还有同伴在就先半死");
+                assert_eq!(c.phase, Phase::PlayerTurn, "两只半死还不结束");
+            }
+            c.enemies[last].hp = 1;
+            c.damage_enemy_plain(last, 20);
+            c.settle_deaths();
+            c.check_win();
+            assert_eq!(c.phase, Phase::Won, "最后一只真死 -> 立刻胜利");
+            assert!(!c.enemies[last].state.half_dead, "最后一只不留半死");
+            for i in [first, second] {
+                assert!(!c.enemies[i].state.half_dead, "半死的两只一起作废");
+                assert!(c.enemies[i].dead());
+            }
+        }
+    }
+
+    /// 瞬变体每回合攻击 +10(反编译 MonsterSpecific.cpp:1498-1502:
+    /// damage = (asc2 ? 40 : 30) + 10 * (getMonsterTurnNumber() - 1)).
+    #[test]
+    fn transient_attack_grows_ten_per_turn() {
+        let mut c = lock("transient_solo");
+        c.player.hp = 999;
+        for (turn, want) in [(1, 30), (2, 40), (3, 50)] {
+            let hp = c.player.hp;
+            c.end_turn();
+            assert_eq!(hp - c.player.hp, want, "第 {turn} 回合");
         }
     }
 }

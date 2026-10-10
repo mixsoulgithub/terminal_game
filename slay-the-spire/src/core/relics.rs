@@ -75,6 +75,8 @@ pub struct RelicFx {
     pub combat_start_confused: bool,
     pub combat_start_self_weak: i32,
     pub combat_start_enemy_strength: i32,
+    /// 复活类招式给的额外力量(暗灵 REINCARNATE:哲学家的石头 +1)
+    pub enemy_revive_strength: i32,
     pub combat_start_enemy_vulnerable: i32,
     pub combat_start_enemy_weak: i32,
     pub combat_start_strength_per_curse: i32,
@@ -267,6 +269,7 @@ impl RelicFx {
         combat_start_confused: false,
         combat_start_self_weak: 0,
         combat_start_enemy_strength: 0,
+        enemy_revive_strength: 0,
         combat_start_enemy_vulnerable: 0,
         combat_start_enemy_weak: 0,
         combat_start_strength_per_curse: 0,
@@ -1873,6 +1876,7 @@ pub static RELICS: &[RelicDef] = &[
         fx: RelicFx {
             combat_start_energy_per_turn: 1,
             combat_start_enemy_strength: 1,
+            enemy_revive_strength: 1,
             ..RelicFx::ZERO
         },
         note: "",
