@@ -8877,6 +8877,76 @@ mod power_tests {
         assert_eq!(c.enemies[0].hp, hp - 5);
     }
 
+    /// 指定血量/遗物开一场(开局回血这类"进战斗瞬间"的行为要在这里看)
+    fn with_relics(
+        id: &'static str,
+        hp: i32,
+        max_hp: i32,
+        relics: Vec<&'static crate::core::relics::RelicDef>,
+    ) -> Combat {
+        let enc = crate::core::enemies::encounter_def(id)
+            .unwrap_or_else(|| panic!("no such encounter {id}"));
+        let setup = CombatSetup {
+            rested: false,
+            hp,
+            max_hp,
+            deck: vec![card("strike"); 5],
+            relics,
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc: 0,
+        };
+        Combat::new(enc, setup, RngRegistry::new(11))
+    }
+
+    /// 血瓶(Blood Vial):每次战斗开始回 2 血.依据 relics.rs 的 blood_vial
+    /// (combat_start_heal: 2)与 combat.rs 战斗初始化的 start_heal.参考实现同样在
+    /// 开战时回血,差别只在导出器把这次回血算进 move 行还是随后的战斗行
+    /// (act2.script seed 13 的第 33 步),不是规则差异.
+    #[test]
+    fn blood_vial_heals_two_at_the_start_of_every_combat() {
+        let vial = relic_def_or_panic("blood_vial");
+        let c = with_relics("jaw_worm_solo", 50, 80, vec![vial]);
+        assert_eq!(c.player.hp, 52, "开战回 2");
+    }
+
+    /// 制图仪(Pantograph):只在 Boss 房开战时回 25,普通怪房间不回.依据 relics.rs 的
+    /// pantograph(boss_combat_heal: 25)与 combat.rs 里 `enc.kind == Boss` 的判定
+    /// (原版的回血遗物按房间类型决定是否触发).a20a4 seed 33 的差异只是导出器把这次
+    /// 回血算进 move 行还是战斗行,终局一致.
+    #[test]
+    fn pantograph_heals_twenty_five_only_in_boss_combats() {
+        let panto = relic_def_or_panic("pantograph");
+        let boss = with_relics("the_champ", 50, 80, vec![panto]);
+        assert_eq!(boss.player.hp, 75, "Boss 房开战回 25");
+        let normal = with_relics("jaw_worm_solo", 50, 80, vec![panto]);
+        assert_eq!(normal.player.hp, 50, "普通房不回");
+    }
+
+    /// 史莱姆每个怪物回合都掷一次 aiRng.原版 MonsterGroup::doMonsterTurn 里每只怪都
+    /// rollMove(掷点可能不用);参考实现自述史莱姆首回合之后不再掷(ENGINE-GAP rng
+    /// parity,见其 content/monsters/act1/slimes.ts:71-74),a20a3 seed 510 的 mindbloom
+    /// 幻影史莱姆首领战因此整段错位.这里钉住本作"每回合照掷一次".
+    #[test]
+    fn slimes_roll_one_ai_rng_per_turn() {
+        let mut c = lock("lots_of_slimes");
+        let i = c
+            .enemies
+            .iter()
+            .position(|e| e.def.id == "acid_slime_small")
+            .expect("一堆史莱姆里必有一只小酸液");
+        let only = c.enemies.remove(i);
+        c.enemies = vec![only];
+        let ai = |c: &mut Combat| c.streams.floor(FloorStream::AiRng).counter();
+        for turn in 1..=3 {
+            let before = ai(&mut c);
+            c.end_turn();
+            assert_eq!(ai(&mut c) - before, 1, "第 {turn} 回合也要掷一次");
+        }
+    }
+
     /// Boot 只抬"玩家打出去的攻击伤害".反编译里攻击走 Monster::attacked ->
     /// attackedUnblockedHelper(Monster.cpp:407-438);非攻击伤害走 Monster::damage ->
     /// damageUnblockedHelper(Monster.cpp:442-448 / 466-493),那条路径里根本没有 Boot.

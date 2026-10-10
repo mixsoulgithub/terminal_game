@@ -41,7 +41,11 @@
 //! 参考实现的 id 是大写,对拍器(不在这里)负责大小写与少数别名归一.
 //!
 //! 各张表的登记注释里引的反编译依据都落在仓库内 `refs/sts_lightspeed/`(来源与
-//! commit 见该目录的 README-ORIGIN.md);只有 `refs/slay-the-cli/...` 是参考实现.
+//! commit 见该目录的 README-ORIGIN.md),写成整路径(如 `refs/sts_lightspeed/src/combat/Monster.cpp:339-341`);
+//! 少数地方用了简写(如 `MonsterSpecific.cpp:807-812`),按同目录 `src/combat/` 展开.
+//! 参考实现统一写 `refs/slay-the-cli/...`,少数简写(如 `interpreter.ts:748-768`)按
+//! `refs/slay-the-cli/src/engine/combat/`、`content/...` 展开;语料字段写
+//! `refs/slay-the-cli/data/corpus/...`.
 
 use crate::core::card::{CardInstance, CardType, Cost};
 use crate::core::combat::Phase;
@@ -930,7 +934,7 @@ fn run_raw(seed: u64, policy: &Policy) -> Result<Vec<String>, String> {
     let mut run = Run::new_for_asc(seed, ch, policy.asc)?;
     // headless 对拍:便条事件不读也不写真实存档(参考实现没有持久化,按默认铁斩波)
     run.set_note_persist(false);
-    // 参考实现没实现尼尔瑞的抄本(引擎缺口,见 refs/slay-the-cli/src/content/relics/event.ts:146-153),
+    // 参考实现没实现尼尔瑞的抄本(引擎缺口,见 refs/slay-the-cli/src/content/relics/event.ts:144-153),
     // 连"亮三张"的 cardRandomRng 都不掷;原版这件遗物可选,驱动侧统一按"跳过"折平
     run.set_no_codex(true);
     run.open_neow();
@@ -1325,7 +1329,7 @@ mod e2e {
     ///
     /// (a) 本轮修:事件/商店的"移除 / 变形"屏不该列瓶装的牌 —— 就是折掉退赃后 seed 12
     ///   露出来的那一条(步 48 候选 18 vs 17,本作多算了被封进瓶子的那张 defend).反编译
-    ///   refs/sts_lightspeed/src/game/GameContext.cpp:3799-3808 的 REMOVE / TRANSFORM / BONFIRE_SPIRITS 走同一个分支
+    ///   refs/sts_lightspeed/src/game/GameContext.cpp:3802-3810 的 REMOVE / TRANSFORM / BONFIRE_SPIRITS 走同一个分支
     ///   `c.canTransform() && !deck.isCardBottled(i)`(refs/sts_lightspeed/include/game/Deck.h:34 的 transformableCount 也
     ///   注明不含瓶装),本作原先只排"不可移除"的牌.修完 seed 12 逐字节全对齐;断言 =
     ///   run.rs bottled_cards_are_not_offered_for_removal_but_astrolabe_sees_them.
@@ -1336,7 +1340,7 @@ mod e2e {
     ///   seed 9 / 10 / 24:仙女在瓶中的保命 —— 参考把它写成 ENGINE-GAP
     ///     (content/potions/index.ts:315-324 "non-drinkable death-save";playerDeath
     ///     interpreter.ts:335-339 只置 combatOver,没有保命钩子),本作按原版
-    ///     Player::wouldDie(反编译 refs/sts_lightspeed/src/combat/Player.cpp:320-345:丢瓶、按 max HP 30%/60% 回血、
+    ///     Player::wouldDie(反编译 refs/sts_lightspeed/src/combat/Player.cpp:323-347:丢瓶、按 max HP 30%/60% 回血、
     ///     继续战斗)实现。属**参考缺口 (c)**,本轮在参考驱动侧借它自己的 onLoseHp
     ///     折叠折掉(tools/replay_ref.ts 的 FAIRY_SAVE 能力),三颗逐字节全对齐。
     ///   seed 40:套娃 —— 本轮查出是**本作 (a) bug**,不是登记里的 (b):原版
@@ -1916,7 +1920,7 @@ mod e2e {
     ///       (havoc+ 基础 1、升级后 0,掷出 2 只给 1 费).反编译 refs/sts_lightspeed/src/combat/CardManager.cpp:398-410 是
     ///       直接 newCost 写进 cost/costForTurn.修在 on_card_drawn + randomize_hand_costs,
     ///       断言 = confused_sets_the_rolled_cost_even_when_the_upgrade_discounts_it
-    ///       (seed 16 的蛇怪战 9 处差异的头 3 步).
+    ///       (当时是在 seed 16 的一场战斗里露出来的;本表 seed 16 现在剩下的差异是笔尖计数).
     ///   (a)3 笔尖(Pen Nib)的"每第 10 张攻击翻倍"只写在 Effect::Damage / DamageAll
     ///       两处 —— 狂暴(DamageWithBonus)、回旋镖(DamageRandom)、重击(DamageEqualBlock)、
     ///       完美打击(DamagePerStrike)这些同样打伤害的攻击效果全漏了.原版/参考把翻倍
@@ -1924,7 +1928,7 @@ mod e2e {
     ///       → power atDamageGive),只要是攻击牌就吃得到.修法 = 把翻倍收进
     ///       player_attack_damage(所有走它的攻击伤害效果共用),断言 = combat.rs
     ///       pen_nib_doubles_every_attack_damage_effect.登记表上它只动了 ACT2 的 seed 16
-    ///       (那一行的指纹变了;差异步集合没缩,因为同一场还压着 (b)3 的 hp 级联).
+    ///       那一行的指纹;那颗 seed 现在的差异归因见上面 seed 16 那条(笔尖计数).
     ///   (b)1 参考侧燃烧精英的"再生"没生效:它 runFlow.ts:352 照原版挂了 REGEN 能力,
     ///       但它的战斗解释器里怪身上的 REGEN 没有 atStartOfTurn 钩子 —— 参考自己的
     ///       REGEN 定义(src/content/relics/supportPowers.ts:93)是玩家侧 Regen Potion
@@ -1942,24 +1946,37 @@ mod e2e {
     ///   另有两条属"一次选多张"的导出口径:本作把空笼删 2 张拆成两行 pick(候选 20 → 19),
     ///   参考侧一次 choose 交完 —— 驱动侧按张数补出中间态(seed 25 尾部 27 处消失).
     ///
-    /// 反查后逐颗口径(对齐前缀 / 首分叉步 / 成因 / 归类),全表合计差异 153->71->15 处
-    /// (本轮折掉小鬼头目开战摆位与 Nilry 宝典两条参考缺口,见 ASC2_CASES (c)5/(c)6;
-    ///  再折掉铜制自动机的槽位缺口 (c)10 后 15->9 处):
+    /// 逐颗口径(种子 | 对齐前缀 | 首分叉步 | 成因 | 归类 | 依据 | 断言),全表合计 9 处.
+    /// 复跑:`bun tools/e2e_diff.ts --all --script tools/golden/e2e/act2.script`.
     ///   全对齐(0 处):4 6 11 15 17 18 19 25 33
-    ///   seed 3 : 41 步 / 步 36 百夫长+神秘者 / (b)3 参考侧怪物的"下一招掷点"早于它自己
-    ///            排队的回血结算 —— 反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607
-    ///            的 MYSTIC_HEAL 先把 heal 落地(refs/sts_lightspeed/src/combat/Monster.cpp:269-272
-    ///            的 Monster::heal 直接改 curHp)再 rollMove,所以那一掷看到的是治完的血;参考
-    ///            refs/slay-the-cli/src/engine/combat/interpreter.ts:748-768 的
-    ///            executeMonsterMove 是 execute 里把治疗 addToBottom、接着就 rollMove,
-    ///            掷点看到的是治疗前的血.本作按反编译(combat.rs 的 enemy_act 先落效果再
-    ///            pick_next_move).5 处全是这一处的 hp 级联.
-    ///   seed 13: 33 步 / 步 33 move / 参考侧进 Boss 房前的回血时点(与 ASC2 的 seed 13 同型,
-    ///            同族的参考侧口径差).1 处(步 41..43 那截 hp 级联是铜制自动机槽位缺口
-    ///            (c)10,插 GAP 后消失).
-    ///   seed 16: 41 步 / 步 41 百夫长+神秘者 / (b)3 同 seed 3.3 处.
-    ///   seed 33: 原为燃烧精英小鬼头目的 Rally 摆位(见 ASC2 (c)6),驱动侧插槽 0 的 GAP
-    ///            后已归零(本表这颗是 A0,与 a20a2 的 A20 同 seed 不同战斗,同一条缺口).
+    ///   seed 3 | 36 | 36 | 战斗怒吼之后的燃烧契约不该再抽那 2 张:本作按反编译在抽牌前
+    ///            拿 NO_DRAW 否决,参考没实现照抽,这一场(蛇形植物)由此整段错开 |
+    ///            (c) 参考空实现 |
+    ///            refs/sts_lightspeed/src/combat/BattleContext.cpp:2439-2445;
+    ///            refs/slay-the-cli/src/content/powers/ironclad.ts:269-272 |
+    ///            combat.rs battle_trance_gives_no_draw_for_the_rest_of_the_turn
+    ///   seed 13 | 33 | 33 | 进战斗时的血瓶回 2:参考把这次回血算进 move 行快照,本作算进
+    ///            随后那一场战斗,两边到战斗行 hp 又合回来 | 表示差异 |
+    ///            src/core/relics.rs:545-551(combat_start_heal: 2) + src/core/combat.rs:776 |
+    ///            combat.rs blood_vial_heals_two_at_the_start_of_every_combat
+    ///   seed 16 | 41 | 41 | 收藏家 Boss 战里本作第 10 张攻击(狂暴)吃到笔尖翻倍,参考同一
+    ///            刻没翻倍(其余 1.25 倍弱体两边一致:本作 raw16 / 参考 raw8) |
+    ///            (b) 参考侧口径差(笔尖计数少一张) |
+    ///            refs/slay-the-cli/src/content/relics/common.ts:303-317 +
+    ///            refs/slay-the-cli/src/engine/combat/damageCalc.ts:31-41;
+    ///            本作 src/core/combat.rs:1391-1397/3815 |
+    ///            combat.rs pen_nib_doubles_every_attack_damage_effect
+    ///
+    /// 归因说明(逐颗反查:逐 seed 跑 + SPIRE_TRACE=1 两侧对 trace):
+    ///   历史上 seed 3/16 记的是 (b)3"神秘者 MYSTIC_HEAL 结算时点"(参考把 heal 排队、
+    ///   rollMove 早一拍).这一条在本表已经没有实例:步 36 那一场是蛇形植物、步 41 是
+    ///   收藏家,都不含神秘者;含神秘者的几场在 A0 侧也被参考驱动同一条补偿折平(见
+    ///   ASC2_CASES (a1)),所以上面的成因是按 trace 实地重定的.
+    ///   血瓶那条(seed 13)只在"刚捡到血瓶、下一场战斗"露出来,因为参考侧的快照把开局
+    ///   回血提前到了 move 行.
+    ///   seed 16 的笔尖计数为何少一张(参考把哪一张攻击漏计了)本轮没定死;本作侧的翻倍
+    ///   路径已由 pen_nib_doubles_every_attack_damage_effect 钉住,sandbox 的卡片场景也
+    ///   逐字段一致,所以不改本作.
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
     Expected { seed: 4, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2107,25 +2124,24 @@ mod e2e {
     /// 攻击伤害 1..4 抬到 5"放在格挡与目标侧飞行/慢速/无形之后,所以打 writhing_mass
     /// (延展越打格挡越多)时挡剩的 1..4 会被本作抬到 5;参考实现 relics/common.ts 的
     /// THE_BOOT 是 ENGINE-GAP(空实现),不抬 —— 属 (b) 参考未实现,不是本作的错.
-    /// 最终口径(这 7 颗种子的按颗归因):
-    ///   29/30/121/237/494/510 = 两边逐字节一致(每步的 hp/金币/牌堆/遗物/药水都对上);
-    ///   284 = 11 处,全部来自 The Boot(归类 (b),见下).
-    /// (b) 唯一还露头的一条:靴子 The Boot 参考未实现.
-    ///   本作按反编译 refs/sts_lightspeed/src/combat/Monster.cpp:339-341 的
-    ///   attackedUnblockedHelper 判定"未被格挡的攻击伤害 1..4 -> 5"(调用点在同文件
-    ///   407-440 的 Monster::attacked:先扣格挡、再 helper),实现在 combat.rs 的
-    ///   hit_enemy_final(拿 relic 的 small_attack_boost_to),断言在 combat.rs 的
-    ///   boot_boosts_unblocked_damage_after_reductions.
-    ///   参考实现的 THE_BOOT 是 ENGINE-GAP 空实现(refs/slay-the-cli/src/content/relics/common.ts:436-441
-    ///   `hooks: {}`):参考侧没有"扣完格挡、掉血之前改伤害"这条玩家->怪物的钩子
-    ///   (interpreter.ts:184-208 的怪侧只 fold 目标自己的 powers),补不了,归 (b).
-    ///   seed 284 的 11 处就是这么来的:打 writhing_mass(延展越打格挡越多)时挡剩的 1..4
-    ///   被本作抬到 5,参考不抬,于是从第 29 步起整段错开(逐帧核对:两边第 29 步前一行不差,
-    ///   本作这一刀比参考多 1 点,后续因"斩杀线/canKill"判据翻面而走法分叉,终局多掉 42 血).
-    /// 历史上登记过、现已不再露头的两条(留档,别当成还差):
-    ///   - 颚虫部落那只怪的预置状态(参考既没预置、也不按"已行动过"重掷第一招);
-    ///   - Mind Bloom 的"打一个 Boss"选项(参考开战时抛 unknown monster DONU_AND_DECA);
-    ///   - 暗灵半死复活的历史归属(参考侧 ENGINE-GAP,见下方 ASC3 注释的 (c)).
+    /// 逐颗口径(种子 | 对齐前缀 | 首分叉步 | 成因 | 归类 | 依据 | 断言),全表合计 11 处.
+    /// 复跑:`bun tools/e2e_diff.ts --all --script tools/golden/e2e/act3.script`.
+    ///   全对齐(0 处):29 30 121 237 494 510(每步的 hp/金币/牌堆/遗物/药水都对上)
+    ///   seed 284 | 29 | 29 | 打 writhing_mass(延展越打格挡越多)时,挡剩的 1..4 点攻击伤害
+    ///             被本作按靴子抬到 5、参考的空实现不抬,那一刀之后斩杀线/canKill 判据翻面、
+    ///             走法分叉,终局多掉 42 血 | (b) 参考空实现 |
+    ///             refs/sts_lightspeed/src/combat/Monster.cpp:339-341(attackedUnblockedHelper)
+    ///             + 同文件 407-440(Monster::attacked 先扣格挡再调它);
+    ///             参考 refs/slay-the-cli/src/content/relics/common.ts:436-441(hooks: {})|
+    ///             combat.rs boot_boosts_unblocked_damage_after_reductions
+    ///
+    /// (b) 唯一还露头的一条就是靴子 The Boot(参考 ENGINE-GAP 空实现):参考侧没有"扣完
+    ///   格挡、掉血之前改伤害"这条玩家->怪物的钩子(interpreter.ts:184-208 的怪侧只 fold
+    ///   目标自己的 powers),驱动侧补不了,只登记.
+    /// 历史上登记过、现已不再露头的(留档,别当成还差):颚虫部落那只怪的预置状态
+    ///   (参考既没预置、也不按"已行动过"重掷第一招);Mind Bloom 的"打一个 Boss"选项
+    ///   (参考开战时抛 unknown monster DONU_AND_DECA);暗灵半死复活的历史归属
+    ///   (参考侧 ENGINE-GAP,见 ASC3 注释的 (c)2).
     const ACT3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2318,7 +2334,7 @@ mod e2e {
     // 扩表时又修掉一条:飞升 18+ 的 Gremlin Nob 换固定节奏(头槌只在"最近两招里没有头槌"
     // 时出,即 Bellow 之后 头槌/冲锋/冲锋 循环).反编译 MonsterSpecific.cpp:2412-2424 那段
     // asc18 分支条件退化(先判 !lastTwoMoves(SKULL_BASH) 就 return RUSH,头槌永不入历史,
-    // 于是恒为冲锋),语料 monsters-act1.json 的 conflicts:817-820 记为转写错误并给出
+    // 于是恒为冲锋),语料 monsters-act1.json 的 conflicts:818-820 记为转写错误并给出
     // "wiki/real pattern [SKULL_BASH, RUSH, RUSH] should be treated as correct";
     // 本作按 wiki/corpus 的真游戏节奏.修前
     // seed 3/42/45 的头目小鬼精英战各差 17~21 hp(seed 44 也有这场,但它另外还撞上仙女
@@ -2336,42 +2352,16 @@ mod e2e {
     //     参考实现只在 goldStolen 里记账、奖励层从不退(与第二幕 ASC2 的 (b)1 同一条,
     //     seed 31/36 同理没登记).本轮改由参考驱动侧补偿(见 ASC2 上方"驱动侧补偿之二"),
     //     seed 22 随之逐字节全对齐,A20 第一幕合计 31 -> 17 处(只剩 seed 9 的仙女瓶).
-    // 第三幕:表里 7 颗 seed,29/121/494 三颗逐字节全对齐,其余 4 颗共 30 处差异.
-    // 逐条归因(每颗有差异的 seed 都能对回下面某一条;步号是含 init 行的 0 起行号):
-    //   1) seed 30 步 [42, 43, 44](3 处)、seed 237 步 [41, 42](2 处)
-    //      归类:(c) 参考自相矛盾 —— 顿努与德卡"团队护盾→板甲"的结算时点.
-    //      原版 MonsterSpecific.cpp 的 DECA_SQUARE_OF_PROTECTION 在出招那一刻就把板甲
-    //      `deca.buff<MS::PLATED_ARMOR>(3)`(A19+)挂上,而板甲给的格挡在
-    //      Monster::applyEndOfTurnTriggers 里同一轮回合末结算,于是迪卡当回合就有 19 格挡;
-    //      参考 donuDeca.ts 把这次板甲排到回合末钩子之后,迪卡当回合只有 16 格挡.两边都
-    //      没有"漏实现",是参考内部两个时点自相矛盾,按反编译那是参考的错.
-    //   2) seed 284 步 [29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45](14 处)
-    //      归类:(c) 参考未实现 —— 靴子 The Boot.
-    //      本作按反编译 Monster::attackedUnblockedHelper 把"挡后未格挡的攻击伤害"1..4 抬到 5
-    //      (排在格挡与目标侧的飞行/慢速/无形之后);参考 relics/common.ts 的 THE_BOOT 是
-    //      ENGINE-GAP 空实现.这颗 seed 在步 29 前已经拿到 the_boot,爬虫法师+匕首与
-    //      writhing_mass 两战里低伤那一击因此 4/5 分叉,整段 hp 轨迹从此偏移(改成 post-block
-    //      之后步集合仍是这 14 步,只有内容指纹变了).
-    //   3) seed 510 步 [34, 35, 36, 37, 38, 39](6 处)
-    //      归类:(c) 参考未实现 —— 史莱姆族每回合那次 aiRng 掷点.
-    //      seed 510 的步 33 是 mindbloom 事件"I am War",两边抽到的幻影 Act1 Boss 都是
-    //      史莱姆首领(参考侧实测 SLIME_BOSS;两侧洗牌同源).参考自己注明它的史莱姆首领与
-    //      史莱姆"consumes no aiRng.random(99) after turn 1"(monsters/act1/slimeBoss.ts:60、
-    //      monsters/act1/slimes.ts:73,ENGINE-GAP rng parity),而原版每个怪物回合都要掷一次,
-    //      于是分裂出来的小史莱姆"首招掷点"落到不同的值上,这一战差 4 hp.
-    //   4) seed 510 步 [11, 12, 13, 14, 15](5 处)
-    //      归类:(c) 参考表示差异 —— 半死暗灵的掷点挪到回合末.
-    //      原版 MonsterGroup::doMonsterTurn 里 isHalfDead 的暗灵也照常占自己那一回合出招
-    //      (REGROW/REINCARNATE 各消耗一次 aiRng),掷点发生在槽位顺序里;参考
-    //      powers/monstersAct34.ts 的 REGROW 自己注明 "ENGINE-GAP: those rolls happen at
-    //      end of round instead of in slot order".掷点次数一样,只是同一轮里换了归属,回合末
-    //      计数就对齐,所以只在这一战差 3 hp,后面几间不动(42..44 那 3 处已由上一轮的
-    //      鸟居/荆棘修复一并收掉).
+    // 第三幕(a20a3)的逐颗口径、归类与依据见 ASC3_CASES 上方那张统一表:本轮 30 -> 25 处
+    // (seed 30 的顿努与德卡板甲时点、seed 237 的板甲时点 + 不休陀螺补牌都在驱动侧或引擎里
+    //  折平;剩下 seed 284 的 The Boot 与 seed 510 的暗灵掷点归属 + mindbloom 史莱姆 aiRng
+    //  缺口).板甲那条也一并记在 ASC3 的 (c)1.
     // 已修的一条(留作记录):怪物回合末能力里,只有祭礼(Ritual)是"刚挂上当回合不结算"
     //   (原版 RitualPower 的 skipFirst);金属化/板甲/再生/力量渐增都在自己回合末按当前层数
     //   无条件结算 —— 依据反编译 Monster::applyEndOfTurnTriggers 在 afterMonsterTurns 里跑
     //   (排在移动效果之后),PLATED_ARMOR/METALLICIZE 没有 justApplied 检查而 RITUAL 有.
-    //   修完 seed 237 的顿努与德卡一战随之对齐,代价是 seed 30 多出上面第 1 条那 3 处.
+    //   修完 seed 237 的顿努与德卡一战随之对齐,代价是 seed 30 一度多出 3 处(本轮已在
+    //   驱动侧折平,见 ASC3 的 (c)1).
     // 表里把当前的对齐前缀、差异步与内容指纹登记下来,修好一条就重跑
     // `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
     // 第四幕(A20)25 颗种子(见 ASC4_CASES 上方):24 颗逐字节全对齐,seed 33 只差进入
@@ -2406,17 +2396,31 @@ mod e2e {
 
     /// 飞升 20 第三幕的登记表:a20a3.script = act3.script + `asc 20`(路径/策略同第三幕那张
     /// act3 表,只把飞升抬到 20).A20 第三幕要连打两个 Boss(顿努与德卡 / 觉醒者 / 时间
-    /// 吞噬者里挑两个),所以本作的步数比 A0 多 1~2 步.逐颗口径(复跑命令
-    /// `bun tools/e2e_diff.ts --all --script tools/golden/e2e/a20a3.script`):
-    ///   本表合计 30 处 -> 25 处(本轮).逐颗:
-    ///   seed 29 / 121 / 494:两边逐字节一致(0 处),本轮不变.
-    ///   seed 30:3 处 -> 0 处.首分叉在第 42 步的顿努与德卡战,成因是 (c)
-    ///     参考的"方阵护御"板甲时点(见 (c)1),已在驱动侧补偿掉.
-    ///   seed 237:2 处 -> 0 处.第 41 步(A20 第二个 Boss:时间吞噬者)的 2 处有两个成因,
-    ///     都在本轮解决:先是 (c)1 的顿努与德卡板甲时点(第 39 步那场),再是本作真 bug
-    ///     (a)1 —— 时间扭曲掐掉回合时"不休陀螺"不该补牌(见 (a)1).
-    ///   seed 284:14 处,不变,全部来自 The Boot(归类 (b),依据见 ACT3_CASES 上方那段).
-    ///   seed 510:11 处,不变,全部来自暗灵的掷点归属(归类 (c)2).
+    /// 吞噬者里挑两个),所以本作的步数比 A0 多 1~2 步.
+    ///
+    /// 逐颗口径(种子 | 对齐前缀 | 首分叉步 | 成因 | 归类 | 依据 | 断言),全表合计 25 处.
+    /// 复跑:`bun tools/e2e_diff.ts --all --script tools/golden/e2e/a20a3.script`.
+    ///   全对齐(0 处):29 30 121 237 494(30/237 是本轮刚折平的,细节见 (c)1/(a)1)
+    ///   seed 284 | 29 | 29 | 靴子 The Boot:挡后剩的 1..4 点攻击伤害本作抬到 5、参考空实现
+    ///             不抬(与 A0 的 act3 表同一条,步集合多了收尾两步) | (b) 参考空实现 |
+    ///             refs/sts_lightspeed/src/combat/Monster.cpp:339-341 + 407-440;
+    ///             refs/slay-the-cli/src/content/relics/common.ts:436-441 |
+    ///             combat.rs boot_boosts_unblocked_damage_after_reductions
+    ///   seed 510 | 11 | 11 | 半死暗灵的掷点归属:本作让半死那只照常在自己槽位出招、掷点在
+    ///             槽位顺序里,参考把它的 parity roll 挪到回合末,同轮 aiRng 归属错位 |
+    ///             (c) 参考引擎够不到的时点(参考自述 ENGINE-GAP) |
+    ///             refs/sts_lightspeed/src/combat/MonsterGroup.cpp:571-586;
+    ///             refs/slay-the-cli/src/content/powers/monstersAct34.ts:8-10 |
+    ///             combat.rs half_dead_darkling_acts_in_slot_and_burns_one_roll_per_turn
+    ///   seed 510 | 34 | 34 | mindbloom 的"我是战争"抽到史莱姆首领:参考的史莱姆族首回合
+    ///             之后不再掷 aiRng(自述 ENGINE-GAP rng parity),分裂出的小史莱姆首招
+    ///             掷点错位 | (c) 参考引擎够不到的时点 |
+    ///             refs/slay-the-cli/src/content/monsters/act1/slimeBoss.ts:60、
+    ///             .../monsters/act1/slimes.ts:73;
+    ///             本作 src/core/combat.rs:3037(pick_next_move 每回合掷一次)|
+    ///             combat.rs slimes_roll_one_ai_rng_per_turn
+    /// (同 seed 510 的两段差异分属两场战斗:步 11~15 是三只暗灵,步 34~39 是 mindbloom
+    ///  幻影 Boss;历史数字 30 -> 25 处.)
     ///
     /// (a)1 时间扭曲掐掉回合后不休陀螺还补牌(本轮修 + 断言).反编译的主循环
     ///   refs/sts_lightspeed/src/combat/BattleContext.cpp:802-815 里,"这一回合已经排队结束"
@@ -2473,29 +2477,15 @@ mod e2e {
     /// A17 的第二幕怪选招分支(被选中者/壳鹦鹉螺/神秘者/蛇形植物等)、A20 的 Boss 规则,
     /// 以及召唤/分裂在飞升档的血量.
     ///
-    /// 逐颗 seed 归因(12 颗,复跑命令 `bun tools/e2e_diff.ts --all --script
-    /// tools/golden/e2e/a20a2.script`)."对齐前缀"= 第一处分叉前的步数,"首分叉"= 第一处
-    /// 字段不同的步号(其后差异都是这一处的级联).退赃等驱动侧补偿折掉后从 1157 降到
-    /// 249 处,后续几轮修 bug 再降到 195 -> 105 -> 50 处(后两轮折掉 (c)5~(c)8);本轮再
-    /// 折掉事件选牌屏的 chosen 口径 (c)9 与铜制自动机(槽位缺口 (c)10 + 引擎的飞升 19
-    /// "光束后接增幅" (a)),全表 50 -> 3 处:
-    ///
-    ///   seed  步数(本作/参考)  对齐前缀  首分叉            首分叉成因 / 归类
-    ///    3     45/45            45       (已全对齐,本轮折铜制自动机槽位 (c)10 + 引擎飞升 19 分支 (a))  [共 0 处]
-    ///    4     50/50            47       步 47 fight       收藏家的 Battle Trance 抽牌限制 (c)8   [共 3 处]
-    ///    6     53/53            53       (已全对齐)                                             [共 0 处]
-    ///   11     48/48            48       (已全对齐)                                             [共 0 处]
-    ///   13     42/42            42       (已全对齐)                                             [共 0 处]
-    ///   15     45/45            45       (已全对齐)                                             [共 0 处]
-    ///   16     44/44            44       (已全对齐)                                             [共 0 处]
-    ///   17     44/44            44       (已全对齐)                                             [共 0 处]
-    ///   18     47/47            47       (已全对齐)                                             [共 0 处]
-    ///   19     45/45            45       (已全对齐,本轮折 designer/shrine 选牌口径 (c)9)          [共 0 处]
-    ///   25     47/47            47       (已全对齐,本轮折 designer/shrine 选牌口径 (c)9)          [共 0 处]
-    ///   33     46/46            46       (已全对齐)                                             [共 0 处]
-    ///
-    /// 只剩种子 4 的步 47:收藏家(Boss)战里参考的"本回合不能再抽牌"没实现(下方 (c)8);
-    /// 其余 11 颗本轮或上一轮已逐字节全对齐.本轮两条并见下方 (c)9/(c)10 与 (a).
+    /// 逐颗口径(种子 | 对齐前缀 | 首分叉步 | 成因 | 归类 | 依据 | 断言),全表合计 3 处.
+    /// 复跑:`bun tools/e2e_diff.ts --all --script tools/golden/e2e/a20a2.script`.
+    ///   全对齐(0 处):3 6 11 13 15 16 17 18 19 25 33
+    ///   seed 4 | 47 | 47 | 收藏家 Boss 战里参考的"本回合不能再抽牌"没实现:本作按牌面
+    ///            否决额外抽牌,参考没否决多抽一张,整场差 64 血 | (c) 参考空实现 |
+    ///            refs/slay-the-cli/src/content/powers/ironclad.ts:269-272;
+    ///            refs/sts_lightspeed/src/combat/BattleContext.cpp:2439-2445 |
+    ///            combat.rs battle_trance_gives_no_draw_for_the_rest_of_the_turn
+    /// 历史数字:退赃等驱动侧补偿后 1157 -> 249 -> 195 -> 105 -> 50 -> 3 处.
     ///
     /// (a1) 驱动侧时序补偿(本轮):参考的怪招掷点早于它自己排队的回血结算.
     ///   原版/反编译(refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607 的 MYSTIC_HEAL、
@@ -2702,7 +2692,7 @@ mod e2e {
     ///   (c)10 铜制自动机的开战槽位:反编译 MonsterGroup.cpp:173-177 把 BRONZE_AUTOMATON
     ///       构造在槽 1(先 monsterCount=1,createMonster 用 arr[monsterCount]),spawnBronzeOrbs
     ///       用 arr[0]/arr[2](MonsterSpecific.cpp:3393-3399);本作 bronze_automaton = [1]
-    ///       (src/core/enemies.rs:816,断言见 combat.rs automaton_orbs_take_slots_0_and_2_around_it).
+    ///       (src/core/enemies.rs:818,断言见 combat.rs automaton_orbs_take_slots_0_and_2_around_it).
     ///       参考按数组下标铺成槽 0..N-1,自动机落槽 0、铜球进槽 1/2.除了行动顺序被改,每回合
     ///       "谁先掷下一招 aiRng"也按数组顺序走,摆位一挪铜球拿到的掷点就换了人(seed 13/33
     ///       各差 8 hp).驱动侧给参考开战时插一个槽 0 的 GAP(同 (c)6 的做法),与 (a) 合起来
@@ -2738,12 +2728,16 @@ mod e2e {
     /// 飞升 20 第四幕:在原有 16 颗的基础上扩到 25 颗(seed 1..24 + 33).
     /// 量的是飞升 18(盾与矛)/19(心脏数值)在 A20 下的表现,顺便核对盾与矛的背袭朝向
     /// (SPIRE_SHIELD/SURROUNDED)与心脏的死亡律动(Beat of Death)/无敌(Invincible).
-    /// 24 颗逐字节全对齐,只有 seed 33 差一处:
-    ///   (b) 进 Boss 房那一行的回血时点.Pantograph 在进入 Boss 房时回 25(参考实现把这次
-    ///   回血算在 move 那一行的快照里,本作要等战斗初始化才回,于是 move 行差 25 hp);
-    ///   同一颗 seed 的终局(hp/胜败)逐字段相同,纯粹是两边导出器对"刚进房间"这一刻的
-    ///   快照口径不同.seed 49 同型(没登记).改这一处要动 move 行的取快照时机,会影响
-    ///   全部已钉住的表,收益只是少一行中间态,所以留着.
+    /// 逐颗口径(种子 | 对齐前缀 | 首分叉步 | 成因 | 归类 | 依据 | 断言),全表合计 1 处.
+    /// 复跑:`bun tools/e2e_diff.ts --all --script tools/golden/e2e/a20a4.script`.
+    ///   全对齐(0 处):表里 25 颗里的 24 颗(seed 1..24)
+    ///   seed 33 | 8 | 8 | 进 Boss 房那一行的回血时点:Pantograph 的 +25 在参考侧算进 move
+    ///            行的快照,本作要等战斗初始化才回,于是 move 行差 25 hp;同一颗 seed 的终局
+    ///            (hp/胜败)逐字段相同 | 表示差异 | src/core/relics.rs:1116-1122
+    ///            (boss_combat_heal: 25)+ src/core/combat.rs:852-853 |
+    ///            combat.rs pantograph_heals_twenty_five_only_in_boss_combats
+    /// 改这一处要动 move 行的取快照时机,会影响全部已钉住的表,收益只是少一行中间态,
+    /// 所以留着.seed 49 同型(没登记).
     /// 另:扩表时顺手抓到并修掉一条真 bug —— 镀甲(Thread and Needle)的掉层规则.原版只有
     ///   没被格挡住的"攻击"伤害才掉一层(反编译 Player::attacked),死亡律动/荆棘/灼烧这些
     ///   非攻击伤害走 Player::damage() 不掉层;本作原先在 hit_player 里见血就掉,于是 A20
