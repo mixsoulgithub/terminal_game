@@ -19,6 +19,8 @@ import { canSmith } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src
 import { createCardReward, cardGroupEntries } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/rewards.ts";
 import { readFileSync } from "node:fs";
 import { ActionQueue } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/queue.ts";
+import { executeAction } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/interpreter.ts";
+import type { GameAction } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/actions.ts";
 import { RngRegistry } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rngRegistry.ts";
 import type { EffectCtx } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/content/defs.ts";
 import type { CombatState } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/combatState.ts";
@@ -299,6 +301,60 @@ function ensureFairyWatch(s: GameState): void {
   if (c.player.powers.some((p) => p.id === ("FAIRY_SAVE" as never))) return;
   c.player.powers.push({ id: "FAIRY_SAVE" as never, amount: 0, justApplied: false, data: null });
 }
+
+// ---- 参考侧时序补丁:怪物"下一招掷点"早于它本招排队的回血结算 ----
+//
+// 原版怪招是"先把本招效果当场做完,再掷下一招".反编译的 MYSTIC_HEAL
+// (refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607)就是
+// `heal(knight); heal(self); rollMove();` —— heal 立即改 curHp
+// (refs/sts_lightspeed/src/combat/Monster.cpp:269-272),紧接着 rollMove 里 getMove 读到的是
+// **补过血之后**的血量(神秘者据此判"自己还差不差血、要不要继续 HEAL").
+// CENTURION_DEFEND 同理(mystic.addBlock 当场生效后才 rollMove).
+//
+// 参考实现把 heal 塞进动作队列(interpreter.ts:68 的 "heal" action 走 applyHeal),
+// 而它的 executeMonsterMove(interpreter.ts:748-768)在 move.execute 排完队之后**立刻**
+// rollMove,于是 getMove 读到的是补血**之前**的血:神秘者在 14/54 时判"要治",原版补到
+// 34/54 后才判"不用治".两边都没漏实现,是参考排队的时点比原版晚了一拍.
+//
+// 这里在驱动侧把这一拍掰回来:包住每个怪招的 execute,等它把本招效果(含 heal)排进动作
+// 队列后,当场把**本招刚排进去的、目标是怪物的** heal 按原顺序先结算掉 —— 走参考自己的
+// executeAction → applyHeal,回血钩子照旧,一粒不少;随后参考自己的 rollMove 就与原版
+// 一样读到补过血的血量.只把"结算"的时点提前,掷点**次数**不变,其它 action 一律不动;
+// 玩家的回血(牌/遗物)不是怪招排的,不在名单里.本作引擎不动.
+const patchedMoveExec = new WeakSet<object>();
+
+function patchMonsterRollAfterQueuedHeal(): void {
+  for (const def of bundle.monsters.values()) {
+    for (const move of Object.values(def.moves)) {
+      if (patchedMoveExec.has(move)) continue;
+      patchedMoveExec.add(move);
+      const exec = move.execute;
+      if (!exec) continue;
+      move.execute = (ctx, self) => {
+        // ActionQueue.items 是 private;驱动侧要按对象身份摘掉刚排队的那几项,这里显式松一把类型(它就在 queue.ts:13 声明)
+        const queue = ctx.queue as unknown as { items: GameAction[] };
+        const items = queue.items;
+        // 本招刚开始时队列里已有的是"别人的";只认本招新排进去的那几项
+        const before = new Set<GameAction>(items);
+        exec(ctx, self);
+        if (!COMPENSATE) return;
+        const late = items.filter(
+          (a) => !before.has(a) && a.kind === "heal" && a.target.kind === "monster",
+        );
+        if (late.length === 0) return;
+        // 先按原地顺序从队列里摘掉(本招排的都是 addToBottom,原本也排在这些项之后),
+        // 再逐项走参考自己的结算,掷点读到的血量就与原版一致.
+        const lateSet = new Set<GameAction>(late);
+        for (let i = items.length - 1; i >= 0; i--) {
+          if (lateSet.has(items[i]!)) items.splice(i, 1);
+        }
+        for (const a of late) executeAction(ctx, a);
+      };
+    }
+  }
+}
+
+patchMonsterRollAfterQueuedHeal();
 
 /** 调试钩子 `act n`:从当前幕切到第 n 幕开头.
  *  借参考实现自己的幕切换 —— 先把房间换成"Boss 奖励屏",再 skipRewards,

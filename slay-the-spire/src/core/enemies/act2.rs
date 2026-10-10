@@ -1176,9 +1176,10 @@ pub const BRONZE_ORB: EnemyDef = EnemyDef {
         MoveDef {
             name: "Support Beam",
             intent: Intent::Defend,
+            // 只给铜制自动机加 12 格挡(不给同伴、也不给自己)
             effects: &[EnemyFx::Block {
                 amount: 12,
-                scope: Scope::Allies,
+                scope: Scope::Leader,
             }],
         },
         MoveDef {
@@ -1481,8 +1482,10 @@ fn pick_the_champ(ctx: &mut PickCtx) -> usize {
         }
     }
     let roll = ctx.roll();
-    // 防守姿态每场最多两次,且不许连二
-    if roll <= 15 && !ctx.last_is(STANCE) && ctx.state.guard_uses < 2 {
+    // 防守姿态每场最多两次,且不许连二;掷点门槛 A19 起从 15 抬到 30(反编译
+    // MonsterSpecific.cpp:2878-2881 的 asc19 ? 30 : 15)
+    let stance_threshold = if ctx.asc >= 19 { 30 } else { 15 };
+    if roll <= stance_threshold && !ctx.last_is(STANCE) && ctx.state.guard_uses < 2 {
         ctx.state.guard_uses += 1;
         return STANCE;
     }

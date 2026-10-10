@@ -30,6 +30,10 @@ pub enum Scope {
     Team,
     /// 除了自己以外的同伴(没有就落空)
     Allies,
+    /// 场上的随从首领(带 MINION_LEADER 的那只,且不是自己):铜球的支援光束只给
+    /// 铜制自动机加格挡(反编译 MonsterSpecific.cpp:524-527 直接写 arr[1],
+    /// 而 automaton 就在 arr[1];见 spawnBronzeOrbs 用 arr[0]/arr[2])
+    Leader,
     /// 随机一个活着的同伴(包括自己)
     RandomOne,
 }

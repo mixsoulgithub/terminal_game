@@ -239,6 +239,9 @@ pub struct Choice {
     pub copies: usize,
     /// 选中的牌本回合 0 费(发现类药水;工具箱与抄本不免费)
     pub free: bool,
+    /// 这张牌是被"打抽牌堆顶"(浩劫/混沌药剂)放出来的:收尾时无条件消耗
+    /// (power 退场),取消也不回手牌 —— 它不是从手牌里出去的
+    pub exhaust_after: bool,
 }
 
 /// 整局持续的遗物计数器:参考实现里这些数挂在 Run 的遗物实例上(relic counter),
@@ -345,8 +348,12 @@ pub struct Combat {
     /// 弃牌堆(顶牌自己的"抽 1"再触发重洗时就会把浩劫一起洗进去).见反编译
     /// BattleContext.cpp 的 useCard / onAfterUseCard 与主循环(actionQueue 先于 cardQueue).
     /// 这里照同一顺序:打牌时先摘顶牌存进这条队列,等本张牌收尾之后再结算.
-    /// 每项是(浩劫链层级, 顶牌, 打完是否消耗).
-    pending_top_plays: Vec<(u8, CardInstance, bool)>,
+    /// 每项是(浩劫链层级, 顶牌, 打完是否消耗, 摘牌时掷好的随机目标).
+    /// 目标必须在这里掷(与参考实现的 PlayTopCardAction 同一时刻):原版/参考都是把
+    /// PlayTopCard 动作排在"打出的那张牌"之后、"诅咒之眼(Hex)塞眩晕"之前执行,
+    /// 掷点次序是"先顶牌目标、后 Hex 位置" —— 拖到真正结算顶牌时才掷,两次
+    /// cardRandomRng 的次序就反了(见 tools/e2e_diff.ts a20a2 seed 3 的鸟+被选中者战).
+    pending_top_plays: Vec<(u8, CardInstance, bool, Option<usize>)>,
     /// 放到抽牌堆顶的序号,每次放都 +1
     top_seq: u32,
     /// 待选择(选牌窗口/手牌选择模式)
@@ -1123,20 +1130,36 @@ impl Combat {
     }
 
     /// 原版 PlayTopCard 动作的后半:结算摘下来的那张牌(exhaust_after 为真时打完
-    /// 直接消耗,浩劫就是),depth 是浩劫链层级.
-    fn play_top_card(&mut self, mut card: CardInstance, exhaust_after: bool, depth: u8) {
+    /// 直接消耗,浩劫就是),depth 是浩劫链层级,target 是摘牌那一刻掷好的随机目标.
+    fn play_top_card(
+        &mut self,
+        mut card: CardInstance,
+        exhaust_after: bool,
+        depth: u8,
+        target: Option<usize>,
+    ) {
         let kind = card.kind();
         // 记进浩劫链(层级 +1 表示嵌了一层),表现层据此叠播报
         let saved_depth = self.havoc_depth;
         self.havoc_depth = depth;
         self.havoc_chain.push((depth, card.label()));
-        let target = self.pick_random_alive();
         self.snapshot_sharp_hide();
         let mut top_ctx = PlayCtx::default();
         self.resolve(&mut card, target, &mut top_ctx);
         self.havoc_depth = saved_depth;
         card.free_this_turn = false;
-        if card.kind() == crate::core::card::CardType::Power {
+        // 这张顶牌挂着选牌(浩劫放出来的燃烧契约/头槌之类):牌的去处与"打出过"
+        // 记账都等选完再收尾,走与 play_card 同一条路 —— 否则选牌之后那一截效果
+        // (燃烧契约的"抽 2")会因为 close_choice 找不到 played 而整段丢掉.
+        if self.choice.is_some() {
+            if let Some(ch) = self.choice.as_mut() {
+                ch.played = Some((card, 0));
+                ch.exhaust_after = exhaust_after;
+            }
+            self.check_win();
+            return;
+        }
+        if kind == crate::core::card::CardType::Power {
             // 能力牌一样是打完就退场(浩劫放出来的也不例外)
             self.vanish_card(card);
         } else if exhaust_after || card.is_exhaust() {
@@ -1153,7 +1176,8 @@ impl Combat {
     /// 立刻打抽牌堆顶:没有"本张牌"要收尾的场合(混乱/混沌药剂)走这条.
     fn play_top_of_draw_now(&mut self, exhaust_after: bool, via: &str) {
         if let Some(card) = self.take_top_card_for_play(via) {
-            self.play_top_card(card, exhaust_after, 1);
+            let target = self.pick_random_alive();
+            self.play_top_card(card, exhaust_after, 1, target);
         }
     }
 
@@ -1161,8 +1185,8 @@ impl Combat {
     /// 顺序与原版一致(浩劫先进弃牌堆,再结算摘下来的顶牌).
     fn drain_pending_top_plays(&mut self) {
         while !self.pending_top_plays.is_empty() {
-            let (depth, card, exhaust) = self.pending_top_plays.remove(0);
-            self.play_top_card(card, exhaust, depth);
+            let (depth, card, exhaust, target) = self.pending_top_plays.remove(0);
+            self.play_top_card(card, exhaust, depth, target);
         }
     }
 
@@ -2445,6 +2469,14 @@ impl Combat {
             Scope::Allies => (0..self.enemies.len())
                 .filter(|i| *i != idx && self.enemies[*i].alive())
                 .collect(),
+            Scope::Leader => (0..self.enemies.len())
+                .filter(|i| {
+                    *i != idx
+                        && self.enemies[*i].alive()
+                        && (self.enemies[*i].statuses.holds(Status::MinionLeader)
+                            || matches!(self.enemies[*i].def.special, Special::Leader))
+                })
+                .collect(),
             Scope::RandomOne => {
                 // 参考实现/原版(盾卫 Protect):从"除自己外的存活同伴"里随机挑一个,
                 // 只有单挑时才落到自己头上;掷点走 aiRng,不是 cardRandomRng.
@@ -2488,20 +2520,43 @@ impl Combat {
         }
     }
 
-    /// 圆球哨卫的停滞:从抽牌堆偷一张牌,它死了再还回来
+    /// 圆球者的停滞:从抽牌堆(空了改从弃牌堆)偷一张牌,它死了再还回来.
+    /// 选牌不是均匀随机:反编译 MonsterSpecific.cpp:3425-3459 的 stasisHelper 先按稀有度
+    /// RARE > UNCOMMON > COMMON 挑出"当前堆里最高那一档"的牌,组内按固定卡序
+    /// (cardSortedIdx,参考实现按卡名)稳定排序后随机取一张;堆里只剩基础/特殊这些
+    /// 没档次的牌时,才在整堆里均匀随机.两处都只掷一次 cardRandomRng.
     fn enemy_steal_card(&mut self, idx: usize, name: &str) {
-        let pile = if !self.draw.is_empty() {
-            &mut self.draw
-        } else if !self.discard.is_empty() {
-            &mut self.discard
-        } else {
+        let from_draw = !self.draw.is_empty();
+        let pile: &Vec<CardInstance> = if from_draw { &self.draw } else { &self.discard };
+        if pile.is_empty() {
             self.push_log(
                 LogKind::Enemy,
                 format!("{name} finds nothing to steal"),
             );
             return;
+        }
+        // 档位:数字越小越优先,没有档次的牌(Basic/Special/诅咒)给 None
+        let rank = |c: &CardInstance| match c.def.rarity {
+            Rarity::Rare => Some(0),
+            Rarity::Uncommon => Some(1),
+            Rarity::Common => Some(2),
+            _ => None,
         };
-        let pick = self.streams.floor(FloorStream::CardRandomRng).below(pile.len() as u32) as usize;
+        let pick = match pile.iter().filter_map(rank).min() {
+            Some(best) => {
+                let mut group: Vec<usize> = pile
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| rank(c) == Some(best))
+                    .map(|(i, _)| i)
+                    .collect();
+                group.sort_by(|&a, &b| pile[a].def.name.cmp(pile[b].def.name));
+                let k = self.streams.floor(FloorStream::CardRandomRng).below(group.len() as u32);
+                group[k as usize]
+            }
+            None => self.streams.floor(FloorStream::CardRandomRng).below(pile.len() as u32) as usize,
+        };
+        let pile = if from_draw { &mut self.draw } else { &mut self.discard };
         let card = pile.remove(pick);
         let label = card.label();
         self.stasis.push((idx, card));
@@ -2974,6 +3029,7 @@ impl Combat {
             draw_after: false,
             copies: 1,
             free: false,
+            exhaust_after: false,
         });
     }
 
@@ -3134,7 +3190,18 @@ impl Combat {
         }
         // 带选牌的牌到这里才算"牌的效果跑完":记一次"打出过这张牌"
         let played_kind = ch.played.as_ref().map(|(c, _)| c.kind());
-        self.finish_played(ch.played.take());
+        if ch.exhaust_after {
+            // 被"打抽牌堆顶"放出来的牌打完无条件消耗(能力牌退场),与浩劫的"Exhaust it"一致
+            if let Some((card, _)) = ch.played.take() {
+                if card.kind() == crate::core::card::CardType::Power {
+                    self.vanish_card(card);
+                } else {
+                    self.exhaust_card(card);
+                }
+            }
+        } else {
+            self.finish_played(ch.played.take());
+        }
         if let Some(kind) = played_kind {
             self.note_card_played(kind);
         }
@@ -3184,7 +3251,16 @@ impl Combat {
         }
         if let Some((card, cost)) = ch.played.take() {
             self.energy += cost;
-            self.hand.push(card);
+            if ch.exhaust_after {
+                // 打抽牌堆顶放出来的牌本来就不是手牌里出去的,取消也不能塞回手里
+                if card.kind() == crate::core::card::CardType::Power {
+                    self.vanish_card(card);
+                } else {
+                    self.exhaust_card(card);
+                }
+            } else {
+                self.hand.push(card);
+            }
         }
         // 牌都没打出去,挂起的那一截效果也一并作废
         self.choice_tail.clear();
@@ -4111,11 +4187,13 @@ impl Combat {
             self.player.statuses.add(Status::Duplication, -1);
             self.resolve(&mut card, chosen, &mut ctx);
         }
-        // 死灵之书:本回合第一张 2 费以上的攻击再打一次
+        // 死灵之书:本回合第一张"实际费用 >= 2"的攻击再打一次.
+        // 反编译 BattleContext.cpp:1691-1694 判的是 costForTurn(X 费另看 energyOnUse >= 2),
+        // 不是印刷费用 —— 混乱(蛇眼/蛇油)把狂暴掷成 2 费时,这一刀同样要翻倍.
         let necro = self.relic_any(|fx| fx.double_first_big_attack)
             && !self.rs.necro_used
             && card.kind() == crate::core::card::CardType::Attack
-            && matches!(card.cost(), Cost::Fixed(c) if c >= 2);
+            && cost >= 2;
         if necro {
             self.rs.necro_used = true;
             self.push_log(LogKind::Player, "Necronomicon: the attack plays twice".to_string());
@@ -4544,7 +4622,9 @@ impl Combat {
                     // 结算(见反编译 BattleContext.cpp).这里照同一顺序:现在只摘牌,
                     // 等本张牌收尾之后再结算(见 drain_pending_top_plays).
                     if let Some(card) = self.take_top_card_for_play("Havoc") {
-                        self.pending_top_plays.push((self.havoc_depth + 1, card, true));
+                        // 目标在这里掷:与参考实现的 PlayTopCardAction 同一时刻(排在 Hex 塞眩晕之前)
+                        let target = self.pick_random_alive();
+                        self.pending_top_plays.push((self.havoc_depth + 1, card, true, target));
                     }
                 }
                 Effect::AddCardToHand { id, n } => {
@@ -6829,6 +6909,57 @@ mod tests {
             c.hand.iter().any(|x| x.def.id == "necronomicurse"),
             "消耗之后手里又回来一张"
         );
+    }
+
+    /// 浩劫放出的带选牌顶牌(燃烧契约):选完牌之后那一截效果(抽 2)不能丢
+    #[test]
+    fn havoc_plays_the_whole_choice_card() {
+        let mut c = guarded(&[]);
+        c.hand = vec![card("havoc"), card("strike")];
+        c.draw = vec![card("burning_pact"), card("strike"), card("strike")];
+        c.energy = 3;
+        c.play_card(0, Some(0)).unwrap();
+        assert!(c.choice.is_some(), "燃烧契约要挂起选牌");
+        c.choose(0).unwrap();
+        assert_eq!(c.hand.len(), 2, "选完牌之后要真的抽 2 张");
+        assert!(c.draw.is_empty(), "顶牌自己 + 抽走的 2 张都没了");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "burning_pact"),
+            "浩劫放出的顶牌打完要消耗"
+        );
+    }
+
+    /// 死灵之书看的是本回合实际费用(混乱掷出来的 2 费也算),不是印刷费用
+    #[test]
+    fn necronomicon_counts_the_cost_rolled_by_confusion() {
+        let mut c = Combat::new(
+            enc("jaw_worm_solo"),
+            setup(80, &["strike"], &[relic_def_or_panic("necronomicon")]),
+            RngRegistry::new(1),
+        );
+        c.hand = vec![card("strike")];
+        c.draw.clear();
+        c.energy = 3;
+        c.hand[0].cost_delta = 1; // 混乱把 1 费的打击掷成 2 费
+        let hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, hp - 12, "2 费的打击要被再打一次");
+    }
+
+    /// 铜球的停滞偷的是"当前堆里稀有度最高"的那一档,不是均匀随机
+    #[test]
+    fn stasis_steals_the_highest_rarity_card() {
+        let mut c = guarded(&[]);
+        c.draw = vec![
+            card("strike"),        // Basic
+            card("rampage"),       // Common
+            card("spot_weakness"), // Uncommon
+            card("pummel"),        // Uncommon
+            card("bludgeon"),      // Rare
+        ];
+        c.enemy_steal_card(0, "Bronze Orb");
+        assert_eq!(c.stasis.len(), 1);
+        assert_eq!(c.stasis[0].1.def.id, "bludgeon", "唯一的稀有牌必被偷");
     }
 
     /// 战斗恍惚:先抽 3 张,再挂 No Draw,本回合之后连卡牌效果的抽牌也挡住
