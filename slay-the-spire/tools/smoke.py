@@ -18,6 +18,8 @@ import sys
 import time
 
 SESSION = os.environ.get("SMOKE_SESSION", "spire_smoke")
+# tmux 伪终端的尺寸.默认比真实终端(107x24)大一点,可用 SMOKE_SIZE=WxH 覆盖来测小屏.
+SIZE = os.environ.get("SMOKE_SIZE", "110x34")
 # 按键之后最短等多久再抓屏(等界面稳定下来用的采样间隔)
 SAMPLE = 0.03
 
@@ -29,8 +31,9 @@ def tmux(*args: str) -> str:
 
 def start(binary: str, seed: int) -> None:
     stop()
+    w, _, h = SIZE.partition("x")
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", SESSION, "-x", "110", "-y", "34",
+        ["tmux", "new-session", "-d", "-s", SESSION, "-x", w, "-y", h,
          f"{binary} --seed {seed}"],
         check=True,
     )
