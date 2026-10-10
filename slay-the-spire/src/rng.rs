@@ -334,6 +334,22 @@ pub fn seed_from_arg(arg: &str) -> Option<u64> {
     None
 }
 
+/// 种子窗口用的解析:一律按参考实现的 base-35 串解释(即使全是数字,
+/// 这样从原版抄来的纯数字种子串也能 1:1 对上);字母表外的字符算非法
+pub fn seed_from_string_checked(s: &str) -> Option<u64> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if !t
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() && c.to_ascii_uppercase() != 'O')
+    {
+        return None;
+    }
+    Some(seed_from_string(t))
+}
+
 // ---- 具名流 ----
 
 /// 整局用一条的流

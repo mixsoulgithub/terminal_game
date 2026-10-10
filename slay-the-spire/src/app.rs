@@ -13,6 +13,8 @@ use crate::ui::overlay::Overlay;
 pub enum Mode {
     Normal,
     Command,
+    /// 种子窗口::seed 打开的输入框
+    SeedInput,
 }
 
 /// 战斗里的一次抖动动画:谁、往哪边、还剩几帧、起步延迟几帧、还要重抖几次
@@ -47,6 +49,8 @@ pub struct App {
     pub run: Run,
     pub mode: Mode,
     pub cmd: String,
+    /// 种子窗口里正在敲的 base-35 串
+    pub seed_in: String,
     pub overlay: Option<Overlay>,
     pub overlay_scroll: u16,
     /// 上一次渲染算出的最大滚动量:到底之后再按 j 不会继续累加
@@ -121,6 +125,7 @@ impl App {
             run: Run::new(seed),
             mode: Mode::Normal,
             cmd: String::new(),
+            seed_in: String::new(),
             comp_list: Vec::new(),
             comp_idx: 0,
             comp_pending: false,
@@ -730,6 +735,10 @@ impl App {
         match self.mode {
             Mode::Command => {
                 self.command_key(key);
+                return;
+            }
+            Mode::SeedInput => {
+                self.seed_key(key);
                 return;
             }
             Mode::Normal => {}
@@ -1777,6 +1786,43 @@ impl App {
         }
     }
 
+    // ---- 种子窗口 ----
+
+    /// 种子窗口的按键:敲 base-35 串,回车起一局新的,esc 取消.
+    /// 一律按参考实现的口径解析(全是数字也按 base-35),好和原版抄来的串对上.
+    fn seed_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.seed_in.clear();
+                self.info("seed input cancelled");
+            }
+            KeyCode::Backspace => {
+                self.seed_in.pop();
+            }
+            KeyCode::Enter => {
+                let text = self.seed_in.trim().to_string();
+                self.mode = Mode::Normal;
+                self.seed_in.clear();
+                match crate::rng::seed_from_string_checked(&text) {
+                    Some(seed) => {
+                        self.remember_seed(seed);
+                        self.restart(seed);
+                        self.info(format!(
+                            "new run, seed {} ({seed})",
+                            crate::rng::seed_to_string(seed)
+                        ));
+                    }
+                    None => self.warn(format!("bad seed: {text}")),
+                }
+            }
+            KeyCode::Char(c) if self.seed_in.len() < 24 => {
+                self.seed_in.push(c.to_ascii_uppercase());
+            }
+            _ => {}
+        }
+    }
+
     // ---- 命令行 ----
 
     fn command_key(&mut self, key: KeyEvent) {
@@ -1881,14 +1927,13 @@ impl App {
         match head {
             "q" | "quit" => self.quit = true,
             "help" => self.open_overlay(Overlay::Help),
-            // 种子按参考实现的形式(base-35)显示,和 --seed 收的字符串同一种写法.
-            // 给参数就是设"待用种子":留到被覆盖,新局与下次启动(--seed 缺省)都用它.
+            // 种子按参考实现的形式(base-35)显示.
+            // 无参:开种子窗口(显示当前串,可改,回车起新局);有参:直接设"待用种子".
             "seed" => match rest {
-                "" => self.info(format!(
-                    "seed {} ({})  |  :seed <n|b35:STR> sets the seed new runs use",
-                    crate::rng::seed_to_string(self.run.seed),
-                    self.run.seed
-                )),
+                "" => {
+                    self.mode = Mode::SeedInput;
+                    self.seed_in = crate::rng::seed_to_string(self.run.seed);
+                }
                 arg => match crate::rng::seed_from_arg(arg) {
                     Some(n) => {
                         self.remember_seed(n);
@@ -2144,6 +2189,9 @@ impl App {
     }
 
     pub fn key_hints(&self) -> Vec<(&'static str, &'static str)> {
+        if self.mode == Mode::SeedInput {
+            return vec![("enter", "new run"), ("esc", "cancel")];
+        }
         if self.overlay.is_some() {
             return vec![("j/k", "scroll"), ("g/G", "top/bottom"), ("esc", "close")];
         }
@@ -2225,7 +2273,7 @@ impl App {
             (":", "command line"),
             (":q", "quit"),
             (":help", "this help"),
-            (":seed", "show the run seed"),
+            (":seed", "seed window: show / set the run seed"),
             (
                 ":seed <n|b35:STR>",
                 "set the seed new runs use (kept until overwritten; b35: forces base-35)",
@@ -2349,6 +2397,10 @@ mod tests {
 
     fn esc() -> KeyEvent {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    fn backspace() -> KeyEvent {
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
     }
 
     /// 敲一行命令行(: 开头的内容,最后回车)
@@ -2859,14 +2911,71 @@ mod tests {
     }
 
     #[test]
-    fn seed_command_reports_seed() {
+    fn seed_window_opens_with_the_current_seed_and_starts_a_new_run() {
+        let path = temp_seed_path("window");
         let mut app = App::new(4242);
-        app.handle_key(key(':'));
-        for c in "seed".chars() {
+        app.set_seed_file(path.clone());
+
+        // :seed 打开种子窗口,输入框预填当前种子的 base-35 串(照着敲进原版用)
+        cmd(&mut app, "seed");
+        assert_eq!(app.mode, Mode::SeedInput);
+        assert_eq!(app.seed_in, crate::rng::seed_to_string(4242));
+
+        // 清掉预填,敲 "ABC",回车 -> 按 base-35 起新局并记下待用种子
+        for _ in 0..app.seed_in.len() {
+            app.handle_key(backspace());
+        }
+        for c in "abc".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(app.seed_in, "ABC", "窗口里按大写显示");
+        app.handle_key(enter());
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.run.seed, 12647, "ABC 按 base-35 = 12647");
+        assert_eq!(save::read_seed_at(&path), Some(12647));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn seed_window_reads_digits_as_base35_and_esc_cancels() {
+        let mut app = App::new(4242);
+
+        // 窗口里纯数字也按 base-35(和原版同一个口径):17 -> 42
+        cmd(&mut app, "seed");
+        for _ in 0..app.seed_in.len() {
+            app.handle_key(backspace());
+        }
+        for c in "17".chars() {
             app.handle_key(key(c));
         }
         app.handle_key(enter());
-        assert!(app.msg.contains("4242"));
+        assert_eq!(app.run.seed, 42, "窗口口径:17 按 base-35 = 42");
+
+        // esc 取消:不改 run,也不换待用种子
+        let path = temp_seed_path("cancel");
+        let mut app = App::new(77);
+        app.set_seed_file(path.clone());
+        cmd(&mut app, "seed");
+        app.handle_key(esc());
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.run.seed, 77);
+        assert_eq!(save::read_seed_at(&path), None, "取消了就不该落盘");
+
+        // 非法串:报错,不动 run
+        cmd(&mut app, "seed");
+        for _ in 0..app.seed_in.len() {
+            app.handle_key(backspace());
+        }
+        for c in "OOPS".chars() {
+            app.handle_key(key(c));
+        }
+        app.handle_key(enter());
+        assert!(app.warn);
+        assert_eq!(app.run.seed, 77);
+        assert_eq!(save::read_seed_at(&path), None);
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

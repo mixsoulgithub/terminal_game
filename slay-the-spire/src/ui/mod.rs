@@ -768,6 +768,7 @@ pub fn render(f: &mut Frame, app: &App) {
             if let Some(ov) = app.overlay {
                 overlay::render(buf, area, app, ov);
             }
+            seed_window(buf, area, app);
             return;
         }
         _ => {}
@@ -800,6 +801,7 @@ pub fn render(f: &mut Frame, app: &App) {
     if let Some(ov) = app.overlay {
         overlay::render(buf, area, app, ov);
     }
+    seed_window(buf, area, app);
 }
 
 /// 命令行补全提示:摆在命令行上面,最多 5 行、每行最多 10 列
@@ -818,6 +820,71 @@ pub fn command_hints(buf: &mut Buffer, status_area: Rect, app: &App) {
         let y = status_area.y.saturating_sub(rows - i as u16);
         put_padded(buf, status_area.x, y, hint, w, style);
     }
+}
+
+/// 种子窗口::seed 打开的输入框,顺便把当前种子按参考实现的 base-35 串摆出来,
+/// 好照着敲进原版
+fn seed_window(buf: &mut Buffer, area: Rect, app: &App) {
+    if app.mode != crate::app::Mode::SeedInput {
+        return;
+    }
+    if area.width < 24 || area.height < 6 {
+        return;
+    }
+    let w = 48u16.min(area.width - 2);
+    let h = 6u16.min(area.height);
+    let rect = Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    );
+    let inner = (w - 4) as usize;
+    let bg = Style::default().fg(theme::FG).bg(theme::BG);
+    // 先整块刷成底色,不然开始界面的大字会从框里漏出来
+    for y in rect.y..rect.y + h {
+        put_padded(buf, rect.x, y, "", w as usize, bg);
+    }
+    draw_box(
+        buf,
+        rect,
+        "seed",
+        theme::fg(theme::BORDER).bg(theme::BG),
+        theme::fg(theme::GOLD).bg(theme::BG),
+    );
+    let cur = crate::rng::seed_to_string(app.run.seed);
+    put_padded(
+        buf,
+        rect.x + 2,
+        rect.y + 1,
+        &format!("current: {cur} ({})", app.run.seed),
+        inner,
+        bg,
+    );
+    put_padded(
+        buf,
+        rect.x + 2,
+        rect.y + 2,
+        &format!("seed: {}_", app.seed_in),
+        inner,
+        theme::selected(),
+    );
+    put_padded(
+        buf,
+        rect.x + 2,
+        rect.y + 3,
+        "A-Z 0-9 (no O), base-35",
+        inner,
+        theme::dim().bg(theme::BG),
+    );
+    put_padded(
+        buf,
+        rect.x + 2,
+        rect.y + 4,
+        "enter: new run   esc: cancel",
+        inner,
+        theme::dim().bg(theme::BG),
+    );
 }
 
 /// 选药水时的浮窗:无边框,宽度就是顶栏药水区那一块,高度按说明自动
@@ -1031,6 +1098,32 @@ mod tests {
         // 小终端也要能画(列表会自己截断)
         let tiny = screen_text(&app, 80, 24);
         assert!(tiny.contains("The Library: choose 1 of 20"), "小终端画不出来");
+    }
+
+    #[test]
+    fn seed_window_shows_the_base35_string() {
+        let mut app = App::new(4242);
+        let press = |app: &mut App, code: crossterm::event::KeyCode| {
+            app.handle_key(crossterm::event::KeyEvent::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        };
+        press(&mut app, crossterm::event::KeyCode::Char(':'));
+        for c in "seed".chars() {
+            press(&mut app, crossterm::event::KeyCode::Char(c));
+        }
+        press(&mut app, crossterm::event::KeyCode::Enter);
+        assert_eq!(app.mode, crate::app::Mode::SeedInput);
+        let text = screen_text(&app, 107, 24);
+        let want = crate::rng::seed_to_string(4242);
+        assert!(text.contains("current: "), "没画出种子窗口:\n{text}");
+        assert!(text.contains(&want), "当前种子 {want} 没摆出来:\n{text}");
+        assert!(text.contains("seed: "), "没有输入行:\n{text}");
+        assert!(text.contains("esc: cancel"), "没写怎么退出:\n{text}");
+        // 小终端也要能画
+        let tiny = screen_text(&app, 80, 24);
+        assert!(tiny.contains("current: "), "小终端画不出种子窗口");
     }
 
     #[test]
