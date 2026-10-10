@@ -82,6 +82,12 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
   "cards/normality": ["normality"],
   "cards/pain": ["pain"],
   "cards/blood_for_blood": ["blood_for_blood"],
+  // 绿职:参考实现把这些"下回合才结算"的效果挂成玩家 power(Energized / Draw Card /
+  // Next Turn Block),本作放在 Combat 的 pending_next_* 字段里,回合开始时一次性结算
+  // (combat.rs 的 start_turn 末尾).玩法一致,只差快照里那条 power.
+  "cards/dodge_and_roll": ["next_turn_block"],
+  "cards/flying_knee": ["energized"],
+  "cards/outmaneuver": ["energized"],
 };
 
 /**
@@ -114,6 +120,7 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
  * curse_hand_counters_match_the_decompile;每条注释里都写了反编译出处行号。
  */
 const RANDOM_CARD_IDS = [
+  "distraction",
   "infernal_blade",
   "discovery",
   "jack_of_all_trades",
@@ -138,7 +145,12 @@ const RANDOM_CARD_NOTES: Record<string, string> = {
  * (a) 我们错:已经定位到根因、但要动引擎核心才修得干净的,先记在这里。
  * key 是场景前缀(类别/内容 id)。
  */
-const OURS_WRONG: Record<string, string> = {};
+const OURS_WRONG: Record<string, string> = {
+  "cards/choke":
+    "本作的「打出一张牌」钩子(浮夸/残影/千刀万剐/窒息)排在卡牌效果结算之后,参考实现排在结算之前(cards/silent/uncommon.ts 的 onUseCard 注释写的是 during resolution),所以挂上窒息的这张牌自己也被算了一次:ref 12 / 我们 15(基础 3 层).要改就得动 play_card 里 note_card_played 的位置,牵扯浮夸/墨水瓶/苦无这些已经对过账的铁甲场景,留作单独一轮按反编译 BattleContext 的 onUseCard 时点核对",
+  "cards/finisher":
+    "(同一处根因)参考把终结技自己算进「本回合已打出的攻击数」,我们不算,差一张攻击牌的量",
+};
 
 /**
  * (b) 参考缺口:参考实现自己坏掉/没实现的地方(不是我们的锅)。
@@ -149,6 +161,8 @@ const REF_GAP: Record<string, string> = {
     "脱身是**跑局层**结果(本作 run.rs smoke_bomb_leaves_a_normal_fight / smoke_bomb_refuses_a_boss_fight,只对非 Boss 战生效),沙盒只建模单场战斗、看不到;参考在 onUse 里设 combatOver=escape(content/potions/index.ts:529-541),沙盒渲染时 combat 已被清空、去读 c.monsters 崩掉。反编译 BattleContext.cpp:2398-2400 对 SMOKE_BOMB 只写 // todo,给不出口径",
   "relics/warped_tongs":
     "参考把 WARPED_TONGS 挂在 atStartOfTurn(抽牌前,content/relics/event.ts:237-249),那一刻手里还没有牌、挑不出候选,于是永不升级;反编译放在抽牌后的 applyStartOfTurnPostDrawRelics(Player.cpp:669-671 + Actions.cpp:940-962),本作照反编译",
+  "cards/distraction":
+    "参考的 returnTrulyRandomCardInCombat(SKILL) 从**所有职业**的牌池里抽(cards/silent/uncommon.ts:229-238 的 ENGINE-NOTE),反编译按本职业池抽(Game.cpp:221-225 的 CombatTypeCardPool::getCardAt(cc, type)),本作照反编译;于是抽到哪张不同(参考 bouncing_flask / 我们 second_wind),两边都是合法技能牌",
   "relics/nilrys_codex":
     "参考的 NILRY_CODEX hooks 为空、根本没实现(content/relics/event.ts:146-153);反编译有完整实现(BattleContext.cpp:2046-2047 + Actions.cpp:964-969 + CardManager.cpp:215-223),本作照反编译",
 };
