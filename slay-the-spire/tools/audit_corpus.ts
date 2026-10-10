@@ -21,6 +21,13 @@
 //   守卫一 口径覆盖:有数值效果却没进口径、又没登记的内容直接判失败。
 //   守卫二 内容登记表:本作或语料里新增了卡/遗物/药水却没登记(audit_registry.txt)判失败。
 // 这两道守卫把"哨卫消耗回能"那类静默漏检从"人肉发现"变成"工具拦住"。
+//
+// 另有"文案 ↔ 实现"双向静态校验(不依赖沙盒):遗物/药水/状态诅咒的数值较早加入;
+// 战斗/技能/能力牌由 CARD_RULES 覆盖——数值(伤害/格挡/层数/抽牌/回能/掉血/回血/塞牌/
+// 循环次数)、触发词(Whenever / 回合开始末 / When drawn / While in hand / If… / for each /
+// X times / twice)、关键词标记(Exhaust/Ethereal/Innate/Retain/无限升级)、升级差异(基础档
+// 查基础 effects,升级档查 upgrade 里的 effects)四处对账,跑在语料文案与实现文案两侧。
+// 文案里出现数字或条件词却没被任何规则命中、也没登记 CARD_TEXT_SKIP -> 守卫失败。
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -2017,6 +2024,13 @@ const flatBase = (text: string) =>
     .replace(/\[([^\]]*)\]/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+/** 取语料 [基础|升级] 的升级档(升级档没有两级值时与基础档相同) */
+const flatUp = (text: string) =>
+  text
+    .replace(/\[([^\]|]*)\|([^\]]*)\]/g, "$2")
+    .replace(/\[([^\]]*)\]/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 const anyDigits = (t: string) => /\d/.test(t);
 
 interface RelicImpl {
@@ -2064,16 +2078,137 @@ function parsePotionImpls(raw: string): Map<string, PotionImpl> {
   return out;
 }
 
+/** 解析出来的 Effect 引用:变体名、括号参数(DoubleSelfStatus(Status::X))、{ 字段: 值 } 表 */
+interface EffRef {
+  variant: string;
+  arg: string;
+  fields: Map<string, string>;
+}
+/** 升级宏带来的标记覆盖(沿用基础值的字段留 undefined) */
+interface UpFlags {
+  exhaust?: boolean;
+  innate?: boolean;
+  retain?: boolean;
+  ethereal?: boolean;
+  target?: string;
+}
 interface CardImpl {
   text: string;
   block: string;
+  kind: string;
+  cost: string;
+  target: string;
+  exhaust: boolean;
+  ethereal: boolean;
+  innate: boolean;
+  retain: boolean;
+  unremovable: boolean;
+  multiUpgrade: boolean;
+  effects: EffRef[];
+  onDraw: EffRef[];
+  onEndTurn: EffRef[];
+  inHand: EffRef[];
+  /** 升级宏名:up / up_innate / up_no_exhaust / up_all,不可升级是 None */
+  upMacro: string;
+  upText: string;
+  upEffects: EffRef[] | null;
+  upFlags: UpFlags;
+}
+/** 从 src[i](必须是 '[')起取配对括号内的内容 */
+function bracketInner(src: string, i: number): { inner: string; end: number } | null {
+  let d = 0;
+  for (let k = i; k < src.length; k++) {
+    if (src[k] === "[") d++;
+    else if (src[k] === "]") {
+      d--;
+      if (d === 0) return { inner: src.slice(i + 1, k), end: k };
+    }
+  }
+  return null;
+}
+/** 解析一段 &[Effect::..., ...] 的内容(不含外层括号) */
+function parseEffects(inner: string): EffRef[] {
+  const out: EffRef[] = [];
+  let depth = 0;
+  let cur = "";
+  const push = (s: string) => {
+    const t = s.trim();
+    if (t === "") return;
+    const m = t.match(/^Effect::(\w+)(.*)$/s);
+    if (!m) return;
+    const fields = new Map<string, string>();
+    const body = m[2]!.match(/\{([^}]*)\}/);
+    if (body)
+      for (const part of body[1]!.split(",")) {
+        const kv = part.match(/^\s*([a-z_0-9]+):\s*(.+?)\s*$/);
+        if (kv) fields.set(kv[1]!, kv[2]!);
+      }
+    out.push({ variant: m[1]!, arg: m[2]!.match(/^\s*\(([^)]*)\)/)?.[1]?.trim() ?? "", fields });
+  };
+  for (const ch of inner) {
+    if (ch === "{" || ch === "(") depth++;
+    else if (ch === "}" || ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      push(cur);
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  push(cur);
+  return out;
+}
+/** 取 CardDef 里某个 &[…] 切片(按要求字段名定位,如 on_draw / effects) */
+function sliceEffects(block: string, name: string): EffRef[] {
+  const i = block.indexOf(`${name}: &[`);
+  if (i < 0) return [];
+  const b = bracketInner(block, block.indexOf("[", i));
+  return b ? parseEffects(b.inner) : [];
 }
 function parseCardImpls(raw: string): Map<string, CardImpl> {
   const out = new Map<string, CardImpl>();
   for (const block of raw.split("\n    CardDef {").slice(1)) {
     const id = block.match(/id: "([^"]+)"/)?.[1];
     if (!id) continue;
-    out.set(id, { text: rustStr(block.match(/text: "((?:[^"\\]|\\.)*)"/)?.[1] ?? ""), block });
+    const flag = (n: string) => block.match(new RegExp(`\\n\\s*${n}: (true|false),`))?.[1] === "true";
+    const up = block.match(/\n\s{8}upgrade: (up(?:_[a-z_]+)?!|None)/);
+    const upMacro = (up?.[1] ?? "None").replace(/!$/, "");
+    let upText = "";
+    let upEffects: EffRef[] | null = null;
+    const upFlags: UpFlags = {};
+    if (up && upMacro !== "None") {
+      const after = block.slice(up.index!);
+      upText = rustStr(after.match(/up(?:_[a-z_]+)?!\([^"]*"((?:[^"\\]|\\.)*)"/)?.[1] ?? "");
+      const txt = after.match(/up(?:_[a-z_]+)?!\([^"]*"(?:[^"\\]|\\.)*"\s*,\s*\[/);
+      if (txt) {
+        const b = bracketInner(after, after.indexOf("[", txt.index! + txt[0]!.length - 1));
+        if (b) upEffects = parseEffects(b.inner);
+      }
+      if (upMacro === "up_innate") upFlags.innate = true;
+      if (upMacro === "up_no_exhaust") upFlags.exhaust = false;
+      if (upMacro === "up_all") upFlags.target = "All";
+    }
+    out.set(id, {
+      text: rustStr(block.match(/\n\s{8}text: "((?:[^"\\]|\\.)*)"/)?.[1] ?? ""),
+      block,
+      kind: block.match(/kind: CardType::(\w+)/)?.[1] ?? "?",
+      cost: block.match(/\n\s*cost: (Cost::\w+(?:\([^)]*\))?)/)?.[1] ?? "?",
+      target: block.match(/target: Target::(\w+)/)?.[1] ?? "?",
+      exhaust: flag("exhaust"),
+      ethereal: flag("ethereal"),
+      innate: flag("innate"),
+      retain: flag("retain"),
+      unremovable: flag("unremovable"),
+      multiUpgrade: flag("multi_upgrade"),
+      effects: sliceEffects(block, "effects"),
+      onDraw: sliceEffects(block, "on_draw"),
+      onEndTurn: sliceEffects(block, "on_end_turn"),
+      inHand: sliceEffects(block, "in_hand"),
+      upMacro,
+      upText,
+      upEffects,
+      upFlags,
+    });
   }
   return out;
 }
@@ -2487,8 +2622,398 @@ function checkCurseText(
   return { fails, covered };
 }
 
+// ---- 卡牌(战斗/技能/能力)文案 ↔ 实现 ----
+//
+// 与遗物/药水/状态同一套路:规则表只记"文案正则 + 实现断言",数字两边各自抽取。
+// 一份正则同时跑在 语料文案 与 实现文案 上,每条命中都要与实现载荷对账,覆盖四个面:
+//   ①数值(伤害/格挡/层数/抽牌/回能/掉血/回血/塞牌/循环次数)↔ Effect 载荷;
+//   ②触发词(Whenever / At the start of your turn / At the end of your turn / When drawn /
+//     While in hand / If … / for each / X times / twice)↔ 触发点(effects / on_draw /
+//     on_end_turn / in_hand / 能力载荷);
+//   ③关键词标记(Exhaust / Ethereal / Innate / Retain / 无限升级)↔ CardDef 字段;
+//   ④升级差异:基础档查基础 effects,升级档查 upgrade 里的 effects(未给则沿用基础).
+// 覆盖守卫:范围内卡的文案里出现数字或条件词,却没被任何规则命中、也没登记 -> FAIL。
+
+type Level = "base" | "up";
+
+/** 从效果表里取 (变体, 字段) 的整数;status 给定时只认该状态的能力载荷 */
+function effVal(effs: EffRef[], variant: string, field: string, status?: string): number | null {
+  for (const e of effs) {
+    if (e.variant !== variant) continue;
+    if (status !== undefined && e.arg !== `Status::${status}` && e.fields.get("status") !== `Status::${status}`) continue;
+    const v = e.fields.get(field);
+    if (v !== undefined && /^-?\d+$/.test(v)) return Number(v);
+  }
+  return null;
+}
+function hasEff(effs: EffRef[], variant: string, status?: string): boolean {
+  return effs.some(
+    (e) => e.variant === variant && (status === undefined || e.arg === `Status::${status}` || e.fields.get("status") === `Status::${status}`),
+  );
+}
+/** 取"能量个数":语料用 @RE 重复,实现用 (N) */
+const capEnergy = (m: RegExpMatchArray) => (m[2] !== undefined ? Number(m[2]) : (m[3]!.match(/@RE/g) ?? []).length);
+/** 取第一个存在的捕获组整数 */
+const capAny = (m: RegExpMatchArray) => {
+  for (let i = 1; i < m.length; i++) if (m[i] !== undefined) return Number(m[i]);
+  return null;
+};
+
+/**
+ * 一条卡面规则。re 带 g,在两份文案上逐个命中;num 取文案数值(undefined = 纯触发/标记规则);
+ * needs 列出"本规则只在这些效果变体存在时才适用",不满足则不报错(数字交给覆盖守卫兜底)。
+ */
+interface CardRule {
+  label: string;
+  re: RegExp;
+  num?: (m: RegExpMatchArray) => number | null;
+  needs?: string[];
+  skip?: string[];
+  check: (effs: EffRef[], want: number | null, m: RegExpMatchArray, impl: CardImpl, level: Level) => string | null;
+}
+/** 构造"文案数值 = 载荷字段"的规则:pairs 里任一 (变体, 字段) 命中且不等于文案值即报错 */
+function numRule(
+  label: string,
+  re: RegExp,
+  pairs: [string, string][],
+  opts: {
+    status?: (m: RegExpMatchArray) => string | undefined;
+    needs?: string[];
+    cap?: (m: RegExpMatchArray) => number | null;
+    scale?: (n: number) => number;
+    skip?: string[];
+    check?: (effs: EffRef[], want: number | null, m: RegExpMatchArray) => string | null;
+  } = {},
+): CardRule {
+  return {
+    label,
+    re,
+    needs: opts.needs ?? [...new Set(pairs.map((p) => p[0]))],
+    skip: opts.skip,
+    num: opts.cap ?? ((m) => (m[1] !== undefined ? Number(m[1]) : null)),
+    check:
+      opts.check ??
+      ((effs, want, m) => {
+        if (want === null) return null;
+        const status = opts.status?.(m);
+        const sc = opts.scale ? opts.scale(want) : want;
+        for (const [v, f] of pairs) {
+          const got = effVal(effs, v, f, status);
+          if (got !== null) return got === sc ? null : `实现 ${v}.${f}=${got},文案 ${want}${opts.scale ? `(→${sc})` : ""}`;
+        }
+        return `实现里找不到 ${pairs.map((p) => `${p[0]}.${p[1]}`).join("/")}=${sc}${status ? `(${status})` : ""}`;
+      }),
+  };
+}
+const flagRule = (
+  label: string,
+  re: RegExp,
+  want: (impl: CardImpl, level: Level) => boolean,
+  what: string,
+): CardRule => ({
+  label,
+  re,
+  check: (_e, _w, _m, impl, level) => (want(impl, level) ? null : `${what}=${want(impl, level)}`),
+});
+
+const CARD_RULES: CardRule[] = [
+  // ①数值
+  numRule(
+    "伤害",
+    /Deal (?:(\d+)|\{d\}) damage/gi,
+    [
+      ["Damage", "amount"],
+      ["DamageAll", "amount"],
+      ["DamageRandom", "amount"],
+      ["DamageWithBonus", "amount"],
+      ["Reaper", "amount"],
+      ["DamageStrengthMult", "amount"],
+      ["DamageAndKillMaxHp", "amount"],
+      ["DamageAndGoldOnKill", "amount"],
+      ["DamageIfVulnerable", "amount"],
+      ["DamagePerStrike", "base"],
+      ["DamagePerExhausted", "per"],
+      ["DamageAllX", "per"],
+      ["ExhaustNonAttacks", "damage"],
+      ["Bomb", "damage"],
+      ["AddSelfStatus", "n"],
+    ],
+    { skip: ["searing_blow"] },
+  ),
+  numRule("格挡", /Gain (\d+) Block/gi, [["Block", "amount"], ["BlockPerExhausted", "per"], ["AddSelfStatus", "n"]]),
+  numRule("施加状态", /(?:Apply |and )(\d+) (Weak|Vulnerable|Frail)/gi, [["AddTargetStatus", "n"], ["AddAllEnemiesStatus", "n"]], {
+    status: (m) => m[2],
+  }),
+  numRule("获得力量", /Gain (\d+) Strength/gi, [["AddSelfStatus", "n"], ["StrengthIfTargetAttacks", "n"]]),
+  numRule("失去力量", /\blose (\d+) Strength/gi, [["AddSelfStatus", "n"]]),
+  numRule("敌方失去力量", /[Ee]nemy loses (\d+) Strength(?! this turn)/gi, [["AddTargetStatus", "n"]], { scale: (n) => -n }),
+  numRule("敌方本回合失去力量", /[Ee]nemy loses (\d+) Strength this turn/gi, [["TargetLoseStrengthThisTurn", "n"]]),
+  numRule("抽牌", /Draw (\d+) cards?/gi, [["Draw", "n"], ["DrawIfNoAttacks", "n"], ["DamageIfVulnerable", "draw"], ["AddSelfStatus", "n"]]),
+  numRule("回能", /Gain (\((\d+)\)|((?:@RE\s*)+))/gi, [["GainEnergy", "n"], ["EnergyOnExhaust", "n"], ["DamageIfVulnerable", "energy"]], {
+    cap: capEnergy,
+  }),
+  numRule("掉血", /Lose (\d+) HP/gi, [["LoseHp", "amount"]]),
+  numRule("回血", /Heal (\d+) HP/gi, [["Heal", "amount"]]),
+  numRule("塞牌进手", /Add (\d+) (Wounds?|Burns?|Dazed)/gi, [["AddCardToHand", "n"]]),
+  numRule(
+    "次数",
+    /(\d+) times/gi,
+    [
+      ["Damage", "times"],
+      ["DamageAll", "times"],
+      ["DamageRandom", "times"],
+      ["DamageWithBonus", "times"],
+      ["DamageAndKillMaxHp", "times"],
+      ["DamageAndGoldOnKill", "times"],
+      ["DamageStrengthMult", "mult"],
+    ],
+  ),
+  numRule("定时炸弹", /At the end of (\d+) turns/gi, [["Bomb", "turns"]]),
+  numRule("本回合末失去力量", /At the end of this turn, lose (\d+) Strength/gi, [["AddSelfStatus", "n"]], {
+    status: () => "LoseStrength",
+  }),
+  numRule("按 Strike 加成", /(?:plus (\d+) damage for each Strike|Deals (\d+) additional damage for ALL your cards)/gi, [
+    ["DamagePerStrike", "per"],
+  ], { cap: capAny }),
+  numRule("复制份数", /Add (?:a copy|(\d+) copies) of that card into your hand/gi, [["CopyFromHand", "copies"]], { cap: capAny }),
+  numRule("成长此卡伤害", /Increase this card's damage by (\d+)/gi, [["BonusSelf", "n"]]),
+  numRule("击杀加最大生命", /(?:gain (\d+) Max HP|raise your Max HP by (\d+))/gi, [["DamageAndKillMaxHp", "max_hp"]], { cap: capAny }),
+  numRule("击杀加金币", /gain (\d+) Gold/gi, [["DamageAndGoldOnKill", "gold"]]),
+  numRule("自获易伤", /Gain (\d+) Vulnerable/gi, [["AddSelfStatus", "n"]]),
+  numRule("疲惫反伤", /they take (\d+) damage/gi, [["AddSelfStatus", "n"]]),
+  numRule("随机无色牌", /Add (\d+) random Colorless/gi, [["AddRandomColorlessToHand", "n"]]),
+  numRule("洗入随机牌", /Shuffle (\d+) random (?:Skills|Attacks) into your draw pile/gi, [["AddRandomToDrawFree", "n"]]),
+  numRule("消耗至多", /Exhaust up to (\d+) cards/gi, [["ExhaustUpTo", "n"]]),
+  numRule("消耗若干手牌", /Exhaust (\d+) cards?/gi, [["ExhaustRandomInHand", "n"], ["ExhaustUpTo", "n"]], {
+    needs: ["ExhaustRandomInHand", "ExhaustUpTo", "ExhaustFromHand"],
+    check: (effs, want) =>
+      want === null
+        ? null
+        : effVal(effs, "ExhaustRandomInHand", "n") === want ||
+            effVal(effs, "ExhaustUpTo", "n") === want ||
+            (want === 1 && hasEff(effs, "ExhaustFromHand"))
+          ? null
+          : `实现里没有消耗 ${want} 张手牌的效果`,
+  }),
+  numRule("随机取攻", /Put (\d+) random Attacks from your draw pile/gi, [["RandomFromDrawToHand", "n"]]),
+  numRule("发现选牌", /Choose (\d+) of (\d+) random/gi, [["OfferRandomCardsFromClass", "n"]], { cap: (m) => Number(m[2]) }),
+  numRule("获得人造制品", /Gain (\d+) Artifact/gi, [["AddSelfStatus", "n"]]),
+  numRule("禁格挡回合", /cannot gain Block from cards for (\d+) turns/gi, [["AddSelfStatus", "n"]]),
+  numRule("双发次数", /your next (\d+) Attacks?/gi, [["AddSelfStatus", "n"]]),
+  numRule("费用上限", /Reduce the cost of (?:all|a random) cards? in your hand to (\d+)/gi, [["CapHandCost", "cap"]]),
+  {
+    label: "升级费用",
+    re: /Costs (\d+)\./gi,
+    num: (m) => Number(m[1]),
+    check: (_e, want, _m, impl, level) => {
+      if (level !== "up" || want === null) return null;
+      const c = impl.block.match(/\n\s{8}upgrade: up(?:_[a-z_]+)?!\(\s*Some\(Cost::(\w+)(?:\((\d+)\))?\)/);
+      if (!c) return null;
+      if (!c[2]) return `升级文案说 Costs ${want},实现升级费用 Cost::${c[1]}(非固定值)`;
+      return Number(c[2]) === want ? null : `实现升级费用 Cost::Fixed(${c[2]}),文案 ${want}`;
+    },
+  },
+  // ②触发词 ↔ 触发点
+  {
+    label: "抽到触发",
+    re: /(?:Whenever this card is drawn|When drawn)/g,
+    check: (_e, _w, _m, impl) => (impl.onDraw.length > 0 ? null : "文案说抽到触发,实现 on_draw 为空"),
+  },
+  {
+    label: "手牌持续",
+    re: /While in hand/g,
+    check: (_e, _w, _m, impl) => (impl.inHand.length > 0 ? null : "文案说在手牌持续生效,实现 in_hand 为空"),
+  },
+  {
+    label: "回合末触发",
+    re: /At the end of your turn/g,
+    check: (e, _w, _m, impl) =>
+      impl.onEndTurn.length > 0 || ["DamageSelf", "LoseHp", "LoseHpPerHandCard", "AddSelfStatus", "CopySelfToDrawTop"].some((v) => hasEff(e, v))
+        ? null
+        : "文案说回合末结算,实现 on_end_turn 为空且没有对应载荷",
+  },
+  {
+    label: "本回合末触发",
+    re: /At the end of this turn/g,
+    check: (e, _w, _m, impl) => (impl.onEndTurn.length > 0 || hasEff(e, "AddSelfStatus", "LoseStrength") ? null : "文案说本回合末结算,实现里没有 LoseStrength"),
+  },
+  {
+    label: "回合开始触发",
+    re: /At the start of your turn/g,
+    check: (e) => (hasEff(e, "AddSelfStatus") ? null : "文案说回合开始结算,实现里没有对应能力载荷"),
+  },
+  {
+    label: "每当触发",
+    re: /Whenever /g,
+    check: (e, _w, _m, impl) =>
+      hasEff(e, "AddSelfStatus") || impl.onDraw.length > 0 || impl.inHand.length > 0 ? null : "文案说'每当',实现里没有对应能力载荷",
+  },
+  {
+    label: "每个",
+    re: /for each/g,
+    skip: ["blood_for_blood"],
+    check: (e) =>
+      ["DamagePerExhausted", "BlockPerExhausted", "DamagePerStrike", "DamagePerDrawPile", "LoseHpPerHandCard"].some((v) => hasEff(e, v))
+        ? null
+        : "文案说'每个/每张',实现里没有对应按数量结算的效果",
+  },
+  { label: "X 次", re: /\bX times/g, check: (e) => (hasEff(e, "DamageAllX") ? null : "文案说 X 次,实现里没有 DamageAllX") },
+  {
+    label: "两次",
+    re: /\btwice\b/g,
+    check: (e) =>
+      e.some((x) => x.fields.get("times") === "2") || hasEff(e, "CopyFromHand") || hasEff(e, "AddSelfStatus", "DoubleTap")
+        ? null
+        : "文案说'两次',实现里没有对应语义",
+  },
+  {
+    label: "全体",
+    re: /to ALL enemies/g,
+    check: (e, _w, _m, impl) =>
+      ["DamageAll", "DamageAllX", "AddAllEnemiesStatus", "Reaper", "Bomb"].some((v) => hasEff(e, v)) ||
+      hasEff(e, "AddSelfStatus", "FireBreathing") ||
+      hasEff(e, "AddSelfStatus", "Combust") ||
+      hasEff(e, "AddSelfStatus", "Panache") ||
+      impl.target === "All" ||
+      impl.upFlags.target === "All"
+        ? null
+        : "文案说对全体敌人,实现里没有全体效果",
+  },
+  { label: "若易伤", re: /If the enemy (?:has|is) Vulnerable/g, check: (e) => (hasEff(e, "DamageIfVulnerable") ? null : "文案说若易伤,实现里没有 DamageIfVulnerable") },
+  {
+    label: "若击杀",
+    re: /If (?:this kills|Fatal)/g,
+    check: (e) => (hasEff(e, "DamageAndKillMaxHp") || hasEff(e, "DamageAndGoldOnKill") ? null : "文案说若击杀,实现里没有击杀收益效果"),
+  },
+  { label: "若被消耗", re: /If this card is Exhausted/g, check: (e) => (hasEff(e, "EnergyOnExhaust") ? null : "文案说若被消耗,实现里没有 EnergyOnExhaust") },
+  {
+    label: "若敌人将攻击",
+    re: /If the enemy intends to attack/g,
+    check: (e) => (hasEff(e, "StrengthIfTargetAttacks") ? null : "文案说若敌人将攻击,实现里没有 StrengthIfTargetAttacks"),
+  },
+  { label: "若无攻击牌", re: /If you have no Attacks in your hand/g, check: (e) => (hasEff(e, "DrawIfNoAttacks") ? null : "文案说若无攻击牌,实现里没有 DrawIfNoAttacks") },
+  { label: "洗牌进抽牌堆", re: /(?:Shuffle a|Add a) (Wound|Dazed|Burn) into your draw pile/g, check: (e, _w, m) => (e.some((x) => x.variant === "AddCardToDraw" && x.fields.get("id") === `"${m[1]!.toLowerCase()}"`) ? null : `实现里没有 AddCardToDraw id=${m[1]!.toLowerCase()}`) },
+  { label: "塞牌进弃牌堆", re: /Add a (Burn) to your discard pile/g, check: (e, _w, m) => (e.some((x) => x.variant === "AddCardToDiscard" && x.fields.get("id") === `"${m[1]!.toLowerCase()}"`) ? null : `实现里没有 AddCardToDiscard id=${m[1]!.toLowerCase()}`) },
+  { label: "塞自身副本进弃牌堆", re: /Add a copy of this card into your discard pile/g, check: (e) => (hasEff(e, "AddSelfToDiscard") ? null : "实现里没有 AddSelfToDiscard") },
+  { label: "洗回抽牌堆", re: /Shuffle your discard pile into your draw pile/g, check: (e) => (hasEff(e, "ShuffleDiscardIntoDraw") ? null : "实现里没有 ShuffleDiscardIntoDraw") },
+  { label: "置顶手牌", re: /Put a card from your hand (?:onto|on) top of your draw pile|Put a card from your hand onto the top of your draw pile/g, check: (e) => (hasEff(e, "TopFromHand") ? null : "实现里没有 TopFromHand") },
+  { label: "掘出消耗堆", re: /Put a card from your [Ee]xhaust pile into your hand/g, check: (e) => (hasEff(e, "FromExhaustToHand") ? null : "实现里没有 FromExhaustToHand") },
+  { label: "弃牌堆置顶", re: /Put a card from your discard pile on top of your draw pile/g, check: (e) => (hasEff(e, "FromDiscardToDrawTop") ? null : "实现里没有 FromDiscardToDrawTop") },
+  { label: "复制手牌", re: /Copy an Attack or Power card in your hand/g, check: (e) => (hasEff(e, "CopyFromHand") ? null : "实现里没有 CopyFromHand") },
+  // ③关键词标记
+  flagRule("消耗标记", /(?:^| )Exhaust\./g, (i, l) => (l === "up" ? i.upFlags.exhaust ?? i.exhaust : i.exhaust), "实现 exhaust"),
+  flagRule("不再消耗", /No longer Exhausts\./g, (i) => i.upFlags.exhaust === false, "实现升级 exhaust"),
+  flagRule("虚无标记", /\bEthereal\./g, (i, l) => (l === "up" ? i.upFlags.ethereal ?? i.ethereal : i.ethereal), "实现 ethereal"),
+  flagRule("天生标记", /\bInnate\./g, (i, l) => (l === "up" ? i.upFlags.innate ?? i.innate : i.innate), "实现 innate"),
+  flagRule("保留标记", /\bRetain\./g, (i, l) => (l === "up" ? i.upFlags.retain ?? i.retain : i.retain), "实现 retain"),
+  flagRule("无限升级", /Can be upgraded any number of times\./g, (i) => i.multiUpgrade, "实现 multi_upgrade"),
+];
+/** 关键词的反向核对:实现标记为真,文案里却没有关键词 */
+const CARD_KEYWORDS: { label: string; re: RegExp; flag: (i: CardImpl, l: Level) => boolean }[] = [
+  { label: "Exhaust", re: /(?:^| )Exhaust\./, flag: (i, l) => (l === "up" ? i.upFlags.exhaust ?? i.exhaust : i.exhaust) },
+  { label: "Ethereal", re: /\bEthereal\./, flag: (i, l) => (l === "up" ? i.upFlags.ethereal ?? i.ethereal : i.ethereal) },
+  { label: "Innate", re: /\bInnate\./, flag: (i, l) => (l === "up" ? i.upFlags.innate ?? i.innate : i.innate) },
+  { label: "Retain", re: /\bRetain\./, flag: (i, l) => (l === "up" ? i.upFlags.retain ?? i.retain : i.retain) },
+];
+/** 文案里出现即必须被某条规则覆盖的条件词 */
+const TRIGGER_SCAN: RegExp[] = [
+  /\bWhenever\b/g,
+  /At the start of /g,
+  /At the end of /g,
+  /At the start of your turn/g,
+  /At the end of your turn/g,
+  /At the end of this turn/g,
+  /When drawn/g,
+  /While in hand/g,
+  /for each/g,
+  /\bX times/g,
+  /\btwice\b/g,
+  /to ALL enemies/g,
+  /\bIf\b/g,
+  /Can only be played if/g,
+  /Can be upgraded any number of times/g,
+  /No longer Exhausts/g,
+];
+/** 文案里"实现了但无法用载荷直测"的数字/条件词:显式登记原因(与遗物 RELIC_NUM_SKIP 同理) */
+const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
+  combust: [{ sub: /lose 1 HP/, reason: "每回合掉 1 HP 由 Status::Combust 的结算常量承载(combat.rs),不在 CardDef 载荷里" }],
+  brutality: [{ sub: /lose 1 HP/, reason: "每回合掉 1 HP 由 Status::Brutality 的结算常量承载(combat.rs),不在 CardDef 载荷里" }],
+  panache: [{ sub: /play 5 cards in a single turn/, reason: "每 5 张的阈值由 Status::Panache 的结算常量承载(combat.rs),载荷 n 是伤害值" }],
+  corruption: [{ sub: /Skills cost 0/, reason: "技能降为 0 费由 Status::Corruption 的结算承载,载荷 n 是层数" }],
+  infernal_blade: [{ sub: /costs? 0 this turn/, reason: "送给的牌 0 费由 AddRandomAttackToHand 的结算承载" }],
+  discovery: [{ sub: /costs? 0 this turn/, reason: "选到的牌 0 费由 OfferRandomCardsFromClass 的结算承载" }],
+  transmutation: [{ sub: /costs? 0 this turn/, reason: "送到的牌 0 费由 AddRandomColorlessXToHand 的结算承载" }],
+  chrysalis: [{ sub: /costs? 0 this combat/, reason: "送到的牌 0 费由 AddRandomToDrawFree 的结算承载" }],
+  metamorphosis: [{ sub: /costs? 0 this combat/, reason: "送到的牌 0 费由 AddRandomToDrawFree 的结算承载" }],
+  forethought: [{ sub: /costs? 0 until played/, reason: "放到牌堆底的牌 0 费由 ToDrawBottomFromHand 的结算承载" }],
+  madness: [{ sub: /to 0 this combat/, reason: "随机一张降为 0 费由 FreeRandomInHand 的结算承载,载荷里没有数值" }],
+  blood_for_blood: [
+    { sub: /Costs \(?1\)? less/, reason: "按本场掉血次数降费由 combat.rs 的费用修正承载,不在 CardDef 载荷里" },
+    { sub: /for each time you lose HP/, reason: "同上:降费节奏由 combat.rs 的费用修正承载,载荷里没有 per" },
+  ],
+  berserk: [{ sub: /gain \(1\)/, reason: "回合开始回能由 Status::Berserk 的结算承载,载荷 n=1 是层数" }],
+  searing_blow: [{ sub: /Deal (?:\(?\d+\)?|\{d\}) damage/, reason: "无限升级(multi_upgrade):升级档文案是累计加成后的显示值,载荷由 multi_upgrade 增量承载" }],
+  clash: [{ sub: /Can only be played if every card in your hand is an Attack/, reason: "只能在手牌全为攻击时打出由 combat.rs 的 can_play 判定承载" }],
+};
+
+function checkCardText(impls: Map<string, CardImpl>): { fails: string[]; sides: number; cards: number; rules: number } {
+  const fails: string[] = [];
+  let sides = 0;
+  let cards = 0;
+  for (const id of ourCards) {
+    const c = cardByGame.get(id);
+    const impl = impls.get(id);
+    if (!c || !impl) continue;
+    const type = c.type.toLowerCase();
+    if (type === "curse" || type === "status") continue;
+    cards++;
+    for (const level of ["base", "up"] as const) {
+      if (level === "up" && impl.upMacro === "None") continue;
+      const effs = level === "up" ? impl.upEffects ?? impl.effects : impl.effects;
+      const implText = flatBase(level === "up" ? impl.upText : impl.text);
+      const corpusText = level === "up" ? flatUp(norm(c.text)) : flatBase(norm(c.text));
+      for (const [side, text] of [["实现", implText], ["语料", corpusText]] as const) {
+        if (text === "") continue;
+        sides++;
+        const covered = new Array<boolean>(text.length).fill(false);
+        for (const rule of CARD_RULES) {
+          if (rule.skip?.includes(id)) continue;
+          for (const m of text.matchAll(rule.re)) {
+            const want = rule.num ? rule.num(m) : null;
+            if (rule.needs && !rule.needs.some((v) => effs.some((e) => e.variant === v))) continue;
+            for (let k = m.index ?? 0; k < (m.index ?? 0) + m[0]!.length; k++) covered[k] = true;
+            const err = rule.check(effs, want, m, impl, level);
+            if (err) fails.push(`卡牌 ${id}/${level}[${side}] 规则[${rule.label}]: ${err}  <- "${m[0]}"`);
+          }
+        }
+        for (const kw of CARD_KEYWORDS) {
+          const inText = kw.re.test(text);
+          const flag = kw.flag(impl, level);
+          if (inText !== flag) fails.push(`卡牌 ${id}/${level}[${side}]: 关键词 ${kw.label} 文案${inText ? "有" : "无"} vs 实现${flag ? "有" : "无"}`);
+        }
+        const allowed = (CARD_TEXT_SKIP[id] ?? []).flatMap((s) =>
+          [...text.matchAll(new RegExp(s.sub.source, "g"))].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0]!.length] as const),
+        );
+        const excused = (at: number) => allowed.some(([a, b]) => at >= a && at < b);
+        for (const m of text.matchAll(/\d+/g)) {
+          const at = m.index ?? 0;
+          if (!covered[at] && !excused(at)) fails.push(`卡牌 ${id}/${level}[${side}]: 数字 ${m[0]} 没有对应规则(补规则或登记 CARD_TEXT_SKIP)`);
+        }
+        for (const scan of TRIGGER_SCAN) {
+          for (const m of text.matchAll(scan)) {
+            const at = m.index ?? 0;
+            if (!covered[at] && !excused(at)) fails.push(`卡牌 ${id}/${level}[${side}]: 条件词 "${m[0]}" 没有对应规则(补规则或登记)`);
+          }
+        }
+      }
+    }
+  }
+  return { fails, sides, cards, rules: CARD_RULES.length };
+}
+
 const textImplFails: string[] = [];
 let textImplChecks = 0;
+let cardTextSummary = "";
 if (want("relics")) {
   const r = checkRelicText(relicImpl, (id) => relicByGame.get(id)?.text, RELIC_SRC_FILES);
   textImplFails.push(...r.fails);
@@ -2503,6 +3028,10 @@ if (want("cards")) {
   const r = checkCurseText(cardImpl, (id) => cardByGame.get(id)?.text);
   textImplFails.push(...r.fails);
   textImplChecks += r.covered;
+  const cr = checkCardText(cardImpl);
+  textImplFails.push(...cr.fails);
+  textImplChecks += cr.sides * cr.rules;
+  cardTextSummary = `战斗/技能/能力牌 ${cr.cards} 张 x 基础/升级两档 x ${cr.rules} 条规则(${cr.sides} 侧文案),命中 ${cr.sides * cr.rules}`;
 }
 
 // ---- 守卫一:口径覆盖(未覆盖即报错) ----
@@ -2675,6 +3204,27 @@ function implCase(spot: string, specName: string, mutate: (rows: Row[]) => void,
       if (after.hard === undefined && after.lines.length === 0) return `模拟实现回归后工具没报错(期望点出 ${marker})`;
       if (!text.includes(marker) && !(after.hard ?? "").includes(marker)) return `报的错里没有 ${marker}: ${text || after.hard}`;
       return null;
+    },
+  };
+}
+
+/** 对解析出来的 CardImpl 做定向篡改(模拟实现侧回归),要求 checkCardText 报出 marker。 */
+function cardImplCase(spot: string, mutate: (m: Map<string, CardImpl>) => void, marker: string): SpotCase {
+  return {
+    spot,
+    expect: marker,
+    run: () => {
+      const copy = new Map<string, CardImpl>();
+      for (const [k, v] of cardImpl)
+        copy.set(k, {
+          ...v,
+          effects: v.effects.map((e) => ({ ...e, fields: new Map(e.fields) })),
+          upEffects: v.upEffects?.map((e) => ({ ...e, fields: new Map(e.fields) })) ?? null,
+          upFlags: { ...v.upFlags },
+        });
+      mutate(copy);
+      const { fails } = checkCardText(copy);
+      return fails.some((f) => f.includes(marker)) ? null : `改坏实现后卡牌文案校验没点名 ${marker}: ${fails.join(" | ") || "(无失败)"}`;
     },
   };
 }
@@ -2866,13 +3416,88 @@ function spotCases(): SpotCase[] {
       spot: "静态双向校验 状态载荷(改实现)",
       expect: "burn",
       run: () => {
-        const impls = new Map([...cardImpl].map(([k, v]) => [k, { text: v.text, block: v.block }] as const));
+        const impls = new Map(cardImpl);
         const b = impls.get("burn")!;
-        impls.set("burn", { text: b.text, block: b.block.replace("Effect::DamageSelf { amount: 2 }", "Effect::DamageSelf { amount: 5 }") });
+        impls.set("burn", { ...b, block: b.block.replace("Effect::DamageSelf { amount: 2 }", "Effect::DamageSelf { amount: 5 }") });
         const { fails } = checkCurseText(impls, (id) => cardByGame.get(id)?.text);
         return fails.some((f) => f.includes("burn")) ? null : `改坏实现载荷后静态校验没点名 burn: ${fails.join(" | ") || "(无失败)"}`;
       },
     },
+    // ---- 卡牌(战斗/技能/能力)文案 ↔ 实现:改坏/恢复(语料侧 + 实现侧) ----
+    // 语料侧:基础档数值被改坏,静态表必须点名
+    corpusCase(
+      "卡牌 数值(改语料基础档)",
+      (cards) => {
+        for (const c of cards) if (c.id === "STRIKE_RED") c.text = c.text?.replace("Deal [6|9]", "Deal [7|9]");
+      },
+      "卡牌 strike/base[语料]",
+    ),
+    // 语料侧:升级档数值被改坏(升级差异)
+    corpusCase(
+      "卡牌 升级差异(改语料升级档)",
+      (cards) => {
+        for (const c of cards) if (c.id === "BLUDGEON") c.text = c.text?.replace("[32|42]", "[32|43]");
+      },
+      "卡牌 bludgeon/up[语料]",
+    ),
+    // 语料侧:循环次数被改坏(times 字段)
+    corpusCase(
+      "卡牌 循环次数(改语料)",
+      (cards) => {
+        for (const c of cards) if (c.id === "SWORD_BOOMERANG") c.text = c.text?.replace("[3|4] times", "[3|5] times");
+      },
+      "规则[次数]",
+    ),
+    // 语料侧:关键词标记被抹掉(Exhaust)
+    corpusCase(
+      "卡牌 关键词标记(改语料)",
+      (cards) => {
+        for (const c of cards) if (c.id === "IMPERVIOUS") c.text = c.text?.replace("$Exhaust.", "");
+      },
+      "关键词 Exhaust",
+    ),
+    // 语料侧:给牌塞一个没有载荷支撑的数字 -> 覆盖守卫必须响
+    corpusCase(
+      "卡牌 覆盖守卫 数字(改语料)",
+      (cards) => {
+        for (const c of cards) if (c.id === "STRIKE_RED") c.text = `${c.text}<br>Gain 3 Block.`;
+      },
+      "没有对应规则",
+    ),
+    // 语料侧:给牌塞一个没进表的条件词 -> 覆盖守卫必须响
+    corpusCase(
+      "卡牌 覆盖守卫 条件词(改语料)",
+      (cards) => {
+        for (const c of cards) if (c.id === "STRIKE_RED") c.text = `${c.text}<br>At the end of time, gain 1 Block.`;
+      },
+      "条件词",
+    ),
+    // 实现侧:伤害载荷被改坏(数值 ↔ Effect)
+    cardImplCase(
+      "卡牌 数值(改实现载荷)",
+      (m) => {
+        const e = m.get("strike")!.effects.find((x) => x.variant === "Damage")!;
+        e.fields.set("amount", "7");
+      },
+      "卡牌 strike",
+    ),
+    // 实现侧:消耗标记被改坏(关键词 ↔ CardDef 字段)
+    cardImplCase(
+      "卡牌 关键词标记(改实现字段)",
+      (m) => {
+        m.get("offering")!.exhaust = false;
+      },
+      "Exhaust",
+    ),
+    // 实现侧:能力载荷被拿掉(触发词 ↔ 触发点)
+    cardImplCase(
+      "卡牌 触发点(改实现载荷)",
+      (m) => {
+        const c = m.get("combust")!;
+        c.effects = c.effects.filter((e) => e.variant !== "AddSelfStatus");
+      },
+      "回合末触发",
+    ),
   ];
 }
 
@@ -2928,6 +3553,7 @@ report.push(`静态数据(费用/类型/稀有度)对语料: ${dataIssues.length
 for (const s of dataIssues) report.push(`  ${s}`);
 report.push("");
 report.push(`文案↔实现 双向校验(静态): ${textImplFails.length === 0 ? "全一致" : `${textImplFails.length} 处不一致`}(${textImplChecks} 条规则,数字只从语料与源码各自抽取)`);
+if (cardTextSummary !== "") report.push(`  ${cardTextSummary}`);
 for (const s of textImplFails) report.push(`  ${s}`);
 report.push("");
 report.push("行为不一致清单:");

@@ -20,6 +20,7 @@
 // 基线数字是本轮记录下来的实际值:判据一律"不高于基线"(修好一处就变绿,退化就 FAIL)。
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -182,9 +183,9 @@ function stepPotions(): Step {
 }
 
 function stepSmoke(): Step {
-  // smoke.py 用的是固定 tmux 会话名,并行跑(别的 agent/另一批种子)会互相 kill 会话。
-  // 这里默认给每次 check_all 一个独立会话名;外部显式给了 SMOKE_SESSION 就沿用。
-  const session = process.env.SMOKE_SESSION ?? `spire_checkall_${process.pid}`;
+  // smoke.py 自己会按 pid+随机后缀取独立会话名与独立 XDG_DATA_HOME;这里再显式指定一个
+  // 带 pid+随机后缀的会话名,保证并发跑 check_all(或与手动 smoke 同时跑)也互不干扰。
+  const session = process.env.SMOKE_SESSION ?? `spire_checkall_${process.pid}_${randomBytes(3).toString("hex")}`;
   const { status, out } = sh(["python3", join(HERE, "smoke.py"), ...SMOKE_SEEDS], ROOT, { SMOKE_SESSION: session });
   const summary = out.match(/smoke: (PASS|FAIL)\s+\((\d+) seeds/);
   const fails = [...out.matchAll(/^FAIL seed (\d+)/gm)].map((m) => m[1]!);

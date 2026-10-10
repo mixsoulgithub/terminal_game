@@ -33,13 +33,23 @@
   --win          战斗一律用 `:win` 判定打赢(能顺着看完 Boss 房/双 Boss/奖励那一串 UI);
   --asc N        传 --ascension N(A20 第三幕 Boss 后直接接第二只 Boss:双 Boss).
 """
+import atexit
 import os
 import re
+import secrets
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
-SESSION = os.environ.get("SMOKE_SESSION", "spire_smoke")
+# tmux 会话名与存档目录都必须每次进程独立:否则并行跑 smoke(或 check_all 与手动 smoke
+# 同时跑)会互相 kill 会话、互相覆盖 ~/.local/share/slay-the-spire 下的存档与便条。
+# 外部显式给了 SMOKE_SESSION 就沿用(留给需要固定名字的场景)。
+SESSION = os.environ.get("SMOKE_SESSION") or f"spire_smoke_{os.getpid()}_{secrets.token_hex(3)}"
+# 本进程专用的游戏数据目录(存档/便条都落在它下面),跑完删掉。
+DATA_DIR = tempfile.mkdtemp(prefix=f"spire_smoke_data_{os.getpid()}_")
+atexit.register(shutil.rmtree, DATA_DIR, ignore_errors=True)
 # tmux 伪终端的尺寸.默认比真实终端(107x24)大一点,可用 SMOKE_SIZE=WxH 覆盖来测小屏.
 SIZE = os.environ.get("SMOKE_SIZE", "110x34")
 # 按键之后最短等多久再抓屏(等界面稳定下来用的采样间隔)
@@ -61,7 +71,8 @@ def tmux(*args: str) -> str:
 def start(binary: str, seed: int) -> None:
     stop()
     w, _, h = SIZE.partition("x")
-    cmd = f"{binary} --seed {seed}" + (f" --ascension {ASC}" if ASC else "")
+    # XDG_DATA_HOME 指到本进程专属目录:并行跑时各写各的 run.save / note.card,不互相污染.
+    cmd = f"env XDG_DATA_HOME={DATA_DIR} {binary} --seed {seed}" + (f" --ascension {ASC}" if ASC else "")
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", SESSION, "-x", w, "-y", h, cmd],
         check=True,
@@ -71,6 +82,10 @@ def start(binary: str, seed: int) -> None:
 
 def stop() -> None:
     subprocess.run(["tmux", "kill-session", "-t", SESSION], capture_output=True)
+
+
+# 进程退出时收掉本进程的 tmux 会话:随机会话名不能被留成僵尸会话。
+atexit.register(stop)
 
 
 def screen() -> str:

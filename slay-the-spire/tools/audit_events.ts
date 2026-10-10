@@ -1314,7 +1314,13 @@ specs.forEach((s, i) => {
 const listPath = join(dir, "list.txt");
 writeFileSync(listPath, listLines.join("\n") + "\n");
 
-const run = spawnSync(SPIRE, ["--sandbox-batch", SEED, listPath], { encoding: "utf8", maxBuffer: 1 << 28 });
+// XDG_DATA_HOME 指到本进程的临时目录:note_for_yourself 会写跨局存卡文件(note.card),
+// 不隔离的话并行跑多个 check_all 会互相覆盖 ~/.local/share/slay-the-spire/note.card。
+const run = spawnSync(SPIRE, ["--sandbox-batch", SEED, listPath], {
+  encoding: "utf8",
+  maxBuffer: 1 << 28,
+  env: { ...process.env, XDG_DATA_HOME: dir },
+});
 if (run.status !== 0) throw new Error(`spire --sandbox-batch 失败: ${run.stderr}`);
 
 // 解析:`#名字` 一段,后面跟 JSONL
