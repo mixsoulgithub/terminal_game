@@ -125,12 +125,12 @@ fn chosen_future(app: &App) -> Option<Vec<bool>> {
     Some(app.run.map.forward_reachable(chosen))
 }
 
-/// 地图上的房间记号。精英:红底铺三格(左右各多一格);燃烧精英在右边多一个 *;
-/// 休息与商店用 emoji(各占两格,终端按显示宽度算)
+/// 地图上的房间记号。精英与休息:色底铺三格(左右各多一格);
+/// 燃烧精英在右边多一个 *(也就是 E*)
 fn map_glyph_text(kind: NodeKind, burning: bool) -> (&'static str, u16) {
     match kind {
-        NodeKind::Rest => ("🔥", 0),
-        NodeKind::Shop => ("💰", 0),
+        NodeKind::Rest => (" R ", 1),
+        NodeKind::Shop => ("$", 0),
         NodeKind::Elite if burning => (" E*", 1),
         NodeKind::Elite => (" E ", 1),
         NodeKind::Monster => ("e", 0),
@@ -161,9 +161,9 @@ fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     out.extend(vec![
         ("[] you".to_string(), Style::default().add_modifier(Modifier::BOLD)),
         ("?  Unknown".to_string(), theme::kind_style(NodeKind::Event)),
-        ("💰  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
+        ("$  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
         ("T  Treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
-        ("🔥  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
+        (" R  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
         ("e  Enemy".to_string(), theme::kind_style(NodeKind::Monster)),
         (" E  Elite".to_string(), theme::kind_style(NodeKind::Elite)),
         (" E* Burning".to_string(), theme::kind_style(NodeKind::Elite)),
@@ -249,19 +249,15 @@ fn render_floor(
         let kind_style = map_glyph_style(node.kind);
         let visited = run.path.contains(i);
         // 选中的房间用 [ ] 框出来:符号仍然落在本列,方括号借用左右各一格
-        let sel_text = if node.kind == NodeKind::Elite {
-            // 精英本来就铺了三格,选中时不再往两边撑
-            if node.burning {
-                "[E*]".to_string()
-            } else {
-                "[E]".to_string()
-            }
+        let sel_text = if indent > 0 {
+            // 本来就铺了三格的(精英/休息),选中时不再往两边撑
+            format!("[{}]", glyph.trim())
         } else {
             format!("[{glyph}]")
         };
         let (px, text, style) = if is_sel && x > indent {
             (
-                if node.kind == NodeKind::Elite {
+                if indent > 0 {
                     x.saturating_sub(1)
                 } else {
                     x - 1 - indent
