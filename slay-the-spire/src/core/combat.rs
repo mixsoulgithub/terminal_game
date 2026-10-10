@@ -436,6 +436,12 @@ pub struct Combat {
     /// 只清 clearOnCombatVictory=true 的那些,反伤不在其中 —— 所以这一击
     /// 把守护者打死,反伤照样结算.出牌前先快照,结算后再看现在是否还活着就错了.
     sharp_hide: Vec<(usize, i32)>,
+    /// headless 对拍:参考实现没实现尼尔瑞的抄本
+    /// (refs/slay-the-cli/src/content/relics/event.ts:146-153 标了 ENGINE-GAP:
+    /// "回合中段请求选牌会把排在其后的动作(交给回合)整段丢掉"),
+    /// 连"亮三张"那几次 cardRandomRng 都不掷.原版这件遗物是可选(shuffle 或不 shuffle),
+    /// 驱动侧统一按"跳过"处理:回合结束不亮牌、不掷点,两边才对得上.
+    pub suppress_codex: bool,
 }
 
 /// 单次打牌过程中的临时统计
@@ -622,6 +628,7 @@ impl Combat {
             choice_tail_target: None,
             choice_tail_ctx: PlayCtx::default(),
             sharp_hide: Vec::new(),
+            suppress_codex: false,
         };
         // 跨战斗的遗物计数器由一局流程注入(参考实现里这些数挂在 Run 的遗物上,
         // 开局第一回合就会 +1,所以必须在 start_turn 之前放进去)
@@ -1876,9 +1883,10 @@ impl Combat {
         if self.phase != Phase::PlayerTurn {
             return;
         }
-        // 尼尔瑞的抄本:回合结束亮出几张随机牌,挑一张洗进抽牌堆(可以跳过)
+        // 尼尔瑞的抄本:回合结束亮出几张随机牌,挑一张洗进抽牌堆(可以跳过)。
+        // headless 对拍时整件当不存在(见 Combat::suppress_codex 的注释).
         let codex = self.relic_max(|fx| fx.end_turn_shuffle_pick);
-        if codex > 0 && !self.rs.nilrys_used {
+        if codex > 0 && !self.rs.nilrys_used && !self.suppress_codex {
             self.rs.nilrys_used = true;
             let pool = cards::class_card_pool();
             self.offer_pick(pool, codex as usize, false, "Nilry's Codex: choose 1");
@@ -3123,13 +3131,29 @@ impl Combat {
                 self.push_log(LogKind::Player, format!("{label} is added to your hand"));
             }
             (ChoiceSource::Offered, ChoiceAction::ToDrawShuffled) => {
-                // 尼尔瑞的抄本:挑中的那张洗进抽牌堆
+                // 尼尔瑞的抄本:挑中的那张"洗进"抽牌堆.
+                // 反编译 refs/sts_lightspeed/src/combat/CardManager.cpp:215-221 的
+                // shuffleIntoDrawPile 只掷一次 cardRandomRng 取一个插入位,把牌插进去
+                // (不是整堆重洗);抽牌堆为空就直接放顶.本作原先掷的是 shuffleRng 再
+                // java_shuffle 整堆,多掷一整条流、顺序也全变 —— 与反编译不符,改成一致.
                 let card = ch.offered.remove(idx);
                 let label = card.label();
-                self.draw.push(card);
-                let seed = self.streams.floor(FloorStream::ShuffleRng).random_long();
-                java_shuffle(&mut self.draw, &mut JavaRandom::new(seed));
-                self.on_shuffle();
+                if self.draw.is_empty() {
+                    // 空堆:原版 moveToDrawPileTop(插到堆顶);本作 draw[0] 是堆顶.
+                    self.draw.insert(0, card);
+                } else {
+                    let n = self.draw.len();
+                    // 原版下标从堆底数(drawPile.insert(begin()+idx)),本作下标从堆顶数,
+                    // 且堆顶是 draw[0];换过来 idx=0(原版堆底)对应本作 index=n.
+                    let insert = {
+                        let idx = self
+                            .streams
+                            .floor(FloorStream::CardRandomRng)
+                            .random(n as u32 - 1) as usize;
+                        n - idx
+                    };
+                    self.draw.insert(insert, card);
+                }
                 self.push_log(
                     LogKind::Player,
                     format!("{label} is shuffled into your draw pile"),
@@ -9159,7 +9183,9 @@ mod relic_hook_tests {
         assert_eq!(c.hand.len(), hand_before, "弃一张补一张");
     }
 
-    /// 尼尔瑞的抄本:回合结束亮三张,挑中的洗进抽牌堆,选完才轮到对面
+    /// 尼尔瑞的抄本:回合结束亮三张,挑中的"洗进"抽牌堆(只掷一次 cardRandomRng
+    /// 取插入位,不动 shuffleRng、不整堆重洗 —— 反编译 sts_lightspeed
+    /// src/combat/CardManager.cpp:215-221 的 shuffleIntoDrawPile),选完才轮到对面
     #[test]
     fn nilrys_codex_shuffles_a_chosen_card_into_the_draw_pile() {
         let relics = vec![relic_def_or_panic("nilrys_codex")];
@@ -9170,18 +9196,56 @@ mod relic_hook_tests {
         assert_eq!(ch.action, ChoiceAction::ToDrawShuffled);
         assert_eq!(c.choice_candidates().len(), 3, "亮三张");
         let picked = c.choice_candidates()[0].1.def.id;
+        // 亮三张用 cardRandomRng(3 次);插入位再掷 1 次 cardRandomRng,
+        // shuffleRng 一步都不许动(原先整堆 java_shuffle 会多掷一条流)
+        let card_before = c.streams.floor(FloorStream::CardRandomRng).counter();
+        let shuffle_before = c.streams.floor(FloorStream::ShuffleRng).counter();
         c.choose(0).unwrap();
         assert!(c.choice.is_none());
         assert!(c.pending_end_turn == false, "选完接着走回合尾巴");
+        assert_eq!(
+            c.streams.floor(FloorStream::CardRandomRng).counter(),
+            card_before + 1,
+            "只掷一次插入位"
+        );
+        assert_eq!(
+            c.streams.floor(FloorStream::ShuffleRng).counter(),
+            shuffle_before,
+            "抄本不整堆重洗,不动 shuffleRng"
+        );
+        // 插进抽牌堆之后回合尾巴接着抽 5 张,插进去的那张可能已经被抽上手
         assert!(
             c.draw.iter().chain(c.hand.iter()).any(|k| k.def.id == picked),
-            "挑中的洗进抽牌堆(洗完后被抽到手上也算)"
+            "挑中的进抽牌堆(抽到手上也算)"
         );
         assert!(
             !c.discard.iter().any(|k| k.def.id == picked),
             "挑中的不该落到弃牌堆"
         );
         assert_eq!(c.turn, 2, "回合已经交给对面并回到自己");
+    }
+
+    /// 抄本在 headless 对拍里被折平(参考实现没实现这件遗物):
+    /// 回合结束既不亮牌也不掷 cardRandomRng,与"跳过"一致
+    #[test]
+    fn nilrys_codex_is_suppressed_in_headless_replay() {
+        let relics = vec![relic_def_or_panic("nilrys_codex")];
+        let mut c = staged(&["strike"; 10], &["defend"], &relics);
+        c.suppress_codex = true;
+        let card_before = c.streams.floor(FloorStream::CardRandomRng).counter();
+        let draw_before = c.draw.len();
+        c.end_turn();
+        assert!(c.choice.is_none(), "折平后不亮牌");
+        assert_eq!(
+            c.streams.floor(FloorStream::CardRandomRng).counter(),
+            card_before,
+            "折平后连掷点都没有"
+        );
+        assert_eq!(
+            c.draw.len(),
+            draw_before - DRAW_PER_TURN,
+            "抽牌堆只少开局抽的五张,没有多的牌被塞进来"
+        );
     }
 
     /// 抄本可以跳过:不选就不会往抽牌堆塞牌
@@ -9330,3 +9394,4 @@ mod relic_hook_tests {
         assert_eq!(999 - c.enemies[0].hp, 40, "神圣树皮翻倍");
     }
 }
+

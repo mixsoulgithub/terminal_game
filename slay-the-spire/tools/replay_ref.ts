@@ -236,6 +236,7 @@ function advanceWithEggs(s: GameState, cmd: Command): GameState {
     refundStolenGold(s, out);
     renameBurningRegen(out);
     ensureFairyWatch(out);
+    fixSummonerSlotLayout(out);
   }
   return out;
 }
@@ -355,6 +356,121 @@ function patchMonsterRollAfterQueuedHeal(): void {
 }
 
 patchMonsterRollAfterQueuedHeal();
+
+// ---- 参考侧缺口的驱动补偿:六火幽魂的 Inferno ----
+//
+// 原版 Inferno 除了 2x6(飞升 3x6)攻击,还要"往弃牌堆塞 3 张 Burn+,并把已有的
+// 灼伤全部升级"(语料 refs/slay-the-cli/data/corpus/monsters-act1.json 的
+// HEXAGHOST.conflicts 条:"wiki:Hexaghost (Enemies.lua Inferno text): 'Adds 3 Burns+
+// into your discard pile. Upgrades all Burns.'";wiki 与反编译同源的 Java
+// BurnIncreaseAction + burnUpgraded).参考实现有**意**省掉了这半
+//(refs/slay-the-cli/src/content/monsters/act1/hexaghost.ts 的 HEXAGHOST_INFERNO
+// 只 attackPlayer,文件头注明"omitted here as in the transcription"),本作引擎照
+// 原版实现(enemies/act1.rs 的 Inferno:PlayerCardUpgraded{burn,3,from_turn:None} +
+// UpgradePlayerBurns).这里在驱动侧把参考缺的那半补上:包住 HEXAGHOST_INFERNO 的
+// execute,攻击照旧(原 exec),再把玩家各堆里已有的灼伤就地升级(升过的跳过)、
+// 往弃牌堆塞 3 张 Burn+(与 Sear 用同一个 makeTempCard 动作).不掷点;本作引擎不动.
+const patchedInferno = new WeakSet<object>();
+
+function patchHexaghostInferno(): void {
+  const def = bundle.monsters.get("HEXAGHOST" as never);
+  const move = def?.moves.HEXAGHOST_INFERNO;
+  if (!move || patchedInferno.has(move)) return;
+  patchedInferno.add(move);
+  const exec = move.execute;
+  if (!exec) return;
+  move.execute = (ctx, self) => {
+    exec(ctx, self);
+    if (!COMPENSATE || !ctx.combat) return;
+    const c = ctx.combat;
+    // 已有的灼伤全部升级(参考侧把牌实例放在 combat.cards,piles 里存 iid)
+    for (const pile of Object.values(c.player.piles)) {
+      for (const iid of pile) {
+        const card = c.cards[iid];
+        if (card && card.defId === "BURN" && card.upgrades < 1) card.upgrades = 1;
+      }
+    }
+    // 再塞 3 张 Burn+ 进弃牌堆
+    ctx.queue.addToBottom({
+      kind: "makeTempCard",
+      defId: "BURN",
+      upgrades: 1,
+      dest: "discard",
+      n: 3,
+    } as never);
+  };
+}
+
+patchHexaghostInferno();
+
+// ---- 参考侧摆位缺口的驱动补偿:召唤型首领的开战槽位 ----
+//
+// 反编译按固定槽位摆怪(MonsterGroup::createMonsters):
+//   GREMLIN_LEADER 在槽 3、起始随从在 arr[1]/arr[2]、槽 0 空
+//   (refs/sts_lightspeed/src/combat/MonsterGroup.cpp:255 把 GREMLIN_LEADER construct 在槽 3);
+//   BRONZE_AUTOMATON 在槽 1、槽 0 空,召唤的铜球进槽 0/2
+//   (反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:3393-3399 的 spawnBronzeOrbs 用 arr[0]/arr[2],
+//    铜球找空槽见 Actions.cpp 的 SpawnOrbs/SummonGremlins 按从低到高找空槽).
+// 本作 encounter 表的摆位与之一致(gremlin_leader_gang = [1,2,3];bronze_automaton = [1]).
+// 参考实现把遭遇表的怪按数组下标直接铺成槽 0..N-1
+// (refs/slay-the-cli/src/content/acts.ts:78/84 的 monsters:[...]),于是
+//   小鬼头目落在槽 2 —— Rally 找空槽(反编译 Actions.cpp:459 的 1,2,0 顺序)候选少了槽 2
+//   (a20a2 seed 13 只差 5 hp、seed 33 槽 1 的小鬼已死时参考只找到 1 个空槽、少召唤一只胖小鬼,差 117 hp);
+//   铜制自动机落在槽 0 —— 铜球进槽 1/2、且怪物行动顺序被改(参考自动机先动、本作后动)
+//   (a20a2 seed 3 整场 hp 差 10 点).
+// 这里在驱动侧把参考的开战槽位掰回原版:开战后插一个槽 0 的 GAP(escaped,永不行动、不计数、
+// 不可选中,与参考自己 padMonsterSlots 造的同一种对象),再把各只 idx 顺移一位.
+// 不掷任何点(HP 掷点仍按原次序落在真实怪身上);导出时 GAP 照旧滤掉.本作引擎不动.
+// 每个遭遇只认它"开战那一刻"的阵容,插一次就不再来(之后召唤/替换更不会再插):
+// 小鬼头目开战固定三只、首领排最后;铜制自动机开战只有它自己一只.
+const LEADING_GAP_ENCOUNTERS: Record<string, (ids: string[]) => boolean> = {
+  GREMLIN_LEADER: (ids) => ids.length === 3 && ids[2] === "GREMLIN_LEADER",
+};
+
+function fixSummonerSlotLayout(s: GameState): void {
+  const c = s.combat;
+  if (!c) return;
+  const enc = c.combatFlags.encounterId;
+  const isInitial = LEADING_GAP_ENCOUNTERS[enc];
+  if (!isInitial) return;
+  const ms = c.monsters;
+  if (!isInitial(ms.map((m) => m.id as string))) return;
+  ms.unshift({
+    id: "GAP" as never,
+    idx: 0,
+    hp: 0,
+    maxHp: 0,
+    block: 0,
+    powers: [],
+    move: null,
+    moveHistory: [],
+    isDead: false,
+    isEscaped: true,
+    halfDead: false,
+    data: {},
+  });
+  ms.forEach((m, i) => {
+    m.idx = i;
+  });
+}
+
+// ---- 参考侧判定写反的驱动补偿:Preserved Insect ----
+//
+// 原版 Preserved Insect 只在"精英房"触发(AbstractDungeon.getCurrRoom().eliteTrigger;
+// 反编译 refs/sts_lightspeed/src/combat/BattleContext.cpp 的 eliteTrigger 分支),本作照这个
+// (relics.rs 的 elite_hp_reduction_pct + 战斗房间种类).参考实现按"战斗里有 elite 类怪"
+// 触发(refs/slay-the-cli/src/content/relics/common.ts:321-330 的
+// `monsters.some(category === "elite")`),于是**非精英房里的精英**(如第二幕怪物节点上的
+// 燃烧精英,roomKind 仍是 "monster")也被削 25% 血(a20a2 seed 18 的哨卫+球形守卫那场
+// 43/20 -> 32/15).这里在驱动侧把判据换成参考自己记的房间种类 roomKind === "elite".
+const preservedInsect = bundle.relics.get("PRESERVED_INSECT" as never);
+if (preservedInsect) {
+  preservedInsect.hooks.atBattleStartPreDraw = (ctx) => {
+    const room = ctx.run.room as { roomKind?: string } | undefined;
+    if (room?.roomKind !== "elite") return;
+    for (const m of ctx.combat!.monsters) m.hp = Math.floor(m.hp * 0.75);
+  };
+}
 
 /** 调试钩子 `act n`:从当前幕切到第 n 幕开头.
  *  借参考实现自己的幕切换 —— 先把房间换成"Boss 奖励屏",再 skipRewards,
@@ -558,11 +674,20 @@ function pickSmartCard(c: CombatState, aboutToDie: boolean, threatened: boolean,
 }
 
 /** 危险时按格子顺序找第一瓶能喝的药水;喝到就返回新状态,否则 null */
+// 原版里"仙女在瓶中"是被动药水:不能主动喝(onUse 空),只在将死时自动触发
+//(FAIRY_SAVE 补偿在下面).参考实现把它写成 `onUse: () => {}` 的空壳,试喝时
+// usePotion 会"成功"并吃掉这一格(refs/slay-the-cli/src/content/potions/index.ts:315-324),
+// 保命符就这么丢了、后面的药水也跟着整体错位(acts seed 12691 的 59 处).
+// 本作引擎 quaff_potion 对 Passive 药水直接回 Err(run.rs 的 quaff_potion),
+// 这里让参考侧对齐:试喝时跳过这瓶.
+const NON_DRINKABLE_POTIONS: Record<string, true> = { FAIRY_POTION: true };
+
 function tryDrinkOnce(s: GameState): GameState | null {
   const run = s.run;
   for (let slot = 0; slot < run.potions.length; slot++) {
     const id = run.potions[slot];
     if (!id) continue;
+    if (NON_DRINKABLE_POTIONS[id]) continue;
     const def = bundle.potions.get(id);
     if (!def) continue;
     let target: number | undefined = undefined;
@@ -1082,6 +1207,24 @@ let COMPENSATE = true;
  */
 function emitPendingPick(out: string[], step: number, s: GameState): { s: GameState; step: number } {
   const req = s.pending!.request;
+  if (req.kind === "option") {
+    // the_library 的"读一本书(20 选 1)"屏:参考把这一屏实现成 option 型待选项
+    //(refs/slay-the-cli/src/content/events/lib.ts:372-382 的 requestOptionChoice),
+    // 本作的导出器认的是"事件第二屏"(event, options=可选项数).两边都选第 0 项,
+    // 下一行状态逐字段一致 —— 只是同一屏被摊成了不同的行(旧口径导成 pick candidates 0).
+    // 这里按本作的口径补出 event 行.本作引擎不动.
+    const args = s.pending!.resumeArgs as { eventId?: string } | undefined;
+    const next = advanceWithEggs(s, { cmd: "choose", indices: [0] } as Command);
+    out.push(
+      line(
+        step,
+        "event",
+        `"id":${JSON.stringify((args?.eventId ?? "").toLowerCase())},"options":${req.options.length},"pick":0`,
+        stateJson(next),
+      ),
+    );
+    return { s: next, step: step + 1 };
+  }
   const n = req.kind === "cards" ? req.iids.length : 0;
   const picks = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
   const deckIdx = (s.pending!.resumeArgs as { indices?: number[] } | undefined)?.indices;

@@ -765,6 +765,9 @@ pub struct Run {
     note_path: Option<std::path::PathBuf>,
     /// 便条存卡是否落盘:headless 对拍/回放关掉,免得读到玩家存档或把回放写进存档
     note_persist: bool,
+    /// headless 对拍:参考实现没实现尼尔瑞的抄本(引擎缺口),把这场战斗里的这件
+    /// 遗物当不存在(回合结束不亮牌、不掷点).见 Combat::suppress_codex
+    no_codex: bool,
     /// 玩家当前所在节点;None 表示还没上路
     pub pos: Option<usize>,
     /// 这一局走过的节点(按顺序),地图上走过的房间统一给底色
@@ -982,6 +985,7 @@ impl Run {
             card_rarity_factor: CARD_RARITY_PITY_START,
             note_path: None,
             note_persist: true,
+            no_codex: false,
             pos: None,
             path: Vec::new(),
             floor_reached: 0,
@@ -1428,6 +1432,7 @@ impl Run {
                 }
                 // 战斗的随机状态以存档为准(上面重建时又掷了几次血量与洗牌)
                 c.streams = run.streams.clone();
+                c.suppress_codex = run.no_codex;
                 run.combat = Some(c);
                 run.screen = Screen::Combat;
                 run.win_hold = 0;
@@ -1696,6 +1701,10 @@ impl Run {
             asc: self.ascension,
         };
         self.combat = Some(Combat::new(enc, setup, self.streams.clone()));
+        // headless 对拍:参考实现没实现尼尔瑞的抄本,整件当不存在
+        if let Some(c) = self.combat.as_mut() {
+            c.suppress_codex = self.no_codex;
+        }
         // 古代茶具的能量只在紧接着的这场战斗里生效,开打就清掉
         self.rested = false;
         // 仙女在瓶中:开局就把保命符挂上
@@ -4556,6 +4565,15 @@ impl Run {
     /// 关掉便条存卡的持久化:headless 对拍/回放用,保证不读不写玩家存档
     pub fn set_note_persist(&mut self, on: bool) {
         self.note_persist = on;
+    }
+
+    /// headless 对拍:把尼尔瑞的抄本当不存在(参考实现没实现这件遗物).
+    /// 见 Combat::suppress_codex —— 重开战斗时会带过去
+    pub fn set_no_codex(&mut self, on: bool) {
+        self.no_codex = on;
+        if let Some(c) = self.combat.as_mut() {
+            c.suppress_codex = on;
+        }
     }
 
     /// 随机一张本职业牌(不限稀有度时从三档里挑)
