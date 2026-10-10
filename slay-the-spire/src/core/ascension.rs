@@ -922,6 +922,9 @@ fn fx_key(fx: &EnemyFx) -> (&'static str, String) {
         EnemyFx::BlockFromDamage => ("blockfromdmg", String::new()),
         EnemyFx::StealGold { .. } => ("steal", String::new()),
         EnemyFx::PlayerCard { card, .. } => ("card", card.to_ascii_uppercase()),
+        // 塞进去的牌升不升级是另说,飞升覆盖按卡名认领(六火幽魂 Sear 的
+        // A19 覆盖要把张数改成 2,认不到这段就会变成"再塞 2 张"= 3 张)
+        EnemyFx::PlayerCardUpgraded { card, .. } => ("card", card.to_ascii_uppercase()),
         EnemyFx::Heal { .. } => ("heal", String::new()),
         EnemyFx::DrawReduction { .. } => ("draw", String::new()),
         EnemyFx::ClearDebuffs => ("clear", String::new()),
@@ -988,7 +991,8 @@ fn set_amount(fx: &mut EnemyFx, n: i32) {
         | EnemyFx::StealGold { n: v }
         | EnemyFx::Heal { n: v, .. }
         | EnemyFx::DrawReduction { n: v }
-        | EnemyFx::PlayerCard { n: v, .. } => *v = n,
+        | EnemyFx::PlayerCard { n: v, .. }
+        | EnemyFx::PlayerCardUpgraded { n: v, .. } => *v = n,
         EnemyFx::Block { amount, .. } => *amount = n,
         // 双拳合击装回的额度:飞升表给的是"第一次装回去"的值
         EnemyFx::RearmModeShift { first } => *first = n,
@@ -1506,6 +1510,34 @@ mod tests {
             assert_eq!(at(3), *a3, "{id}/{mv} A3");
             assert_eq!(at(4), *a4, "{id}/{mv} A4");
         }
+    }
+
+    /// 六火幽魂的 Sear:A19 起"塞 2 张灼伤"要**改写**已有的塞牌段,不是再塞 2 张。
+    /// 反编译 MonsterSpecific.cpp:822-826 是 `MakeTempCardInDiscard(BURN, asc19 ? 2 : 1)`,
+    /// 没有第二条塞牌动作;fx_key 认不到 PlayerCardUpgraded 时会多补一段 -> 实际塞 1+2=3 张。
+    #[test]
+    fn hexaghost_sear_asc19_replaces_the_burn_count() {
+        fn burn_cards(fxs: &[EnemyFx]) -> Vec<(i32, Option<u32>)> {
+            fxs.iter()
+                .filter_map(|fx| match fx {
+                    EnemyFx::PlayerCard { n, .. } => Some((*n, None)),
+                    EnemyFx::PlayerCardUpgraded { n, from_turn, .. } => Some((*n, *from_turn)),
+                    _ => None,
+                })
+                .collect()
+        }
+        let def = enemies::enemy_def("hexaghost").unwrap();
+        let m = def.moves.iter().find(|m| m.name == "Sear").unwrap();
+        assert_eq!(
+            burn_cards(&effects("hexaghost", m.name, m.effects, 0)),
+            vec![(1, Some(10))],
+            "A0 的 Sear 塞 1 张(第 10 回合起才升级)"
+        );
+        assert_eq!(
+            burn_cards(&effects("hexaghost", m.name, m.effects, 19)),
+            vec![(2, Some(10))],
+            "A19 的 Sear 改成 2 张,不是 1+2=3 张"
+        );
     }
 
     /// 击杀/开局以外的分档:虱子的卷曲与咬伤区间、暗灵的撕咬(反编译

@@ -23,7 +23,8 @@ options:
                   a decimal number is used as-is; anything else is read as a
                   base-35 seed string (same form `:seed` prints)
   --ascension <n> ascension level 0-20 for a new game (default 0 = off)
-  --dump <what>   print data and exit (cards|enemies|relics|potions|events|gated)
+  --dump <what>   print data and exit
+                  (cards|enemies|monsters|relics|potions|events|gated)
   --replay <seed> headless scripted run: walk act 1 to the boss, one JSON
                   line per step on stdout (no terminal needed)
   --script <file> path script for --replay (neow/reward/card/event/rest/shop)
@@ -299,6 +300,11 @@ fn dump(what: &str) -> Result<(), String> {
                     e.moves.len()
                 );
             }
+            Ok(())
+        }
+        "monsters" => {
+            print!("{}", core::enemies::dump_json());
+            println!();
             Ok(())
         }
         "relics" => {

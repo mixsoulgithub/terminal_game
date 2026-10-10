@@ -11,6 +11,8 @@
 //   sandbox       tools/sandbox_diff.ts 逐卡/遗物/药水差分尺(要求 (a) 我们错 = 0)
 //   corpus        tools/audit_corpus.ts 语料审计 + 两道守卫(未覆盖即报错 / 新增未登记即报错)
 //   selftest      tools/audit_corpus.ts --selftest 历史盲区回归
+//   monsters      tools/audit_monsters.ts 怪物对账(65 怪 × 招式/飞升档/血量档/AI 规则)
+//   monself       tools/audit_monsters.ts --selftest 怪物对账的改坏/恢复回归
 //   events        tools/audit_events.ts 事件审计
 //   axes          tools/sandbox_axes.ts 边界轴
 //   relics        tools/sandbox_relics.ts 遗物沙盒
@@ -136,6 +138,29 @@ function stepSelftest(): Step {
   };
 }
 
+function stepMonsters(): Step {
+  const { status, out } = sh(["bun", join(HERE, "audit_monsters.ts")], ROOT);
+  const bad = out.match(/不一致 (\d+) 处/);
+  const guard = out.match(/守卫: (PASS|FAIL)/);
+  return {
+    name: "monsters",
+    ok: status === 0 && bad?.[1] === "0" && guard?.[1] === "PASS",
+    detail: `不一致 ${bad?.[1] ?? "?"} 处,守卫 ${guard?.[1] ?? "?"}`,
+    fail: interesting(out, ["不一致", "守卫", "缺少", "没进"], 16),
+  };
+}
+
+function stepMonsterSelftest(): Step {
+  const { status, out } = sh(["bun", join(HERE, "audit_monsters.ts"), "--selftest"], ROOT);
+  const m = out.match(/抓到 (\d+),漏检 (\d+)/);
+  return {
+    name: "monself",
+    ok: status === 0 && m?.[2] === "0",
+    detail: `改坏/恢复抓到 ${m?.[1] ?? "?"},漏检 ${m?.[2] ?? "?"}`,
+    fail: interesting(out, ["[FAIL]"], 12),
+  };
+}
+
 function stepEvents(): Step {
   const { status, out } = sh(["bun", join(HERE, "audit_events.ts")], ROOT);
   const m = out.match(/ok=(\d+)\s+mismatch=(\d+)/);
@@ -211,6 +236,8 @@ for (const t of ["act1", "act2", "act3", "acts", "a20", "a20a2", "a20a3", "a20a4
 run(stepSandbox(), "sandbox");
 run(stepCorpus(), "corpus");
 run(stepSelftest(), "selftest");
+run(stepMonsters(), "monsters");
+run(stepMonsterSelftest(), "monself");
 run(stepEvents(), "events");
 run(stepAxes(), "axes");
 run(stepRelics(), "relics");

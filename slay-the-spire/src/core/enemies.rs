@@ -4,7 +4,7 @@ pub mod act1;
 pub mod act2;
 pub mod act34;
 
-use crate::core::enemy::{Encounter, EnemyDef, EnemyKind, EnemyPreset, Spawned};
+use crate::core::enemy::{Encounter, EnemyDef, EnemyFx, EnemyKind, EnemyPreset, Intent, Spawned};
 use crate::core::status::Status;
 use crate::rng::{FloorStream, Rng, RngRegistry};
 
@@ -1062,6 +1062,384 @@ pub fn generate_extra_strong(act: u32, rng: &mut Rng, count: usize) -> Vec<&'sta
 /// 按敌人 id 找一场能打的遭遇(调试入口用)
 pub fn encounter_with_enemy(id: &str) -> Option<&'static Encounter> {
     all_encounters().find(|e| e.enemies.contains(&id))
+}
+
+// ---- 静态数据导出:--dump monsters ----
+// 把全部怪物的"基础招式表 + 飞升变更点"导成 JSON,给 tools/audit_monsters.ts
+// 与语料逐条对账.每个招式/血量的 changes 只列分辨率真正变化的飞升档(含该档的
+// 完整快照),档位边界(>= N 还是 > N)错一位都会被工具抓到.
+
+/// 招式作用范围在导出里的名字
+fn scope_name(s: crate::core::enemy::Scope) -> &'static str {
+    use crate::core::enemy::Scope;
+    match s {
+        Scope::SelfOnly => "self",
+        Scope::Team => "team",
+        Scope::Allies => "allies",
+        Scope::Leader => "leader",
+        Scope::RandomOne => "random",
+    }
+}
+
+/// 塞牌的牌堆在导出里的名字
+fn spot_name(s: crate::core::enemy::CardSpot) -> &'static str {
+    use crate::core::enemy::CardSpot;
+    match s {
+        CardSpot::Discard => "discard",
+        CardSpot::DrawShuffle => "drawShuffle",
+        CardSpot::DrawTop => "drawTop",
+        CardSpot::Deck => "deck",
+    }
+}
+
+/// 意图类型在导出里的名字(语料里是大写/小写混用,工具侧统一小写)
+fn intent_name(i: Intent) -> &'static str {
+    match i {
+        Intent::Attack { .. } => "attack",
+        Intent::AttackDefend { .. } => "attack_defend",
+        Intent::AttackDebuff { .. } => "attack_debuff",
+        Intent::AttackBuff { .. } => "attack_buff",
+        Intent::Defend => "defend",
+        Intent::DefendBuff { .. } => "defend_buff",
+        Intent::DefendDebuff { .. } => "defend_debuff",
+        Intent::Buff => "buff",
+        Intent::Debuff => "debuff",
+        Intent::StrongDebuff => "strong_debuff",
+        Intent::Stun => "stun",
+        Intent::Escape => "escape",
+        Intent::Sleep => "sleep",
+        Intent::Unknown => "unknown",
+    }
+}
+
+/// 意图上挂的三个数:伤害 / 次数 / 格挡(没有就是 null)
+fn intent_nums(i: Intent) -> (Option<i32>, Option<i32>, Option<i32>) {
+    match i {
+        Intent::Attack { damage, times } | Intent::AttackDebuff { damage, times }
+        | Intent::AttackBuff { damage, times } => (Some(damage), Some(times as i32), None),
+        Intent::AttackDefend {
+            damage,
+            times,
+            block,
+        } => (Some(damage), Some(times as i32), Some(block)),
+        Intent::DefendBuff { block } | Intent::DefendDebuff { block } => (None, None, Some(block)),
+        _ => (None, None, None),
+    }
+}
+
+fn opt_i32(v: Option<i32>) -> String {
+    match v {
+        Some(n) => n.to_string(),
+        None => "null".to_string(),
+    }
+}
+
+fn str_array(xs: &[&str]) -> String {
+    let items: Vec<String> = xs.iter().map(|x| format!("\"{x}\"")).collect();
+    format!("[{}]", items.join(","))
+}
+
+fn u8_array(xs: &[u8]) -> String {
+    let items: Vec<String> = xs.iter().map(|x| x.to_string()).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// 一段敌人效果的 JSON(字段名与 EnemyFx 各变体一一对应)
+fn fx_json(fx: &EnemyFx) -> String {
+    match fx {
+        EnemyFx::Attack { amount, times } => {
+            format!("{{\"v\":\"Attack\",\"amount\":{amount},\"times\":{times}}}")
+        }
+        EnemyFx::AttackScaling {
+            amount,
+            per_turn,
+            cap,
+            times,
+        } => format!(
+            "{{\"v\":\"AttackScaling\",\"amount\":{amount},\"perTurn\":{per_turn},\"cap\":{cap},\"times\":{times}}}"
+        ),
+        EnemyFx::AttackGrowing { amount } => {
+            format!("{{\"v\":\"AttackGrowing\",\"amount\":{amount}}}")
+        }
+        EnemyFx::AttackStabCount { amount } => {
+            format!("{{\"v\":\"AttackStabCount\",\"amount\":{amount}}}")
+        }
+        EnemyFx::AttackRolled { times } => format!("{{\"v\":\"AttackRolled\",\"times\":{times}}}"),
+        EnemyFx::PlainDamage { amount } => format!("{{\"v\":\"PlainDamage\",\"amount\":{amount}}}"),
+        EnemyFx::Block { amount, scope } => format!(
+            "{{\"v\":\"Block\",\"amount\":{amount},\"scope\":\"{}\"}}",
+            scope_name(*scope)
+        ),
+        EnemyFx::BlockFromDamage => "{\"v\":\"BlockFromDamage\"}".to_string(),
+        EnemyFx::GainStatus { status, n, scope } => format!(
+            "{{\"v\":\"GainStatus\",\"status\":\"{}\",\"n\":{n},\"scope\":\"{}\"}}",
+            status.name(),
+            scope_name(*scope)
+        ),
+        EnemyFx::PlayerStatus { status, n } => format!(
+            "{{\"v\":\"PlayerStatus\",\"status\":\"{}\",\"n\":{n}}}",
+            status.name()
+        ),
+        EnemyFx::Heal { n, scope } => format!(
+            "{{\"v\":\"Heal\",\"n\":{n},\"scope\":\"{}\"}}",
+            scope_name(*scope)
+        ),
+        EnemyFx::HealFromDamage => "{\"v\":\"HealFromDamage\"}".to_string(),
+        EnemyFx::HealToHalf => "{\"v\":\"HealToHalf\"}".to_string(),
+        EnemyFx::ClearDebuffs => "{\"v\":\"ClearDebuffs\"}".to_string(),
+        EnemyFx::ResetStrength { n } => format!("{{\"v\":\"ResetStrength\",\"n\":{n}}}"),
+        EnemyFx::Escalate => "{\"v\":\"Escalate\"}".to_string(),
+        EnemyFx::PlayerCard { card, spot, n } => format!(
+            "{{\"v\":\"PlayerCard\",\"card\":\"{card}\",\"spot\":\"{}\",\"n\":{n}}}",
+            spot_name(*spot)
+        ),
+        EnemyFx::PlayerCardUpgraded {
+            card,
+            spot,
+            n,
+            from_turn,
+        } => format!(
+            "{{\"v\":\"PlayerCardUpgraded\",\"card\":\"{card}\",\"spot\":\"{}\",\"n\":{n},\"fromTurn\":{}}}",
+            spot_name(*spot),
+            match from_turn {
+                Some(t) => t.to_string(),
+                None => "null".to_string(),
+            }
+        ),
+        EnemyFx::UpgradePlayerBurns => "{\"v\":\"UpgradePlayerBurns\"}".to_string(),
+        EnemyFx::ParityCoin { num, den, turn } => format!(
+            "{{\"v\":\"ParityCoin\",\"num\":{num},\"den\":{den},\"turn\":{turn}}}"
+        ),
+        EnemyFx::ParityRand { n } => format!("{{\"v\":\"ParityRand\",\"n\":{n}}}"),
+        EnemyFx::StealGold { n } => format!("{{\"v\":\"StealGold\",\"n\":{n}}}"),
+        EnemyFx::StealCard => "{\"v\":\"StealCard\"}".to_string(),
+        EnemyFx::Summon {
+            ids,
+            slots,
+            hp_burn,
+        } => format!(
+            "{{\"v\":\"Summon\",\"ids\":{},\"slots\":{},\"hpBurn\":{hp_burn}}}",
+            str_array(ids),
+            u8_array(slots)
+        ),
+        EnemyFx::SummonRandom {
+            pool,
+            count,
+            slots,
+        } => format!(
+            "{{\"v\":\"SummonRandom\",\"pool\":{},\"count\":{count},\"slots\":{}}}",
+            str_array(pool),
+            u8_array(slots)
+        ),
+        EnemyFx::DrawReduction { n } => format!("{{\"v\":\"DrawReduction\",\"n\":{n}}}"),
+        EnemyFx::Charge => "{\"v\":\"Charge\"}".to_string(),
+        EnemyFx::WakeUp { at_turn } => format!("{{\"v\":\"WakeUp\",\"atTurn\":{at_turn}}}"),
+        EnemyFx::RollDamage { div, add } => {
+            format!("{{\"v\":\"RollDamage\",\"div\":{div},\"add\":{add}}}")
+        }
+        EnemyFx::LoseStatus { status, scope } => format!(
+            "{{\"v\":\"LoseStatus\",\"status\":\"{}\",\"scope\":\"{}\"}}",
+            status.name(),
+            scope_name(*scope)
+        ),
+        EnemyFx::RearmModeShift { first } => {
+            format!("{{\"v\":\"RearmModeShift\",\"first\":{first}}}")
+        }
+        EnemyFx::ForceNext { idx } => format!("{{\"v\":\"ForceNext\",\"idx\":{idx}}}"),
+        EnemyFx::Split => "{\"v\":\"Split\"}".to_string(),
+        EnemyFx::Suicide => "{\"v\":\"Suicide\"}".to_string(),
+        EnemyFx::Escape => "{\"v\":\"Escape\"}".to_string(),
+        EnemyFx::MarkImplantUsed => "{\"v\":\"MarkImplantUsed\"}".to_string(),
+    }
+}
+
+fn fx_array(fxs: &[EnemyFx]) -> String {
+    let items: Vec<String> = fxs.iter().map(fx_json).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// 一处招式在某飞升档下的分辨率内容(不含 asc 字段;用来判断档位是否变化)
+fn move_content(def: &EnemyDef, m: &crate::core::enemy::MoveDef, asc: u32) -> String {
+    let i = crate::core::ascension::intent(def.id, m.name, m.intent, asc);
+    let fx = crate::core::ascension::effects(def.id, m.name, m.effects, asc);
+    let (d, t, b) = intent_nums(i);
+    format!(
+        "\"intent\":\"{}\",\"damage\":{},\"times\":{},\"block\":{},\"fx\":{}",
+        intent_name(i),
+        opt_i32(d),
+        opt_i32(t),
+        opt_i32(b),
+        fx_array(&fx)
+    )
+}
+
+fn move_snapshot(def: &EnemyDef, m: &crate::core::enemy::MoveDef, asc: u32) -> String {
+    format!("{{\"asc\":{asc},{}}}", move_content(def, m, asc))
+}
+
+/// 开局自带(含飞升增量)在某档下的内容:开局格挡 + 状态列表
+fn innate_content(def: &EnemyDef, asc: u32) -> String {
+    let mut items: Vec<String> = Vec::new();
+    for (s, base) in def.innate {
+        items.push(format!(
+            "[\"{}\",{}]",
+            s.name(),
+            crate::core::ascension::innate_amount(def.id, *s, *base, asc)
+        ));
+    }
+    for (s, n) in crate::core::ascension::bonus_innate(def.id, asc) {
+        items.push(format!("[\"{}\",{n}]", s.name()));
+    }
+    format!(
+        "\"block\":{},\"statuses\":[{}]",
+        def.start_block,
+        items.join(",")
+    )
+}
+
+fn innate_snapshot(def: &EnemyDef, asc: u32) -> String {
+    format!("{{\"asc\":{asc},{}}}", innate_content(def, asc))
+}
+
+fn special_json(sp: &crate::core::enemy::Special) -> String {
+    use crate::core::enemy::Special;
+    match sp {
+        Special::None => "None".to_string(),
+        Special::Split { a, b, b_offset } => format!("Split({a},{b},{b_offset})"),
+        Special::ModeShift { d, guard } => format!("ModeShift({d},{guard})"),
+        Special::Rebirth => "Rebirth".to_string(),
+        Special::Regrow => "Regrow".to_string(),
+        Special::Intangible => "Intangible".to_string(),
+        Special::Reactive => "Reactive".to_string(),
+        Special::Leader => "Leader".to_string(),
+    }
+}
+
+/// 抽签伤害招式(AttackRolled)在某档下的掷点区间;返回 None 表示这不是抽签伤害,
+/// Some(None) 表示伤害由局面决定(工具侧登记"不参与比对")
+fn rolled_range(
+    def: &EnemyDef,
+    m: &crate::core::enemy::MoveDef,
+    asc: u32,
+) -> Option<Option<(i32, i32, i32)>> {
+    if !m.effects.iter().any(|f| matches!(f, EnemyFx::AttackRolled { .. })) {
+        return None;
+    }
+    let r = match (def.id, m.name) {
+        ("red_louse" | "green_louse", "Bite") => {
+            let (lo, hi) = crate::core::ascension::louse_bite_range(asc);
+            (lo, hi, 0)
+        }
+        ("darkling", "Nip") => crate::core::ascension::darkling_nip_roll(asc),
+        // 六火幽魂的分裂伤害 = 玩家当时生命 / 12 + 1,不是固定抽签
+        _ => return Some(None),
+    };
+    Some(Some(r))
+}
+
+/// 抽签伤害的区间导出:空数组 = 不是抽签伤害;变化点只列区间真正变化的档
+fn rolled_json(def: &EnemyDef, m: &crate::core::enemy::MoveDef) -> String {
+    if rolled_range(def, m, 0).is_none() {
+        return "[]".to_string();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut prev: Option<(i32, i32, i32)> = None;
+    let mut has = false;
+    for asc in 0..=crate::core::ascension::MAX {
+        let cur = rolled_range(def, m, asc).flatten();
+        if has && cur == prev {
+            continue;
+        }
+        has = true;
+        prev = cur;
+        parts.push(match cur {
+            None => format!("{{\"asc\":{asc},\"dynamic\":true}}"),
+            Some((lo, hi, add)) => {
+                format!("{{\"asc\":{asc},\"lo\":{lo},\"hi\":{hi},\"add\":{add}}}")
+            }
+        });
+    }
+    format!("[{}]", parts.join(","))
+}
+
+/// 全部怪物的静态定义:`基础值` 加 `changes`(分辨率发生变化的飞升档,升序)
+pub fn dump_json() -> String {
+    let mut out = String::from("{\"monsters\":[");
+    for (di, def) in ENEMIES.iter().enumerate() {
+        if di > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"id\":\"{}\",\"name\":\"{}\",\"kind\":\"{}\",\"hp\":[{},{}],\"hpChanges\":[",
+            def.id,
+            def.name,
+            def.kind.name(),
+            def.hp.0,
+            def.hp.1
+        ));
+        let mut prev = crate::core::ascension::hp_range(def, 0);
+        let mut first = true;
+        for asc in 1..=crate::core::ascension::MAX {
+            let hp = crate::core::ascension::hp_range(def, asc);
+            if hp != prev {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                out.push_str(&format!("{{\"asc\":{asc},\"hp\":[{},{}]}}", hp.0, hp.1));
+                prev = hp;
+            }
+        }
+        out.push_str("],\"startBlock\":");
+        out.push_str(&def.start_block.to_string());
+        out.push_str(",\"special\":\"");
+        out.push_str(&special_json(&def.special));
+        out.push_str("\",\"moves\":[");
+        for (mi, m) in def.moves.iter().enumerate() {
+            if mi > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"name\":\"{}\",\"base\":{},\"rolled\":{},\"changes\":[",
+                m.name,
+                move_snapshot(def, m, 0),
+                rolled_json(def, m)
+            ));
+            let mut prev = move_content(def, m, 0);
+            let mut first = true;
+            for asc in 1..=crate::core::ascension::MAX {
+                let content = move_content(def, m, asc);
+                if content != prev {
+                    if !first {
+                        out.push(',');
+                    }
+                    first = false;
+                    out.push_str(&move_snapshot(def, m, asc));
+                    prev = content;
+                }
+            }
+            out.push_str("]}");
+        }
+        out.push_str("],\"innate\":");
+        out.push_str(&innate_snapshot(def, 0));
+        out.push_str(",\"innateChanges\":[");
+        let mut prev = innate_content(def, 0);
+        let mut first = true;
+        for asc in 1..=crate::core::ascension::MAX {
+            let content = innate_content(def, asc);
+            if content != prev {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                out.push_str(&innate_snapshot(def, asc));
+                prev = content;
+            }
+        }
+        out.push_str(&format!("],\"onDeath\":{}}}", fx_array(def.on_death)));
+    }
+    out.push_str("]}");
+    out
 }
 
 #[cfg(test)]
