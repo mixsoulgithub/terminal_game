@@ -107,9 +107,23 @@ pub fn deck_rows(app: &App, ov: Overlay) -> Vec<crate::ui::CardRow> {
         (Overlay::Exhaust, Some(c)) => &c.exhaust,
         _ => &run.player.deck,
     };
-    // 未抽堆:顶牌在下标 0,照堆内顺序列出来就是"下一个抽到的排最前"
+    // 未抽堆:顶牌在下标 0,照堆内顺序列出来就是"下一个抽到的排最前".
+    // 但只有拿了冰冻之眼才照真实抽取顺序列:没拿就按牌名排序,免得直接泄露下一张抽到什么.
+    // 口径与参考实现 sts-textual-py 的 combat_pile_visibility.visible_combat_pile_cards
+    // 一致(无 Frozen Eye 时 sorted).从抽牌堆挑牌的选择窗口在上面已提前 return,
+    // 那条路要保持候选序号,不走这里.
     if let (Overlay::Draw, Some(c)) = (ov, run.combat()) {
-        // 特意放到顶上的牌(手牌/弃牌堆放上去的)单列一段,本来就在堆的最前面
+        let sees_order = run
+            .player
+            .relic_fx_sum(|r| if r.fx.draw_pile_in_order { 1 } else { 0 })
+            > 0;
+        if !sees_order {
+            let mut list: Vec<CardInstance> = c.draw.clone();
+            list.sort_by(|a, b| a.label().cmp(&b.label()));
+            push(&mut rows, &list);
+            return rows;
+        }
+        // 冰冻之眼:特意放到顶上的牌(手牌/弃牌堆放上去的)单列一段,本来就在堆的最前面
         let topped: Vec<&CardInstance> = c.draw.iter().filter(|x| x.topped > 0).collect();
         if !topped.is_empty() {
             rows.push(CardRow::Header(format!(

@@ -207,7 +207,8 @@ pub enum Effect {
     LoseHpOnOtherCardPlayed { amount: i32 },
     /// 手里有这张牌时,本回合最多打出 max 张牌(反常)
     PlayLimitWhileInHand { max: u8 },
-    /// 被抽出牌组时失去 n 点最大生命(寄生;变形机制本作没有)
+    /// 被移出牌组时(删牌/变形/被事件夺走)失去 n 点最大生命(寄生).
+    /// 由 run.rs 的 pay_deck_leave_cost 在所有"原牌离开牌组"的入口结算(复制不算).
     LoseMaxHpOnRemoved { n: i32 },
 }
 

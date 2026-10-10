@@ -1233,7 +1233,10 @@ mod tests {
         assert!(c.hand[0].free_this_turn, "本回合 0 费");
     }
 
-    /// 未抽堆窗口:下一个抽到的排最前(顶牌在下标 0)
+    /// 未抽堆窗口:拿冰冻之眼才按真实抽取顺序列,没拿就按牌名排序(不泄露下一张).
+    /// 原先这里两种情形都断言按抽取顺序,等于把冰冻之眼当成没效果 —— 那是 bug:
+    /// 冰冻之眼的意义正是"让你看到抽牌堆的真实顺序",没它时原版也不显示顺序
+    /// (参考实现 sts-textual-py 的 visible_combat_pile_cards 在无 Frozen Eye 时 sorted).
     #[test]
     fn draw_pile_window_lists_next_drawn_first() {
         let ids = |app: &App| -> Vec<&'static str> {
@@ -1250,28 +1253,76 @@ mod tests {
             let c = app.run.combat_mut().expect("战斗中");
             c.hand.clear();
             c.draw.clear();
-            // 下标 0 就是下一个抽到的
-            for id in ["bash", "defend", "strike"] {
+            // 下标 0 就是下一个抽到的(抽取顺序:strike -> bash -> defend)
+            for id in ["strike", "bash", "defend"] {
                 c.draw.push(crate::core::cards::card(id));
             }
         }
-        assert_eq!(ids(&app), vec!["bash", "defend", "strike"], "顶牌排最前");
-        app.run.debug_add_relic("frozen_eye").unwrap();
         assert_eq!(
             ids(&app),
             vec!["bash", "defend", "strike"],
-            "冰冻之眼看到的也是这个顺序(窗口本来就按抽牌顺序列)"
+            "没有冰冻之眼:窗口按牌名排序,不泄露抽取顺序"
         );
-        // 窗口列的第一个就是真抽到的那张
+        app.run.debug_add_relic("frozen_eye").unwrap();
+        assert_eq!(
+            ids(&app),
+            vec!["strike", "bash", "defend"],
+            "拿了冰冻之眼:窗口按真实抽取顺序列,顶牌排最前"
+        );
+        // 真渲染一帧:两种口径下窗口都能画出来
+        {
+            app.overlay = Some(Overlay::Draw);
+            let text = screen_text(&app, 110, 36);
+            assert!(
+                text.contains("Strike") && text.contains("Defend"),
+                "未抽堆窗口渲染不出来:\n{text}"
+            );
+        }
+        // 抽牌顺序不受显示口径影响:下一个抽到的还是 strike
         {
             let c = app.run.combat_mut().expect("战斗中");
             c.draw_cards(1);
             assert_eq!(
                 c.hand.last().unwrap().def.id,
-                "bash",
-                "真抽到的是窗口里排最前的那张"
+                "strike",
+                "真抽到的是堆顶那张,与窗口怎么排无关"
             );
         }
+    }
+
+    /// 从抽牌堆挑牌(秘技/秘密武器)的窗口不受冰冻之眼影响:必须照候选序号列,
+    /// 否则光标行号换不回真实下标,会选中错的牌
+    #[test]
+    fn draw_pick_window_keeps_candidate_order_without_frozen_eye() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let mut app = app_in_combat(5, "jaw_worm_solo");
+        {
+            let c = app.run.combat_mut().expect("战斗中");
+            c.hand.clear();
+            c.draw.clear();
+            c.hand.push(crate::core::cards::card("secret_technique"));
+            // 抽取顺序与牌名顺序相反:排序口径若泄漏到这里就可能挑错
+            c.draw.push(crate::core::cards::card("strike"));
+            c.draw.push(crate::core::cards::card("defend"));
+            c.energy = 9;
+        }
+        app.hand_sel = 0;
+        app.handle_key(enter);
+        assert_eq!(app.overlay, Some(Overlay::Draw));
+        let rows = crate::ui::overlay::deck_rows(&app, Overlay::Draw);
+        let shown: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| match r {
+                crate::ui::CardRow::Card { card, .. } => Some(card.def.id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shown, vec!["defend"], "只列技能牌,且按候选序号");
+        // 选中的必须是窗口里那张(defend),不能因为排序挑到别的
+        app.handle_key(enter);
+        let c = app.run.combat().expect("战斗中");
+        assert!(c.hand.iter().any(|x| x.def.id == "defend"), "挑到的是 defend");
     }
 
     #[test]

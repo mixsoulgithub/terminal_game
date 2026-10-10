@@ -51,6 +51,12 @@ macro_rules! up_no_exhaust {
     };
 }
 
+/// 本作实现的全部卡牌.范围只有:红职(铁甲)职业牌 + 无色牌 + 诅咒/状态牌 + 事件专用牌
+/// (事件专用牌在 events.rs).绿/蓝/紫职的职业牌一律不在表里 —— 这是"超出范围",不是"漏实现":
+/// 判定依据是语料 corpus::CARDS 里它们的 `color` 是 green/blue/purple 且 `pool == "class"`,
+/// 而 roster::playable 只放行起始牌组/起始遗物都实现了的角色(本作只有铁甲),
+/// 其它角色开局即被挡住,牌池(colorless_pool/class_card_pool)也按 color 过滤.
+/// 上一轮点名过的 Blur(绿)、Nirvana(紫)、Envenom(绿)都属此类;emotion_chip 同理(蓝职遗物).
 pub static CARDS: &[CardDef] = &[
     // ---- 基础牌 ----
     CardDef {

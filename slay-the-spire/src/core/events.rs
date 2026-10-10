@@ -1366,13 +1366,13 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Accept: lose 50% of max HP permanently (capped at max HP - 1), obtain 5 Apparition cards (3 at A15+)",
                 outcome: outcome!(
                     max_hp_pct: 500,
-                    add_cards: Some(("ghostly_armor", 5)),
-                    text: "Your body thins; five ghostly guards join your deck."
+                    add_cards: Some(("apparition", 5)),
+                    text: "Your body thins; five Apparitions join your deck."
                 ),
                 outcome_a15: Some(outcome!(
                     max_hp_pct: 500,
-                    add_cards: Some(("ghostly_armor", 3)),
-                    text: "Your body thins; three ghostly guards join your deck."
+                    add_cards: Some(("apparition", 3)),
+                    text: "Your body thins; three Apparitions join your deck."
                 ))
             ),
             choice!(label: "Refuse: no effect", outcome: outcome!(text: "You refuse the bargain.")),
@@ -2444,6 +2444,43 @@ pub static EVENT_CARDS: &[CardDef] = &[
             }]
         ),
     },
+    CardDef {
+        // 议会幽魂(Council of Ghosts)给的牌:反编译/参考都是 APPARITION,不是铁甲的
+        // Ghostly Armor.升级只去掉 Ethereal,所以升级项要显式写 ethereal: Some(false).
+        id: "apparition",
+        name: "Apparition",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Special,
+        target: Target::None,
+        text: "Ethereal.\nGain 1 Intangible.\nExhaust.",
+        exhaust: true,
+        ethereal: true,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Intangible,
+            n: 1,
+        }],
+        upgrade: Some(CardUpgrade {
+            cost: None,
+            text: "Gain 1 Intangible.\nExhaust.",
+            effects: Some(&[Effect::AddSelfStatus {
+                status: Status::Intangible,
+                n: 1,
+            }]),
+            exhaust: None,
+            retain: None,
+            ethereal: Some(false),
+            innate: None,
+            on_end_turn: None,
+        }),
+    },
 ];
 
 /// 按 id 找事件专用卡牌
@@ -2960,10 +2997,38 @@ mod tests {
     fn ghosts_cost_half_of_max_hp() {
         let r = apply("ghosts", 18, 0);
         assert_eq!(r.player.max_hp, 40, "接受要永久掉一半上限");
+        // 给的是 Apparition(无色 special),不是铁甲的 Ghostly Armor:
+        // 反编译/参考实现的 GHOSTS 选项直接 obtainCard("APPARITION").
         assert_eq!(
-            r.player.deck.iter().filter(|c| c.def.id == "ghostly_armor").count(),
+            r.player.deck.iter().filter(|c| c.def.id == "apparition").count(),
             5
         );
+        assert!(
+            !r.player.deck.iter().any(|c| c.def.id == "ghostly_armor"),
+            "不该混入 Ghostly Armor"
+        );
+    }
+
+    /// Apparition:1 费技能,Ethereal + Exhaust,给自己 1 层无形;升级只去掉 Ethereal
+    #[test]
+    fn apparition_is_ethereal_intangible_and_exhausts() {
+        let base = super::event_card("apparition").expect("apparition 已实现");
+        assert_eq!(base.cost, Cost::Fixed(1));
+        assert_eq!(base.kind, CardType::Skill);
+        assert!(base.exhaust && base.ethereal, "本体 Exhaust + Ethereal");
+        assert!(base.upgradable());
+        assert_eq!(
+            base.effects,
+            &[Effect::AddSelfStatus {
+                status: Status::Intangible,
+                n: 1
+            }]
+        );
+        let mut up = crate::core::card::CardInstance::new(base);
+        assert!(up.upgrade());
+        assert!(up.is_exhaust(), "升级后仍然 Exhaust");
+        assert!(!up.is_ethereal(), "升级后不再 Ethereal");
+        assert_eq!(up.cost(), Cost::Fixed(1), "升级不改费用");
     }
 
     #[test]

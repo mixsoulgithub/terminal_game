@@ -3115,7 +3115,7 @@ mod tests {
         assert!(bites.iter().all(|c| c.upgraded), "熔火之蛋该升级 bite");
     }
 
-    /// 剧毒之蛋:事件加进来的技能牌直接升级(ghosts -> 5 张 ghostly_armor)
+    /// 剧毒之蛋:事件加进来的技能牌直接升级(ghosts -> 5 张 apparition)
     #[test]
     fn toxic_egg_upgrades_skills() {
         let mut r = Run::new(5);
@@ -3127,10 +3127,10 @@ mod tests {
             .player
             .deck
             .iter()
-            .filter(|c| c.def.id == "ghostly_armor")
+            .filter(|c| c.def.id == "apparition")
             .collect();
         assert_eq!(cards.len(), 5);
-        assert!(cards.iter().all(|c| c.upgraded), "剧毒之蛋该升级 ghostly_armor");
+        assert!(cards.iter().all(|c| c.upgraded), "剧毒之蛋该升级 apparition");
     }
 
     /// 冰冻之蛋:商店买进来的能力牌直接升级(加牌统一钩子在商店路径也生效)

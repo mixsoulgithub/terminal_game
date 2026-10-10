@@ -85,7 +85,9 @@ pub enum Status {
     ModeShift,
     /// 造成未被格挡的攻击伤害时往玩家弃牌堆塞等量伤口(痛苦刺击)
     PainfulStabs,
-    /// 受到攻击伤害就重新选招(扭动巨物)
+    /// 受到攻击伤害就重新选招(扭动巨物).
+    /// 仅作展示:重掷走 EnemyDef::special = Special::Reactive(combat.rs hit_enemy 那段),
+    /// 引擎不读这个状态本身.
     Reactive,
     /// 死亡后若还有同伴就半血复活一次(暗灵)
     Regrow,
@@ -95,9 +97,12 @@ pub enum Status {
     Slow,
     /// 死亡时给玩家上等量易伤(孢子云)
     SporeCloud,
-    /// 血量掉到一半就分裂成两只小史莱姆
+    /// 血量掉到一半就分裂成两只小史莱姆.
+    /// 仅作展示:真正的分裂走 EnemyDef::special = Special::Split(combat.rs on_enemy_hp_lost),
+    /// 引擎不读这个状态本身.
     Split,
-    /// 身上压着一张被偷走的牌,死亡时归还
+    /// 身上压着一张被偷走的牌,死亡时归还.
+    /// 仅作展示:被偷的牌记在 Combat::stasis 里,归还走 return_stolen_card,引擎不读这个状态.
     Stasis,
     /// 每回合结束时获得等量力量(圆球步行者)
     StrengthUp,
@@ -112,7 +117,9 @@ pub enum Status {
     LoseStrength,
     /// 自己回合结束时扣掉等量敏捷(敏捷药水)
     LoseDexterity,
-    /// 集中:本作没有充能球,挂上也不影响任何计算(集中药水)
+    /// 集中:本作没有充能球,挂上也不影响任何计算(集中药水).
+    /// 超出范围:集中药水是蓝职(Defect)专属(class="blue"),本作只有铁甲能开局,
+    /// 该药水抽不到,所以这个状态不会被挂上、引擎也不读.
     Focus,
     /// 自己回合开始时掉等量生命再减一层(毒药水)
     Poison,

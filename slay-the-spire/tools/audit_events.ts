@@ -602,13 +602,13 @@ add({
   scenario: choose(0),
   check: (r) => seq(
     eq(lastSt(r).max_hp, 40, "上限"),
-    eq(countOf(lastSt(r).deck, "ghostly_armor"), 5, "Apparition x5"),
+    eq(countOf(lastSt(r).deck, "apparition"), 5, "Apparition x5"),
   ),
 });
 add({
   event: "ghosts", choice: 0, option: "Accept A15", expected: "A15 只给 3 张",
   scenario: choose(0, { asc: 15 }),
-  check: (r) => eq(countOf(lastSt(r).deck, "ghostly_armor"), 3, "Apparition 数"),
+  check: (r) => eq(countOf(lastSt(r).deck, "apparition"), 3, "Apparition 数"),
 });
 add({
   event: "ghosts", choice: 1, option: "Refuse", expected: "无变化",

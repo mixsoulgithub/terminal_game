@@ -3532,7 +3532,8 @@ impl Combat {
     //
     // [链 C] hpWasLost(Player.cpp:276-321), 上面两条最终都汇到这里:
     //   扣血 -> Rupture(仅 selfDamage) -> 百年拼图(移除遗物并抽 3)
-    //        -> 情绪芯片(反编译为 todo) -> 自成型黏土(下回合格挡 +3)
+    //        -> 情绪芯片(反编译为 todo;蓝职专属充能球遗物,超出本作范围,
+    //           见 relics.rs 的 GATED_RELICS) -> 自成型黏土(下回合格挡 +3)
     //        -> 符文方块(抽 1) -> 红骷髅(首次跌破半血补 3 力)
     //        -> cards.onTookDamage(血债降费) -> timesDamagedThisCombat++ -> wouldDie
     //   本作:on_hp_lost 做拼图/方块/黏土/红骷髅, 血债在 note_hp_loss, wouldDie 在
@@ -3553,7 +3554,8 @@ impl Combat {
     //        d. 扣血;hp<=0 走 die, 否则 onHpLost(阈值:分裂/形态切换)
     //   本作:hit_enemy_final 做 0/2/3a/无敌/扣血;on_enemy_hp_lost 做睡眠/卷曲/延展/
     //   镀甲/飞行/移形换影/阈值;on_enemy_attacked 做 1(狂怒)与荆棘、反应.
-    //   (淬毒 Envenom 本作未实现该卡, 见 card corpus 缺项.)
+    //   (淬毒 Envenom 是绿职(Silent)专属卡,超出本作范围:corpus 里 color=green、
+    //    不在 CARDS/牌池里,所以玩家永远拿不到它.毒机制本身本作有,是卡不在范围.)
     //
     // [怪物受击链 B] 非攻击"伤害"(毒/燃烧/荆棘这类 Monster::damage, Monster.cpp:466-497):
     //   无形 -> 格挡吸收 -> damageUnblockedHelper(Monster.cpp:442-464):
@@ -3570,7 +3572,9 @@ impl Combat {
     //   本作:gain_block(amount, doubled, from_card) 里 from_card 才走敏捷/虚弱/NoBlock,
     //   Juggernaut 对所有来源的格挡都触发.
     // [回合开始的格挡清理] BattleContext.cpp:2181-2188:Barricade(全留) > Blur(递减)
-    //   > Calipers(-15) > 清空.本作在 start_turn,顺序一致(未实现 Blur 卡).
+    //   > Calipers(-15) > 清空.本作在 start_turn,顺序一致
+    //   (Blur 是绿职(Silent)专属卡,超出本作范围:corpus 里 color=green、不在 CARDS 里,
+    //    所以不会有牌挂上"下回合格挡不消失",这条链只剩 Barricade/Calipers 两支.)
 
     /// 敌人打玩家一次(非攻击伤害:死亡律动、荆棘、缠绕、灼伤这些一并走这里);
     /// 返回(实际掉血, 被格挡量).会掉镀甲的只有真正的攻击,见 hit_player_attack
@@ -11751,7 +11755,8 @@ mod ascension_move_branches {
     }
 
     /// 卡钳:回合开始时只掉 15 点格挡,不清空(反编译 BattleContext.cpp:2181-2188 的
-    /// Barricade > Blur > Calipers > 清空 那条链).本作没有 Blur 卡,所以只钉卡钳.
+    /// Barricade > Blur > Calipers > 清空 那条链).Blur 是绿职专属卡、超出本作范围,
+    /// 这条链只剩 Barricade 与 Calipers 两支,所以这里只钉卡钳.
     #[test]
     fn calipers_keeps_all_but_fifteen_block() {
         let cal = [crate::core::relics::relic_def_or_panic("calipers")];
