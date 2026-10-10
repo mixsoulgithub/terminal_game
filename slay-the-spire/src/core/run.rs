@@ -3292,6 +3292,19 @@ impl Run {
         if c.req_removable && self.removable_cards().is_empty() {
             return false;
         }
+        // 按数量要求的可移除/可变形牌(增强器变形两张要 >=2)
+        if c.req_removable_min > 0 && self.removable_cards().len() < c.req_removable_min as usize {
+            return false;
+        }
+        // 设计师的 Clean up:变体由进房掷出的布尔决定.选"删一张"时原版只要 1 张
+        // 可变形牌,选"随机变形两张"时要 2 张(反编译 GameAction.cpp:765-771
+        // `cleanUpIsRemoveCard ? getTransformableCount(1) >= 1 : getTransformableCount(2) >= 2`).
+        if st.def.id == "designer_in_spire" && i == 1 {
+            let transform_two = st.designer.is_some_and(|d| !d.cleanup_choice);
+            if transform_two && self.removable_cards().len() < 2 {
+                return false;
+            }
+        }
         if c.req_upgradeable && !self.player.deck.iter().any(|c| c.can_upgrade()) {
             return false;
         }
@@ -8683,5 +8696,69 @@ mod ascension_tests {
             r.tick_win_hold();
         }
         assert_eq!(r.screen, Screen::Victory, "A0 打完一个 Boss 就收尾");
+    }
+
+    /// Neow 的祝福与代价结算:replay golden 只比对 seed 12345 的选项表,从不真选一条,
+    /// apply_neow 的多数 match 分支此前没有任何断言.这里直接逐条钉住.
+    /// 参照 refs/sts_lightspeed/src/game/Neow.cpp(代价先结算、上限按 floor、掉血 30% 等).
+    #[test]
+    fn neow_blessings_and_drawbacks_resolve() {
+        // 白拿 100 金
+        let mut r = Run::new(11);
+        let g = r.player.gold;
+        r.apply_neow("hundred_gold", "").unwrap();
+        assert_eq!(r.player.gold, g + 100);
+
+        // 代价先结算:no_gold 清零后祝福再给 100
+        let mut r = Run::new(11);
+        r.player.gold = 250;
+        r.apply_neow("hundred_gold", "no_gold").unwrap();
+        assert_eq!(r.player.gold, 100, "代价先扣、祝福后给");
+
+        // ten_percent_hp_bonus:上限按 floor(10%) 涨
+        let mut r = Run::new(11);
+        let m = r.player.max_hp;
+        r.apply_neow("ten_percent_hp_bonus", "").unwrap();
+        assert_eq!(r.player.max_hp, m + (m as f64 * 0.10).floor() as i32);
+
+        // ten_percent_hp_loss:上限掉 10%,当前血跟着夹到新上限
+        let mut r = Run::new(11);
+        r.player.max_hp = 80;
+        r.player.hp = 80;
+        r.apply_neow("hundred_gold", "ten_percent_hp_loss").unwrap();
+        assert_eq!(r.player.max_hp, 72);
+        assert_eq!(r.player.hp, 72, "当前血夹到新上限");
+
+        // percent_damage:当前血掉 30%(整数除法)
+        let mut r = Run::new(11);
+        r.player.hp = 90;
+        r.apply_neow("hundred_gold", "percent_damage").unwrap();
+        assert_eq!(r.player.hp, 90 - 27);
+
+        // curse:牌组多一张诅咒
+        let mut r = Run::new(11);
+        let before = r.player.deck.len();
+        r.apply_neow("hundred_gold", "curse").unwrap();
+        assert_eq!(r.player.deck.len(), before + 1);
+        assert_eq!(r.player.deck.last().unwrap().kind(), CardType::Curse);
+
+        // lose_starter_relic:第一件遗物(燃烧之血)没了
+        let mut r = Run::new(11);
+        assert_eq!(r.player.relics[0].id, "burning_blood");
+        r.apply_neow("hundred_gold", "lose_starter_relic").unwrap();
+        assert!(!r.player.relics.iter().any(|x| x.id == "burning_blood"));
+
+        // three_enemy_kill:发 Neow's Lament 遗物并把 3 场计数器挂上
+        let mut r = Run::new(11);
+        r.apply_neow("three_enemy_kill", "").unwrap();
+        assert!(r.player.relics.iter().any(|x| x.id == "neows_lament"));
+        assert_eq!(r.neow_lament, 3);
+
+        // boss_relic:白拿一件 Boss 档遗物
+        let mut r = Run::new(11);
+        let n = r.player.relics.len();
+        r.apply_neow("boss_relic", "").unwrap();
+        assert_eq!(r.player.relics.len(), n + 1);
+        assert_eq!(r.player.relics.last().unwrap().tier, RelicTier::Boss);
     }
 }

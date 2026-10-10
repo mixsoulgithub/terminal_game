@@ -348,6 +348,10 @@ pub struct EventChoice {
     pub max_uses: u32,
     /// 需要牌组里有能移除的牌(非不可移除、没被瓶装)
     pub req_removable: bool,
+    /// 需要牌组里至少有这么多张能移除/能变形的牌(0 = 不按数量要求);
+    /// 增强器的"变成试验体"要变形两张,原版要求 >=2
+    /// (反编译 GameAction.cpp:774-777 `getTransformableCount(2) >= 2`)
+    pub req_removable_min: u8,
     /// 需要牌组里有能升级的牌
     pub req_upgradeable: bool,
     /// 需要牌组里有该类型的可移除牌(没瓶装、非不可移除);坠落的三选项用
@@ -394,6 +398,7 @@ impl EventChoice {
         only_screen: None,
         max_uses: 0,
         req_removable: false,
+        req_removable_min: 0,
         req_upgradeable: false,
         req_card_type: None,
         req_no_card_type: false,
@@ -765,6 +770,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -787,6 +793,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -809,6 +816,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -845,6 +853,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -867,6 +876,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: true,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -889,6 +899,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -977,6 +988,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -999,6 +1011,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -1288,7 +1301,7 @@ pub static EVENTS: &[EventDef] = &[
             ),
             choice!(
                 label: "Become test subject: choose 2 cards to transform",
-                req_removable: true,
+                req_removable_min: 2,
                 outcome: outcome!(
                     transform_choose_n: 2,
                     text: "Two cards twist into something else."
@@ -2126,6 +2139,7 @@ pub static EVENTS: &[EventDef] = &[
                 only_screen: None,
                 max_uses: 0,
                 req_removable: false,
+                req_removable_min: 0,
                 req_upgradeable: false,
                 req_card_type: None,
                 req_no_card_type: false,
@@ -4301,6 +4315,43 @@ mod ascension_event_tests {
         }
         assert!(found, "300 颗种子里总该有 A0 不中、A15 中的");
     }
+
+    /// 设计师的三档服务价与"打一拳"在 A15 起都涨一档:
+    /// 40/60/90 -> 50/75/110,掉血 3 -> 5
+    /// (反编译 GameContext.cpp:2660-2672 `loseGold(unfavorable ? 50 : 40)` 等).
+    /// 此前只有 the_cleric 的 A15 涨价断言,designer 的三档价与拳头都没被钉过.
+    #[test]
+    fn designer_a15_raises_service_prices_and_punch_damage() {
+        let adjust = find("designer_in_spire", "Adjustments:");
+        assert_eq!(adjust.effective(14).cost_gold, 40);
+        assert_eq!(adjust.effective(15).cost_gold, 50);
+        let clean = find("designer_in_spire", "Clean up:");
+        assert_eq!(clean.effective(14).cost_gold, 60);
+        assert_eq!(clean.effective(15).cost_gold, 75);
+        let full = find("designer_in_spire", "Full service:");
+        assert_eq!(full.effective(14).cost_gold, 90);
+        assert_eq!(full.effective(15).cost_gold, 110);
+        let punch = find("designer_in_spire", "Punch:");
+        assert_eq!(punch.effective(14).outcome.hp, -3);
+        assert_eq!(punch.effective(15).outcome.hp, -5);
+        // 真跑一局 A15:全套服务实收 110
+        let mut r = run_asc_seed(51, 15);
+        r.player.gold = 200;
+        r.debug_open_event("designer_in_spire").unwrap();
+        r.choose_event(2).unwrap();
+        assert_eq!(r.player.gold, 200 - 110, "A15 全套服务收 110");
+    }
+
+    /// 变化之轮的 A15 变体:受伤那一格从 10% 上限提到 15%(其余五格同 A0).
+    /// 现有 wheel 测试用 7 颗种子只覆盖 A0 的六个格子,没有一条断言这个 A15 覆盖真的接上.
+    /// 参照 refs/sts_lightspeed/src/game/GameContext.cpp 的 WHEEL 表(unfavorable 时 0.15).
+    #[test]
+    fn wheel_a15_raises_the_damage_slot() {
+        let c = find("wheel_of_change", "Spin:");
+        let slot5 = |asc: u32| c.effective(asc).outcome.roll.expect("轮盘掷点").0[5].hp_frac;
+        assert_eq!(slot5(14), 0.10, "A0~A14 受伤格 10%");
+        assert_eq!(slot5(15), 0.15, "A15 起受伤格 15%");
+    }
 }
 
 #[cfg(test)]
@@ -4462,10 +4513,25 @@ mod event_audit_fix_tests {
         let c = event_def("augmenter").unwrap().choices[1];
         assert_eq!(c.outcome.transform_choose_n, 2);
         assert_eq!(c.outcome.transform_random_n, 0);
-        assert!(c.req_removable, "需要至少一张可变形牌");
+        // 原版要求牌组里至少 2 张可变形牌才点亮"变成试验体"
+        // (反编译 GameAction.cpp:774-777 `getTransformableCount(2) >= 2`);
+        // 此前只有 `req_removable`(>=1),恰好 1 张时可选项却没料可变形.
+        assert_eq!(c.req_removable_min, 2, "需要至少两张可变形牌");
         let mut r = open_id("augmenter", 5);
         r.player.deck = vec![crate::core::cards::card("ascenders_bane"); 2];
         assert!(!r.event_choice_available(1), "没有可变形牌 -> 禁用");
+        // 恰好一张可变形牌:仍然禁用(原版门槛是 2)
+        r.player.deck = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("ascenders_bane"),
+        ];
+        assert!(!r.event_choice_available(1), "只有一张可变形牌 -> 禁用");
+        // 两张可变形牌:可选
+        r.player.deck = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("defend"),
+        ];
+        assert!(r.event_choice_available(1), "两张可变形牌 -> 可选");
     }
 
     #[test]
@@ -4480,5 +4546,85 @@ mod event_audit_fix_tests {
             "升级过的起始打击也要删"
         );
         assert_eq!(r.player.deck.iter().filter(|c| c.def.id == "bite").count(), 5);
+    }
+
+    /// 坠落"Channel"(能力牌):正面执行一次,牌组里真抽走一张能力牌.
+    /// 此前只有"没有能力牌时禁用"这一半,起始铁甲牌组又没有能力牌,这条分支从未被选过
+    /// (反编译 GameAction.cpp:786-794 的 power 位 `if (info.powerCardDeckIdx != -1) bits |= 2`;
+    /// 移除走 GameContext.cpp:890-895 对能力类型置 -1 的语义).
+    #[test]
+    fn falling_channel_removes_a_power_card() {
+        let mut r = open_id("falling", 42);
+        r.player.deck = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("inflame"),
+        ];
+        assert!(r.event_choice_available(1), "有能移除的能力牌时 Channel 可选");
+        r.choose_event(1).unwrap();
+        assert!(
+            !r.player.deck.iter().any(|c| c.def.id == "inflame"),
+            "能力牌被丢弃"
+        );
+        assert!(
+            r.player.deck.iter().any(|c| c.def.id == "strike"),
+            "攻击牌留着"
+        );
+    }
+
+    /// 活墙"Grow"(升级):牌组一张能升级的牌都没有时原版锁住这个选项
+    /// (反编译 GameAction.cpp:820-825 `getUpgradeableCount() > 0 ? 0x7 : 0x3`,bit2 = Grow).
+    /// 此前 living_wall 没有任何测试,这条可用性分支从未被检验.
+    #[test]
+    fn living_wall_grow_requires_an_upgradeable_card() {
+        let mut r = open_id("living_wall", 46);
+        let mut upgraded = crate::core::cards::card("strike");
+        upgraded.upgrade();
+        r.player.deck = vec![upgraded, crate::core::cards::card("ascenders_bane")];
+        assert!(!r.event_choice_available(2), "没有可升级牌时 Grow 禁用");
+        r.player.deck = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("ascenders_bane"),
+        ];
+        assert!(r.event_choice_available(2), "有可升级牌时 Grow 可选");
+    }
+
+    /// 石像头"Offer Golden Idol":身上没有金像时不可选
+    /// (反编译 GameAction.cpp:849-855 `hasRelic(GOLDEN_IDOL) ? 0x7 : 0b101`).
+    /// 此前只测了"有金像"那一半,缺金像时的禁用没有任何断言.
+    #[test]
+    fn moai_head_idol_option_needs_the_golden_idol() {
+        let mut r = open_id("the_moai_head", 32);
+        assert!(!r.event_choice_available(1), "没金像时供奉不可选");
+        r.player
+            .relics
+            .push(crate::core::relics::relic_def_or_panic("golden_idol"));
+        assert!(r.event_choice_available(1), "有金像时可供奉");
+    }
+
+    /// 设计师"Clean up"的可用性随变体变:变体是"随机变形两张"时原版要 >=2 张可变形牌,
+    /// 变体是"删一张"时只要 >=1
+    /// (反编译 GameAction.cpp:765-771 `cleanUpIsRemoveCard ? getTransformableCount(1) >= 1
+    /// : getTransformableCount(2) >= 2`).此前该选项一律按 req_removable(>=1) 判,从未按变体分.
+    #[test]
+    fn designer_cleanup_transform_variant_needs_two_removable_cards() {
+        let mut r = open_id("designer_in_spire", 51);
+        r.player.gold = 200;
+        r.player.deck = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("ascenders_bane"),
+        ];
+        let set = |r: &mut Run, cleanup: bool| {
+            r.event.as_mut().unwrap().designer = Some(crate::core::run::DesignerData {
+                upgrade_choice: true,
+                cleanup_choice: cleanup,
+            });
+        };
+        set(&mut r, false);
+        assert!(
+            !r.event_choice_available(1),
+            "变形两张的变体只有 1 张可变形牌 -> 禁用"
+        );
+        set(&mut r, true);
+        assert!(r.event_choice_available(1), "删一张的变体 1 张可变形牌就够");
     }
 }

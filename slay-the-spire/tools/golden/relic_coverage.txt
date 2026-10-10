@@ -550,17 +550,31 @@
   十手镯 juzu_bracelet(run.rs): 概率复位改按"掷出来的房型"算(原版同分支复位);
   陶瓷鱼 ceramic_fish(run.rs): 战斗里塞进牌组的牌也走 push_card_to_deck(蛋/陶瓷鱼/黑石护符);
   腕刃 wrist_blade(combat.rs): 判据由印刷费用改成本回合实际费用 fixed_cost() == Some(0)
-    (free_this_turn 在伤害结算前已被清,本轮未配断言,登记待补)。
+    (由疯狂/化茧/木乃伊之手降到 0 费的攻击也算);断言 = wrist_blade_boosts_an_attack_whose_cost_was_reduced_to_zero。
   事件层号门槛(run.rs): can_spawn 的层号不再 +1(参考实现 floorNum > 6,本作 floor_num 进首房即 1);
     断言 = event_spawn_floor_uses_the_global_floor。knowing_skull 的无色牌改走 shuffleRng 整池 java 洗牌。
   tomb_of_lord(events.rs/run.rs): "Offer gold" 补 req_no_relic 门控(反编译两张位掩码互斥);
     断言 = tomb_of_lord_stops_offering_the_mask_once_you_wear_it。
 
-登记(本轮不改,附理由):
-  [d] smiling_mask 删牌价: 反编译 Shop::getRemoveCost 对 50 也叠信使/会员卡折扣、且不吃 A16;
-      wiki 与参考实现(shop.ts 头注 DISPUTED)都取"固定 50、吃 A16";本作照 wiki(与 fixture 一致),待定夺。
-  [b] fairy_potion 可被手动喝掉并消耗: 反编译把"饮 FAIRY_POTION"归入 assert(false) 的非法分支,
-      refs/slay-the-cli 注释亦标 non-drinkable;本作当前允许(喝掉无效果),保留现状登记。
-  [b] toy_ornithopter 在地图/事件上喝药是否回 5: 反编译未实现该遗物,证据弱,登记。
-  [b] dingy_rug: 反编译/语料/本作都查不到,未核。
+战斗开始两处加伤/加力判据修正(本轮):
+  勇气投石索 sling_of_courage(combat.rs): 力量加成只在精英战给,首领战不给
+    (反编译 BattleContext.cpp:340 `if (room == Room::ELITE)`);此前与奴隶主颈圈共用 elite_or_boss 判据,
+    沙盒只有精英/普通两个场景,漏了首领这一半。断言 = sling_of_courage_gives_strength_only_in_elite_combats(沙盒本行已加首领战)。
+  奴隶主颈圈 slavers_collar: 精英与首领都给能量(反编译 BattleContext.cpp:334),沙盒本行补了首领战场景。
+  振奋 akabeko: 活力只加到本场第一张攻击(参考实现 VIGOR onAfterCardPlayed);
+    断言 = akabeko_vigor_applies_only_to_the_first_attack。
+  化石螺壳/卡钳/钨钢棒/荆棘/风筝/腕刃等长尾战斗钩子的补断言见 combat.rs 的 branch_assertions。
+
+登记(附精确口径与出处):
+  [d] smiling_mask 与删牌价: 反编译 Shop::getRemoveCost(src/game/Shop.cpp:218-235)把 50 也算信使/会员卡折扣
+      (50 x 0.8 或 x 0.5),且删牌价不吃 A16(A16 的折扣在 Shop.cpp:17 只落在商品价上);
+      wiki 与参考实现(shop.ts 头注 DISPUTED)取"固定 50、不再叠信使/会员卡折扣";本作照 wiki/参考(与 fixture 一致):
+      微笑面具固定 50、不上折。普通删牌价本作按 wiki 的 A16 +10%(run.rs 的 discount)。
+  [b] fairy_potion 不可手动喝: 反编译 BattleContext.cpp:2435-2440 对 FAIRY_POTION 直接 assert(它只在死亡时自动生效);
+      参考 potions/index.ts:316-324 自注 non-drinkable;本作已是 PotionFx::Passive,quaff_potion/use_potion 一律拒绝
+      (断言 fairy_in_a_bottle_is_not_drinkable)。此条此前误记为"本作当前允许",已随该修复作废。
+  [b] toy_ornithopter 在地图/事件上喝药是否回 5: 反编译只在 Relics.h:90 登记枚举,全 src/ 无该遗物的任何处理(未实现);
+      参考实现 common.ts:451-460 战斗内外都回 5;本作照语料 desc + 参考(heal_on_potion_use = 5)。
+  [c] dingy_rug 是《杀戮尖塔 2》的遗物(refs/sts2-cli/localization_eng/relics.json:203: "Card rewards can now contain
+      Colorless cards."),StS1 反编译/语料/本作都没有,不在范围。
   [c] 26 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。

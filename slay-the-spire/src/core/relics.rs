@@ -3365,6 +3365,35 @@ mod tests {
         );
     }
 
+    /// Neow 的哀悼只覆盖最前面的 3 场战斗:第 4 场起敌人恢复原血.
+    /// 原版计数器 `neowLament` 每进一场战斗减一,减到 0 就不再改血量
+    /// (反编译 GameContext.cpp 的 Neow's Lament onBattleStart 计数语义).
+    /// 此前测试只查了第 1 场,"3 场上限 / 倒数到 0"没有任何断言.
+    #[test]
+    fn neows_lament_covers_only_the_first_three_combats() {
+        let mut r = Run::new(5);
+        r.debug_add_relic("neows_lament").unwrap();
+        let enc = encounter_def("jaw_worm_solo").unwrap();
+        let mut first_enemy_hp = Vec::new();
+        for _ in 0..4 {
+            r.debug_start_combat(enc);
+            first_enemy_hp.push(r.combat.as_ref().unwrap().enemies[0].hp);
+            r.debug_win_battle();
+            settle(&mut r);
+            r.leave_reward();
+        }
+        assert_eq!(
+            &first_enemy_hp[..3],
+            &[1, 1, 1],
+            "前三场敌人都是 1 血"
+        );
+        assert!(
+            first_enemy_hp[3] > 1,
+            "第 4 场敌人恢复原血,实测 {}",
+            first_enemy_hp[3]
+        );
+    }
+
     /// 恩洛斯的礼物:稀有牌概率翻三倍
     #[test]
     fn nloths_gift_triples_rare_chance() {

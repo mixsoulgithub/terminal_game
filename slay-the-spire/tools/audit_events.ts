@@ -558,6 +558,16 @@ add({
   scenario: base({ deck: ["ascenders_bane", "ascenders_bane"], actions: [{ op: "noop" }] }),
   check: (r) => eq(openSt(r).choices[1]!.enabled, false, "enabled"),
 });
+add({
+  event: "augmenter", choice: 1, option: "只一张可变形牌禁用", expected: "要变形两张,故恰 1 张可变形牌 → 禁用",
+  scenario: base({ deck: ["strike", "ascenders_bane"], actions: [{ op: "noop" }] }),
+  check: (r) => eq(openSt(r).choices[1]!.enabled, false, "enabled"),
+});
+add({
+  event: "augmenter", choice: 1, option: "两张可变形牌可选", expected: "两张可变形牌 → 可选",
+  scenario: base({ deck: ["strike", "defend", "ascenders_bane"], actions: [{ op: "noop" }] }),
+  check: (r) => eq(openSt(r).choices[1]!.enabled, true, "enabled"),
+});
 
 // ---- Forgotten Altar ----
 add({

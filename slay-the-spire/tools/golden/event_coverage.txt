@@ -1,6 +1,6 @@
 事件效果审计报告 (event coverage)
-种子 seed=12345  事件=51  选项实测=179
-ok=179  mismatch=0  untestable=0  (含表示差异备注 3)
+种子 seed=12345  事件=51  选项实测=181
+ok=181  mismatch=0  untestable=0  (含表示差异备注 3)
 
 结论列:ok = 与期望一致;mismatch = 不一致;untestable = 无法测(理由);[c] = 表示差异已备注
 
@@ -72,6 +72,8 @@ augmenter#0                      Test J.A.X.                          得 J.A.X.
 augmenter#1                      Become test subject                  自选 2 张变形(张数不变)                         与期望一致                                  ok
 augmenter#2                      Ingest mutagens                      得 Mutagenic Strength                   与期望一致                                  ok
 augmenter#1                      无可变形牌禁用                              全不可移除 → 禁用                             与期望一致                                  ok
+augmenter#1                      只一张可变形牌禁用                            要变形两张,故恰 1 张可变形牌 → 禁用                  与期望一致                                  ok
+augmenter#1                      两张可变形牌可选                             两张可变形牌 → 可选                            与期望一致                                  ok
 forgotten_altar#0                Offer Golden Idol                    金像换血像                                  与期望一致                                  ok
 forgotten_altar#0                无金像禁用                                没有 Golden Idol → 禁用                    与期望一致                                  ok
 forgotten_altar#1                Sacrifice                            先 +5 上限,再按旧上限扣 round(25%)=20           与期望一致                                  ok
@@ -203,6 +205,12 @@ the_woman_in_blue#3              Leave A15                            A15 扣 ce
   - the_joust:金币 <50 仍可下注 → 加 req_gold 50
   - vampires:升级过的起始打击没被删 → 一并删
   - face_trader:10% 扣血的下限 1 点没生效 → hp_frac 也吃 hp_pct_min
+  - cursed_tome 的 Take:遗物直接进包 → 改成摆进奖励屏(反编译 refs/sts_lightspeed/src/game/GameContext.cpp:2558-2598 走 openCombatRewardScreen);
+    同轮补上死灵之书拾取时的死灵诅咒(Necronomicon.onEquip);三页中间屏去掉多余的第 2 项 Stop
+    (反编译 refs/sts_lightspeed/src/sim/search/GameAction.cpp:727-731 中间三屏的位掩码只有 Continue)
+  - colosseum 第一场:按地图上的 SLAVERS 遭遇摆了三只(多一只巡回官)→ 改成蓝/红奴隶主两只
+    (反编译 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211 的 COLOSSEUM_EVENT_SLAVERS);
+  - wing_statue 的 Destroy:按'总伤'判定 → 改成按单次伤害(语料 deckHasAttackWithSingleHitDamageAtLeast)
 
 分类 (b) 无法测:
   (无)
@@ -215,7 +223,8 @@ the_woman_in_blue#3              Leave A15                            A15 扣 ce
 分类 (d) wiki 与 lightspeed/参考冲突: 无(取整统一按参考实现各调用点的 floor/round/ceil)
 
 第三幕+ 事件复核对拍(反编译 GameContext.cpp / GameAction.cpp / ConsoleSimulator.cpp)结论:
-  falling: 三类型分支与"摔头"保底一致;瓶装牌按 corpus(真实游戏排除)排除。
+  falling: 三类型分支与"摔头"保底一致;瓶装牌按 corpus/wiki(真实游戏)排除 —— 反编译 Event::FALLING 只挂了一句
+    `// todo test and CANNOT BE BOTTLED`(refs/sts_lightspeed/src/game/GameContext.cpp:886),实现仍不过滤瓶装牌,是反编译省了一块。
   mindbloom: 层号门控 <=40 / >=41 与 GameAction 一致。
   vampires: ceil(30%) 上限、min(maxHp-1)、删全部起始打击(含升级)、5 张 Bite 一致。
   the_mausoleum / living_wall / winding_halls / mysterious_sphere / sensory_stone / joust: 效果与分支一致。
@@ -223,12 +232,18 @@ the_woman_in_blue#3              Leave A15                            A15 扣 ce
   tomb_of_lord_red_mask: 本轮修 —— "Offer gold" 补 req_no_relic 门控(反编译两张位掩码互斥),
     断言 = events.rs::tomb_of_lord_stops_offering_the_mask_once_you_wear_it。
   knowing_skull: 本轮修 —— Success 的无色牌改走 shuffleRng 整池 java 洗牌取第一张非普通;
-  cursed_tome / colosseum / n'loth: 与 corpus 一致(选项层已在前轮核过)。
+  cursed_tome / colosseum / n'loth: 选项层与 corpus 一致;本轮按反编译修了 cursed_tome 的 Take 奖励屏
+    与死灵之书拾取诅咒、colosseum 第一场的阵容(见上 (a) 分类)。
   secret_portal: 一致(跳 Boss 房,800 秒门槛抽象为 speedrunPace)。
 登记(本轮不改,附理由):
-  [d] colosseum 在反编译里是 stub(disableColosseum),第二场的奖励组成按 wiki/corpus;
-  [d] joust 赔率与掷点细节按 corpus(wiki)实现,反编译该事件的掷点语义未逐行核。
-  [b] falling 的掷点时机:反编译在 onEnter 预选,本作在选项结算时删牌(牌与时机不同,结果集合一致)。
+  [d] colosseum 整体在反编译里是 stub(refs/sts_lightspeed/src/game/GameContext.cpp:2554-2556, spawn 被 disableColosseum 关掉),
+      只有第一场阵容(refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211)与第二场奖励(MonsterGroup/Events)有反编译依据;
+      其余流程按 wiki/corpus;
+  [d] joust 掷点语义已核:反编译 THE_JOUST(refs/sts_lightspeed/src/game/GameContext.cpp:3280-3297)在两个分支前先掷一次
+      miscRng.randomBoolean(0.3)(0.3 = 骑士赢),本作 RollKind::Coin{num:3,den:10}(events.rs:2082/2091)同口径;
+      押凶手 70% 赢 100 / 押骑士 30% 赢 250 与语料一致。
+  [b] falling 的掷点时机:反编译在 onEnter 用 miscRng.random 预选下标(GameContext.cpp:890-895),本作在选项结算时删牌;
+      牌与时点不同,结果集合一致。
 
 
 本轮实测未发现新的 mismatch:

@@ -213,13 +213,17 @@ S("slavers_collar", "精英/首领战斗能量", "仅精英/首领开战 +1 能�
   combats: [
     { encounter: "gremlin_nob_solo", enemies: [ENEMY({ id: "gremlin_nob", hp: 200, max_hp: 200, move: null })], hand: ["defend"], draw: [], discard: [], exhaust: [], actions: [{ op: "noop" }] },
     { encounter: "cultist_solo", enemies: [ENEMY({ id: "cultist", hp: 200, max_hp: 200 })], hand: ["defend"], draw: [], discard: [], exhaust: [], actions: [{ op: "noop" }] },
+    { encounter: "the_guardian", enemies: [ENEMY({ id: "the_guardian", hp: 400, max_hp: 400, move: null })], hand: ["defend"], draw: [], discard: [], exhaust: [], actions: [{ op: "noop" }] },
   ],
 },
   (r) => {
     const elite = withSt(r).find((x) => x.c === 0 && x.op === "init")!.st!;
     const normal = withSt(r).find((x) => x.c === 1 && x.op === "init")!.st!;
+    const boss = withSt(r).find((x) => x.c === 2 && x.op === "init")!.st!;
     if (elite.max_energy !== 4) return `精英战最大能量 ${elite.max_energy},期望 4`;
-    return normal.max_energy === 3 ? null : `普通战最大能量 ${normal.max_energy},期望 3(不应加成)`;
+    if (normal.max_energy !== 3) return `普通战最大能量 ${normal.max_energy},期望 3(不应加成)`;
+    // 首领战也 +1(反编译 BattleContext.cpp:334 `room == ELITE || room == BOSS`)
+    return boss.max_energy === 4 ? null : `首领战最大能量 ${boss.max_energy},期望 4`;
   });
 S("sling_of_courage", "精英战斗力量", "仅精英开战 +2 力量", {
   player: { hp: 80, max_hp: 80 },
@@ -228,13 +232,17 @@ S("sling_of_courage", "精英战斗力量", "仅精英开战 +2 力量", {
   combats: [
     { encounter: "gremlin_nob_solo", enemies: [ENEMY({ id: "gremlin_nob", hp: 200, max_hp: 200, move: null })], hand: ["defend"], draw: [], discard: [], exhaust: [], actions: [{ op: "noop" }] },
     { encounter: "cultist_solo", enemies: [ENEMY({ id: "cultist", hp: 200, max_hp: 200 })], hand: ["defend"], draw: [], discard: [], exhaust: [], actions: [{ op: "noop" }] },
+    { encounter: "the_guardian", enemies: [ENEMY({ id: "the_guardian", hp: 400, max_hp: 400, move: null })], hand: ["defend"], draw: [], discard: [], exhaust: [], actions: [{ op: "noop" }] },
   ],
 },
   (r) => {
     const elite = withSt(r).find((x) => x.c === 0 && x.op === "init")!.st!;
     const normal = withSt(r).find((x) => x.c === 1 && x.op === "init")!.st!;
+    const boss = withSt(r).find((x) => x.c === 2 && x.op === "init")!.st!;
     if (elite.player.powers.strength !== 2) return `精英战力量 ${elite.player.powers.strength},期望 2`;
-    return normal.player.powers.strength === undefined ? null : `普通战力量 ${normal.player.powers.strength},期望无`;
+    if (normal.player.powers.strength !== undefined) return `普通战力量 ${normal.player.powers.strength},期望无`;
+    // 首领战不给力量(反编译 BattleContext.cpp:340 `if (room == Room::ELITE)`)
+    return boss.player.powers.strength === undefined ? null : `首领战力量 ${boss.player.powers.strength},期望无`;
   });
 S("pantograph", "首领战斗回血", "首领战开局回 25:40->65", board({ player: { hp: 40, max_hp: 80 }, relics: ["pantograph"], encounter: "the_guardian", enemies: [ENEMY({ id: "the_guardian", hp: 400, max_hp: 400, move: null })], actions: [{ op: "noop" }] }),
   (r) => (init(r).player.hp === 65 ? null : `首领战开局血量 ${init(r).player.hp},期望 65`));
@@ -671,11 +679,20 @@ report.push("  银行家之躯 maw_bank(run.rs): 买删牌走选牌屏时也算\
 report.push("  十手镯 juzu_bracelet(run.rs): 概率复位改按\"掷出来的房型\"算(原版同分支复位);");
 report.push("  陶瓷鱼 ceramic_fish(run.rs): 战斗里塞进牌组的牌也走 push_card_to_deck(蛋/陶瓷鱼/黑石护符);");
 report.push("  腕刃 wrist_blade(combat.rs): 判据由印刷费用改成本回合实际费用 fixed_cost() == Some(0)");
-report.push("    (free_this_turn 在伤害结算前已被清,本轮未配断言,登记待补)。");
+report.push("    (由疯狂/化茧/木乃伊之手降到 0 费的攻击也算);断言 = wrist_blade_boosts_an_attack_whose_cost_was_reduced_to_zero。");
 report.push("  事件层号门槛(run.rs): can_spawn 的层号不再 +1(参考实现 floorNum > 6,本作 floor_num 进首房即 1);");
 report.push("    断言 = event_spawn_floor_uses_the_global_floor。knowing_skull 的无色牌改走 shuffleRng 整池 java 洗牌。");
 report.push("  tomb_of_lord(events.rs/run.rs): \"Offer gold\" 补 req_no_relic 门控(反编译两张位掩码互斥);");
 report.push("    断言 = tomb_of_lord_stops_offering_the_mask_once_you_wear_it。");
+report.push("");
+report.push("战斗开始两处加伤/加力判据修正(本轮):");
+report.push("  勇气投石索 sling_of_courage(combat.rs): 力量加成只在精英战给,首领战不给");
+report.push("    (反编译 BattleContext.cpp:340 `if (room == Room::ELITE)`);此前与奴隶主颈圈共用 elite_or_boss 判据,");
+report.push("    沙盒只有精英/普通两个场景,漏了首领这一半。断言 = sling_of_courage_gives_strength_only_in_elite_combats(沙盒本行已加首领战)。");
+report.push("  奴隶主颈圈 slavers_collar: 精英与首领都给能量(反编译 BattleContext.cpp:334),沙盒本行补了首领战场景。");
+report.push("  振奋 akabeko: 活力只加到本场第一张攻击(参考实现 VIGOR onAfterCardPlayed);");
+report.push("    断言 = akabeko_vigor_applies_only_to_the_first_attack。");
+report.push("  化石螺壳/卡钳/钨钢棒/荆棘/风筝/腕刃等长尾战斗钩子的补断言见 combat.rs 的 branch_assertions。");
 report.push("");
 report.push("登记(附精确口径与出处):");
 report.push("  [d] smiling_mask 与删牌价: 反编译 Shop::getRemoveCost(src/game/Shop.cpp:218-235)把 50 也算信使/会员卡折扣");

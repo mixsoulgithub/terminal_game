@@ -706,7 +706,10 @@ impl Combat {
             if fx.combat_start_self_weak != 0 {
                 c.player.statuses.add(Status::Weak, fx.combat_start_self_weak);
             }
-            if fx.combat_start_strength_elite != 0 && elite_or_boss {
+            // 勇气投石索只在精英战给力量,首领战不给(反编译 BattleContext.cpp:340
+            // `if (room == Room::ELITE) p.buff<PS::STRENGTH>(2)`);此前误与奴隶主颈圈
+            // 一样按精英/首领都算,而沙盒只有精英与普通场景,漏了首领这一半.
+            if fx.combat_start_strength_elite != 0 && enc.kind == EnemyKind::Elite {
                 c.player
                     .statuses
                     .add(Status::Strength, fx.combat_start_strength_elite);
@@ -10642,5 +10645,87 @@ mod branch_assertions {
         let a18 = seq(18);
         assert_eq!(first(&a0), 4, "A0 已经行动 4 回合才摆 It Is Time");
         assert_eq!(first(&a18), 3, "A18 提前一回合");
+    }
+
+    /// 指定遭遇、指定遗物的一场满状态战斗(牌组给 5 张打击,牌堆照抽)
+    fn combat_vs(encounter: &'static str, relics: &[&'static RelicDef]) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: (0..5).map(|_| card("strike")).collect(),
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc: 0,
+        };
+        Combat::new(enc(encounter), setup, RngRegistry::new(7))
+    }
+
+    /// 勇气投石索:只在精英战给 2 力量,首领战不给.
+    /// 反编译 refs/sts_lightspeed/src/combat/BattleContext.cpp:340-343
+    /// `case R::SLING_OF_COURAGE: if (room == Room::ELITE) p.buff<PS::STRENGTH>(2);`
+    /// 此前它与奴隶主颈圈共用 `elite_or_boss` 判据,sandbox_relics 的 sling 场景只有
+    /// 精英与普通两种,首领这一半从未被检验 —— 首领战多给 2 力量的 bug.
+    #[test]
+    fn sling_of_courage_gives_strength_only_in_elite_combats() {
+        let relics = [relic_def_or_panic("sling_of_courage")];
+        let elite = combat_vs("gremlin_nob_solo", &relics);
+        assert_eq!(elite.player.statuses.get(Status::Strength), 2, "精英战 +2");
+        let boss = combat_vs("the_guardian", &relics);
+        assert_eq!(boss.player.statuses.get(Status::Strength), 0, "首领战不给力量");
+        let normal = combat_vs("cultist_solo", &relics);
+        assert_eq!(normal.player.statuses.get(Status::Strength), 0, "普通战不给");
+    }
+
+    /// 奴隶主颈圈:精英与首领战斗都每回合 +1 能量,普通战不加.
+    /// 反编译 BattleContext.cpp:334-338 `if (room == Room::ELITE || room == Room::BOSS)`.
+    /// 沙盒只测了精英与普通,首领这一半没断言.
+    #[test]
+    fn slavers_collar_gives_energy_in_elite_and_boss_combats() {
+        let relics = [relic_def_or_panic("slavers_collar")];
+        assert_eq!(combat_vs("gremlin_nob_solo", &relics).max_energy, 4, "精英战 +1");
+        assert_eq!(combat_vs("the_guardian", &relics).max_energy, 4, "首领战 +1");
+        assert_eq!(combat_vs("cultist_solo", &relics).max_energy, 3, "普通战不加");
+    }
+
+    /// 风筝:同一回合只有第一次主动弃牌给 1 能量,回合开始才复位.
+    /// 反编译 Hovering Kite 的 `firstDiscardThisTurn`;沙盒 scene 只弃了 1 张,
+    /// "同回合第二次弃牌不再给"这一半此前没有断言.
+    #[test]
+    fn hovering_kite_grants_energy_only_on_the_first_discard_each_turn() {
+        let relics = [relic_def_or_panic("hovering_kite")];
+        let mut c = combat_vs("cultist_solo", &relics);
+        let e = c.energy;
+        c.on_manual_discard();
+        assert_eq!(c.energy, e + 1, "本回合第一次弃牌 +1");
+        c.on_manual_discard();
+        assert_eq!(c.energy, e + 1, "本回合第二次弃牌不再给");
+        c.start_turn(0);
+        let e2 = c.energy;
+        c.on_manual_discard();
+        assert_eq!(c.energy, e2 + 1, "下回合第一次弃牌又能给");
+    }
+
+    /// 振奋(Akabeko)给的活力只加到本场第一张攻击上,砍完立刻用掉:
+    /// 参考实现把 VIGOR 挂在 onAfterCardPlayed(refs/sts_lightspeed 的 VIGOR 结算),
+    /// 第二张攻击不再吃那 8 点.沙盒 akabeko 场景只打一张打击,清空那一半此前没有断言.
+    #[test]
+    fn akabeko_vigor_applies_only_to_the_first_attack() {
+        let relics = [relic_def_or_panic("akabeko")];
+        let mut c = board(&["strike", "strike"], &relics, 0);
+        c.hand = vec![card("strike"), card("strike")];
+        c.enemies[0].hp = 500;
+        let hp0 = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        let first = hp0 - c.enemies[0].hp;
+        c.energy = 9;
+        let hp1 = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        let second = hp1 - c.enemies[0].hp;
+        assert_eq!(first, 6 + 8, "第一张打击吃到活力 8");
+        assert_eq!(second, 6, "第二张打击不再吃活力");
     }
 }
