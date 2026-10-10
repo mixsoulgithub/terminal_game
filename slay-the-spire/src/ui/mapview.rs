@@ -263,9 +263,14 @@ fn render_floor(
                 if is_sel {
                     style = style.add_modifier(Modifier::SLOW_BLINK);
                 }
-                // 只有一行:名字左右各留一格,底色也就铺满这一行
+                // 只有一行:名字左右各留一格(选中时换成方括号),底色铺满这一行
                 let label = truncate(name, (w - 2) as usize);
-                put_padded(buf, x, y, &format!(" {label} "), w as usize, style);
+                let text = if is_sel {
+                    format!("[{label}]")
+                } else {
+                    format!(" {label} ")
+                };
+                put_padded(buf, x, y, &text, w as usize, style);
             } else {
                 // 右边放不下整块就退回一行红字
                 put(
@@ -296,7 +301,13 @@ fn render_floor(
             } else {
                 style
             };
-            (x - 1, map_glyph(k, burning, true).to_string(), style)
+            // 选中的那一格用 [] 框起来:这就是图例里那行 "[] you"
+            let text = if is_sel {
+                format!("[{}]", map_glyph(k, burning, false))
+            } else {
+                map_glyph(k, burning, true).to_string()
+            };
+            (x - 1, text, style)
         } else if lit {
             // 最左那一列借不到左边的格子:不铺底,只把字色提亮
             (
