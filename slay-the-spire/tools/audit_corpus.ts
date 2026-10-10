@@ -2,28 +2,36 @@
 // sts_lightspeed 反编译)抽出每张牌/每瓶药水/每件遗物的数值事实,再用沙盒在
 // 受控局面下实测本作的产出,逐条对比。不一致的由人对 wiki 定夺。
 //
-//   bun tools/audit_corpus.ts                 # 全量审计 + 报告
+//   bun tools/audit_corpus.ts                 # 全量审计 + 报告(守卫失败或不一致即 exit != 0)
 //   bun tools/audit_corpus.ts --only cards    # 只审某类(cards|potions|relics)
 //   bun tools/audit_corpus.ts --seed 12345
 //   bun tools/audit_corpus.ts --out tools/golden/audit_report.txt
+//   bun tools/audit_corpus.ts --selftest      # 历史盲区回归:逐条确认工具还抓得到(漏检即 exit != 0)
+//   bun tools/audit_corpus.ts --corpus <目录>  # 换语料目录(自检用它跑改坏的临时副本)
+//   bun tools/audit_corpus.ts --write-registry # 按当前状态重写 tools/audit_registry.txt
 //
 // 语料 text 里的数值与 values/upgrade 字段是同一份来源;本工具从 text 抽事实、
 // 用 values 做语料自洽核对,再用 `spire --sandbox-batch` 实测本作行为。
 //
 // 文本里条件/触发式/每张类效果进口径的方式:能直测的写进 cardFacts;需要额外触发的
-// 用探针(conditionalScenarios 等);测不了的登记进 CARD_NOT_COMPARED / POTION_NOT_COMPARED
-// 或按原因归类(遗物)。报告末尾"口径覆盖"一节会把"有数值效果却没进口径、又没登记"
-// 的文本列出来,避免哨卫"消耗回能"那类静默漏检。
+// 用探针(conditionalScenarios / blindSpotScenarios 等);测不了的登记进
+// CARD_NOT_COMPARED / POTION_NOT_COMPARED / RELIC_NOT_COMPARED。
+//
+// 两道守卫(任一不满足即 exit != 0):
+//   守卫一 口径覆盖:有数值效果却没进口径、又没登记的内容直接判失败。
+//   守卫二 内容登记表:本作或语料里新增了卡/遗物/药水却没登记(audit_registry.txt)判失败。
+// 这两道守卫把"哨卫消耗回能"那类静默漏检从"人肉发现"变成"工具拦住"。
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, copyFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 const ROOT = join(HERE, "..");
 const REPO = join(ROOT, "..");
-const CORPUS = join(REPO, "refs", "slay-the-cli", "data", "corpus");
+const DEFAULT_CORPUS = join(REPO, "refs", "slay-the-cli", "data", "corpus");
+const REGISTRY = join(HERE, "audit_registry.txt");
 const SPIRE = process.env.SPIRE_BIN ?? join(ROOT, "target", "debug", "spire");
 if (!existsSync(SPIRE)) throw new Error(`找不到 ${SPIRE},先 cargo build`);
 
@@ -36,7 +44,14 @@ function flag(name: string): string | undefined {
 const ONLY = flag("--only");
 const SEED = flag("--seed") ?? "12345";
 const OUT = flag("--out");
-const want = (kind: string) => ONLY === undefined || ONLY === kind;
+/** 语料目录(默认 refs/slay-the-cli/data/corpus);--selftest 会指向改坏的临时副本 */
+const CORPUS = flag("--corpus") ?? DEFAULT_CORPUS;
+/** 自检模式:把历史盲区逐条喂回工具,确认每条都被拦下;任一漏检即 exit != 0 */
+const SELFTEST = argv.includes("--selftest");
+/** 内容登记表:新增卡/遗物/药水必须登记,否则守卫二报错 */
+const WRITE_REGISTRY = argv.includes("--write-registry");
+/** 只跑自检/只写登记表时不打印主报告;--selftest 需要全套场景,忽略 --only */
+const want = (kind: string) => SELFTEST || ONLY === undefined || ONLY === kind;
 
 // ---- 语料(外部 JSON:用类型守卫验形状后再当领域类型用) ----
 interface CorpusValues {
@@ -433,6 +448,7 @@ const CARD_NOT_COMPARED: Record<string, string> = {
   reckless_charge: "洗一张眩晕进抽牌堆:造牌不比对(仅核对伤害)",
   reaper: "回复量等于未被格挡的伤害:按战况变,不比对(仅核对伤害)",
   battle_trance: "本回合不能再抽牌:限制类不比对(仅核对抽牌数)",
+  panic_button: "打出后 2 回合不能再获得格挡(NoBlock):限制类不比对(仅核对格挡)",
 };
 
 function cardScenarios(): void {
@@ -520,8 +536,9 @@ function pushProbe(
   facts: Fact[],
   probe: (rows: Row[]) => Record<string, number> | string,
   scenario: Record<string, unknown>,
+  kind: Spec["kind"] = "cards",
 ): void {
-  list.push({ name: `cards/${id}/${suffix}`, kind: "cards", id, level, facts, probe, scenario, mode: "delta" });
+  list.push({ name: `${kind}/${id}/${suffix}`, kind, id, level, facts, probe, scenario, mode: "delta" });
 }
 
 /** 诅咒/状态:持有(不可打出/手牌限制/掉血)、抽到(掉能量)、回合末(掉血/状态/回手)、天生 */
@@ -1295,6 +1312,233 @@ function conditionalScenarios(): void {
   }
 }
 
+/**
+ * 历史盲区回归场景:这些效果此前靠人肉发现、工具当时抓不到,现在逐个补成可实测的
+ * 探针(期望值仍从语料文本或语料 values 抽),并由 `--selftest` 固化成回归用例。
+ * 每个场景对应报告"口径覆盖"里的一类历史漏检:条件效果、状态/诅咒、目标变更、
+ * 数值在别的机制里相乘、X 费例外、升级差异、作用范围、遗物文案数值。
+ */
+function blindSpotScenarios(): void {
+  // 吐火:抽到状态牌或诅咒牌都打全体(语料 "Status or Curse"),此前实现只认状态牌。
+  // 期望直接读语料:"Curse"/"Status" 任一被从文本里去掉,对应的期望就变 0,守卫自检时
+  // 改坏语料这一侧就能看到工具报错。战斗冥思一次抽 3 张,命中几张就打几个 magic。
+  for (const level of ["base", "up"] as const) {
+    const c = cardByGame.get("fire_breathing")!;
+    const magic = level === "up" ? c.upgrade.magic! : c.values.magic!;
+    const t = norm(c.text);
+    const draws: [string, string[], boolean][] = [
+      ["curse_draw", ["decay", "decay", "decay"], /Curse/.test(t)],
+      ["status_draw", ["wound", "wound", "wound"], /Status/.test(t)],
+    ];
+    for (const [suffix, pile, fires] of draws) {
+      pushProbe(
+        "fire_breathing",
+        level,
+        `${level}_${suffix}`,
+        [{ k: "probe", key: "damage", v: fires ? magic * pile.length : 0 }],
+        (rows) => ({ damage: firstSt(rows).enemies[0]!.hp - lastSt(rows).enemies[0]!.hp }),
+        playBoard({
+          player: { powers: { fire_breathing: magic } },
+          hand: ["battle_trance", "defend"],
+          draw: pile,
+          actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+        }),
+      );
+    }
+  }
+  // 致盲/绊倒:基础只打单个目标,升级后打全体(升级感知目标)。两个敌人各看一层;
+  // 升级是否打全体直接读语料 "[...| to ALL enemies]" 那半句,改坏语料就会被抓到。
+  for (const [id, power] of [
+    ["blind", "weak"],
+    ["trip", "vulnerable"],
+  ] as const) {
+    const c = cardByGame.get(id)!;
+    const allOnUpgrade = /\[\s*\|[^\]]*ALL enemies/.test(norm(c.text));
+    for (const level of ["base", "up"] as const) {
+      const up = level === "up";
+      const tok = up ? `${id}+` : id;
+      const n = up ? c.upgrade.magic! : c.values.magic!;
+      pushProbe(
+        id,
+        level,
+        `${level}_target_count`,
+        [
+          { k: "probe", key: "target_hit", v: n },
+          { k: "probe", key: "other_hit", v: up && allOnUpgrade ? 1 : 0 },
+        ],
+        (rows) => {
+          const es = lastSt(rows).enemies;
+          return { target_hit: es[0]!.powers[power] ?? 0, other_hit: (es[1]!.powers[power] ?? 0) > 0 ? 1 : 0 };
+        },
+        playBoard({
+          hand: [tok, "defend"],
+          enemies: [
+            { id: "cultist", hp: 999, max_hp: 999, move: "Incantation" },
+            { id: "cultist", hp: 999, max_hp: 999, move: "Incantation" },
+          ],
+          actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+        }),
+      );
+    }
+  }
+  // 神化:只升"打出那一刻"的四个牌堆,之后再造出来的牌不升(反编译 ApotheosisAction)。
+  // 用献祭造一张燃烧进弃牌堆,燃烧必须是基础版(若实现连后续新牌也升,会看到 burn+)。
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "apotheosis+" : "apotheosis";
+    pushProbe(
+      "apotheosis",
+      level,
+      `${level}_not_later_cards`,
+      [
+        { k: "probe", key: "burn_base", v: 1 },
+        { k: "probe", key: "burn_up", v: 0 },
+      ],
+      (rows) => {
+        const d = lastSt(rows).discard as string[];
+        return {
+          burn_base: d.filter((t) => tokenBase(t) === "burn" && !t.includes("+")).length,
+          burn_up: d.filter((t) => tokenBase(t) === "burn" && t.includes("+")).length,
+        };
+      },
+      playBoard({
+        hand: [tok, "immolate"],
+        draw: ["defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 重击:伤害在别的机制里相乘 —— 吃力量 3 次(升级 5 次)。摆 10 点力量按语料 values 算期望。
+  for (const level of ["base", "up"] as const) {
+    const c = cardByGame.get("heavy_blade")!;
+    const up = level === "up";
+    const str = 10;
+    const mult = up ? c.upgrade.magic! : c.values.magic!;
+    const dmg = (up ? c.upgrade.damage! : c.values.damage!) + mult * str;
+    pushProbe(
+      "heavy_blade",
+      level,
+      `${level}_strength_multiplier`,
+      [{ k: "probe", key: "damage", v: dmg }],
+      (rows) => ({ damage: firstSt(rows).enemies[0]!.hp - lastSt(rows).enemies[0]!.hp }),
+      playBoard({
+        player: { powers: { strength: str } },
+        hand: [up ? "heavy_blade+" : "heavy_blade", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 笔尖:每第 10 张攻击翻倍,数值在遗物机制里相乘。第 10 张故意用狂暴(DamageWithBonus)
+  // —— 历史 bug 是翻倍只写在 Effect::Damage/DamageAll 分支里,狂暴这类攻击效果漏翻倍。
+  // 9 张打击 + 第 10 张狂暴,期望 = 9*打击伤害 + 2*狂暴伤害(都从语料 values 抽,改语料就能看到)。
+  {
+    const strikeDmg = cardByGame.get("strike")!.values.damage!;
+    const rampageDmg = cardByGame.get("rampage")!.values.damage!;
+    pushProbe(
+      "pen_nib",
+      "base",
+      "doubles_tenth_attack_effect",
+      [{ k: "probe", key: "damage", v: 9 * strikeDmg + 2 * rampageDmg }],
+      (rows) => ({ damage: firstSt(rows).enemies[0]!.hp - lastSt(rows).enemies[0]!.hp }),
+      playBoard({
+        relics: ["pen_nib"],
+        player: { energy: 10, max_energy: 10 },
+        hand: [...Array.from({ length: 9 }, () => "strike"), "rampage"],
+        actions: [
+          { op: "noop" },
+          ...Array.from({ length: 9 }, () => ({ op: "play", hand: 0, target: 0 })),
+          { op: "play", hand: 0, target: 0 },
+        ],
+      }),
+      "relics",
+    );
+  }
+  // 靴子:遗物文案 "4 or less unblocked → 5"(阈值直接读语料文案数字)。虚弱打击 6→4,抬到 5。
+  {
+    const bootText = norm(relicByGame.get("the_boot")!.text);
+    const floor = Number(bootText.match(/increase it to (\d+)/)![1]);
+    pushProbe(
+      "the_boot",
+      "base",
+      "raises_low_hit_to_5",
+      [{ k: "probe", key: "damage", v: floor }],
+      (rows) => ({ damage: firstSt(rows).enemies[0]!.hp - lastSt(rows).enemies[0]!.hp }),
+      playBoard({
+        relics: ["the_boot"],
+        player: { powers: { weak: 10 } },
+        hand: ["strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+      "relics",
+    );
+  }
+  // 液态记忆:取回的牌本回合 0 费,但 X 费牌除外(反编译里 X 费的 cost 不走这条)。
+  pushProbe(
+    "liquid_memories",
+    "base",
+    "returns_card_free",
+    [
+      { k: "probe", key: "returned", v: 1 },
+      { k: "probe", key: "cost", v: 0 },
+    ],
+    (rows) => ({
+      returned: handOf(lastSt(rows)).includes("strike") ? 1 : 0,
+      cost: lastHandCost(rows) ?? -99,
+    }),
+    playBoard({
+      report: true,
+      hand: ["defend"],
+      discard: ["strike"],
+      potions: ["liquid_memories", null, null],
+      actions: [{ op: "noop" }, { op: "potion", slot: 0, target: null, choose: [0] }],
+    }),
+    "potions",
+  );
+  pushProbe(
+    "liquid_memories",
+    "base",
+    "keeps_x_cost",
+    [{ k: "probe", key: "cost", v: -1 }],
+    (rows) => ({ cost: lastHandCost(rows) ?? -99 }),
+    playBoard({
+      report: true,
+      hand: ["defend"],
+      discard: ["whirlwind"],
+      potions: ["liquid_memories", null, null],
+      actions: [{ op: "noop" }, { op: "potion", slot: 0, target: null, choose: [0] }],
+    }),
+    "potions",
+  );
+  // 混乱:随机化后的费用必须落在 0..3,升级降费的牌也不能被再减一档(havoc+ 当前 0 费,
+  // 若拿牌面基础费 1 当基线,掷出的值会被减成 -1)。蛇眼每回合抽牌都随机化,多抽几轮
+  // 凑够 30+ 个样本(固定种子下即确定性输出)。
+  pushProbe(
+    "snecko_eye",
+    "base",
+    "confusion_cost_range",
+    [
+      { k: "probe", key: "min_cost", v: 0 },
+      { k: "probe", key: "max_cost", v: 3 },
+    ],
+    (rows) => {
+      const cs = rows.flatMap((r) => r.report?.costs ?? []);
+      return { min_cost: Math.min(...cs), max_cost: Math.max(...cs) };
+    },
+    {
+      player: { hp: 200, max_hp: 200, energy: 9, max_energy: 9 },
+      relics: ["snecko_eye"],
+      potions: [null, null, null],
+      deck: Array.from({ length: 40 }, () => "havoc+"),
+      enemies: [{ id: "cultist", hp: 999, max_hp: 999, move: "Incantation" }],
+      report: true,
+      actions: [
+        { op: "noop" },
+        ...Array.from({ length: 6 }, () => ({ op: "end_turn" as const })),
+      ],
+    },
+    "relics",
+  );
+}
+
 function potionFacts(p: CorpusPotion, mul: number): Fact[] {
   const facts: Fact[] = [];
   const t = norm(p.text);
@@ -1332,7 +1576,6 @@ const POTION_NOT_COMPARED: Record<string, string> = {
   fairy_potion: "致死时回血 30%/60%:需致死局面",
   fruit_juice: "增加 5/10 最大 HP:战斗外结算",
   gamblers_brew: "弃任意张再抽等量:交互式(无固定张数)",
-  liquid_memories: "从弃牌堆取回牌:选牌交互",
   potion_of_capacity: "增加 2/4 球槽:充能球机制",
   power_potion: "三选一随机能力牌:随机池/选牌交互",
   skill_potion: "三选一随机技能牌:随机池/选牌交互",
@@ -1342,6 +1585,14 @@ const POTION_NOT_COMPARED: Record<string, string> = {
 
 /** 没有抽出任何数值事实的药水 id(potionScenarios 里记录,供"口径覆盖"检查) */
 const potionNoFacts = new Set<string>();
+
+/**
+ * 数值效果由探针场景(blindSpotScenarios)覆盖的药水:文本抽不出"当次直测"的数值,
+ * 但已经被 probe 逐字段比对,不再算"未覆盖"。
+ */
+const POTION_PROBED: Record<string, string> = {
+  liquid_memories: "取回牌本回合 0 费(probe 比对返回牌的当前费用;X 费牌除外)",
+};
 
 function potionScenarios(): void {
   for (const id of ourPotions) {
@@ -1354,7 +1605,7 @@ function potionScenarios(): void {
     for (const [name, mul, relics] of variants) {
       const facts = potionFacts(p, mul);
       if (facts.length === 0) {
-        potionNoFacts.add(id);
+        if (!POTION_PROBED[id]) potionNoFacts.add(id);
         continue;
       }
       list.push({
@@ -1412,7 +1663,37 @@ function relicSkipReason(t: string): string {
   return "其它(未分类)";
 }
 
-/** RELIC_RULES 未覆盖的遗物 id(记录,供"口径覆盖"检查) */
+/**
+ * RELIC_RULES / relicSkipReason 都盖不住的遗物:显式登记原因(与 CARD_NOT_COMPARED 同理)。
+ * 新增遗物若既没规则、relicSkipReason 也归不了类,口径守卫会当"未登记"报错。
+ */
+const RELIC_NOT_COMPARED: Record<string, string> = {
+  akabeko: "本场第一张攻击 +8:战斗内触发式(需攻击伤害探针,见 Heavy Blade 同轴)",
+  centennial_puzzle: "本场首次掉血抽 3:战斗内触发式(需掉血时序)",
+  juzu_bracelet: "? 房不再遇普通战:地图/房间生成机制",
+  strike_dummy: "含 Strike 的牌 +3 伤害:战斗内数值修正(需攻击伤害探针)",
+  white_beast_statue: "战利品必出药水:奖励屏机制",
+  fossilized_helix: "本场首次掉血免疫:战斗内触发式",
+  ginger: "免疫虚弱:减益免疫(需施加时序)",
+  ice_cream: "能量跨回合保留:回合结算机制",
+  turnip: "免疫脆弱:减益免疫(需施加时序)",
+  hovering_kite: "每回合首次弃牌 +1 能:战斗内触发式",
+  wrist_blade: "0 费攻击 +4:战斗内数值修正(需攻击伤害探针)",
+  black_star: "精英多掉一件遗物:奖励屏机制",
+  chemical_x: "X 费牌效果 +2:X 费修正(需 X 费探针)",
+  frozen_eye: "抽牌堆按序显示:界面机制,不可在战斗沙盒观测",
+  membership_card: "商店 50% 折扣:商店机制",
+  sling_of_courage: "精英战开局 +2 力量:开局触发,但只限精英战",
+  strange_spoon: "消耗改弃牌 50%:随机触发式",
+  prismatic_shard: "奖励屏含无色/他色牌:奖励屏机制",
+  neows_lament: "前三场敌人 1 HP:战斗外流程机制",
+  nloths_gift: "稀有牌概率三倍:奖励屏掷点机制",
+};
+
+/** RELIC_RULES / 遗物探针覆盖的遗物 id(供登记表判"audited") */
+const relicAudited = new Set<string>();
+
+/** RELIC_RULES 未覆盖、也没登记原因的遗物 id(记录,供"口径覆盖"检查) */
 const relicNoMatch = new Set<string>();
 
 function relicScenarios(): void {
@@ -1440,7 +1721,8 @@ function relicScenarios(): void {
       matched = true;
       break;
     }
-    if (!matched) relicNoMatch.add(id);
+    if (matched) relicAudited.add(id);
+    else relicNoMatch.add(id);
   }
 }
 
@@ -1453,6 +1735,8 @@ if (want("cards")) {
 }
 if (want("potions")) potionScenarios();
 if (want("relics")) relicScenarios();
+// 历史盲区场景跨卡/药水/遗物三类(笔尖与靴子是遗物、液态记忆是药水),单独一组
+blindSpotScenarios();
 
 // ---- 跑沙盒 ----
 const DIR = mkdtempSync(join(tmpdir(), "spire-audit-"));
@@ -1566,34 +1850,27 @@ interface Mismatch {
 const mismatches: Mismatch[] = [];
 let passed = 0;
 
-for (const s of list) {
-  const rows = got.get(s.name);
-  if (!rows) {
-    mismatches.push({ name: s.name, verdict: "(a) 我们错", lines: ["沙盒没有输出这一段"] });
-    continue;
-  }
+interface CompareResult {
+  lines: string[];
+  /** 沙盒没输出这一段 / 探针自己炸了:整段判失败 */
+  hard?: string;
+}
+
+/** 比对单个场景。返回 lines(空 = 通过)或 hard(整段失败);--selftest 复用同一份逻辑。 */
+function compareSpec(s: Spec, rows: Row[]): CompareResult {
   // 探针轴:直接读快照算事实(持有/抽到/回合末/多回合/选牌结果集合)
   if (s.probe) {
     const rec = s.probe(rows);
-    if (typeof rec === "string") {
-      mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines: [rec] });
-      continue;
-    }
+    if (typeof rec === "string") return { lines: [], hard: rec };
     const lines: string[] = [];
     for (const f of s.facts) {
       if (f.k !== "probe") continue;
-      const have = rec[f.key];
-      if (have !== f.v) lines.push(`${f.key}: 实测 ${JSON.stringify(have)} vs 期望 ${f.v}`);
+      if (rec[f.key] !== f.v) lines.push(`${f.key}: 实测 ${JSON.stringify(rec[f.key])} vs 期望 ${f.v}`);
     }
-    if (lines.length === 0) passed++;
-    else mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines });
-    continue;
+    return { lines };
   }
   const o = observed(s, rows);
-  if (typeof o === "string") {
-    mismatches.push({ name: s.name, verdict: "(a) 我们错", lines: [o] });
-    continue;
-  }
+  if (typeof o === "string") return { lines: [], hard: o };
   const lines: string[] = [];
   for (const f of s.facts) {
     let have: unknown;
@@ -1620,8 +1897,22 @@ for (const s of list) {
     }
     if (have !== want) lines.push(`${f.k}${"name" in f ? ":" + f.name : ""}: 实测 ${JSON.stringify(have)} vs 期望 ${JSON.stringify(want)}`);
   }
-  if (lines.length === 0) passed++;
-  else mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines });
+  return { lines };
+}
+
+for (const s of list) {
+  const rows = got.get(s.name);
+  if (!rows) {
+    mismatches.push({ name: s.name, verdict: "(a) 我们错", lines: ["沙盒没有输出这一段"] });
+    continue;
+  }
+  const r = compareSpec(s, rows);
+  if (r.hard !== undefined) {
+    mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines: [r.hard] });
+    continue;
+  }
+  if (r.lines.length === 0) passed++;
+  else mismatches.push({ name: s.name, verdict: KNOWN[s.name] ?? "(a) 我们错", lines: r.lines });
 }
 
 const coveredCardIds = new Set(list.filter((s) => s.kind === "cards").map((s) => s.id));
@@ -1643,11 +1934,32 @@ for (const id of ourCards) {
   const lines = unparsedEffectLines(c);
   if (lines.length > 0) blind.push(`${id}: ${lines.join(" | ")}`);
 }
+// 数值字段级覆盖:没被探针/登记接管的牌,语料 values/upgrade 里每个非空数值字段
+// (damage/block/magic)都必须能在抽出来的事实里找到落点:damage 按"事实值是它的整数倍"
+// (多段/×times 会翻倍)、block 与 magic 按绝对值相等或"magic 是伤害事实的倍数"(times 类)。
+// 语料自身文本 vs values 不一致的牌(见 corpusSelfCheck)跳过,那是语料问题不是口径问题。
+const fieldBlind: string[] = [];
+for (const id of ourCards) {
+  const c = cardByGame.get(id);
+  if (!c || handWritten.has(id) || CARD_NOT_COMPARED[id]) continue;
+  if (corpusSelfCheck(c).length > 0) continue;
+  for (const up of [false, true]) {
+    const v = up ? c.upgrade : c.values;
+    const facts = cardFacts(c, up);
+    const eq = (n: number) => facts.some((f) => "v" in f && f.v !== 0 && Math.abs(f.v) === Math.abs(n));
+    const dmg = facts.filter((f) => f.k === "damage").map((f) => f.v);
+    const multOf = (n: number) => n > 0 && dmg.some((d) => d > 0 && d % n === 0);
+    const lvl = up ? "升级" : "基础";
+    if (v.damage !== null && !multOf(v.damage)) fieldBlind.push(`${id} ${lvl}: damage ${v.damage} 没被任何事实覆盖`);
+    if (v.block !== null && !eq(v.block)) fieldBlind.push(`${id} ${lvl}: block ${v.block} 没被任何事实覆盖`);
+    if (v.magic !== null && !eq(v.magic) && !multOf(v.magic)) fieldBlind.push(`${id} ${lvl}: magic ${v.magic} 没被任何事实覆盖`);
+  }
+}
 const potionBlind = ourPotions.filter((id) => potionNoFacts.has(id) && !POTION_NOT_COMPARED[id]);
 const relicReasons: Record<string, string[]> = {};
 for (const id of relicNoMatch) {
   const r = relicByGame.get(id);
-  const reason = r ? relicSkipReason(norm(r.text)) : "语料里没有";
+  const reason = RELIC_NOT_COMPARED[id] ? "已登记(RELIC_NOT_COMPARED)" : r ? relicSkipReason(norm(r.text)) : "语料里没有";
   (relicReasons[reason] ??= []).push(id);
 }
 
@@ -1687,6 +1999,331 @@ for (const r of dump("potions")) {
     dataIssues.push(`药水 ${r[0]} 稀有度: 我们 ${r[1]} vs 语料 ${p.rarity}`);
 }
 
+// ---- 守卫一:口径覆盖(未覆盖即报错) ----
+// 任何"有数值效果却没人比对、又没明确登记"的内容都直接判失败,不再只是报告里列一行。
+// 这正是哨卫"消耗回能"那类静默漏检的根源:改坏一处口径,守卫必须响。
+const guardFails: string[] = [];
+if (want("cards")) {
+  if (blind.length > 0) {
+    guardFails.push(`卡片口径未覆盖 ${blind.length} 张(加探针或在 CARD_NOT_COMPARED 登记):`);
+    for (const b of blind) guardFails.push(`  ${b}`);
+  }
+  if (fieldBlind.length > 0) {
+    guardFails.push(`语料数值字段没进口径 ${fieldBlind.length} 处:`);
+    for (const b of fieldBlind) guardFails.push(`  ${b}`);
+  }
+  if (unaudited.length > 0) guardFails.push(`没有任何场景的牌: ${unaudited.join(", ")}`);
+}
+if (want("potions") && potionBlind.length > 0)
+  guardFails.push(`药水口径未覆盖(加场景或登记 POTION_NOT_COMPARED): ${potionBlind.join(", ")}`);
+if (want("relics")) {
+  const unclassifiedRelics = relicReasons["其它(未分类)"] ?? [];
+  if (unclassifiedRelics.length > 0) guardFails.push(`遗物既没被 RELIC_RULES 覆盖也没登记原因: ${unclassifiedRelics.join(", ")}`);
+}
+if (dataIssues.length > 0) guardFails.push(`静态数据(费用/类型/稀有度)对语料不一致 ${dataIssues.length} 处`);
+
+// ---- 守卫二:内容登记表(新增未登记即报错) ----
+// 本作 --dump 或语料里出现了登记表没有的卡/遗物/药水,或者登记表里的 tag 与工具当前
+// 状态(audited/registered/gated/corpus)对不上,都判失败。新增内容必须显式登记。
+type RegTag = "audited" | "registered" | "gated" | "corpus";
+const regKey = (kind: string, id: string) => `${kind}/${id}`;
+/** 工具当前状态:每个 kind 的 id -> tag */
+const computedTags = new Map<string, RegTag>();
+{
+  const cardsWithScenario = coveredCardIds;
+  for (const id of ourCards) {
+    const tag: RegTag = cardsWithScenario.has(id) ? "audited" : CARD_NOT_COMPARED[id] ? "registered" : "corpus";
+    computedTags.set(regKey("cards", id), tag);
+  }
+  for (const id of cardByGame.keys()) if (!computedTags.has(regKey("cards", id))) computedTags.set(regKey("cards", id), "corpus");
+
+  for (const id of ourPotions) {
+    if (gated.has(`potion/${id}`)) continue;
+    const tag: RegTag = POTION_PROBED[id] || !potionNoFacts.has(id) ? "audited" : "registered";
+    computedTags.set(regKey("potions", id), tag);
+  }
+  for (const id of potionByGame.keys()) if (!computedTags.has(regKey("potions", id))) computedTags.set(regKey("potions", id), "corpus");
+
+  for (const id of ourRelics) {
+    if (gated.has(`relic/${id}`)) continue;
+    const probed = list.some((s) => s.kind === "relics" && s.probe && s.id === id);
+    computedTags.set(regKey("relics", id), relicAudited.has(id) || probed ? "audited" : "registered");
+  }
+  for (const id of relicByGame.keys()) if (!computedTags.has(regKey("relics", id))) computedTags.set(regKey("relics", id), "corpus");
+
+  const gatedKind: Record<string, string> = { card: "cards", potion: "potions", relic: "relics" };
+  for (const g of gated) {
+    const [kind, id] = g.split("/");
+    const k = gatedKind[kind ?? ""];
+    if (k && id) computedTags.set(regKey(k, id), "gated");
+  }
+}
+/** 登记表里的一行:kind id tag */
+function readRegistry(): Map<string, RegTag> {
+  const m = new Map<string, RegTag>();
+  if (!existsSync(REGISTRY)) return m;
+  for (const raw of readFileSync(REGISTRY, "utf8").split("\n")) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const [kind, id, tag] = line.split(/\s+/);
+    if (!kind || !id || !tag) continue;
+    m.set(regKey(kind, id), tag as RegTag);
+  }
+  return m;
+}
+const registry = readRegistry();
+if (ONLY === undefined) {
+  if (WRITE_REGISTRY) {
+    const lines = ['# 内容登记表:审计守卫二用它判定"新增未登记"',
+      "# 格式:<kind> <id> <tag>,tag = audited(有断言) | registered(已登记不比对) | gated(刻意未实现) | corpus(语料有本作未实现)",
+      "# 新增卡/遗物/药水后:补断言 -> audited;登记不比对 -> registered;跑 --write-registry 重写本表。",
+      ...Array.from(computedTags.entries()).sort().map(([k, t]) => `${k.split("/")[0]} ${k.split("/").slice(1).join("/")} ${t}`)];
+    writeFileSync(REGISTRY, lines.join("\n") + "\n");
+  } else {
+    for (const [k, tag] of computedTags) {
+      const have = registry.get(k);
+      if (!have) guardFails.push(`登记表缺少 ${k}(新增未登记;先加断言/登记,再补进 audit_registry.txt,tag=${tag})`);
+      else if (have !== tag) guardFails.push(`登记表 ${k} 记的是 ${have},工具当前是 ${tag}(内容状态变了,更新登记表)`);
+    }
+    for (const k of registry.keys()) if (!computedTags.has(k)) guardFails.push(`登记表里的 ${k} 本作与语料都没有(已过期,删掉)`);
+  }
+}
+
+// ---- 自检:历史盲区回归(--selftest) ----
+//
+// 把本项目此前"靠人肉发现、工具当时抓不到"的盲区逐条喂回工具,确认每条现在都被拦下。
+// 两条路线:
+//  - 语料侧(真·端到端):在临时副本里改坏语料的那半句(数字/目标/条件),用真实审计
+//    子进程跑一遍,要求 exit != 0 且输出里点名对应场景;
+//  - 实现侧:对真实沙盒输出做定向篡改(模拟当年那份有 bug 的实现),要求 compareSpec
+//    对它报出不一致 —— 冻结"场景 + 比对逻辑"这条链,工具口径退化时同样会 FAIL。
+// 任一漏检 => FAIL 行,进程 exit != 0。
+
+interface LooseCard {
+  id: string;
+  text?: string;
+  values?: Record<string, number | null>;
+}
+interface LooseRelic {
+  id: string;
+  text?: string;
+}
+interface LoosePotion {
+  id: string;
+  text?: string;
+}
+interface SpotCase {
+  spot: string;
+  expect: string;
+  run: () => string | null;
+}
+
+/** 在临时语料副本上改坏一处,再跑真实审计子进程,要求它 exit != 0 且点名 marker。 */
+function corpusCase(
+  spot: string,
+  mutate: (c: LooseCard[], r: LooseRelic[], p: LoosePotion[]) => void,
+  marker: string,
+): SpotCase {
+  return {
+    spot,
+    expect: marker,
+    run: () => {
+      const dir = mkdtempSync(join(tmpdir(), "spire-corpus-"));
+      for (const f of ["cards", "potions", "relics"]) copyFileSync(join(DEFAULT_CORPUS, `${f}.json`), join(dir, `${f}.json`));
+      const cards = JSON.parse(readFileSync(join(dir, "cards.json"), "utf8")) as LooseCard[];
+      const relics = JSON.parse(readFileSync(join(dir, "relics.json"), "utf8")) as LooseRelic[];
+      const potions = JSON.parse(readFileSync(join(dir, "potions.json"), "utf8")) as LoosePotion[];
+      mutate(cards, relics, potions);
+      writeFileSync(join(dir, "cards.json"), JSON.stringify(cards));
+      writeFileSync(join(dir, "relics.json"), JSON.stringify(relics));
+      writeFileSync(join(dir, "potions.json"), JSON.stringify(potions));
+      const r = spawnSync("bun", [join(HERE, "audit_corpus.ts"), "--corpus", dir], { encoding: "utf8", maxBuffer: 1 << 26 });
+      rmSync(dir, { recursive: true, force: true });
+      const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      if (r.status === 0) return "改坏语料后审计仍然 exit 0(期望非 0)";
+      if (!out.includes(marker)) return `审计已报错,但输出里没点名 ${marker}`;
+      return null;
+    },
+  };
+}
+
+/** 对真实沙盒输出做定向篡改(模拟实现侧回归),要求工具报出 marker 那条不一致。 */
+function implCase(spot: string, specName: string, mutate: (rows: Row[]) => void, marker: string): SpotCase {
+  return {
+    spot,
+    expect: specName,
+    run: () => {
+      const spec = list.find((s) => s.name === specName);
+      const rows0 = got.get(specName);
+      if (!spec || !rows0) return `沙盒里没有 ${specName} 这一段`;
+      const clean = compareSpec(spec, rows0);
+      if (clean.hard !== undefined || clean.lines.length > 0) return `未篡改前这条就没过: ${JSON.stringify(clean)}`;
+      const rows = structuredClone(rows0);
+      mutate(rows);
+      const after = compareSpec(spec, rows);
+      const text = after.lines.join("\n");
+      if (after.hard === undefined && after.lines.length === 0) return `模拟实现回归后工具没报错(期望点出 ${marker})`;
+      if (!text.includes(marker) && !(after.hard ?? "").includes(marker)) return `报的错里没有 ${marker}: ${text || after.hard}`;
+      return null;
+    },
+  };
+}
+
+function spotCases(): SpotCase[] {
+  return [
+    // 1 哨卫:升级后消耗回能 2->3(条件效果 [@RE...]);语料写的是 [@RE@RE|@RE@RE@RE]
+    corpusCase(
+      "哨卫消耗回能(条件效果 [@RE...])",
+      (cards) => {
+        for (const c of cards) if (c.id === "SENTINEL") c.text = c.text?.replace("[@RE@RE|@RE@RE@RE]", "[@RE@RE|@RE@RE]");
+      },
+      "cards/sentinel/up_exhaust_energy",
+    ),
+    // 2 吐火:文本 "Status or Curse",实现曾只认 Status(抽到诅咒白丢伤害)
+    corpusCase(
+      "吐火认诅咒(文本 Status or Curse)",
+      (cards) => {
+        for (const c of cards)
+          if (c.id === "FIRE_BREATHING") c.text = c.text?.replace(" or {{QueryLink|Cards|type:Curse|Curse}}", "");
+      },
+      "cards/fire_breathing/base_curse_draw",
+    ),
+    // 3/4 升级版差异:致盲/绊倒升级后目标从单体变全体
+    corpusCase(
+      "致盲升级目标变全体",
+      (cards) => {
+        for (const c of cards) if (c.id === "BLIND") c.text = c.text?.replace("[| to ALL enemies]", "");
+      },
+      "cards/blind/up_target_count",
+    ),
+    corpusCase(
+      "绊倒升级目标变全体",
+      (cards) => {
+        for (const c of cards) if (c.id === "TRIP") c.text = c.text?.replace("[| to ALL enemies]", "");
+      },
+      "cards/trip/up_target_count",
+    ),
+    // 5 数值在别的机制里相乘:重击吃力量 3 次(升级 5 次)
+    corpusCase(
+      "重击力量倍率",
+      (cards) => {
+        for (const c of cards) if (c.id === "HEAVY_BLADE") c.values!.magic = 4;
+      },
+      "cards/heavy_blade/base_strength_multiplier",
+    ),
+    // 6 笔尖:第 10 张攻击翻倍(且狂暴这类 DamageWithBonus 也要翻)
+    corpusCase(
+      "笔尖第 10 张攻击翻倍",
+      (cards) => {
+        for (const c of cards) if (c.id === "RAMPAGE") c.values!.damage = 9;
+      },
+      "relics/pen_nib/doubles_tenth_attack_effect",
+    ),
+    // 7 遗物文案里的数值:靴子 "4 or less unblocked → 5"
+    corpusCase(
+      "靴子遗物文案阈值",
+      (_cards, relics) => {
+        for (const r of relics) if (r.id === "THE_BOOT") r.text = r.text?.replace("increase it to 5", "increase it to 6");
+      },
+      "relics/the_boot/raises_low_hit_to_5",
+    ),
+    // 8 神化的作用范围:只升打出那一刻的四个牌堆,后续新造的牌不升
+    implCase(
+      "神化作用范围(不升后续新牌)",
+      "cards/apotheosis/base_not_later_cards",
+      (rows) => {
+        const last = rows[rows.length - 1]!;
+        const d = last.st!.discard as string[];
+        last.st!.discard = d.map((t) => (t === "burn" ? "burn+" : t));
+      },
+      "burn_up",
+    ),
+    // 9 液态记忆:取回的牌本回合 0 费,但 X 费牌除外
+    implCase(
+      "液态记忆 X 费牌不被免费",
+      "potions/liquid_memories/keeps_x_cost",
+      (rows) => {
+        const last = rows[rows.length - 1]!;
+        const costs = last.report!.costs;
+        costs[costs.length - 1] = 0;
+      },
+      "cost",
+    ),
+    // 10 混乱/费用:随机化后的费用必须落在 0..3(升级降费的牌不能被再减一档)
+    implCase(
+      "混乱费用落 0..3(升级基线)",
+      "relics/snecko_eye/confusion_cost_range",
+      (rows) => {
+        for (const r of rows) if (r.report && r.report.costs.length > 0) r.report.costs[0] = -1;
+      },
+      "min_cost",
+    ),
+    // 守卫一(未覆盖即报错):给一张没有探针的牌塞一句"有数值但解析不了"的文本
+    corpusCase(
+      "守卫一 未覆盖即报错",
+      (cards) => {
+        for (const c of cards) if (c.id === "STRIKE_RED") c.text = `${c.text}<br>Whenever you draw this, gain [1|2] Block.`;
+      },
+      "卡片口径未覆盖",
+    ),
+    // 守卫二(新增未登记即报错):往语料里塞一张本作没有、登记表也没有的牌
+    corpusCase(
+      "守卫二 新增未登记即报错",
+      (cards) => {
+        cards.push({ id: "GUARD_PROBE_CARD", text: "Deal 1 damage.", values: { damage: 1, block: null, magic: null, hits: null } });
+      },
+      "登记表缺少 cards/guard_probe_card",
+    ),
+    // 守卫一(数值字段级):改掉语料 values 里一个 magic,让"有字段没进口径"暴露
+    corpusCase(
+      "守卫一 数值字段未覆盖即报错",
+      (cards) => {
+        for (const c of cards) if (c.id === "SWORD_BOOMERANG") c.values!.magic = 7;
+      },
+      "语料数值字段没进口径",
+    ),
+    // 守卫一(药水侧):把一瓶药水的文本改成解析不出的数值效果
+    corpusCase(
+      "守卫一 药水未覆盖即报错",
+      (_cards, _relics, potions) => {
+        for (const p of potions) if (p.id === "FIRE_POTION") p.text = "Whenever you drink this, gain [1|2] Block.";
+      },
+      "药水口径未覆盖",
+    ),
+    // 守卫一(遗物侧):把一件已实现遗物的文本改成归不了类的,要求强制登记
+    corpusCase(
+      "守卫一 遗物未归类即报错",
+      (_cards, relics) => {
+        for (const r of relics) if (r.id === "BURNING_BLOOD") r.text = "Mysterious aura.";
+      },
+      "遗物既没被",
+    ),
+  ];
+}
+
+function selftestReport(): string[] {
+  const cases = spotCases();
+  const out: string[] = [];
+  out.push(`历史盲区自检(--selftest)  seed=${SEED}`);
+  out.push(`证据源: ${CORPUS.replace(REPO + "/", "")}(记自 sts_lightspeed 反编译)`);
+  out.push("");
+  let caught = 0;
+  let missed = 0;
+  for (const c of cases) {
+    const fail = c.run();
+    if (fail === null) {
+      caught++;
+      out.push(`  [ok]   ${c.spot} -> ${c.expect}`);
+    } else {
+      missed++;
+      out.push(`  [FAIL] ${c.spot}: ${fail}`);
+    }
+  }
+  out.push("");
+  out.push(`历史盲区 ${cases.length} 条:抓到 ${caught},漏检 ${missed}`);
+  return out;
+}
+
 // ---- 报告 ----
 const totals: Record<string, number> = { cards: 0, potions: 0, relics: 0 };
 for (const s of list) totals[s.kind] = (totals[s.kind] ?? 0) + 1;
@@ -1697,7 +2334,7 @@ report.push(`命令: bun tools/audit_corpus.ts${ONLY ? ` --only ${ONLY}` : ""}`)
 report.push(`证据源: ${CORPUS.replace(REPO + "/", "")}(记自 sts_lightspeed 反编译)`);
 report.push("");
 report.push(`覆盖: 牌 ${ourCards.length} 张(可审 ${totals.cards} 个场景)/ 药水 ${ourPotions.length} 瓶(${totals.potions})/ 遗物 ${ourRelics.length} 件(${totals.relics})`);
-report.push(`结果: 通过 ${passed}/${list.length}, 不一致 ${mismatches.length}, 未覆盖(数值不可当回合直测)牌 ${unaudited.length} 张`);
+report.push(`结果: 通过 ${passed}/${list.length}, 不一致 ${mismatches.length}, 未覆盖(数值不可当回合直测)牌 ${want("cards") ? unaudited.length : "-"} 张`);
 {
   const probeSpecs = list.filter((s) => s.probe);
   const probeIds = new Set(probeSpecs.map((s) => s.id));
@@ -1722,13 +2359,15 @@ for (const m of mismatches) {
   for (const l of m.lines) report.push(`      ${l}`);
 }
 report.push("");
-report.push(`未覆盖的牌(${unaudited.length}): ${unaudited.join(", ")}`);
+if (want("cards")) report.push(`未覆盖的牌(${unaudited.length}): ${unaudited.join(", ")}`);
 
 report.push("");
 report.push("口径覆盖(防未来盲区):");
 if (want("cards")) {
   report.push(`  卡片侧未登记盲区: ${blind.length === 0 ? "无" : `${blind.length} 张`}`);
   for (const b of blind) report.push(`    ${b}`);
+  report.push(`  卡片数值字段级未覆盖: ${fieldBlind.length === 0 ? "无" : `${fieldBlind.length} 处`}`);
+  for (const b of fieldBlind) report.push(`    ${b}`);
   report.push(`  卡片不参与自动比对(CARD_NOT_COMPARED): ${Object.keys(CARD_NOT_COMPARED).length} 张`);
   for (const [k, v] of Object.entries(CARD_NOT_COMPARED)) report.push(`    ${k}: ${v}`);
 }
@@ -1740,15 +2379,36 @@ if (want("potions")) {
 }
 if (want("relics")) {
   report.push(
-    `  遗物不参与自动比对: ${relicNoMatch.size} 件(RELIC_RULES 覆盖 ${totals.relics} 件;gated 已单独排除),按原因分组:`,
+    `  遗物不参与自动比对: ${relicNoMatch.size} 件(Relic 规则/探针覆盖 ${totals.relics} 件;gated 已单独排除),按原因分组:`,
   );
   for (const [reason, ids] of Object.entries(relicReasons)) {
-    const suffix = reason.startsWith("其它") || reason.startsWith("语料") ? ` -> ${ids.join(", ")}` : "";
+    const suffix = reason.startsWith("语料") ? ` -> ${ids.join(", ")}` : "";
     report.push(`    ${reason}: ${ids.length} 件${suffix}`);
   }
+  report.push(`  遗物显式登记(RELIC_NOT_COMPARED): ${Object.keys(RELIC_NOT_COMPARED).length} 件`);
+  for (const [k, v] of Object.entries(RELIC_NOT_COMPARED)) report.push(`    ${k}: ${v}`);
+}
+
+const guardOk = guardFails.length === 0;
+const mismatchUnknown = mismatches.filter((m) => !KNOWN[m.name]);
+report.push("");
+report.push(`守卫: ${guardOk && mismatchUnknown.length === 0 ? "PASS" : "FAIL"}`);
+report.push(`  守卫一 口径覆盖: ${guardOk ? "PASS" : `FAIL(${guardFails.length} 条)`}`);
+report.push(`  守卫二 内容登记表: ${ONLY === undefined ? `${registry.size} 条已登记 / 工具当前 ${computedTags.size} 条` : "跳过(--only 模式)"}`);
+for (const f of guardFails) report.push(`    - ${f}`);
+report.push(`  行为不一致: ${mismatchUnknown.length === 0 ? "无" : `${mismatchUnknown.length} 条(见上)`}`);
+
+if (SELFTEST) {
+  const st = selftestReport();
+  const text = st.join("\n") + "\n";
+  process.stdout.write(text);
+  if (OUT) writeFileSync(OUT, text);
+  rmSync(DIR, { recursive: true, force: true });
+  process.exit(st.some((l) => l.includes("[FAIL]")) ? 1 : 0);
 }
 
 const text = report.join("\n") + "\n";
 process.stdout.write(text);
 if (OUT) writeFileSync(OUT, text);
 rmSync(DIR, { recursive: true, force: true });
+if (!guardOk || mismatchUnknown.length > 0) process.exit(1);
