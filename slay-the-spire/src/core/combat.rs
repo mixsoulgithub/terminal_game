@@ -193,6 +193,25 @@ impl ChoiceFilter {
     }
 }
 
+/// 选牌的强制程度:决定"候选只剩 1 张"时开不开屏(见 begin_choice 的自动结算).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChoiceMode {
+    /// 强制:必须选够 need 张.原版这类选牌候选只剩 1 张时直接替玩家结算、不开屏.
+    /// 依据 refs/sts_lightspeed/src/combat/Actions.cpp:HeadbuttAction:811(自动分支 :816)、
+    /// ChooseExhaustOne:824(:830,坚毅/燃烧契约)、DrawToHandAction:839(:860,秘技/秘密武器)、
+    /// WarcryAction:872(:878)、ExhumeAction:755(:772)、ArmamentsAction:678(:687)、
+    /// DualWieldAction:701(:725)、BetterDiscardPileToHandAction:664(:669,液体记忆)、
+    /// ForethoughtAction:784(:803,基础版预谋);
+    /// 对拍基准 slay-the-cli/cards/*/effects.ts 的 chooseOne 对 0/1 候选同样 auto-resolve.
+    Mandatory,
+    /// 可选:可以少选甚至一张不选就收工.原版这类选牌**永远开屏**,哪怕只剩 1 张候选
+    /// (净化/预谋+/赌徒筹码/灵药/赌徒之酿).
+    /// 依据 Actions.cpp:ExhaustMany:973(净化,无条件进 CARD_SELECT)、
+    /// GambleAction:981(赌徒筹码)、ToolboxAction:988、DiscoveryAction:564;
+    /// 对拍基准里 min=0 的请求(purity/elixir/gamblersBrew/gamblingChip)也都不 auto.
+    Optional,
+}
+
 /// 选完之后干什么
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ChoiceAction {
@@ -225,6 +244,8 @@ pub struct Choice {
     pub filter: ChoiceFilter,
     /// 最多选几张;0 表示不限张数(选到玩家主动结束为止)
     pub need: usize,
+    /// 强制还是可选.强制单选在候选只剩 1 张时由 begin_choice 直接结算、不开屏
+    pub mode: ChoiceMode,
     /// 已经选了几张
     pub taken: usize,
     /// 是哪张牌引起的,信息栏提示用
@@ -242,6 +263,80 @@ pub struct Choice {
     /// 这张牌是被"打抽牌堆顶"(浩劫/混沌药剂)放出来的:收尾时无条件消耗
     /// (power 退场),取消也不回手牌 —— 它不是从手牌里出去的
     pub exhaust_after: bool,
+}
+
+/// 开一次选牌窗的参数.默认是"强制单选一张"(最常见的形态);带选牌的牌在
+/// begin_choice 之前把份数/免费/亮牌这些附加项挂上,自动结算时才不会丢掉它们.
+struct ChoiceSpec {
+    source: ChoiceSource,
+    action: ChoiceAction,
+    filter: ChoiceFilter,
+    /// 最多选几张;0 表示不限张数
+    need: usize,
+    mode: ChoiceMode,
+    label: String,
+    /// 选中的那份给几张(双持升级版/神圣树皮)
+    copies: usize,
+    /// 选中的牌本回合 0 费(发现类)
+    free: bool,
+    /// 选完之后抽等量张(赌徒筹码/赌徒之酿)
+    draw_after: bool,
+    /// ChoiceSource::Offered 时亮出来的候选(发现/工具箱/抄本)
+    offered: Vec<CardInstance>,
+}
+
+impl ChoiceSpec {
+    /// 最常见的构造:强制单选一张
+    fn mandatory(
+        source: ChoiceSource,
+        action: ChoiceAction,
+        filter: ChoiceFilter,
+        label: &str,
+    ) -> ChoiceSpec {
+        ChoiceSpec::new(source, action, filter, 1, ChoiceMode::Mandatory, label)
+    }
+
+    fn new(
+        source: ChoiceSource,
+        action: ChoiceAction,
+        filter: ChoiceFilter,
+        need: usize,
+        mode: ChoiceMode,
+        label: &str,
+    ) -> ChoiceSpec {
+        ChoiceSpec {
+            source,
+            action,
+            filter,
+            need,
+            mode,
+            label: label.to_string(),
+            copies: 1,
+            free: false,
+            draw_after: false,
+            offered: Vec::new(),
+        }
+    }
+
+    fn copies(mut self, n: usize) -> ChoiceSpec {
+        self.copies = n.max(1);
+        self
+    }
+
+    fn free(mut self, yes: bool) -> ChoiceSpec {
+        self.free = yes;
+        self
+    }
+
+    fn draw_after(mut self) -> ChoiceSpec {
+        self.draw_after = true;
+        self
+    }
+
+    fn offered(mut self, cards: Vec<CardInstance>) -> ChoiceSpec {
+        self.offered = cards;
+        self
+    }
 }
 
 /// 整局持续的遗物计数器:参考实现里这些数挂在 Run 的遗物实例上(relic counter),
@@ -1099,18 +1194,19 @@ impl Combat {
         if self.turn == 1 && self.relic_any(|fx| fx.add_random_power_card) {
             self.add_random_power_to_hand();
         }
-        // 赌徒筹码:开局弃任意张再抽等量张
+        // 赌徒筹码:开局弃任意张再抽等量张(不限张数,永远开屏)
         if self.turn == 1 && self.relic_any(|fx| fx.gambling_chip) && !self.hand.is_empty() {
             self.begin_choice(
-                ChoiceSource::Hand,
-                ChoiceAction::Discard,
-                ChoiceFilter::Any,
-                0,
-                "Gambling Chip",
+                ChoiceSpec::new(
+                    ChoiceSource::Hand,
+                    ChoiceAction::Discard,
+                    ChoiceFilter::Any,
+                    0,
+                    ChoiceMode::Optional,
+                    "Gambling Chip",
+                )
+                .draw_after(),
             );
-            if let Some(ch) = self.choice.as_mut() {
-                ch.draw_after = true;
-            }
         }
         let brutal = self.player.statuses.get(Status::Brutality);
         if brutal > 0 {
@@ -1131,7 +1227,14 @@ impl Combat {
         let toolbox = self.relic_max(|fx| fx.combat_start_colorless_pick);
         if self.turn == 1 && toolbox > 0 {
             let pool = self.discovery_pool(DiscoveryPool::Colorless);
-            self.offer_pick(pool, toolbox as usize, false, "Toolbox: choose 1");
+            self.offer_pick(
+                pool,
+                toolbox as usize,
+                ChoiceAction::ToHand,
+                false,
+                1,
+                "Toolbox: choose 1",
+            );
         }
     }
 
@@ -1939,10 +2042,14 @@ impl Combat {
         if codex > 0 && !self.rs.nilrys_used && !self.suppress_codex {
             self.rs.nilrys_used = true;
             let pool = cards::class_card_pool();
-            self.offer_pick(pool, codex as usize, false, "Nilry's Codex: choose 1");
-            if let Some(ch) = self.choice.as_mut() {
-                ch.action = ChoiceAction::ToDrawShuffled;
-            }
+            self.offer_pick(
+                pool,
+                codex as usize,
+                ChoiceAction::ToDrawShuffled,
+                false,
+                1,
+                "Nilry's Codex: choose 1",
+            );
             if self.choice.is_some() {
                 // 选完(或跳过)之后由 resume_after_choice 把回合交出去
                 self.pending_end_turn = true;
@@ -3060,46 +3167,60 @@ impl Combat {
         }
     }
 
-    /// 调试用:开一个"从手牌里删牌"的选择
+    /// 调试用:开一个"从手牌里删牌"的选择(调试键要能看到窗口,按可选处理)
     pub fn debug_begin_hand_remove(&mut self) {
-        self.begin_choice(
+        self.begin_choice(ChoiceSpec::new(
             ChoiceSource::Hand,
             ChoiceAction::Remove,
             ChoiceFilter::Any,
             1,
+            ChoiceMode::Optional,
             "remove a card from your hand",
-        );
+        ));
     }
 
-    /// 开一次选牌:记下来,等界面那边选完再 choose()
-    /// need 是最多选几张,0 表示不限张数
-    fn begin_choice(
-        &mut self,
-        source: ChoiceSource,
-        action: ChoiceAction,
-        filter: ChoiceFilter,
-        need: usize,
-        label: &str,
-    ) {
+    /// 开一次选牌:记下来,等界面那边选完再 choose().
+    ///
+    /// 原版口径(见 ChoiceMode 与 spec 的 mode):
+    /// - 候选 0 张:不开窗口.参考实现里这些 action 在堆空(或手里没有合规牌)时都是
+    ///   直接 return,例如 Headbutt(弃牌堆空)、Forethought(手牌空)、
+    ///   Dual Wield(手里没有攻击/能力牌)、Armaments(没有可升级牌).
+    /// - 强制单选且候选 1 张:当场替玩家结算这一张、不开窗口,后续效果照常接着跑.
+    ///   出处见 ChoiceMode::Mandatory 列的那些 *Action(都在
+    ///   refs/sts_lightspeed/src/combat/Actions.cpp);对拍基准 slay-the-cli 的
+    ///   chooseOne 对 0/1 候选也 auto.
+    /// - 可选(可少选/可不选):哪怕只剩 1 张候选也开窗口(ExhaustMany、GambleAction,
+    ///   以及对拍基准里 min=0 的请求).
+    fn begin_choice(&mut self, spec: ChoiceSpec) {
         let ch = Choice {
-            source,
-            action,
-            filter,
-            need,
+            source: spec.source,
+            action: spec.action,
+            filter: spec.filter,
+            need: spec.need,
+            mode: spec.mode,
             taken: 0,
-            label: label.to_string(),
+            label: spec.label,
             played: None,
-            offered: Vec::new(),
-            draw_after: false,
-            copies: 1,
-            free: false,
+            offered: spec.offered,
+            draw_after: spec.draw_after,
+            copies: spec.copies,
+            free: spec.free,
             exhaust_after: false,
         };
-        // 原版口径:没有候选可选的选牌动作不开窗口.参考实现里这些 action 在堆空(或
-        // 手里没有合规牌)时都是直接 return,例如 Headbutt(弃牌堆空)、Exhume(消耗堆
-        // 只剩自己)、Dual Wield(手里没有攻击/能力牌)、Warcry(手牌空).
-        // Offered 的候选要等亮牌时才填进 ch.offered,这里跳过这条判断.
-        if ch.source != ChoiceSource::Offered && self.candidates_of(&ch).is_empty() {
+        let (n, first) = {
+            let cands = self.candidates_of(&ch);
+            (cands.len(), cands.first().map(|(i, _)| *i))
+        };
+        if n == 0 {
+            return;
+        }
+        if ch.mode == ChoiceMode::Mandatory && n == 1 {
+            // 替玩家把这一张选掉:choose 走到收尾(close_choice)后 choice 仍为 None,
+            // resolve_effects 便不会把后面的效果截成尾巴,浩劫顶牌那种历史上的丢尾
+            // 在这个形态下根本不会出现.
+            let idx = first.expect("候选 1 张必有下标");
+            self.choice = Some(ch);
+            let _ = self.choose(idx);
             return;
         }
         self.choice = Some(ch);
@@ -4748,53 +4869,48 @@ impl Combat {
                     }
                 }
                 Effect::ExhaustFromHand => {
-                    self.begin_choice(
+                    self.begin_choice(ChoiceSpec::mandatory(
                         ChoiceSource::Hand,
                         ChoiceAction::Exhaust,
                         ChoiceFilter::Any,
-                        1,
                         "exhaust a card",
-                    );
+                    ));
                 }
                 Effect::TopFromHand => {
-                    self.begin_choice(
+                    self.begin_choice(ChoiceSpec::mandatory(
                         ChoiceSource::Hand,
                         ChoiceAction::ToDrawTop,
                         ChoiceFilter::Any,
-                        1,
                         "put a card on top of the draw pile",
-                    );
+                    ));
                 }
                 Effect::CopyFromHand { copies } => {
+                    // 一次选择、复制 copies 份(升级版两份);份数要在自动结算前挂上
                     self.begin_choice(
-                        ChoiceSource::Hand,
-                        ChoiceAction::Copy,
-                        ChoiceFilter::AttackOrPower,
-                        1,
-                        "copy an Attack or Power card",
+                        ChoiceSpec::mandatory(
+                            ChoiceSource::Hand,
+                            ChoiceAction::Copy,
+                            ChoiceFilter::AttackOrPower,
+                            "copy an Attack or Power card",
+                        )
+                        .copies(copies as usize),
                     );
-                    // 一次选择、复制 copies 份(升级版两份)
-                    if let Some(ch) = self.choice.as_mut() {
-                        ch.copies = copies as usize;
-                    }
                 }
                 Effect::FromExhaustToHand => {
-                    self.begin_choice(
+                    self.begin_choice(ChoiceSpec::mandatory(
                         ChoiceSource::Exhaust,
                         ChoiceAction::ToHand,
                         ChoiceFilter::Any,
-                        1,
                         "take a card from the exhaust pile",
-                    );
+                    ));
                 }
                 Effect::FromDiscardToDrawTop => {
-                    self.begin_choice(
+                    self.begin_choice(ChoiceSpec::mandatory(
                         ChoiceSource::Discard,
                         ChoiceAction::ToDrawTop,
                         ChoiceFilter::Any,
-                        1,
                         "take a card from the discard pile",
-                    );
+                    ));
                 }
                 Effect::AddRandomAttackToHand => {
                     // 本职业攻击牌池(不含基础/特殊/无色):原版的
@@ -4861,15 +4977,13 @@ impl Combat {
                     }
                 }
                 Effect::UpgradeChosenInHand => {
-                    if self.hand.iter().any(|c| c.can_upgrade()) {
-                        self.begin_choice(
-                            ChoiceSource::Hand,
-                            ChoiceAction::Upgrade,
-                            ChoiceFilter::Upgradeable,
-                            1,
-                            "Armaments: upgrade a card",
-                        );
-                    }
+                    // 没有可升级的牌时 begin_choice 自己会闸掉(不开屏)
+                    self.begin_choice(ChoiceSpec::mandatory(
+                        ChoiceSource::Hand,
+                        ChoiceAction::Upgrade,
+                        ChoiceFilter::Upgradeable,
+                        "Armaments: upgrade a card",
+                    ));
                 }
                 Effect::UpgradeAllInHand => {
                     let mut n = 0;
@@ -5107,30 +5221,46 @@ impl Combat {
                     let mut pool = cards::class_card_pool();
                     // 池子顺序按 id 排(见上面随机池那一段的说明).
                     pool.sort_by_key(|c| c.id);
-                    self.offer_pick(pool, n as usize, true, "choose 1 of 3 random cards");
+                    self.offer_pick(
+                        pool,
+                        n as usize,
+                        ChoiceAction::ToHand,
+                        true,
+                        1,
+                        "choose 1 of 3 random cards",
+                    );
                 }
                 Effect::ExhaustUpTo { n } => {
-                    self.begin_choice(
+                    // "最多消耗 n 张":可以少选甚至不选,按可选处理(永远开屏)
+                    self.begin_choice(ChoiceSpec::new(
                         ChoiceSource::Hand,
                         ChoiceAction::Exhaust,
                         ChoiceFilter::Any,
                         n as usize,
+                        ChoiceMode::Optional,
                         &format!("exhaust up to {n} cards"),
-                    );
+                    ));
                 }
                 Effect::ToDrawBottomFromHand { n } => {
+                    // 预谋(n=1 基础版)是强制单选;升级版 n=0"任意张"按可选(永远开屏)
                     let label = if n == 0 {
                         "put any number of cards on the bottom of the draw pile"
                     } else {
                         "put a card on the bottom of the draw pile"
                     };
-                    self.begin_choice(
+                    let mode = if n == 0 {
+                        ChoiceMode::Optional
+                    } else {
+                        ChoiceMode::Mandatory
+                    };
+                    self.begin_choice(ChoiceSpec::new(
                         ChoiceSource::Hand,
                         ChoiceAction::ToDrawBottom,
                         ChoiceFilter::Any,
                         n as usize,
+                        mode,
                         label,
-                    );
+                    ));
                 }
                 Effect::TakeFromDrawToHand { kind } => {
                     let hit = self.draw.iter().any(|c| c.kind() == kind);
@@ -5147,13 +5277,12 @@ impl Combat {
                         }
                         _ => (ChoiceFilter::SkillOnly, "put a Skill from your draw pile into your hand"),
                     };
-                    self.begin_choice(
+                    self.begin_choice(ChoiceSpec::mandatory(
                         ChoiceSource::Draw,
                         ChoiceAction::ToHand,
                         filter,
-                        1,
                         label,
-                    );
+                    ));
                 }
                 Effect::RandomFromDrawToHand { kind, n } => {
                     for _ in 0..n {
@@ -5372,48 +5501,45 @@ impl Combat {
             }
             PotionFx::Discovery { pool, n } => {
                 let cards = self.discovery_pool(pool);
-                self.offer_pick(cards, 3, true, def.name);
                 // 神圣树皮把份数翻倍:挑中的那张按 n 份进手
-                if let Some(ch) = self.choice.as_mut() {
-                    ch.copies = n.max(1) as usize;
-                }
+                self.offer_pick(cards, 3, ChoiceAction::ToHand, true, n.max(1) as usize, def.name);
             }
             PotionFx::ExhaustHand => {
-                if !self.hand.is_empty() {
-                    self.begin_choice(
-                        ChoiceSource::Hand,
-                        ChoiceAction::Exhaust,
-                        ChoiceFilter::Any,
-                        0,
-                        &format!("{}: exhaust any number", def.name),
-                    );
-                }
+                // 灵药:消耗任意张(可选,永远开屏)
+                self.begin_choice(ChoiceSpec::new(
+                    ChoiceSource::Hand,
+                    ChoiceAction::Exhaust,
+                    ChoiceFilter::Any,
+                    0,
+                    ChoiceMode::Optional,
+                    &format!("{}: exhaust any number", def.name),
+                ));
             }
             PotionFx::DiscardHandThenDraw => {
-                if !self.hand.is_empty() {
-                    self.begin_choice(
+                // 赌徒之酿:弃任意张再抽等量张(可选,永远开屏)
+                self.begin_choice(
+                    ChoiceSpec::new(
                         ChoiceSource::Hand,
                         ChoiceAction::Discard,
                         ChoiceFilter::Any,
                         0,
+                        ChoiceMode::Optional,
                         &format!("{}: discard any number", def.name),
-                    );
-                    if let Some(ch) = self.choice.as_mut() {
-                        ch.draw_after = true;
-                    }
-                }
+                    )
+                    .draw_after(),
+                );
             }
             PotionFx::ReturnFromDiscard { n } => {
-                if !self.discard.is_empty() {
-                    let need = (n as usize).min(self.discard.len());
-                    self.begin_choice(
-                        ChoiceSource::Discard,
-                        ChoiceAction::ToHand,
-                        ChoiceFilter::Any,
-                        need,
-                        &format!("{}: take a card back", def.name),
-                    );
-                }
+                // 液态记忆:从弃牌堆拿回 n 张(强制;只剩 1 张时自动结算)
+                let need = (n as usize).min(self.discard.len());
+                self.begin_choice(ChoiceSpec::new(
+                    ChoiceSource::Discard,
+                    ChoiceAction::ToHand,
+                    ChoiceFilter::Any,
+                    need,
+                    ChoiceMode::Mandatory,
+                    &format!("{}: take a card back", def.name),
+                ));
             }
             PotionFx::UpgradeHand => {
                 let mut n = 0;
@@ -5509,6 +5635,7 @@ impl Combat {
 
     /// 亮出 n 张不重样的候选,开一次"挑一张"的选择;牌池抽干了就少亮几张.
     /// free 表示选中的那张本回合 0 费(发现类药水);工具箱与抄本不免费.
+    /// copies 是选中的那份给几张(神圣树皮);action 是选完干什么(抄本要洗进抽牌堆).
     ///
     /// **掷点口径照反编译**:generateDiscoveryCards
     /// (refs/sts_lightspeed/src/game/Game.cpp:228-260)每次从整个池子里随机取一张,
@@ -5519,7 +5646,9 @@ impl Combat {
         &mut self,
         pool: Vec<&'static crate::core::card::CardDef>,
         n: usize,
+        action: ChoiceAction,
         free: bool,
+        copies: usize,
         label: &str,
     ) {
         let mut offered: Vec<CardInstance> = Vec::new();
@@ -5539,17 +5668,13 @@ impl Combat {
         if offered.is_empty() {
             return;
         }
+        // 只亮出 1 张(牌池太小)时按强制单选自动结算(参考实现 chooseOne 同样 auto)
         self.begin_choice(
-            ChoiceSource::Offered,
-            ChoiceAction::ToHand,
-            ChoiceFilter::Any,
-            1,
-            label,
+            ChoiceSpec::mandatory(ChoiceSource::Offered, action, ChoiceFilter::Any, label)
+                .offered(offered)
+                .free(free)
+                .copies(copies),
         );
-        if let Some(ch) = self.choice.as_mut() {
-            ch.offered = offered;
-            ch.free = free;
-        }
     }
 }
 
@@ -5697,10 +5822,11 @@ mod tests {
         assert_eq!(c.draw.len(), before + 1);
         assert_eq!(c.exhaust.len(), 1, "战吼自己被消耗");
 
-        // 二重身:复制一张手牌
+        // 二重身:复制一张手牌(手里摆两张可复制的牌,窗口才开得出来)
         let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
         c.hand = vec![
             crate::core::cards::card("dual_wield"),
+            crate::core::cards::card("strike"),
             crate::core::cards::card("strike"),
         ];
         c.energy = 3;
@@ -5710,8 +5836,9 @@ mod tests {
         assert_eq!(c.hand.len(), n + 1, "复制出一张");
         assert_eq!(c.hand.last().unwrap().def.id, "strike");
 
-        // 掘出:从消耗堆拿回手牌
+        // 掘出:从消耗堆拿回手牌(消耗堆留两张,不是强制单选那条自动结算的路)
         let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.exhaust.push(crate::core::cards::card("bash"));
         c.exhaust.push(crate::core::cards::card("bash"));
         c.hand = vec![crate::core::cards::card("exhume")];
         c.energy = 3;
@@ -5720,8 +5847,9 @@ mod tests {
         c.choose(0).unwrap();
         assert!(c.hand.iter().any(|x| x.def.id == "bash"), "掘出的牌回到手牌");
 
-        // 头槌:打伤害 + 从弃牌堆拿一张到抽牌堆顶
+        // 头槌:打伤害 + 从弃牌堆拿一张到抽牌堆顶(弃牌堆两张才开屏)
         let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.discard.push(crate::core::cards::card("defend"));
         c.discard.push(crate::core::cards::card("defend"));
         c.hand = vec![crate::core::cards::card("headbutt")];
         c.energy = 3;
@@ -5758,22 +5886,30 @@ mod tests {
         let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
         let mut dw = crate::core::cards::card("dual_wield");
         dw.upgraded = true;
-        c.hand = vec![dw, crate::core::cards::card("strike")];
+        // 手里两张可复制的牌,窗口才开得出来
+        c.hand = vec![
+            dw,
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("strike"),
+        ];
         c.energy = 3;
         c.play_card(0, None).unwrap();
         assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Hand);
         assert_eq!(c.choice.as_ref().unwrap().copies, 2, "升级版一次复制两份");
-        // 打出二重身后手牌只剩那张 strike,下标 0 就是它
+        // 打出二重身后手牌只剩那两张 strike,下标 0 是其中一张
         c.choose(0).unwrap();
         assert!(c.choice.is_none(), "一次选择就做完,不该再挂第二次选择");
         let strikes = c.hand.iter().filter(|x| x.def.id == "strike").count();
-        assert_eq!(strikes, 3, "原来的 1 张 + 复制的 2 张");
+        assert_eq!(strikes, 4, "原来的 2 张 + 复制的 2 张");
     }
 
     /// 掘出:候选池里不能包含被消耗掉的掘出自己(wiki Update History + 参考实现)
     #[test]
     fn exhume_cannot_recover_itself() {
+        // 消耗堆里放一张之前耗掉的掘出自己 + 两张别的牌(候选要够 2 张才开屏)
         let mut c = combat_with("jaw_worm_solo", &["exhume"]);
+        c.exhaust.push(crate::core::cards::card("exhume"));
+        c.exhaust.push(crate::core::cards::card("bash"));
         c.exhaust.push(crate::core::cards::card("bash"));
         c.hand = vec![crate::core::cards::card("exhume")];
         c.energy = 3;
@@ -5797,8 +5933,9 @@ mod tests {
         assert_eq!(c.enemies[0].hp, e_hp - 9, "伤害照常结算");
         assert!(c.choice.is_none(), "弃牌堆空不该开选牌窗口");
 
-        // 头槌:弃牌堆有牌 -> 窗口照开(别把正常路径也闸掉)
+        // 头槌:弃牌堆有两张 -> 窗口照开(别把正常路径也闸掉)
         let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.discard.push(crate::core::cards::card("defend"));
         c.discard.push(crate::core::cards::card("defend"));
         c.hand = vec![crate::core::cards::card("headbutt")];
         c.energy = 3;
@@ -5878,7 +6015,12 @@ mod tests {
     #[test]
     fn havoc_playing_a_choice_card_still_asks() {
         let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
-        c.hand = vec![crate::core::cards::card("havoc")];
+        // 留两张手牌,战吼的放顶窗口(候选 2 张)才开得出来
+        c.hand = vec![
+            crate::core::cards::card("havoc"),
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("defend"),
+        ];
         c.draw = vec![crate::core::cards::card("warcry")];
         c.energy = 3;
         c.play_card(0, None).unwrap();
@@ -5899,6 +6041,7 @@ mod tests {
 
         // 掘出(从消耗堆拿)也一样:选择来自消耗堆
         let mut c = combat_with("jaw_worm_solo", &["havoc"; 4]);
+        c.exhaust.push(crate::core::cards::card("bash"));
         c.exhaust.push(crate::core::cards::card("bash"));
         c.hand = vec![crate::core::cards::card("havoc")];
         c.draw = vec![crate::core::cards::card("exhume")];
@@ -6755,7 +6898,7 @@ mod tests {
     #[test]
     fn secret_technique_pulls_only_skills_from_the_draw_pile() {
         let mut c = staged(
-            &["secret_technique", "strike", "defend", "bash"],
+            &["secret_technique", "strike", "defend", "defend", "bash"],
             &["secret_technique"],
         );
         let idx = hand_idx(&c, "secret_technique");
@@ -6763,12 +6906,17 @@ mod tests {
         let ch = c.choice.as_ref().expect("秘技要开选择");
         assert_eq!(ch.source, ChoiceSource::Draw);
         let cands = c.choice_candidates();
-        assert_eq!(cands.len(), 1, "抽牌堆里只有一张技能");
+        assert_eq!(cands.len(), 2, "抽牌堆里有两张技能");
+        assert!(cands.iter().all(|(_, card)| card.def.id == "defend"));
         let (idx, card) = cands[0];
         assert_eq!(card.def.id, "defend");
         c.choose(idx).unwrap();
         assert!(c.hand.iter().any(|x| x.def.id == "defend"), "技能进了手牌");
-        assert!(!c.draw.iter().any(|x| x.def.id == "defend"), "从抽牌堆里拿走了");
+        assert_eq!(
+            c.draw.iter().filter(|x| x.def.id == "defend").count(),
+            1,
+            "只拿走了挑中的那张"
+        );
         assert!(c.draw.iter().any(|x| x.def.id == "strike"), "攻击牌不动");
     }
 
@@ -7209,7 +7357,10 @@ mod tests {
 
     #[test]
     fn forethought_parking_a_card_keeps_it_free() {
-        let mut c = staged(&["forethought", "strike"], &["forethought", "strike"]);
+        let mut c = staged(
+            &["forethought", "strike", "defend"],
+            &["forethought", "strike", "defend"],
+        );
         let idx = hand_idx(&c, "forethought");
         c.play_card(idx, None).unwrap();
         let ch = c.choice.as_ref().expect("预谋要开选择");
@@ -7584,13 +7735,14 @@ mod tests {
     #[test]
     fn havoc_plays_the_whole_choice_card() {
         let mut c = guarded(&[]);
-        c.hand = vec![card("havoc"), card("strike")];
+        // 两张手牌,燃烧契约的消耗窗口(候选 2 张)才开得出来
+        c.hand = vec![card("havoc"), card("strike"), card("strike")];
         c.draw = vec![card("burning_pact"), card("strike"), card("strike")];
         c.energy = 3;
         c.play_card(0, Some(0)).unwrap();
         assert!(c.choice.is_some(), "燃烧契约要挂起选牌");
         c.choose(0).unwrap();
-        assert_eq!(c.hand.len(), 2, "选完牌之后要真的抽 2 张");
+        assert_eq!(c.hand.len(), 3, "选完牌之后要真的抽 2 张");
         assert!(c.draw.is_empty(), "顶牌自己 + 抽走的 2 张都没了");
         assert!(
             c.exhaust.iter().any(|x| x.def.id == "burning_pact"),
@@ -11381,6 +11533,177 @@ mod branch_assertions {
         assert_eq!(first, 6 + 8, "第一张打击吃到活力 8");
         assert_eq!(second, 6, "第二张打击不再吃活力");
     }
+    // ---- 选牌的强制/可选维度(ChoiceMode) ----
+    // 原版口径见 ChoiceMode 的注释与反编译 Actions.cpp 各自的动作定义:
+    // 强制单选候选 1 张 -> 自动结算不开屏;可选(可少选/不选)-> 1 张也开屏.
+
+    /// 候选 0 张:强制/可选的选牌动作都不开窗口(参考实现的 action 在堆空时直接 return)
+    #[test]
+    fn zero_candidates_open_no_window_either_mode() {
+        // 强制:头槌弃牌堆空 -> 只打伤害
+        let mut c = board(&["headbutt"], &[], 0);
+        c.hand = vec![card("headbutt")];
+        let hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, hp - 9);
+        assert!(c.choice.is_none(), "头槌弃牌堆空不开屏");
+
+        // 可选:净化手牌空 -> 消耗堆不动、不开屏
+        let mut c = board(&["purity"], &[], 0);
+        c.hand = vec![card("purity")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "净化手牌空不开屏");
+        assert!(c.exhaust.iter().all(|x| x.def.id == "purity"), "没有别的牌被耗");
+
+        // 可选:预谋升级版(任意张)手牌空 -> 不开屏
+        let mut c = board(&["forethought"], &[], 0);
+        let mut ft = card("forethought");
+        ft.upgraded = true;
+        c.hand = vec![ft];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "预谋+ 手牌空不开屏");
+    }
+
+    /// 1 张候选且强制:当场自动结算,不开窗口
+    #[test]
+    fn mandatory_single_candidate_auto_resolves() {
+        // 头槌:弃牌堆只剩 1 张 -> 自动放到抽牌堆顶
+        let mut c = board(&["headbutt"], &[], 0);
+        c.hand = vec![card("headbutt")];
+        c.discard = vec![card("defend")];
+        let hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert!(c.choice.is_none(), "强制单选 1 张:自动结算");
+        assert_eq!(c.enemies[0].hp, hp - 9, "伤害照打");
+        assert_eq!(c.draw.first().unwrap().def.id, "defend", "那张自动上堆顶");
+
+        // 掘出:消耗堆只有 1 张别的牌 -> 自动回手(掘出自己不算候选)
+        let mut c = board(&["exhume"], &[], 0);
+        c.hand = vec![card("exhume")];
+        c.exhaust = vec![card("bash")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "掘出 1 张候选:自动结算");
+        assert!(c.hand.iter().any(|x| x.def.id == "bash"), "那张直接回手");
+
+        // 战吼:打完自己后手里只剩 1 张 -> 自动放顶
+        let mut c = board(&["warcry", "strike"], &[], 0);
+        c.hand = vec![card("warcry"), card("strike")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "战吼 1 张候选:自动结算");
+        assert_eq!(c.draw.first().unwrap().def.id, "strike", "自动放顶");
+
+        // 军备:手里只有 1 张可升级 -> 自动升级
+        let mut c = board(&["armaments", "strike"], &[], 0);
+        c.hand = vec![card("armaments"), card("strike")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "军备 1 张可升级:自动结算");
+        assert!(c.hand.iter().all(|x| x.upgraded), "那张自动升级");
+
+        // 坚毅+:手里只有 1 张 -> 自动消耗(格挡照给)
+        let mut c = board(&["true_grit", "strike"], &[], 0);
+        let mut tg = card("true_grit");
+        tg.upgraded = true;
+        c.hand = vec![tg, card("strike")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "坚毅+ 1 张候选:自动结算");
+        assert_eq!(c.player.block, 9, "格挡照给");
+        assert!(c.exhaust.iter().any(|x| x.def.id == "strike"), "那张被消耗");
+    }
+
+    /// 多张候选:照常开屏,一张都还没选
+    #[test]
+    fn multiple_candidates_still_open_the_window() {
+        let mut c = board(&["headbutt"], &[], 0);
+        c.hand = vec![card("headbutt")];
+        c.discard = vec![card("defend"), card("strike"), card("bash")];
+        c.play_card(0, Some(0)).unwrap();
+        let ch = c.choice.as_ref().expect("多候选照常开屏");
+        assert_eq!(ch.mode, ChoiceMode::Mandatory);
+        assert_eq!(c.choice_candidates().len(), 3);
+        assert_eq!(ch.taken, 0, "开屏时一张都还没选");
+    }
+
+    /// 1 张候选但可选:仍然开窗口(玩家能少选/不选)
+    #[test]
+    fn optional_single_candidate_still_opens() {
+        // 净化:手里只剩 1 张也开屏
+        let mut c = board(&["purity", "strike"], &[], 0);
+        c.hand = vec![card("purity"), card("strike")];
+        c.play_card(0, None).unwrap();
+        let ch = c.choice.as_ref().expect("净化 1 张候选也要开屏");
+        assert_eq!(ch.mode, ChoiceMode::Optional);
+        assert_eq!(c.choice_candidates().len(), 1);
+
+        // 预谋升级版(任意张):手里 1 张也开屏
+        let mut c = board(&["forethought", "strike"], &[], 0);
+        let mut ft = card("forethought");
+        ft.upgraded = true;
+        c.hand = vec![ft, card("strike")];
+        c.play_card(0, None).unwrap();
+        let ch = c.choice.as_ref().expect("预谋+ 1 张候选也要开屏");
+        assert_eq!(ch.mode, ChoiceMode::Optional);
+
+        // 灵药:手里 1 张也开屏(消耗任意张)
+        let mut c = board(&["strike"], &[], 0);
+        c.hand = vec![card("strike")];
+        c.use_potion(crate::core::potions::by_id("elixir_potion").unwrap(), None);
+        let ch = c.choice.as_ref().expect("灵药 1 张候选也要开屏");
+        assert_eq!(ch.mode, ChoiceMode::Optional);
+        assert_eq!(ch.need, 0);
+
+        // 赌徒筹码:开局手里只有 1 张也开屏(弃任意张)
+        let chip = [relic_def_or_panic("gambling_chip")];
+        let c = board(&["strike"], &chip, 0);
+        let ch = c.choice.as_ref().expect("赌徒筹码 1 张候选也要开屏");
+        assert_eq!(ch.mode, ChoiceMode::Optional);
+    }
+
+    /// 自动结算不能吞掉后面的效果(历史上的丢尾 bug 就在这里)
+    #[test]
+    fn auto_resolve_keeps_the_remaining_effects() {
+        // 燃烧契约(消耗一张 + 抽 2):手里只剩 1 张 -> 自动消耗后照样抽 2
+        let mut c = board(&["burning_pact", "strike"], &[], 0);
+        c.hand = vec![card("burning_pact"), card("strike")];
+        c.draw = vec![card("strike"), card("strike")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "只剩一张:自动消耗,不开屏");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "strike"),
+            "那张被消耗"
+        );
+        assert_eq!(c.hand.len(), 2, "后续的抽 2 照跑");
+        assert!(c.draw.is_empty(), "抽牌堆那 2 张被抽走");
+
+        // 浩劫放出的带选牌顶牌(燃烧契约):顶牌的选牌自动结算,后续的抽 2 也不能丢
+        let mut c = board(&[], &[], 0);
+        c.hand = vec![card("havoc"), card("strike")];
+        c.draw = vec![card("burning_pact"), card("strike"), card("strike")];
+        c.play_card(0, Some(0)).unwrap();
+        assert!(c.choice.is_none(), "顶牌的强制单选也只有 1 张:自动结算");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "burning_pact"),
+            "顶牌打完要消耗"
+        );
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "strike"),
+            "被自动选中的那张也消耗了"
+        );
+        assert_eq!(c.hand.len(), 2, "顶牌的抽 2 照跑");
+        assert!(c.draw.is_empty(), "抽牌堆那 2 张被抽走");
+    }
+
+    /// 自动结算也要带上附加项:二重身升级版只剩 1 张攻击/能力牌时,一次复制两份
+    #[test]
+    fn auto_resolve_keeps_the_extra_copies() {
+        let mut c = board(&["strike"], &[], 0);
+        let mut dw = card("dual_wield");
+        dw.upgraded = true;
+        c.hand = vec![dw, card("strike")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "只剩一张可复制:自动结算");
+        let strikes = c.hand.iter().filter(|x| x.def.id == "strike").count();
+        assert_eq!(strikes, 3, "原来的 1 张 + 自动复制的 2 张");
+    }
 }
 
 /// 怪物选招的飞升档位分支(A17 / A18 / A19)逐条断言,外加一张全怪物选招表.
@@ -11885,4 +12208,5 @@ mod ascension_move_branches {
         c.gain_block(3, false, false); // 遗物/能力格挡
         assert_eq!(hp1 - c.enemies[0].hp, 5, "非卡牌格挡也触发主宰");
     }
+
 }

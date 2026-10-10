@@ -1185,7 +1185,7 @@ mod tests {
                 .count()
         };
 
-        // 秘技:窗口里只列抽牌堆里的技能
+        // 秘技:窗口里只列抽牌堆里的技能(留两张技能,窗口才开得出来)
         let mut app = app_in_combat(3, "jaw_worm_solo");
         {
             let c = app.run.combat_mut().expect("战斗中");
@@ -1194,13 +1194,14 @@ mod tests {
             c.hand.push(crate::core::cards::card("secret_technique"));
             c.draw.push(crate::core::cards::card("strike"));
             c.draw.push(crate::core::cards::card("defend"));
+            c.draw.push(crate::core::cards::card("defend"));
             c.energy = 9;
         }
         app.hand_sel = 0;
         app.handle_key(enter);
         assert_eq!(app.overlay, Some(Overlay::Draw), "秘技要开出抽牌堆窗口");
         let rows = crate::ui::overlay::deck_rows(&app, Overlay::Draw);
-        assert_eq!(count_cards(&rows), 1, "只有技能可挑");
+        assert_eq!(count_cards(&rows), 2, "只有技能可挑");
         let text = screen_text(&app, 110, 34);
         assert!(text.contains("Defend"), "候选该列出来:\n{text}");
         assert!(!text.contains("Strike"), "攻击牌不该出现在候选里:\n{text}");
@@ -1296,6 +1297,7 @@ mod tests {
     fn draw_pick_window_keeps_candidate_order_without_frozen_eye() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        // 秘技:抽牌堆留两张技能,窗口才开得出来(只剩一张会被强制单选自动结算)
         let mut app = app_in_combat(5, "jaw_worm_solo");
         {
             let c = app.run.combat_mut().expect("战斗中");
@@ -1303,7 +1305,7 @@ mod tests {
             c.draw.clear();
             c.hand.push(crate::core::cards::card("secret_technique"));
             // 抽取顺序与牌名顺序相反:排序口径若泄漏到这里就可能挑错
-            c.draw.push(crate::core::cards::card("strike"));
+            c.draw.push(crate::core::cards::card("true_grit"));
             c.draw.push(crate::core::cards::card("defend"));
             c.energy = 9;
         }
@@ -1318,11 +1320,15 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(shown, vec!["defend"], "只列技能牌,且按候选序号");
-        // 选中的必须是窗口里那张(defend),不能因为排序挑到别的
+        assert_eq!(shown, vec!["true_grit", "defend"], "只列技能牌,且按候选序号");
+        // 选中的必须是窗口里第一张(true_grit),不能因为排序挑到别的
         app.handle_key(enter);
         let c = app.run.combat().expect("战斗中");
-        assert!(c.hand.iter().any(|x| x.def.id == "defend"), "挑到的是 defend");
+        assert!(
+            c.hand.iter().any(|x| x.def.id == "true_grit"),
+            "挑到的是 true_grit"
+        );
+        assert!(c.draw.iter().any(|x| x.def.id == "defend"), "defend 还在抽牌堆");
     }
 
     #[test]

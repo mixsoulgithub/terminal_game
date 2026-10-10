@@ -1110,13 +1110,17 @@ mod effect_tests {
     #[test]
     fn liquid_memories_returns_a_card_for_free() {
         let mut c = combat();
-        c.discard = vec![crate::core::cards::card("bash")];
+        // 弃牌堆两张,不是"只剩一张自动结算"那条路
+        c.discard = vec![
+            crate::core::cards::card("bash"),
+            crate::core::cards::card("defend"),
+        ];
         c.use_potion(def("liquid_memories"), None);
         let ch = c.choice.as_ref().expect("液态记忆要开一次选择");
         assert_eq!(ch.source, ChoiceSource::Discard);
         assert_eq!(ch.action, ChoiceAction::ToHand);
         c.choose(0).expect("弃牌堆里那张拿得回来");
-        assert!(c.discard.is_empty());
+        assert_eq!(c.discard.len(), 1, "只拿走挑中的那张");
         assert!(c
             .hand
             .iter()

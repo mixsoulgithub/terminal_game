@@ -737,7 +737,9 @@ function choiceScenarios(): void {
       }),
     );
   }
-  // 双重施法:选一张攻击/能力,加 1 份(升级 2 份);技能不能被选
+  // 双重施法:选一张攻击/能力,加 1 份(升级 2 份);技能不能被选.
+  // 手里摆两张攻击:候选只剩一张时原版会直接结算、不开屏(ChoiceMode::Mandatory),
+  // 那样 options 就看不到候选池了,所以留两张攻击 + 一张技能来验过滤.
   for (const level of ["base", "up"] as const) {
     const up = level === "up";
     const tok = up ? "dual_wield+" : "dual_wield";
@@ -747,7 +749,7 @@ function choiceScenarios(): void {
       level,
       level,
       [
-        { k: "probe", key: "options", v: 1 },
+        { k: "probe", key: "options", v: 2 },
         { k: "probe", key: "copies", v: up ? 2 : 1 },
         { k: "probe", key: "skill_offered", v: 0 },
       ],
@@ -758,7 +760,7 @@ function choiceScenarios(): void {
       }),
       playBoard({
         report: true,
-        hand: [tok, "strike", "defend"],
+        hand: [tok, "strike", "strike", "defend"],
         actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
       }),
     );
@@ -1130,7 +1132,7 @@ function choiceScenarios(): void {
       level,
       level,
       [
-        { k: "probe", key: "options", v: 1 },
+        { k: "probe", key: "options", v: 2 },
         { k: "probe", key: "offered_exhume", v: 0 },
         { k: "probe", key: "took_bash", v: 1 },
         { k: "probe", key: "self_exhausted", v: 1 },
@@ -1144,10 +1146,12 @@ function choiceScenarios(): void {
           self_exhausted: inPile(lastSt(rows), "exhaust", tok),
         };
       },
+      // 消耗堆里留两张别的牌:候选只剩一张时原版会直接结算、不开屏
+      // (ChoiceMode::Mandatory),那样 options 就看不到候选池里的"掘出自己"排除了.
       playBoard({
         report: true,
         hand: [tok, "defend"],
-        exhaust: ["exhume", "bash"],
+        exhaust: ["exhume", "bash", "defend"],
         actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
       }),
     );

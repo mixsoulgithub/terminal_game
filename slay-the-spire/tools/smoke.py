@@ -3,10 +3,13 @@
 
 用法:
     python3 tools/smoke.py [二进制路径] [种子...]
-    python3 tools/smoke.py 7 42     # 不给二进制就用 ./target/debug/spire
+    python3 tools/smoke.py 7 42          # 不给二进制就用 ./target/debug/spire
+    python3 tools/smoke.py 1-30          # 区间写法:一次跑一批种子
+    SMOKE_SESSION=batch2 python3 tools/smoke.py 31-40   # 换会话名,可并行跑几批
 
 它读取底栏的 `-- SCREEN --` 判断当前界面,然后发对应的按键,最后要求这一局
-落到 VICTORY 或 DEATH(不做策略,死了也算通过:重点是流程不能卡住)。
+落到 VICTORY 或 DEATH(不做策略,死了也算通过:重点是流程不能卡住).
+跑完打印逐种子 PASS/FAIL 表(含走过的界面、按键数、耗时)与总耗时.
 """
 import os
 import re
@@ -14,7 +17,7 @@ import subprocess
 import sys
 import time
 
-SESSION = "spire_smoke"
+SESSION = os.environ.get("SMOKE_SESSION", "spire_smoke")
 # 按键之后最短等多久再抓屏(等界面稳定下来用的采样间隔)
 SAMPLE = 0.03
 
@@ -243,6 +246,10 @@ def play(binary: str, seed: int, steps: int = 800) -> tuple[str, set[str], str]:
             # 先用 j 挪到下一格再回车;光标是循环的,一格一格往下走正好凑齐 5 次尝试.
             if "Flip card" in text:
                 send("j", "Enter")
+            elif "that choice is not available" in text:
+                # 光标停在一个刚失效的选项上(金像拿完后的陷阱屏:第 0/1 项已不可选).
+                # 往后挪一格再试,挪到可选项上就能选出去.
+                send("j")
             else:
                 send("Enter")
         elif where == "TREASURE":
@@ -259,27 +266,54 @@ def play(binary: str, seed: int, steps: int = 800) -> tuple[str, set[str], str]:
     )
 
 
+def expand_seeds(tokens: list[str]) -> list[int]:
+    """把种子参数展开:普通数字原样,`N-M` 展开成区间(闭区间)。"""
+    seeds: list[int] = []
+    for tok in tokens:
+        if "-" in tok:
+            lo, _, hi = tok.partition("-")
+            if lo.isdigit() and hi.isdigit():
+                a, b = int(lo), int(hi)
+                seeds.extend(range(a, b + 1))
+                continue
+        if not tok.isdigit():
+            raise SystemExit(f"认不出种子参数: {tok}")
+        seeds.append(int(tok))
+    return seeds
+
+
 def main() -> int:
     args = sys.argv[1:]
-    # 第一个参数全是数字就当它是种子(留出 `smoke.py 7` 这种简写),
-    # 否则按 [二进制路径] [种子...] 解析.
-    if args and args[0].isdigit():
+    # 第一个参数是种子(单个数字或 `N-M` 区间)就当简写,否则按 [二进制路径] [种子...] 解析.
+    first_seedish = bool(args) and (
+        args[0].isdigit()
+        or (
+            "-" in args[0]
+            and all(p.isdigit() for p in args[0].split("-", 1))
+        )
+    )
+    if first_seedish:
         binary = "./target/debug/spire"
-        seeds = [int(a) for a in args]
+        seeds = expand_seeds(args)
     else:
         binary = args[0] if args else "./target/debug/spire"
-        seeds = [int(a) for a in args[1:]]
+        seeds = expand_seeds(args[1:])
     seeds = seeds or [7, 42]
     ok = True
+    rows: list[tuple[int, bool, str, list[str], int, float]] = []
+    t_all = time.time()
     for seed in seeds:
+        t0 = time.time()
         try:
             where, seen, text = play(binary, seed)
         except AssertionError as e:
             print(f"FAIL seed {seed}: {e}")
+            rows.append((seed, False, "-", [], KEYS_SENT, time.time() - t0))
             ok = False
             continue
         if "REWARD" not in seen:
             print(f"FAIL seed {seed}: 整局没出现过奖励界面")
+            rows.append((seed, False, "-", sorted(seen), KEYS_SENT, time.time() - t0))
             ok = False
             continue
         print(
@@ -287,7 +321,16 @@ def main() -> int:
             f"按了 {KEYS_SENT} 次键"
         )
         print("   最后一行:", [l for l in text.splitlines() if l.strip()][-1][:100])
-    print("smoke:", "PASS" if ok else "FAIL")
+        rows.append((seed, True, where, sorted(seen), KEYS_SENT, time.time() - t0))
+    print()
+    print("seed   result  end      keys  secs  screens")
+    for seed, good, where, seen, keys, secs in rows:
+        print(
+            f"{seed:<6} {'PASS' if good else 'FAIL':<7} {where:<8} {keys:<5} "
+            f"{secs:5.1f} {','.join(seen)}"
+        )
+    print(f"\nsmoke: {'PASS' if ok else 'FAIL'}  "
+          f"({len(rows)} seeds, {time.time() - t_all:.1f}s total)")
     return 0 if ok else 1
 
 
