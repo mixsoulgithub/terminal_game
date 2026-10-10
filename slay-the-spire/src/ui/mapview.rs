@@ -178,7 +178,8 @@ fn map_glyph(kind: NodeKind, burning: bool, wide: bool) -> &'static str {
 /// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名。
 /// 标记统一占 3 格再空 1 格,这样每一行名字都从同一列起头
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
-    let row = |marker: &str, name: &str| format!("{marker:<3} {name}");
+    // 标记一律去掉左右补白再补到 3 格:地图上的色块要左右铺满,图例这里只要对齐
+    let row = |marker: &str, name: &str| format!("{:<3} {name}", marker.trim());
     let mut out: Vec<(String, Style)> = Vec::new();
     if run.wing_boots_charges() > 0 {
         out.push((
