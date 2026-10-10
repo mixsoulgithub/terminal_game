@@ -27,6 +27,18 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     let limit = area.x + area.width;
     let dim = theme::dim();
 
+    // 三把钥匙:拿到的用对应颜色的 ↑,没拿到的是暗色 ↑(不写 K:,也不用 - 占位)
+    let key = |owned: bool, c| {
+        if owned {
+            theme::fg(c)
+        } else {
+            theme::dim()
+        }
+    };
+    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.emerald, theme::GOOD));
+    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.ruby, theme::BAD));
+    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.sapphire, theme::BLOCK));
+    x += 3;
     // 血量 / 上限 / 格挡
     x = seg(buf, x, y, limit, &p.hp.to_string(), theme::fg(theme::BAD));
     x = seg(buf, x, y, limit, "/", theme::dim());
@@ -40,18 +52,6 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     x = seg(buf, x, y, limit, &format!("${}", p.gold), theme::fg(theme::GOLD));
     x += 2;
 
-    // 三把钥匙:拿到的用对应颜色的 ↑,没拿到的是暗色 ↑(不写 K:,也不用 - 占位)
-    let key = |owned: bool, c| {
-        if owned {
-            theme::fg(c)
-        } else {
-            theme::dim()
-        }
-    };
-    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.emerald, theme::GOOD));
-    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.ruby, theme::BAD));
-    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.sapphire, theme::BLOCK));
-    x += 3;
 
     // 最右:Act 紧挨着 Floor 再紧挨着 Deck,整组右对齐,右边留 2 格.
     // 药水区要画在它左边,所以先把这一组算出来(窄终端上三瓶长名字会压过来)

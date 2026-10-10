@@ -61,6 +61,8 @@ pub const CHIP_REST: Color = Color::Rgb(236, 96, 108);
 pub const CHIP_MERCHANT: Color = Color::Rgb(250, 186, 66);
 pub const CHIP_EVENT: Color = Color::Rgb(128, 134, 150);
 pub const CHIP_TREASURE: Color = Color::Rgb(146, 92, 214);
+/// 罕见(uncommon)的配色:卡片名、遗物名、图鉴共用同一种偏亮的湖蓝
+pub const UNCOMMON: Color = Color::Rgb(104, 205, 255);
 /// 色块上的字:一律黑字(和终端底色同色)+ 加粗
 pub const CHIP_FG: Color = BG;
 
@@ -94,7 +96,7 @@ pub fn arrived_chip() -> Style {
 pub fn relic_tier_color(tier: crate::core::relics::RelicTier) -> Color {
     use crate::core::relics::RelicTier;
     match tier {
-        RelicTier::Uncommon => Color::Rgb(120, 170, 240),
+        RelicTier::Uncommon => UNCOMMON,
         RelicTier::Rare => Color::Rgb(250, 186, 66),
         RelicTier::Boss => Color::Rgb(236, 96, 108),
         RelicTier::Shop => Color::Rgb(120, 222, 140),
@@ -154,7 +156,7 @@ pub fn tab_bg(key: &str) -> Color {
 /// 语料里的稀有度/阶字符串 -> 颜色(卡牌、遗物、药水共用)
 pub fn corpus_color(rarity: &str) -> Color {
     match rarity {
-        "uncommon" => Color::Rgb(120, 170, 240),
+        "uncommon" => UNCOMMON,
         "rare" | "boss" => Color::Rgb(250, 186, 66),
         "special" | "event" | "shop" => BUFF,
         "curse" => DEBUFF,
@@ -178,7 +180,7 @@ pub fn role_color(color: &str) -> Color {
 pub fn card_color(rarity: crate::core::card::Rarity) -> Color {
     use crate::core::card::Rarity;
     match rarity {
-        Rarity::Uncommon => Color::Rgb(120, 170, 240),
+        Rarity::Uncommon => UNCOMMON,
         Rarity::Rare => Color::Rgb(250, 186, 66),
         _ => FG,
     }
