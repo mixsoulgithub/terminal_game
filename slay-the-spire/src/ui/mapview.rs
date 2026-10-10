@@ -125,6 +125,30 @@ fn chosen_future(app: &App) -> Option<Vec<bool>> {
     Some(app.run.map.forward_reachable(chosen))
 }
 
+/// 地图上的房间记号。精英:红底铺三格(左右各多一格);燃烧精英在右边多一个 *;
+/// 休息与商店用 emoji(各占两格,终端按显示宽度算)
+fn map_glyph_text(kind: NodeKind, burning: bool) -> (&'static str, u16) {
+    match kind {
+        NodeKind::Rest => ("🔥", 0),
+        NodeKind::Shop => ("💰", 0),
+        NodeKind::Elite if burning => (" E*", 1),
+        NodeKind::Elite => (" E ", 1),
+        NodeKind::Monster => ("e", 0),
+        NodeKind::Event => ("?", 0),
+        NodeKind::Treasure => ("T", 0),
+        NodeKind::Boss => ("B", 0),
+    }
+}
+
+/// 房间的配色。精英(含燃烧精英)统一红底;其它照类型
+fn map_glyph_style(kind: NodeKind) -> Style {
+    if kind == NodeKind::Elite {
+        theme::kind_style(NodeKind::Elite)
+    } else {
+        theme::kind_style(kind)
+    }
+}
+
 /// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     let mut out: Vec<(String, Style)> = Vec::new();
@@ -137,12 +161,12 @@ fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     out.extend(vec![
         ("[] you".to_string(), Style::default().add_modifier(Modifier::BOLD)),
         ("?  Unknown".to_string(), theme::kind_style(NodeKind::Event)),
-        ("$  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
+        ("💰  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
         ("T  Treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
-        ("R  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
+        ("🔥  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
         ("e  Enemy".to_string(), theme::kind_style(NodeKind::Monster)),
-        ("E  Elite".to_string(), theme::kind_style(NodeKind::Elite)),
-        ("E  Burning".to_string(), theme::burning_style()),
+        (" E  Elite".to_string(), theme::kind_style(NodeKind::Elite)),
+        (" E* Burning".to_string(), theme::kind_style(NodeKind::Elite)),
         (
             format!("B  {}", run.boss_name()),
             theme::kind_style(NodeKind::Boss),
@@ -220,25 +244,36 @@ fn render_floor(
             }
             continue;
         }
-        let sigil = node.kind.sigil();
-        let kind_style = if node.burning {
-            theme::burning_style()
-        } else {
-            theme::kind_style(node.kind)
-        };
+        // 记号:精英红底铺三格(左右各多一格),燃烧精英右边多一个 *;休息/商店是 emoji
+        let (glyph, indent) = map_glyph_text(node.kind, node.burning);
+        let kind_style = map_glyph_style(node.kind);
         let visited = run.path.contains(i);
         // 选中的房间用 [ ] 框出来:符号仍然落在本列,方括号借用左右各一格
-        let (px, text, style) = if is_sel && x > 0 {
+        let sel_text = if node.kind == NodeKind::Elite {
+            // 精英本来就铺了三格,选中时不再往两边撑
+            if node.burning {
+                "[E*]".to_string()
+            } else {
+                "[E]".to_string()
+            }
+        } else {
+            format!("[{glyph}]")
+        };
+        let (px, text, style) = if is_sel && x > indent {
             (
-                x - 1,
-                format!("[{sigil}]"),
+                if node.kind == NodeKind::Elite {
+                    x.saturating_sub(1)
+                } else {
+                    x - 1 - indent
+                },
+                sel_text,
                 kind_style.add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
             )
         } else if visited {
             // 走过的房间(含现在这间)统一绿底
             (
-                x,
-                format!("{sigil}"),
+                x.saturating_sub(indent),
+                glyph.to_string(),
                 Style::default()
                     .fg(theme::BG)
                     .bg(theme::GOOD)
@@ -247,23 +282,31 @@ fn render_floor(
         } else if is_sel {
             // 最左那一列没法往左借格子,退回底色
             (
-                x,
-                format!("{sigil}"),
+                x.saturating_sub(indent),
+                glyph.to_string(),
                 kind_style.bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
             )
         } else if on_path {
             // 选了它之后能走到的房间
-            (x, format!("{sigil}"), kind_style.add_modifier(Modifier::BOLD))
+            (
+                x.saturating_sub(indent),
+                glyph.to_string(),
+                kind_style.add_modifier(Modifier::BOLD),
+            )
         } else if is_candidate {
             // 别的岔路:现在就能选,跟着一起闪
             (
-                x,
-                format!("{sigil}"),
+                x.saturating_sub(indent),
+                glyph.to_string(),
                 kind_style.add_modifier(Modifier::SLOW_BLINK),
             )
         } else {
             // 现在走不到的一律灰掉
-            (x, format!("{sigil}"), theme::dim())
+            (
+                x.saturating_sub(indent),
+                glyph.to_string(),
+                theme::dim(),
+            )
         };
         put(buf, px, y, &text, style);
     }
