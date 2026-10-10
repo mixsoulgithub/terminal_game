@@ -1649,7 +1649,7 @@ impl App {
                 self.rest_index = (self.rest_index + 1) % n;
             }
             KeyCode::Char('k') | KeyCode::Char('h') | KeyCode::Up | KeyCode::Left => {
-                self.rest_index = (self.rest_index + 1) % n;
+                self.rest_index = (self.rest_index + n - 1) % n;
             }
             // 数字键直接点第 i 项(最多 9 项)
             KeyCode::Char(c @ '1'..='9') => {
