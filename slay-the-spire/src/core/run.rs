@@ -8698,6 +8698,33 @@ mod ascension_tests {
         assert_eq!(r.screen, Screen::Victory, "A0 打完一个 Boss 就收尾");
     }
 
+    /// A13:打完 Boss 的金币掉 25%(反编译 createBossCombatReward 的
+    /// `if (ascension >= 13) goldAmt = round(goldAmt * 0.75f)`,
+    /// refs/sts_lightspeed/src/game/GameContext.cpp:1955-1958).
+    /// 同一个种子、同一场 Boss 战,拿 A0 的奖励屏金币当基准比.
+    #[test]
+    fn a13_boss_gold_drops_by_a_quarter() {
+        fn boss_gold(asc: u32) -> i32 {
+            let mut r = run_asc(asc);
+            r.boss_enc = enemies::resolve("the_guardian");
+            r.player.hp = 200;
+            r.player.max_hp = 200;
+            r.debug_start_combat(r.boss_enc);
+            r.debug_win_battle();
+            for _ in 0..=Run::VICTORY_HOLD {
+                r.tick_win_hold();
+            }
+            assert_eq!(r.screen, Screen::Reward, "Boss 战赢了要进奖励屏");
+            r.reward.as_ref().expect("有奖励").gold
+        }
+        let a0 = boss_gold(0);
+        let a12 = boss_gold(12);
+        let a13 = boss_gold(13);
+        assert!((95..=105).contains(&a0), "A0 是 100 上下 5: {a0}");
+        assert_eq!(a12, a0, "A12 还没减");
+        assert_eq!(a13, (a0 as f32 * 0.75).round() as i32, "A13 只给 75%");
+    }
+
     /// Neow 的祝福与代价结算:replay golden 只比对 seed 12345 的选项表,从不真选一条,
     /// apply_neow 的多数 match 分支此前没有任何断言.这里直接逐条钉住.
     /// 参照 refs/sts_lightspeed/src/game/Neow.cpp(代价先结算、上限按 floor、掉血 30% 等).

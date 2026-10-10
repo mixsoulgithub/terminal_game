@@ -963,6 +963,28 @@ mod tests {
         }
     }
 
+    /// 飞升 1 起精英房概率 8% -> 12.8%(反编译的 ELITE_ROOM_CHANCE_A0/A1 与
+    /// `ascensionLevel > 0 ? A1 : A0`:refs/sts_lightspeed/src/game/Map.cpp:27-28、:726)
+    #[test]
+    fn a1_raises_the_elite_room_chance() {
+        let elites = |asc: u32| -> usize {
+            (0..300u64)
+                .map(|seed| ActMap::generate(&mut Rng::new(seed), true, asc))
+                .map(|m| m.nodes.iter().filter(|n| n.kind == NodeKind::Elite).count())
+                .sum()
+        };
+        let a0 = elites(0);
+        let a1 = elites(1);
+        let a20 = elites(20);
+        assert!(a1 > a0, "A1 的精英应该更多: A0={a0} A1={a1}");
+        assert_eq!(a1, a20, "精英频率只看 asc > 0,不随等级继续变");
+        // 大致是 1.6 倍(取样有限,给个宽松区间免得卡死)
+        assert!(
+            (a0 as f64 * 1.3..=a0 as f64 * 1.9).contains(&(a1 as f64)),
+            "A1/A0 应该接近 1.6: A0={a0} A1={a1}"
+        );
+    }
+
     #[test]
     fn progression_is_always_possible() {
         for seed in 0..10 {

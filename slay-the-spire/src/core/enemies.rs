@@ -623,6 +623,8 @@ fn sphere_and_two_shapes_lineup(rng: &mut RngRegistry, asc: u32) -> Vec<Spawned>
 /// 颚虫三连里的每只颚虫:开局带力量 3、格挡 5,并且算"已经行动过一回合".
 /// 参考实现把它的招式历史预置成一个匹配不到任何招式的哨兵值,于是第一回合那种
 /// "必定咬一口"的开局被跳过,从第一回合起就走 25/30/45 的常规分布.
+/// 这里的 3/5 只是 A0 档:飞升 2+ 是 4/6、飞升 17+ 是 5/9,换档值在
+/// ascension::PRESET_ASC 里(反编译 MonsterGroup.cpp:278-279),构造时整组替换.
 const JAW_WORM_HORDE_PRESETS: &[EnemyPreset] = &[EnemyPreset {
     slots: &[0, 1, 2],
     statuses: &[(Status::Strength, 3)],

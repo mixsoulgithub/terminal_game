@@ -844,6 +844,29 @@ pub fn bonus_innate(id: &str, asc: u32) -> &'static [(Status, i32)] {
     }
 }
 
+// ---- 遭遇开局的预置状态 ----
+
+/// 遭遇级预置状态的飞升覆盖:(遭遇 id, 换档等级, 替换后的状态, 替换后的格挡).
+/// 达到等级就整组替换掉遭遇自带的预置值.
+#[rustfmt::skip]
+static PRESET_ASC: &[(&str, u32, &[(Status, i32)], i32)] = &[
+    // 颚虫三连的开局力量/格挡随飞升走:反编译 MonsterGroup.cpp:278-279
+    //   strBuff = bc.ascension >= 17 ? 5 : (bc.ascension >= 2 ? 4 : 3);
+    //   blockBuff = bc.ascension >= 17 ? 9 : (bc.ascension >= 2 ? 6 : 5);
+    ("jaw_worm_horde", 2, &[(Status::Strength, 4)], 6),
+    ("jaw_worm_horde", 17, &[(Status::Strength, 5)], 9),
+];
+
+/// 取遭遇在某飞升下生效的开局预置覆盖(状态, 格挡);没有覆盖就返回 None,
+/// 调用方沿用遭遇表里写死的 A0 值.同一遭遇有多档时取最高的那一档.
+pub fn preset_asc(enc_id: &str, asc: u32) -> Option<(&'static [(Status, i32)], i32)> {
+    PRESET_ASC
+        .iter()
+        .filter(|(id, lvl, _, _)| *id == enc_id && asc >= *lvl)
+        .max_by_key(|(_, lvl, _, _)| *lvl)
+        .map(|(_, _, statuses, block)| (*statuses, *block))
+}
+
 // ---- 意图 ----
 
 /// 招式的飞升意图(把 damage/hits/block 覆盖到基础意图上)
@@ -1355,4 +1378,142 @@ mod tests {
             }
         }
     }
+
+    /// 血量档的边界必须正好落在表里写的那个等级上:换档前一档还是基础血量,
+    /// 换档那一档起用飞升血量.反编译是逐怪的 `setRandomHp(hpRng, ascension >= N)`
+    /// (refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:26-116,普通怪 7 / 精英 8 /
+    /// Boss 9,orb_walker、reptomancer、bronze_orb、taskmaster 各自单独一档),
+    /// N 抄错一位就会整场错位,所以逐条钉住边界.
+    #[test]
+    fn every_hp_tier_switches_exactly_at_its_level() {
+        for (id, level, asc_hp) in HP_ASC.iter() {
+            let def = enemies::ENEMIES
+                .iter()
+                .find(|e| e.id == *id)
+                .unwrap_or_else(|| panic!("血量表里的 {id} 不存在"));
+            assert!(*level > 0, "{id} 的档位不能是 0");
+            assert_eq!(
+                hp_range(def, level - 1),
+                def.hp,
+                "{id} 在 A{} 还该是基础血量",
+                level - 1
+            );
+            assert_eq!(hp_range(def, *level), *asc_hp, "{id} 从 A{level} 起换档");
+            assert_eq!(hp_range(def, 20), *asc_hp, "{id} 到 A20 仍是这一档血量");
+        }
+    }
+
+    /// 招式档的边界同理:每一条覆盖都要在它自己写明的等级上才生效.
+    /// 反编译是 `ascension >= 2 / >= 3 / >= 4`(MonsterMoveDamage.cpp:11-13)与
+    /// `getTriIdx(ascension, 2, 17)` 这类链式分档(MonsterSpecific.cpp:338-347),
+    /// 漏一档就是静默错值.
+    #[test]
+    fn every_move_tier_takes_effect_exactly_at_its_level() {
+        for (id, moves) in MOVE_ASC.iter() {
+            let def = enemies::ENEMIES
+                .iter()
+                .find(|e| e.id == *id)
+                .unwrap_or_else(|| panic!("招式表里的 {id} 不存在"));
+            for (key, tiers) in moves.iter() {
+                let m = def
+                    .moves
+                    .iter()
+                    .find(|m| norm(m.name) == *key)
+                    .unwrap_or_else(|| panic!("{id} 没有招 {key}"));
+                for t in tiers.iter() {
+                    assert!(t.level > 0, "{id}/{key} 的档位不能是 0");
+                    let before_i = intent(id, m.name, m.intent, t.level - 1);
+                    let before_e = effects(id, m.name, m.effects, t.level - 1);
+                    let after_i = intent(id, m.name, m.intent, t.level);
+                    let after_e = effects(id, m.name, m.effects, t.level);
+                    assert!(
+                        after_i != before_i || after_e.as_ref() != before_e.as_ref(),
+                        "{id}/{key} 在 A{} 一点变化都没有(档位抄错了?)",
+                        t.level
+                    );
+                }
+            }
+        }
+    }
+
+    /// 招式伤害的飞升值与反编译逐招对一遍(MonsterMoveDamage.cpp:11-13 的 asc2/asc3/asc4
+    /// 三目).四档的期望值都写全,顺便钉住边界.
+    #[test]
+    fn damage_tiers_match_the_decompile() {
+        // (敌人, 招式, A0, A2, A3, A4)
+        let rows: &[(&str, &str, i32, i32, i32, i32)] = &[
+            // asc2 ? 12 : 11
+            ("jaw_worm", "Chomp", 11, 12, 12, 12),
+            // GREMLIN_NOB_RUSH: asc3 ? 16 : 14
+            ("gremlin_nob", "Rush", 14, 14, 16, 16),
+            // LAGAVULIN: asc3 ? 20 : 18
+            ("lagavulin", "Attack", 18, 18, 20, 20),
+            // BRONZE_AUTOMATON_HYPER_BEAM: asc4 ? 50 : 45
+            ("bronze_automaton", "Hyper Beam", 45, 45, 45, 50),
+            // SLIME_BOSS: asc4 ? 38 : 35
+            ("slime_boss", "Slam", 35, 35, 35, 38),
+            // CORRUPT_HEART_ECHO: asc4 ? 45 : 40
+            ("corrupt_heart", "Echo", 40, 40, 40, 45),
+        ];
+        for (id, mv, a0, a2, a3, a4) in rows {
+            let def = enemies::enemy_def(id).unwrap();
+            let m = def
+                .moves
+                .iter()
+                .find(|m| m.name == *mv)
+                .unwrap_or_else(|| panic!("{id} 没有招 {mv}"));
+            let at = |asc: u32| match intent(id, m.name, m.intent, asc) {
+                Intent::Attack { damage, .. } => damage,
+                other => panic!("{id}/{mv} 不是攻击意图: {other:?}"),
+            };
+            assert_eq!(at(0), *a0, "{id}/{mv} A0");
+            assert_eq!(at(2), *a2, "{id}/{mv} A2");
+            assert_eq!(at(3), *a3, "{id}/{mv} A3");
+            assert_eq!(at(4), *a4, "{id}/{mv} A4");
+        }
+    }
+
+    /// 击杀/开局以外的分档:虱子的卷曲与咬伤区间、暗灵的撕咬(反编译
+    /// MonsterSpecific.cpp:296-303 的 curlUp、Monster.cpp:117-131 的 louse/darkling miscInfo)
+    #[test]
+    fn louse_and_darkling_ranges_switch_at_their_levels() {
+        // 卷曲:基础 3..7,A7 起 4..8,A17 起 9..12(反编译 curlUpAmounts[]{3,4,9}/{7,8,12})
+        assert_eq!(curl_up_range(6), (3, 7));
+        assert_eq!(curl_up_range(7), (4, 8));
+        assert_eq!(curl_up_range(16), (4, 8));
+        assert_eq!(curl_up_range(17), (9, 12));
+        // 咬伤:A2 起 6..8(Monster.cpp:117-123)
+        assert_eq!(louse_bite_range(1), (5, 7));
+        assert_eq!(louse_bite_range(2), (6, 8));
+        // 暗灵:基础 7..11,A2 起 9..13 且再 +2(Monster.cpp:125-131)
+        assert_eq!(darkling_nip_roll(1), (7, 11, 0));
+        assert_eq!(darkling_nip_roll(2), (9, 13, 2));
+    }
+
+    /// 遭遇级预置状态的换档:颚虫三连 A0 力量 3/格挡 5、A2 起 4/6、A17 起 5/9
+    /// (反编译 MonsterGroup.cpp:278-279 的 strBuff/blockBuff 三目链)
+    #[test]
+    fn jaw_worm_horde_preset_tiers() {
+        assert_eq!(preset_asc("jaw_worm_horde", 0), None, "A0 用遭遇表里的基础值");
+        assert_eq!(preset_asc("jaw_worm_horde", 1), None);
+        assert_eq!(
+            preset_asc("jaw_worm_horde", 2),
+            Some((&[(Status::Strength, 4)][..], 6))
+        );
+        assert_eq!(
+            preset_asc("jaw_worm_horde", 16),
+            Some((&[(Status::Strength, 4)][..], 6))
+        );
+        assert_eq!(
+            preset_asc("jaw_worm_horde", 17),
+            Some((&[(Status::Strength, 5)][..], 9))
+        );
+        assert_eq!(
+            preset_asc("jaw_worm_horde", 20),
+            Some((&[(Status::Strength, 5)][..], 9))
+        );
+        // 别的遭遇没有覆盖,照旧用表里的值
+        assert_eq!(preset_asc("three_sentries", 20), None);
+    }
 }
+

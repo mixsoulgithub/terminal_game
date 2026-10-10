@@ -513,10 +513,17 @@ impl Combat {
             let mut block = def.start_block;
             // 遭遇级预置状态:开局的状态/格挡,以及"已经行动过"的招式历史
             for p in enc.presets.iter().filter(|p| p.slots.contains(&i)) {
-                for (s, n) in p.statuses {
+                // 飞升换档的预置值整组覆盖基础值(颚虫三连的力量/格挡;
+                // 反编译 MonsterGroup.cpp:278-279,见 ascension::PRESET_ASC)
+                let (preset_statuses, preset_block) =
+                    match crate::core::ascension::preset_asc(enc.id, asc) {
+                        Some((st, blk)) => (st, blk),
+                        None => (p.statuses, p.block),
+                    };
+                for (s, n) in preset_statuses {
                     statuses.add(*s, *n);
                 }
-                block += p.block;
+                block += preset_block;
                 state.turns = p.acted_turns;
                 // 预置了"已经行动过"的招式历史:首招已经掷过,不能再走开局分支
                 // (参考实现里这些怪的 moveHistory 非空,firstTurn 为假)
@@ -1629,6 +1636,16 @@ impl Combat {
         if fnp > 0 {
             self.gain_block(fnp, false, false);
         }
+        // 枯枝:消耗时往手里塞一张随机牌(不是本场战斗里的牌;职业池任意稀有度).
+        // 位置必须排在黑暗拥抱的抽牌**之前**:反编译把 MakeTempCardInHand 先入队、
+        // DrawCards 后入队(refs/sts_lightspeed/src/combat/BattleContext.cpp:2822-2830),
+        // 参考实现里枯枝是当场造牌、黑暗拥抱的抽牌才进队列
+        // (refs/slay-the-cli/src/content/relics/rare.ts:96-106 + powers/ironclad.ts:57-60).
+        // 手牌快满时先后决定了落点:先造的这一张进手牌,后来的抽牌才因为满手抽不动.
+        let branch = self.relic_sum(|fx| fx.card_on_exhaust);
+        if branch > 0 {
+            self.add_random_class_card_to_hand();
+        }
         let dark = self.player.statuses.get(Status::DarkEmbrace);
         if dark > 0 {
             self.draw_cards(dark as usize);
@@ -1644,11 +1661,6 @@ impl Combat {
                 format!("Charon's Ashes deals {ashes} to all enemies"),
             );
             self.settle_deaths();
-        }
-        // 枯枝:消耗时往手里塞一张随机牌(不是本场战斗里的牌;职业池任意稀有度)
-        let branch = self.relic_sum(|fx| fx.card_on_exhaust);
-        if branch > 0 {
-            self.add_random_class_card_to_hand();
         }
     }
 
@@ -1709,10 +1721,12 @@ impl Combat {
     }
 
     /// 从本职业牌池里随机拿一张牌(任意稀有度)进手牌
+    /// (枯枝).手牌满了也照样掷点、照样造牌,只是落点改成弃牌堆 —— 反编译的
+    /// moveToHandHelper 就是这个规则(refs/sts_lightspeed/src/combat/BattleContext.cpp:2531-2540),
+    /// 参考实现的 makeTempCard 同样是"hand overflow goes to discard"
+    /// (refs/slay-the-cli/src/engine/combat/interpreter.ts:399-402).此前满手时在掷点前
+    /// 就 return,既吞掉一次 cardRandomRng 掷点,又把那张牌整张丢了.
     fn add_random_class_card_to_hand(&mut self) {
-        if self.hand.len() >= HAND_LIMIT {
-            return;
-        }
         let pool = crate::core::cards::class_card_pool();
         if pool.is_empty() {
             return;
@@ -1721,7 +1735,7 @@ impl Combat {
         let mut inst = CardInstance::new(def);
         self.fix_new_card(&mut inst);
         let label = inst.label();
-        self.hand.push(inst);
+        self.add_created_card_to_hand(inst);
         self.push_log(LogKind::Player, format!("{label} appears"));
     }
 
@@ -3382,8 +3396,21 @@ impl Combat {
         if pct <= 0 {
             return true;
         }
-        let roll = self.streams.floor(FloorStream::CardRandomRng).random(99) as i32;
-        roll >= pct
+        // 反编译的判定就是一次 cardRandomRng.randomBoolean()
+        // (refs/sts_lightspeed/src/combat/BattleContext.cpp:1985-1991:
+        //  `if (item.exhaustOnUse && hasRelic<STRANGE_SPOON>()) spoonProc = cardRandomRng.randomBoolean();`),
+        // 取的是 nextLong 的最低位.掷点口径必须一致:用 random(99) 掷出的值虽然也是 50%,
+        // 但和参考的掷点对不上,同一个种子下这张牌的去处就会两边不同.
+        let coin = self.streams.floor(FloorStream::CardRandomRng).random_boolean();
+        // pct 仍是 0..100 的"改成弃牌"的概率:100 一定改,50 看这一掷,低于 50 反过来.
+        let to_discard = if pct >= 100 {
+            true
+        } else if pct >= 50 {
+            coin
+        } else {
+            !coin
+        };
+        !to_discard
     }
 
     /// 记一次抖动:谁、往哪边(负左正右)、出手还是挨打
@@ -3675,15 +3702,18 @@ impl Combat {
         total
     }
 
-    /// 玩家掉了血:嗜血的费用跟着降(手牌/抽牌堆/弃牌堆/消耗堆里那些)
+    /// 玩家掉了血:嗜血的费用跟着降(只数手牌/抽牌堆/弃牌堆这三堆)
     fn note_hp_loss(&mut self) {
         self.hp_losses += 1;
+        // 消耗堆不算:反编译的 CardManager::onTookDamage
+        // (refs/sts_lightspeed/src/combat/CardManager.cpp:448-490)只遍历
+        // hand/drawPile/discardPile 三堆,没有 exhaustPile.被消耗掉的嗜血
+        // 就算之后被"挖掘"回手牌,也还是当初那张牌面上的价.
         for card in self
             .hand
             .iter_mut()
             .chain(self.draw.iter_mut())
             .chain(self.discard.iter_mut())
-            .chain(self.exhaust.iter_mut())
         {
             if card.def.id == "blood_for_blood" {
                 card.cost_delta -= 1;
@@ -4899,6 +4929,12 @@ impl Combat {
                         LogKind::Info,
                         format!("shuffled {n} cards into the draw pile"),
                     );
+                    // 洗牌遗物的钩子:反编译的 DEEP_BREATH 分支在洗之前先调 onShuffle()
+                    // (refs/sts_lightspeed/src/combat/BattleContext.cpp:1272-1276);
+                    // 参考实现把这次洗牌整个走 reshuffleDiscardIntoDraw,里面也发 onShuffle
+                    // (refs/slay-the-cli/src/engine/combat/piles.ts:63-69,由 interpreter.ts:98-100 调用).
+                    // 算盘/日晷都要认这一下,漏掉就少 6 格挡、少一次日晷计数.
+                    self.on_shuffle();
                 }
                 Effect::FreeRandomInHand => {
                     // 疯狂:把手牌里随机一张"仍要花费用"的牌降到 0.
@@ -7521,6 +7557,11 @@ mod monster_tests {
 
     /// 同上,但种子自己定(开局的阵容抽签要看它)
     fn lock_seed(id: &'static str, seed: u64) -> Combat {
+        lock_seed_asc(id, seed, 0)
+    }
+
+    /// 同上,但指定飞升等级(开局血量档与遭遇预置的换档都看它)
+    fn lock_seed_asc(id: &'static str, seed: u64, asc: u32) -> Combat {
         let enc = crate::core::enemies::encounter_def(id)
             .unwrap_or_else(|| panic!("no such encounter {id}"));
         let deck = vec![
@@ -7545,7 +7586,7 @@ mod monster_tests {
             lift_strength: 0,
             relic_counters: RunRelicCounters::default(),
             curse_negate: 0,
-        asc: 0,
+        asc,
         };
         Combat::new(enc, setup, RngRegistry::new(seed))
     }
@@ -7725,6 +7766,38 @@ mod monster_tests {
             openers.iter().any(|m| *m != "Chomp"),
             "三连的颚虫第一回合不该被锁死成咬一口"
         );
+    }
+
+    /// 颚虫三连的开局力量/格挡按飞升换档:A0 3/5、A2 起 4/6、A17 起 5/9
+    /// (反编译 MonsterGroup.cpp:278-279 的 `strBuff`/`blockBuff` 三目链);血量则
+    /// 跟着 A7 的档走(MonsterSpecific.cpp:34 的 setRandomHp(hpRng, ascension >= 7))
+    #[test]
+    fn jaw_worm_horde_preset_scales_with_ascension() {
+        for (asc, strength, block) in [
+            (0, 3, 5),
+            (1, 3, 5),
+            (2, 4, 6),
+            (16, 4, 6),
+            (17, 5, 9),
+            (20, 5, 9),
+        ] {
+            let c = lock_seed_asc("jaw_worm_horde", 7, asc);
+            for e in &c.enemies {
+                assert_eq!(e.statuses.get(Status::Strength), strength, "A{asc} 的开局力量");
+                assert_eq!(e.block, block, "A{asc} 的开局格挡");
+            }
+        }
+        let hps = |asc: u32| -> Vec<i32> {
+            lock_seed_asc("jaw_worm_horde", 7, asc)
+                .enemies
+                .iter()
+                .map(|e| e.max_hp)
+                .collect()
+        };
+        let a0 = hps(0);
+        let a7 = hps(7);
+        assert!(a0.iter().all(|h| (40..=44).contains(h)), "A0 血量: {a0:?}");
+        assert!(a7.iter().all(|h| (42..=46).contains(h)), "A7 血量: {a7:?}");
     }
 
     #[test]
@@ -10362,6 +10435,406 @@ mod relic_hook_tests {
         c.enemies[0].hp = 999;
         c.use_potion(potion, Some(0));
         assert_eq!(999 - c.enemies[0].hp, 40, "神圣树皮翻倍");
+    }
+
+    // ---- 消耗钩子:蓝蜡烛/医疗包打出的牌算不算"消耗",决定后面一整套钩子 ----
+
+    /// 医疗包把状态牌打出去:这张牌也算"被消耗了一张",无痛感/黑暗拥抱/卡戎之灰/枯枝
+    /// 四条一起触发.反编译 onUseStatusOrCurseCard 给状态牌置 exhaustOnUse
+    /// (refs/sts_lightspeed/src/combat/BattleContext.cpp:1920-1923),收尾走
+    /// triggerAndMoveToExhaustPile(:2812-2841).
+    #[test]
+    fn medical_kit_status_play_fires_every_exhaust_hook() {
+        let relics = vec![
+            relic_def_or_panic("medical_kit"),
+            relic_def_or_panic("charons_ashes"),
+            relic_def_or_panic("dead_branch"),
+        ];
+        let mut c = staged(&["wound"; 8], &["wound"], &relics);
+        c.player.statuses.add(Status::FeelNoPain, 3);
+        c.player.statuses.add(Status::DarkEmbrace, 1);
+        c.enemies[0].hp = 999;
+        let e_hp = c.enemies[0].hp;
+        let hand_before = c.hand.len();
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.exhaust.len(), 1, "状态牌进消耗堆");
+        assert_eq!(e_hp - c.enemies[0].hp, 3, "卡戎之灰:对全体 3 点");
+        assert_eq!(c.player.block, 3, "无痛感:3 格挡");
+        // 手牌 = 打掉 1 张 - 黑暗拥抱抽 1 + 枯枝加 1
+        assert_eq!(c.hand.len(), hand_before - 1 + 1 + 1, "黑暗拥抱抽 1、枯枝加 1");
+    }
+
+    /// 蓝蜡烛把诅咒打出去:一样算消耗,四条钩子全触发,并且掉 1 血
+    #[test]
+    fn blue_candle_curse_play_fires_every_exhaust_hook() {
+        let relics = vec![
+            relic_def_or_panic("blue_candle"),
+            relic_def_or_panic("charons_ashes"),
+            relic_def_or_panic("dead_branch"),
+        ];
+        let mut c = staged(&["injury"; 8], &["injury"], &relics);
+        c.player.statuses.add(Status::FeelNoPain, 2);
+        c.player.statuses.add(Status::DarkEmbrace, 1);
+        c.enemies[0].hp = 999;
+        let e_hp = c.enemies[0].hp;
+        let hp = c.player.hp;
+        let hand_before = c.hand.len();
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.hp, hp - 1, "蓝蜡烛:打出诅咒掉 1 血");
+        assert_eq!(c.exhaust.len(), 1, "诅咒进消耗堆");
+        assert_eq!(e_hp - c.enemies[0].hp, 3, "卡戎之灰");
+        assert_eq!(c.player.block, 2, "无痛感");
+        assert_eq!(c.hand.len(), hand_before - 1 + 1 + 1);
+    }
+
+    /// 两条钩子各自只认自己那一类:没医疗包时状态牌打不出去,没蓝蜡烛时诅咒打不出去
+    /// (反编译 CardInstance.cpp:320-331 的 canUse 分支)
+    #[test]
+    fn the_two_playability_relics_do_not_cover_each_other() {
+        let kit = staged(&["injury", "wound"], &["injury"], &[relic_def_or_panic("medical_kit")]);
+        assert!(kit.playable(0).is_err(), "医疗包不管诅咒");
+        let candle =
+            staged(&["injury", "wound"], &["wound"], &[relic_def_or_panic("blue_candle")]);
+        assert!(candle.playable(0).is_err(), "蓝蜡烛不管状态牌");
+        // 黏液(唯一本来就能打出的状态牌)没有医疗包也能打,打完照旧消耗
+        let mut plain = staged(&["slimed"; 4], &["slimed"], &[]);
+        assert!(plain.playable(0).is_ok(), "黏液本来就能打");
+        plain.play_card(0, None).unwrap();
+        assert_eq!(plain.exhaust.len(), 1, "黏液自带消耗");
+    }
+
+    /// 死灵诅咒:被消耗掉也躲不开,补一张新的回手牌;带蓝蜡烛时打一次掉 1 血、补一张
+    /// (反编译 BattleContext.cpp:2836-2839 的 `c.getId() == NECRONOMICURSE` 分支)
+    #[test]
+    fn necronomicurse_escapes_the_exhaust_pile() {
+        let relics = vec![relic_def_or_panic("blue_candle")];
+        let mut c = staged(&["necronomicurse"; 4], &["necronomicurse"], &relics);
+        let hp = c.player.hp;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.hp, hp - 1, "蓝蜡烛掉 1 血");
+        assert_eq!(c.exhaust.len(), 1, "原张还是进消耗堆");
+        assert_eq!(c.hand.len(), 1, "补一张新的回手牌");
+        assert_eq!(c.hand[0].def.id, "necronomicurse");
+        // 补回来的那张不是"又消耗了一次",不该再触发消耗钩子
+        let relics = vec![relic_def_or_panic("charons_ashes")];
+        let mut c = staged(&["necronomicurse"; 4], &["necronomicurse"], &relics);
+        c.enemies[0].hp = 999;
+        // 没蓝蜡烛打不出去,直接走消耗
+        c.exhaust_card(cards::card("necronomicurse"));
+        assert_eq!(999 - c.enemies[0].hp, 3, "消耗这张只算一次");
+        assert_eq!(c.hand.len(), 2, "手里那张还在,补回来一张");
+        assert_eq!(c.hand[1].def.id, "necronomicurse", "新补的那张");
+    }
+
+    /// 一张牌消耗一次就只触发一次钩子(卡戎之灰 3 点,不是 6 点)
+    #[test]
+    fn exhaust_hooks_fire_once_per_exhausted_card() {
+        let relics = vec![relic_def_or_panic("charons_ashes")];
+        let mut c = staged(&["slimed"; 4], &["slimed", "slimed"], &relics);
+        c.enemies[0].hp = 999;
+        c.play_card(0, None).unwrap();
+        assert_eq!(999 - c.enemies[0].hp, 3, "只掉 3 点");
+        c.play_card(0, None).unwrap();
+        assert_eq!(999 - c.enemies[0].hp, 6, "第二张再 3 点");
+    }
+
+    /// 枯枝排在黑暗拥抱前面:手牌 9 张时枯枝那张先占住第 10 格,黑暗拥抱抽不动
+    /// (反编译先入队 MakeTempCardInHand 再入队 DrawCards,BattleContext.cpp:2822-2830)
+    #[test]
+    fn dead_branch_resolves_before_dark_embrace() {
+        let relics = vec![relic_def_or_panic("dead_branch")];
+        let mut c = staged(&["wound"; 30], &["wound"; 9], &relics);
+        c.player.statuses.add(Status::DarkEmbrace, 1);
+        c.exhaust_card(cards::card("wound"));
+        assert_eq!(c.hand.len(), 10, "9 + 枯枝那张");
+        assert_eq!(c.draw.len(), 30, "顺序反了的话这里会少一张(黑暗拥抱先抽走)");
+        assert!(c.discard.is_empty(), "顺序反了的话枯枝那张会被挤进弃牌堆");
+    }
+
+    /// 枯枝在手牌已满时:照样掷一次 cardRandomRng、照样造牌,牌落到弃牌堆,
+    /// 不是整张消失(反编译 moveToHandHelper 的手牌溢出规则,
+    /// refs/sts_lightspeed/src/combat/BattleContext.cpp:2531-2540)
+    #[test]
+    fn dead_branch_overflows_to_the_discard_pile() {
+        let relics = vec![relic_def_or_panic("dead_branch")];
+        let mut c = staged(&["wound"; 12], &["wound"; 10], &relics);
+        assert_eq!(c.hand.len(), 10);
+        assert!(c.discard.is_empty());
+        // 掷点照旧消耗:拿同一条流上的下一次取牌当期望
+        let mut probe = c.streams.clone();
+        let expected = probe
+            .floor(FloorStream::CardRandomRng)
+            .pick(&crate::core::cards::class_card_pool())
+            .id;
+        c.exhaust_card(cards::card("wound"));
+        assert_eq!(c.hand.len(), 10, "满手还是满手");
+        assert_eq!(c.discard.len(), 1, "枯枝那张进弃牌堆");
+        assert_eq!(
+            c.discard[0].def.id, expected,
+            "掷点没被吞掉,牌就是掷到的那张"
+        );
+    }
+
+    // ---- 洗牌钩子:算盘 +6 格挡、日晷每 3 次洗牌 +2 能量 ----
+
+    /// 三种洗牌都要认:抽牌把抽牌堆抽空时的洗、深呼吸、打抽牌堆顶时的洗.
+    /// 反编译的 onShuffle 调用点是 drawCards(BattleContext.cpp:2452)、
+    /// DEEP_BREATH(:1274)、PlayTopCard 的 EmptyDeckShuffle(:2518-2520);
+    /// 参考实现的洗牌动作统一走 reshuffleDiscardIntoDraw
+    /// (refs/slay-the-cli/src/engine/combat/piles.ts:63-69).
+    #[test]
+    fn the_abacus_and_sundial_fire_on_every_shuffle_trigger() {
+        let relics = vec![
+            relic_def_or_panic("the_abacus"),
+            relic_def_or_panic("sundial"),
+        ];
+
+        // 1) 抽牌抽空抽牌堆
+        let mut c = staged(&["strike"], &[], &relics);
+        c.draw.clear();
+        c.discard.push(cards::card("defend"));
+        c.draw_cards(1);
+        assert_eq!(c.player.block, 6, "算盘:每次洗牌 +6 格挡");
+        assert_eq!(c.rs.sundial, 1, "日晷:计数 1(还没到 3)");
+
+        // 2) 深呼吸(会把弃牌堆洗回抽牌堆)
+        let mut c = staged(&["deep_breath"], &["deep_breath"], &relics);
+        c.discard.push(cards::card("defend"));
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.block, 6, "深呼吸这次洗牌也要给格挡");
+        assert_eq!(c.rs.sundial, 1);
+
+        // 3) 浩劫打抽牌堆顶:抽牌堆空了先洗回来(顶上放一张不打格挡的牌,
+        //    免得它自己的效果混进格挡数)
+        let mut c = staged(&["havoc"], &["havoc"], &relics);
+        c.discard.push(cards::card("strike"));
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.block, 6, "打抽牌堆顶的洗也要给格挡");
+        assert_eq!(c.rs.sundial, 1);
+    }
+
+    /// 日晷正好在第 3 次洗牌给 2 点能量(反编译 BattleContext.cpp:2804-2810 的
+    /// `sundialCounter == 2` 判定:计数 0/1 累加,第 3 次归零并给能量)
+    #[test]
+    fn sundial_gives_two_energy_on_the_third_shuffle() {
+        let relics = vec![relic_def_or_panic("sundial")];
+        let mut c = staged(&["defend"], &[], &relics);
+        c.energy = 0;
+        for i in 1..=3 {
+            c.hand.clear();
+            c.draw.clear();
+            c.discard.push(cards::card("defend"));
+            c.draw_cards(1);
+            assert_eq!(c.rs.sundial, i % 3, "第 {i} 次洗牌后的计数");
+        }
+        assert_eq!(c.energy, 2, "第 3 次洗牌 +2 能量");
+        // 继续洗到第 6 次再来一份
+        for _ in 1..=3 {
+            c.hand.clear();
+            c.draw.clear();
+            c.discard.push(cards::card("defend"));
+            c.draw_cards(1);
+        }
+        assert_eq!(c.energy, 4, "每 3 次洗牌 +2");
+    }
+
+    /// 没有牌可洗的时候不洗也不该触发钩子(反编译 drawCards 开头的
+    /// `drawPile.size() + discardPile.size() == 0` 直接返回,BattleContext.cpp:2439-2444);
+    /// 回合末把手牌弃掉也不算洗牌(onShuffle 的调用点只有 drawCards/DEEP_BREATH/
+    /// PlayTopCard 三处,弃牌那条路一个都没有)
+    #[test]
+    fn an_empty_shuffle_fires_nothing() {
+        let relics = vec![
+            relic_def_or_panic("the_abacus"),
+            relic_def_or_panic("sundial"),
+        ];
+        let mut c = staged(&[], &[], &relics);
+        assert!(c.draw.is_empty() && c.discard.is_empty());
+        c.draw_cards(1);
+        assert_eq!(c.player.block, 0, "没洗牌就没有格挡");
+        assert_eq!(c.rs.sundial, 0, "日晷计数不动");
+
+        // 回合末弃牌:抽牌堆里还有牌,不该有任何洗牌
+        let mut c = staged(&["defend"; 8], &["defend", "defend"], &relics);
+        c.end_turn();
+        assert_eq!(c.rs.sundial, 0, "回合末弃牌不算洗牌");
+    }
+
+    // ---- 能量/费用闸门 ----
+
+    /// 维可夹克:一回合最多 6 张,第 7 张打不出去,换回合重新计数
+    /// (反编译 isCardPlayAllowed 的 `cardsPlayedThisTurn >= 6`,BattleContext.cpp:708-716)
+    #[test]
+    fn velvet_choker_stops_the_seventh_card() {
+        let relics = vec![relic_def_or_panic("velvet_choker")];
+        let mut c = staged(&["strike"; 12], &["strike"; 8], &relics);
+        c.enemies[0].hp = 999;
+        for i in 1..=6 {
+            assert!(c.playable(0).is_ok(), "第 {i} 张还能打");
+            c.play_card(0, Some(0)).unwrap();
+        }
+        assert_eq!(c.cards_played, 6);
+        assert!(c.playable(0).is_err(), "第 7 张被拦下");
+        assert!(c.play_card(0, Some(0)).is_err());
+        // 打到 6 张也不影响别的:技能照样打不出去,但能量还在
+        assert_eq!(c.energy, 3, "6 张 0 费打击没花能量");
+        // 下一回合重新计数
+        c.hand.push(cards::card("strike"));
+        c.end_turn();
+        assert!(
+            c.playable(0).is_ok(),
+            "新回合的计数归零,又能打了(回合={})",
+            c.turn
+        );
+    }
+
+    /// 化学 X:X 费牌的效果多算 2 点,能量照常花光;0 能量也能打出 X=2 的效果
+    /// (反编译 Actions.cpp:591-594 / :1253-1256 的 `energy + (hasRelic<CHEMICAL_X>() ? 2 : 0)`)
+    #[test]
+    fn chemical_x_counts_two_more_with_and_without_energy() {
+        let relics = vec![relic_def_or_panic("chemical_x")];
+        // 3 点能量 -> X = 3 + 2 = 5 次
+        let mut c = staged(&["whirlwind"; 5], &["whirlwind"], &relics);
+        c.enemies[0].hp = 999;
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(999 - c.enemies[0].hp, 25);
+        assert_eq!(c.energy, 0, "能量按 X 全花掉");
+
+        // 0 点能量 -> X = 0 + 2 = 2 次(不是打不出去)
+        let mut c = staged(&["whirlwind"; 5], &["whirlwind"], &relics);
+        c.enemies[0].hp = 999;
+        c.energy = 0;
+        c.play_card(0, None).unwrap();
+        assert_eq!(999 - c.enemies[0].hp, 10, "0 能量也吃化学 X 的 +2");
+
+        // 不带化学 X 时 X 就是花掉的能量
+        let mut c = staged(&["whirlwind"; 5], &["whirlwind"], &[]);
+        c.enemies[0].hp = 999;
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(999 - c.enemies[0].hp, 15);
+    }
+
+    /// 冰激凌:没用完的能量留到下一回合(反编译 Player::rechargeEnergy 的
+    /// `gainEnergy(energyPerTurn)`,Player.cpp:714-719)
+    #[test]
+    fn ice_cream_carries_unspent_energy() {
+        let relics = vec![relic_def_or_panic("ice_cream")];
+        let mut c = staged(&["strike"; 6], &["strike"], &relics);
+        c.max_energy = 3;
+        c.energy = 3;
+        c.play_card(0, Some(0)).unwrap(); // 花 1 点
+        assert_eq!(c.energy, 2);
+        c.end_turn();
+        // 新回合 = 每回合 3 点 + 上回合剩下的 2 点
+        assert_eq!(c.energy, 5, "3 + 存下来的 2");
+        // 没用冰激凌的话归零重来
+        let mut c = staged(&["strike"; 6], &["strike"], &[]);
+        c.max_energy = 3;
+        c.energy = 3;
+        c.play_card(0, Some(0)).unwrap();
+        c.end_turn();
+        assert_eq!(c.energy, 3, "没有冰激凌就是每回合固定 3 点");
+    }
+
+    /// 战争艺术:上一回合没打攻击才补 1 点,且第一回合不补(反编译
+    /// Player::applyStartOfTurnRelics 的 `attacksPlayedThisTurn == 0`,Player.cpp:491-495;
+    /// 参考实现另外要求 turn > 1,refs/slay-the-cli/src/content/relics/common.ts:30-36)
+    #[test]
+    fn art_of_war_needs_an_attack_free_previous_turn() {
+        // 第一回合:回合开始的时刻 turn == 1,走的是"第一回合"那条分支,战争艺术不补
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: vec![cards::card("defend"); 10],
+            relics: vec![relic_def_or_panic("art_of_war")],
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc: 0,
+        };
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").unwrap();
+        let mut c = Combat::new(enc, setup, RngRegistry::new(3));
+        assert_eq!(c.turn, 1);
+        assert_eq!(c.energy, c.max_energy, "第一回合没有额外能量");
+        assert_eq!(c.max_energy, 3);
+
+        // 第一回合不打攻击 -> 第二回合补 1 点
+        c.energy = 3;
+        c.end_turn();
+        assert_eq!(c.turn, 2);
+        assert_eq!(c.energy, 4, "上一回合没打攻击,+1");
+
+        // 第二回合打了攻击 -> 第三回合不补
+        c.hand.push(cards::card("strike"));
+        let strike_idx = c.hand.len() - 1;
+        c.energy = 3;
+        c.play_card(strike_idx, Some(0)).unwrap();
+        c.end_turn();
+        assert_eq!(c.turn, 3);
+        assert_eq!(c.energy, 3, "上一回合打了攻击,不补");
+
+        // 第三回合又没打 -> 第四回合再补
+        c.end_turn();
+        assert_eq!(c.turn, 4);
+        assert_eq!(c.energy, 4, "上一回合没攻击,+1");
+    }
+
+    /// 嗜血:每掉一次血降 1 费,最低钳到 0;而且要恰好钳在 0(反编译
+    /// CardInstance::updateCost 的 `std::max(0, cost + amount)`,CardInstance.cpp:108-117)
+    #[test]
+    fn blood_for_blood_cost_clamps_at_zero() {
+        let mut c = staged(&["blood_for_blood"; 2], &["blood_for_blood"], &[]);
+        assert_eq!(c.hand[0].fixed_cost(), Some(4), "基础 4 费");
+        for _ in 0..4 {
+            c.hit_player(1);
+        }
+        assert_eq!(c.hand[0].fixed_cost(), Some(0), "掉 4 次血到 0 费");
+        for _ in 0..3 {
+            c.hit_player(1);
+        }
+        assert_eq!(c.hand[0].fixed_cost(), Some(0), "再掉也不会变成负费");
+    }
+
+    /// 消耗堆里的嗜血不再跟着掉血降价;被挖掘回手牌后还是当初那张牌的价
+    /// (反编译 CardManager::onTookDamage 只遍历 hand/drawPile/discardPile,
+    /// refs/sts_lightspeed/src/combat/CardManager.cpp:448-490)
+    #[test]
+    fn blood_for_blood_in_the_exhaust_pile_keeps_its_cost() {
+        let mut c = staged(&["blood_for_blood"; 2], &[], &[]);
+        c.draw = vec![cards::card("blood_for_blood")];
+        let buried = c.draw.pop().unwrap();
+        c.exhaust.push(buried);
+        c.hit_player(1);
+        c.hit_player(1);
+        assert_eq!(c.exhaust[0].fixed_cost(), Some(4), "消耗堆里的保持 4 费");
+        // 手牌/弃牌堆里的照降
+        c.hand.push(cards::card("blood_for_blood"));
+        c.hit_player(1);
+        assert_eq!(c.hand[0].fixed_cost(), Some(3), "手牌里的降到 3 费");
+        assert_eq!(c.exhaust[0].fixed_cost(), Some(4), "消耗堆里的还是 4 费");
+    }
+
+    /// 奇异勺的掷点口径:反编译只掷一次 cardRandomRng.randomBoolean()
+    /// (refs/sts_lightspeed/src/combat/BattleContext.cpp:1985-1991),不是 random(99).
+    /// 这里用同一条流上"下一次 randomBoolean"的取值来钉住口径.
+    #[test]
+    fn strange_spoon_rolls_one_random_boolean() {
+        let spoon = relic_def_or_panic("strange_spoon");
+        let mut c = staged(&["slimed"; 2], &["slimed"], &[spoon]);
+        let mut probe = c.streams.clone();
+        let coin = probe.floor(FloorStream::CardRandomRng).random_boolean();
+        c.play_card(0, None).unwrap();
+        if coin {
+            assert_eq!(c.discard.len(), 1, "掷到 true -> 改弃牌堆");
+            assert!(c.exhaust.is_empty());
+        } else {
+            assert_eq!(c.exhaust.len(), 1, "掷到 false -> 照常消耗");
+            assert!(c.discard.is_empty());
+        }
     }
 }
 

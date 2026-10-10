@@ -4238,6 +4238,43 @@ mod ascension_event_tests {
         }
     }
 
+    /// 表驱动:A15 里每一条声明了覆盖的选项,都要在 15 这一档真的改出点东西
+    /// (反编译一律用 `unfavorable = ascension >= 15` 的三目,GameContext.cpp:852、
+    /// :2441 及各事件分支;声明了却没生效 = 抄错了).顺带钉住 14/15 的边界.
+    #[test]
+    fn every_a15_override_changes_something_at_15() {
+        let mut seen = 0;
+        for ev in EVENTS {
+            for c in ev.choices {
+                if c.outcome_a15.is_none() && c.cost_gold_a15 == 0 {
+                    continue;
+                }
+                let lo = c.effective(14);
+                let hi = c.effective(15);
+                // Outcome 里挂着 &EventDef,没法简单地 derive PartialEq,这里比整份
+                // 结构体的 Debug 文本(字段一多也不会漏)
+                assert!(
+                    format!("{:?}", hi.outcome) != format!("{:?}", lo.outcome)
+                        || hi.cost_gold != lo.cost_gold,
+                    "{}({}) 声明了 A15 覆盖却没有任何变化",
+                    ev.id,
+                    c.label
+                );
+                // A15 以下不该被覆盖到
+                assert_eq!(
+                    format!("{:?}", lo.outcome),
+                    format!("{:?}", c.outcome),
+                    "{}({}) 在 A14 就该是原样",
+                    ev.id,
+                    c.label
+                );
+                assert_eq!(lo.cost_gold, c.cost_gold);
+                seen += 1;
+            }
+        }
+        assert!(seen >= 20, "A15 覆盖应该有一批(现在数到 {seen} 条)");
+    }
+
     /// 直接开一局指定飞升(铁甲战士)
     fn run_asc(asc: u32) -> crate::core::run::Run {
         run_asc_seed(7, asc)
