@@ -1151,7 +1151,9 @@ fn pick_bronze_automaton(ctx: &mut PickCtx) -> usize {
         };
     }
     if ctx.last_is(HYPER_BEAM) {
-        return STUNNED;
+        // 飞升 19+ 光束后接增幅,否则眩晕(反编译 BRONZE_AUTOMATON_HYPER_BEAM 分支
+        // 的 `if (asc19) setMove(BOOST); else setMove(STUNNED)`)
+        return if ctx.asc >= 19 { BOOST } else { STUNNED };
     }
     FLAIL
 }

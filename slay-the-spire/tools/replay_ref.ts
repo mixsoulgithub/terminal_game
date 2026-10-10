@@ -416,15 +416,22 @@ patchHexaghostInferno();
 // (refs/slay-the-cli/src/content/acts.ts:78/84 的 monsters:[...]),于是
 //   小鬼头目落在槽 2 —— Rally 找空槽(反编译 Actions.cpp:459 的 1,2,0 顺序)候选少了槽 2
 //   (a20a2 seed 13 只差 5 hp、seed 33 槽 1 的小鬼已死时参考只找到 1 个空槽、少召唤一只胖小鬼,差 117 hp);
-//   铜制自动机落在槽 0 —— 铜球进槽 1/2、且怪物行动顺序被改(参考自动机先动、本作后动)
-//   (a20a2 seed 3 整场 hp 差 10 点).
+//   铜制自动机落在槽 0 —— 铜球进槽 1/2;更要紧的是"每回合谁先掷下一招 aiRng"按数组顺序走,
+//   摆位一挪,首领与两颗铜球各自拿到的掷点就换了人,铜球的随机选招(Beam/Support Beam)因此分叉
+//   (a20a2 seed 13/33 各差 8 hp;seed 3 那 10 hp 不是摆位,见下条).
 // 这里在驱动侧把参考的开战槽位掰回原版:开战后插一个槽 0 的 GAP(escaped,永不行动、不计数、
 // 不可选中,与参考自己 padMonsterSlots 造的同一种对象),再把各只 idx 顺移一位.
 // 不掷任何点(HP 掷点仍按原次序落在真实怪身上);导出时 GAP 照旧滤掉.本作引擎不动.
 // 每个遭遇只认它"开战那一刻"的阵容,插一次就不再来(之后召唤/替换更不会再插):
 // 小鬼头目开战固定三只、首领排最后;铜制自动机开战只有它自己一只.
+//
+// 附:铜制自动机 seed 3 的整场 10 hp 差曾一并记在这条摆位缺口下,实际另有其因 —— 本作漏了
+//   飞升 19 的"光束后接增幅"分支(本作 pick_bronze_automaton 原先一律回到 Stunned;反编译
+//   MonsterSpecific.cpp:492-499 是 `asc19 ? BOOST : STUNNED`).已按反编译修好本作引擎,
+//   摆位缺口与它两回事,两条都得有(单一改任一条都对不上).
 const LEADING_GAP_ENCOUNTERS: Record<string, (ids: string[]) => boolean> = {
   GREMLIN_LEADER: (ids) => ids.length === 3 && ids[2] === "GREMLIN_LEADER",
+  AUTOMATON: (ids) => ids.length === 1 && ids[0] === "BRONZE_AUTOMATON",
 };
 
 function fixSummonerSlotLayout(s: GameState): void {
@@ -1197,6 +1204,13 @@ function planLineup(encounterId: string, seed: bigint, floor: number, asc: numbe
 /** 补偿开关(--raw-ref 关掉) */
 let COMPENSATE = true;
 
+/** 参考侧把 chosen 当"牌组下标"用的选牌 resume(见 emitPendingPick 里的说明). */
+const DECK_INDEX_RESUMES: Record<string, true> = {
+  __eventChoice: true,
+  __runDeckChoice: true,
+  __restToke: true,
+};
+
 /**
  * 结算一次挂起的选牌并输出 pick 行.
  *
@@ -1226,13 +1240,23 @@ function emitPendingPick(out: string[], step: number, s: GameState): { s: GameSt
     return { s: next, step: step + 1 };
   }
   const n = req.kind === "cards" ? req.iids.length : 0;
-  const picks = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
+  const positions = req.kind === "cards" ? req.iids.map((_, i) => i).slice(0, req.min) : [0];
+  // 参考侧"选牌"屏的 resume 有两种口径:
+  //   - content:relicPickupChoice(pickup.ts:91-116)把 chosen 当**候选位置**,再映射回自己的
+  //     indices(chosen.map(i => indices[i]));驱动现在传候选位置,正好对上.
+  //   - __eventChoice(lib.ts:355 requestDeckChoice 起的屏)/__runDeckChoice(runFlow.ts:570)/
+  //     __restToke(runFlow.ts:560)把 chosen 当**牌组下标**直接用(如 designer/upgrade_shrine 的
+  //     onResume 里 `upgradeDeckCard(chosen[0])`,参考无守卫,直接给该下标 upgrades++).
+  // 驱动原来一律传候选位置,于是事件屏会把"候选位置 0"错当"牌组下标 0",升了一张不该升/已升过的
+  // 牌(seed 19/25).这里按 resume 口径把候选位置换成牌组下标(iids[p]),不动本作引擎.
+  const deckPick = req.kind === "cards" && DECK_INDEX_RESUMES[String(s.pending!.resume)] === true;
+  const picks = deckPick ? positions.map((p) => req.iids[p]!) : positions;
   const deckIdx = (s.pending!.resumeArgs as { indices?: number[] } | undefined)?.indices;
-  if (picks.length > 1 && deckIdx && deckIdx.length >= picks.length) {
-    for (let k = 0; k < picks.length - 1; k++) {
+  if (positions.length > 1 && deckIdx && deckIdx.length >= positions.length) {
+    for (let k = 0; k < positions.length - 1; k++) {
       const mid = structuredClone(s);
       // 中间态:按牌组下标从大到小删掉前 k+1 张被选中的牌
-      for (let j = k; j >= 0; j--) mid.run.deck.splice(deckIdx[picks[j]!]!, 1);
+      for (let j = k; j >= 0; j--) mid.run.deck.splice(deckIdx[positions[j]!]!, 1);
       out.push(line(step, "pick", `"candidates":${n - k},"pick":0`, stateJson(mid)));
       step += 1;
     }

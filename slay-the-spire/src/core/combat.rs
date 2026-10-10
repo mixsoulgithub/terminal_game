@@ -8694,6 +8694,53 @@ mod summon_tests {
         );
     }
 
+    /// 铜制自动机的固定脚本在飞升 19+ 下"光束后接增幅":反编译 BRONZE_AUTOMATON_HYPER_BEAM
+    /// 分支是 `if (asc19) setMove(BOOST); else setMove(STUNNED)`
+    /// (refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:492-499).本作原先一律回 Stunned,
+    /// 飞升 20 下光束后少一次增幅(格挡+力量),a20a2 seed 3 整场差 10 hp.
+    #[test]
+    fn automaton_hyper_beam_chains_into_boost_at_a19() {
+        fn auto_at(asc: u32) -> Combat {
+            let enc =
+                crate::core::enemies::encounter_def("bronze_automaton").expect("automaton 遭遇");
+            Combat::new(
+                enc,
+                CombatSetup {
+                    rested: false,
+                    hp: 300,
+                    max_hp: 300,
+                    deck: vec![card("strike"); 10],
+                    relics: Vec::new(),
+                    gold: 0,
+                    lift_strength: 0,
+                    relic_counters: RunRelicCounters::default(),
+                    curse_negate: 0,
+                    asc,
+                },
+                RngRegistry::new(7),
+            )
+        }
+        // 脚本:放球 → 连枷 → 增幅 → 连枷 → 增幅 → 光束,再看下一招
+        let chain = ["Spawn Orbs", "Flail", "Boost", "Flail", "Boost", "Hyper Beam"];
+        for (asc, after) in [(0u32, "Stunned"), (20u32, "Boost")] {
+            let mut c = auto_at(asc);
+            for want in chain {
+                let i = idx_of(&c, "bronze_automaton");
+                let next_move = c.enemies[i].next_move;
+                assert_eq!(
+                    c.enemies[i].def.moves[next_move].name, want,
+                    "飞升 {asc}: 脚本该走到 {want}"
+                );
+                use_move(&mut c, "bronze_automaton", next_move);
+            }
+            let i = idx_of(&c, "bronze_automaton");
+            assert_eq!(
+                c.enemies[i].def.moves[c.enemies[i].next_move].name, after,
+                "飞升 {asc}: 光束之后应是 {after}"
+            );
+        }
+    }
+
     #[test]
     fn collector_torch_heads_stand_in_front_of_her() {
         let mut c = fight("the_collector", 7);

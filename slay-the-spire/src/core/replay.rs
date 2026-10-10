@@ -1941,8 +1941,9 @@ mod e2e {
     ///   参考侧一次 choose 交完 —— 驱动侧按张数补出中间态(seed 25 尾部 27 处消失).
     ///
     /// 反查后逐颗口径(对齐前缀 / 首分叉步 / 成因 / 归类),全表合计差异 153->71->15 处
-    /// (本轮折掉小鬼头目开战摆位与 Nilry 宝典两条参考缺口,见 ASC2_CASES (c)5/(c)6):
-    ///   全对齐(0 处):4 6 11 13 15 17 18 19 25
+    /// (本轮折掉小鬼头目开战摆位与 Nilry 宝典两条参考缺口,见 ASC2_CASES (c)5/(c)6;
+    ///  再折掉铜制自动机的槽位缺口 (c)10 后 15->9 处):
+    ///   全对齐(0 处):4 6 11 15 17 18 19 25 33
     ///   seed 3 : 41 步 / 步 36 百夫长+神秘者 / (b)3 参考侧怪物的"下一招掷点"早于它自己
     ///            排队的回血结算 —— 反编译 refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607
     ///            的 MYSTIC_HEAL 先把 heal 落地(refs/sts_lightspeed/src/combat/Monster.cpp:269-272
@@ -1951,25 +1952,25 @@ mod e2e {
     ///            executeMonsterMove 是 execute 里把治疗 addToBottom、接着就 rollMove,
     ///            掷点看到的是治疗前的血.本作按反编译(combat.rs 的 enemy_act 先落效果再
     ///            pick_next_move).5 处全是这一处的 hp 级联.
-    ///   seed 13: 40 步 / 步 33 move / 参考侧进 Boss 房前的回血时点 + 步 41 的 hp 级联
-    ///            (与 ASC2 的 seed 13 同型,同族的参考侧口径差).4 处.
-    ///   seed 16: 40 步 / 步 41 百夫长+神秘者 / (b)3 同 seed 3.3 处.
-    ///   seed 33: 40 步 / 步 40 燃烧精英小鬼头目 / 参考侧 Rally 摆位与反编译不同
-    ///            (见 ASC2 (c)6);本表这颗是 A0(飞升 0),与 a20a2 的 A20 同 seed 不同战斗,
-    ///            驱动侧插槽 0 的 GAP 未能一并折平,保持登记.3 处.
+    ///   seed 13: 33 步 / 步 33 move / 参考侧进 Boss 房前的回血时点(与 ASC2 的 seed 13 同型,
+    ///            同族的参考侧口径差).1 处(步 41..43 那截 hp 级联是铜制自动机槽位缺口
+    ///            (c)10,插 GAP 后消失).
+    ///   seed 16: 41 步 / 步 41 百夫长+神秘者 / (b)3 同 seed 3.3 处.
+    ///   seed 33: 原为燃烧精英小鬼头目的 Rally 摆位(见 ASC2 (c)6),驱动侧插槽 0 的 GAP
+    ///            后已归零(本表这颗是 A0,与 a20a2 的 A20 同 seed 不同战斗,同一条缺口).
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
     Expected { seed: 4, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 6, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33, 41, 42, 43], diff_digest: 0x291c834f4147ade6 },
+    Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33], diff_digest: 0x1f0000150cee864d },
     Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 41, diff_steps: &[41, 42, 43], diff_digest: 0x613321b605962808 },
     Expected { seed: 17, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 40, diff_steps: &[40, 41, 42], diff_digest: 0x94dd859a344298d },
+    Expected { seed: 33, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
     /// 第二幕对拍:同一颗种子 + act2.script,逐行比对(两侧都转小写).
@@ -2404,27 +2405,26 @@ mod e2e {
     /// 逐颗 seed 归因(12 颗,复跑命令 `bun tools/e2e_diff.ts --all --script
     /// tools/golden/e2e/a20a2.script`)."对齐前缀"= 第一处分叉前的步数,"首分叉"= 第一处
     /// 字段不同的步号(其后差异都是这一处的级联).退赃等驱动侧补偿折掉后从 1157 降到
-    /// 249 处,后续几轮修 bug 再降到 195 -> 105 处;本轮又折掉四条参考侧缺口/写反
-    /// (见下 (c)5~(c)8:冠军战的 Nilry 宝典、小鬼头目开战摆位、the_library 屏口径、
-    /// PRESERVED_INSECT 判定),全表 105 -> 50 处:
+    /// 249 处,后续几轮修 bug 再降到 195 -> 105 -> 50 处(后两轮折掉 (c)5~(c)8);本轮再
+    /// 折掉事件选牌屏的 chosen 口径 (c)9 与铜制自动机(槽位缺口 (c)10 + 引擎的飞升 19
+    /// "光束后接增幅" (a)),全表 50 -> 3 处:
     ///
     ///   seed  步数(本作/参考)  对齐前缀  首分叉            首分叉成因 / 归类
-    ///    3     45/45            42       步 42 fight       铜制自动机的怪物槽位与参考不同 (c)   [共 3 处]
-    ///    4     50/50            47       步 47 fight       收藏家的 Battle Trance 抽牌限制 (c)   [共 3 处]
-    ///    6     53/53            53       (已全对齐,本轮折掉 Nilry 宝典)                       [共 0 处]
+    ///    3     45/45            45       (已全对齐,本轮折铜制自动机槽位 (c)10 + 引擎飞升 19 分支 (a))  [共 0 处]
+    ///    4     50/50            47       步 47 fight       收藏家的 Battle Trance 抽牌限制 (c)8   [共 3 处]
+    ///    6     53/53            53       (已全对齐)                                             [共 0 处]
     ///   11     48/48            48       (已全对齐)                                             [共 0 处]
-    ///   13     42/42            42       (已全对齐,本轮折掉小鬼头目开战摆位)                    [共 0 处]
-    ///   15     45/45            45       (已全对齐,本轮折掉小鬼头目摆位 + the_library 屏)        [共 0 处]
+    ///   13     42/42            42       (已全对齐)                                             [共 0 处]
+    ///   15     45/45            45       (已全对齐)                                             [共 0 处]
     ///   16     44/44            44       (已全对齐)                                             [共 0 处]
     ///   17     44/44            44       (已全对齐)                                             [共 0 处]
-    ///   18     47/47            47       (已全对齐,本轮折掉 PRESERVED_INSECT 判定)              [共 0 处]
-    ///   19     45/45            32       步 32 pick        designer_in_spire 升级目标 (b)         [共 26 处]
-    ///   25     47/47            36       步 36 pick        designer_in_spire 升级目标 (b)         [共 18 处]
-    ///   33     46/46            46       (已全对齐,本轮折掉首领排槽少召唤一只小鬼)              [共 0 处]
+    ///   18     47/47            47       (已全对齐)                                             [共 0 处]
+    ///   19     45/45            45       (已全对齐,本轮折 designer/shrine 选牌口径 (c)9)          [共 0 处]
+    ///   25     47/47            47       (已全对齐,本轮折 designer/shrine 选牌口径 (c)9)          [共 0 处]
+    ///   33     46/46            46       (已全对齐)                                             [共 0 处]
     ///
-    /// 种子 4 的步 47 是收藏家(Boss)战里参考的"本回合不能再抽牌"没实现(下方 (c)3);
-    /// 种子 19/25 是 designer_in_spire 升级目标的口径差 (b);种子 3 是铜制自动机的怪物
-    /// 槽位差 (c).其余七颗本轮或上一轮已逐字节全对齐.
+    /// 只剩种子 4 的步 47:收藏家(Boss)战里参考的"本回合不能再抽牌"没实现(下方 (c)8);
+    /// 其余 11 颗本轮或上一轮已逐字节全对齐.本轮两条并见下方 (c)9/(c)10 与 (a).
     ///
     /// (a1) 驱动侧时序补偿(本轮):参考的怪招掷点早于它自己排队的回血结算.
     ///   原版/反编译(refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:600-607 的 MYSTIC_HEAL、
@@ -2547,7 +2547,8 @@ mod e2e {
     ///      候选表当 iids 传(oneTime.ts),续牌时却直接 upgradeDeckCard(chosen[0]),
     ///      把"候选表里的下标 0"当成"牌组下标 0",于是把 deck[0] 已经强化过的狂暴又升成
     ///      rampage+2 —— 原版里非 multiUpgrade 的牌根本升不了第二次,参考这一支是错的.
-    ///      seed 25 第 36 步起的分叉(含其后 event/pick/reward 的级联)全是它.
+    ///      seed 25 第 36 步起的分叉(含其后 event/pick/reward 的级联)全是它.本轮已在
+    ///      驱动侧把候选位置换成牌组下标(见下方 (c)9)折平,本作引擎不动.
     ///   4) dream_catcher 没实现(本轮折掉噪声):参考 common.ts 的 DREAM_CATCHER 是
     ///      hooks: {},休息后该送的那张牌参考侧没有,本作有.原版"休息后可以加一张牌"
     ///      是常规遗物效果,本作不改(断言 = run.rs::dream_catcher_gives_a_card_pick_after_resting);
@@ -2594,7 +2595,7 @@ mod e2e {
     ///      原版是 43/20,那场之后整段 hp 差 10 点.本轮已在驱动侧把参考的判据换成
     ///      roomKind === "elite"(见 tools/replay_ref.ts 的 PRESERVED_INSECT 覆盖),seed 18 归零.
     ///
-    /// (c)5~(c)8) 本轮新折掉/登记的参考侧缺口与写反(均由 tools/replay_ref.ts 在驱动侧补偿,
+    /// (c)5~(c)10) 本轮新折掉/登记的参考侧缺口与写反(均由 tools/replay_ref.ts 在驱动侧补偿,
     ///   本作引擎不动;除 (c)8 外全部归零):
     ///   (c)5 seed 6 冠军战(原"未定"):追到 t2 起手牌不同,再往下打印两侧开战瞬间的
     ///       逐张牌堆 + 三条流计数器,发现 t1 起手与三个流(cardRandomRng/miscRng/shuffleRng)
@@ -2618,13 +2619,38 @@ mod e2e {
     ///       "ENGINE-GAP: NO_DRAW cannot veto card-effect draws",本作按牌面否决抽牌,于是
     ///       seed 4 的收藏家战里本作少抽一张(整场差 64 hp).参考侧没有可低成本利用的钩子
     ///       (要动它的 drawCards),保持登记.
+    ///   (c)9 事件选牌屏的 chosen 口径(designer_in_spire / upgrade_shrine / purifier 等):
+    ///       参考的 requestDeckChoice 注释写的是"iids 是牌组下标,resume 拿到的 chosen 也是
+    ///       牌组下标"(refs/slay-the-cli/src/content/events/lib.ts:355-368),各事件 onResume
+    ///       也直接把它当牌组下标用(designer 的 upgradeDeckCard(chosen[0]) 见 oneTime.ts:184-192;
+    ///       shrine 的 transformDeckCard/removeDeckCards 见 shrines.ts:161/182/203);但这套约定
+    ///       在 pickup 版里却是"chosen 是候选表里的位置"(refs/slay-the-cli/src/content/relics/pickup.ts:91-104).
+    ///       驱动原先一律按"位置"传,于是把候选表第 0 项当成牌组下标 0,升了一张其实没被选中
+    ///       (甚至已升过)的牌 —— seed 19/25 各差 13/11 步.驱动侧按 resume 口径把位置换成
+    ///       牌组下标(tools/replay_ref.ts 的 DECK_INDEX_RESUMES),本作引擎不动.
+    ///   (c)10 铜制自动机的开战槽位:反编译 MonsterGroup.cpp:173-177 把 BRONZE_AUTOMATON
+    ///       构造在槽 1(先 monsterCount=1,createMonster 用 arr[monsterCount]),spawnBronzeOrbs
+    ///       用 arr[0]/arr[2](MonsterSpecific.cpp:3393-3399);本作 bronze_automaton = [1]
+    ///       (src/core/enemies.rs:816,断言见 combat.rs automaton_orbs_take_slots_0_and_2_around_it).
+    ///       参考按数组下标铺成槽 0..N-1,自动机落槽 0、铜球进槽 1/2.除了行动顺序被改,每回合
+    ///       "谁先掷下一招 aiRng"也按数组顺序走,摆位一挪铜球拿到的掷点就换了人(seed 13/33
+    ///       各差 8 hp).驱动侧给参考开战时插一个槽 0 的 GAP(同 (c)6 的做法),与 (a) 合起来
+    ///       seed 3/13/33 全归零.
     ///
-    /// 12 颗 seed 至此只剩两条未折:designer_in_spire 升级目标的口径(b,seed 19/25)
-    /// 与 Battle Trance 抽牌限制(c8,seed 4);铜制自动机的怪物槽位差(c,seed 3)也保持登记
-    /// (试过照 (c)6 插槽 0 的 GAP,反而把 seed 13/33 原本对齐的自动机战弄坏,说明本作自动机
-    /// 的槽位与"插 GAP"的假设不符,故不折).折掉本轮四条后全表 105 -> 50 处.
+    /// (a) 本轮本作引擎修掉一条:铜制自动机的"光束后接增幅".反编译 BRONZE_AUTOMATON_HYPER_BEAM
+    ///   分支是 `if (asc19) setMove(BOOST); else setMove(STUNNED)`
+    ///   (refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:492-499);本作 pick_bronze_automaton
+    ///   原先一律回 STUNNED,飞升 20 下光束后少一次增幅(格挡+力量),a20a2 seed 3 整场差 10 hp.
+    ///   改在 src/core/enemies/act2.rs 的 pick_bronze_automaton;断言 = combat.rs
+    ///   automaton_hyper_beam_chains_into_boost_at_a19.注意 (a) 与 (c)10 是两回事:只改
+    ///   (a) 会让 seed 13/33 从"两错相抵"的对齐变成差 8 hp,只插 GAP 又修不好 seed 3 的 10 hp,
+    ///   两条都到位才全对.
+    ///
+    /// 至此 12 颗 seed 只剩 seed 4 一条未折:Battle Trance 的"本回合不能再抽牌"(c)8.
+    /// 折掉 designer/shrine 选牌口径(seed 19/25,44 处)与铜制自动机(seed 3/13/33,槽位缺口 +
+    /// 引擎的飞升 19 分支)后,全表 50 -> 3 处.
     const ASC2_CASES: &[Expected] = &[
-    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 42, diff_steps: &[42, 43, 44], diff_digest: 0x923922f63b45627b },
+    Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 50, ref_lines: 50, aligned: 47, diff_steps: &[47, 48, 49], diff_digest: 0x701c37bace05e1a2 },
     Expected { seed: 6, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2633,8 +2659,8 @@ mod e2e {
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 17, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 18, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xa240c6f91cf4971c },
-    Expected { seed: 25, lines: 47, ref_lines: 47, aligned: 36, diff_steps: &[36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46], diff_digest: 0xe8d3452f64299577 },
+    Expected { seed: 19, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 25, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 33, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
