@@ -2009,16 +2009,30 @@ mod e2e {
     /// 同覆盖优先对齐"从 1..400 里再挑 28 颗(只挑走到第二幕 Boss 奖励屏的),补上此前
     /// 没量到的事件/精英/遭遇.新种子逐字段对拍后:
     ///   全对齐(0 处):1 4 5 6 8 9 10 11 12 15 17 18 19 24 25 27 28 29 30 32 33 35 36
-    ///     37 39 40 41 43 79 141 166 187 253 323 330(原 12 颗全部保持原状)
-    ///   seed 92: 第 18 步起 3 步 —— 手里有"幽影"时,本作重放策略的来袭估算没把玩家侧
-    ///     无形(Intangible)算进去(参考那一回合的 in 是 2、本作算 10),同一回合选牌分家,
-    ///     那一场结尾差 2 血 | (a) 本作策略侧新缺口(本轮定位到,未修;见 report)|
-    ///     replay.rs 的 incoming 走 combat.rs predicted_damage→enemy_attack_damage,
-    ///     那里没折玩家的无形,而实际结算 combat.rs hit_player_kind:3717 折了
-    ///   seed 110: 第 23 步起 21 步 —— 被选中者(Chosen)那一场:两边的抽牌堆顺序在此分家
-    ///     (手牌内容从这一步起换成"少一张狂怒多一张痛苦"),之后整段错开 | (b)/(c) 参考侧
-    ///     随机流错位 | 复跑 `bun tools/e2e_diff.ts 110 --script tools/golden/e2e/act2.script`
-    /// 全表合计差异 66 处(原 9 处:3 的 5 + 13 的 1 + 16 的 3;新 57 处:92 的 3 + 110 的 54).
+    ///     37 39 40 41 43 79 92 110 141 166 187 253 323 330(原 12 颗全部保持原状)
+    ///   seed 92(本轮已结掉,0 处):原记"第 18 步起 3 步".逐掷点追到底:真因不是
+    ///     来袭估算,而是**参考侧自伤路径没折无形** —— 血债 Hemokinesis"失去 2 点生命"
+    ///     在手里有幽影时,本作 combat.rs lose_hp_player 折无形掉 1(反编译
+    ///     refs/sts_lightspeed/src/combat/Player.cpp:261-275 的 Player::loseHp 第一句就折),
+    ///     参考侧 applyHpLoss(interpreter.ts:225-240)只折 onLoseHp 钩子、不折 INTANGIBLE,
+    ///     于是掉满 2,那一场差 2 血.处理 = 驱动侧补一枚隐藏玩家能力 INTANGIBLE_LOSEHP
+    ///     (tools/replay_ref.ts)把自伤折到 1;本作引擎本来就对,只加断言
+    ///     (combat.rs predicted_damage_matches_actual_hp_loss_with_intangible 钉来袭估算口径).
+    ///     顺带把本作来袭估算也补折了玩家侧无形(enemy_attack_damage 末尾),与
+    ///     Monster::calculateDamageToPlayer 一致 —— 这条口径统一,但现有种子没有因它翻牌的.
+    ///   seed 110(本轮已结掉,0 处):原记"第 23 步起 21 步,抽牌堆顺序分家".两段成因:
+    ///     (一)第 23-33 步 = 参考侧变形钳(Warped Tongs)时点错 —— 反编译挂在抽牌后、用
+    ///       shuffleRng 洗候选下标取第一张(Actions.cpp:940-962;本作 combat.rs start_turn 照此),
+    ///       参考挂在 atStartOfTurn(抽牌前)手里没牌、永不触发也不掷点,于是两边 shuffleRng
+    ///       错开一格、后面每次洗牌都分家([b] 参考未实现).处理 = 驱动侧把 WARPED_TONGS
+    ///       改挂 atStartOfTurnPostDraw 并走 shuffleRng + Collections.shuffle
+    ///       (tools/replay_ref.ts).
+    ///     (二)第 34-43 步 = 斗兽场第一场的药水保底:参考侧(与语料
+    ///       refs/slay-the-cli/data/corpus/events.json 的 COLOSSEUM_EVENT_SLAVERS 条
+    ///       "no rewards; potion drop chance still advances invisibly")隐式推进保底 +10,
+    ///       本作原先不推进([a] 本作缺).处理 = run.rs resolve_victory 的 back 分支补上
+    ///       (plan.nothing 即斗兽场第一场),断言见 events.rs::colosseum_first_fight_returns_to_the_event.
+    /// 全表合计差异 9 处(原 9 处:3 的 5 + 13 的 1 + 16 的 3;92 与 110 本轮归零).
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
@@ -2052,8 +2066,8 @@ mod e2e {
     Expected { seed: 41, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 43, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 79, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 18, diff_steps: &[18, 19, 20], diff_digest: 0x3b312b931327483a },
-    Expected { seed: 110, lines: 44, ref_lines: 44, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0x16ed143fb3d0dd1c },
+    Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 110, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 141, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 166, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 187, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },

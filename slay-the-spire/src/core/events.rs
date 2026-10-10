@@ -3895,10 +3895,12 @@ mod tests {
         let mut r = Run::new(37);
         let def = event_def("colosseum").unwrap();
         open(&mut r, def);
+        let pity0 = r.debug_potion_state().0;
         r.choose_event(0).unwrap();
         assert_eq!(r.screen, Screen::Combat);
         let ids: Vec<&str> = r.combat().unwrap().enemies.iter().map(|e| e.def.id).collect();
         assert_eq!(ids, ["blue_slaver", "red_slaver"], "第一场只有两只奴隶主(反编译 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:208-211)");
+        let rng0 = r.debug_potion_state().1;
         r.debug_win_battle();
         // 胜利后要停留几帧才结算,这里直接把定格走完
         let mut guard = 0;
@@ -3907,6 +3909,18 @@ mod tests {
             r.tick_win_hold();
         }
         assert_eq!(r.screen, Screen::Event, "第一场打完要回到看台");
+        // 不摆奖励屏,但药水保底照样隐式推进一格(语料 COLOSSEUM_EVENT_SLAVERS:
+        // "no rewards; potion drop chance still advances invisibly"),且不掷 potionRng
+        assert_eq!(
+            r.debug_potion_state().0,
+            pity0 + 10,
+            "斗兽场第一场把药水保底推进 10"
+        );
+        assert_eq!(
+            r.debug_potion_state().1,
+            rng0,
+            "只推进保底,不掷 potionRng"
+        );
         assert_eq!(r.event.as_ref().unwrap().def.choices.len(), 2);
         let gold = r.player.gold;
         r.choose_event(1).unwrap();

@@ -2152,6 +2152,17 @@ impl Run {
         }
         if let Some(def) = back {
             self.say(format!("victory over the {}", c.encounter_id));
+            // 斗兽场第一场:回看台、不摆奖励屏,但药水保底照样"隐式"推进一格.
+            // 依据:语料 refs/slay-the-cli/data/corpus/events.json 的 COLOSSEUM_EVENT_SLAVERS
+            // 条写明 "no rewards; potion drop chance still advances invisibly"
+            // (来源 wiki:The_Colosseum / spire-archive);参考实现也这么补
+            // (refs/slay-the-cli/src/content/events/act2.ts 的 onCombatVictory 里
+            //  `blizzard.potionChance += POTION_DROP.pityStep`).反编译对斗兽场整段是 stub
+            // (refs/sts_lightspeed/src/game/GameContext.cpp:2554-2556),流程按语料走.
+            // 只推进保底,不掷点、不发药水(所以 REWARD_NOTHING 的 potion_pct 保持 0).
+            if plan.map(|p| p.nothing).unwrap_or(false) {
+                self.potion_chance += POTION_PITY_STEP;
+            }
             self.event = Some(EventState::new(def));
             self.screen = Screen::Event;
             return;

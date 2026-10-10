@@ -68,7 +68,7 @@ const LIMIT = argv.includes("--serial")
 const START = performance.now();
 
 /** 九张 e2e 表的基线"总差异 N 处"(见 src/core/replay.rs 的登记表) */
-const E2E_BASELINE: Record<string, number> = { act1: 50, act2: 66, act3: 257, acts: 0, a20: 0, a20a2: 3, a20a3: 25, a20a4: 1, act4: 0 };
+const E2E_BASELINE: Record<string, number> = { act1: 50, act2: 9, act3: 257, acts: 0, a20: 0, a20a2: 3, a20a3: 25, a20a4: 1, act4: 0 };
 
 interface Step {
   name: string;

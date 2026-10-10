@@ -11,7 +11,7 @@
 
 import { createRun, advance, type GameState, type Command } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/game.ts";
 import { buildBaseContentBundle } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/content/index.ts";
-import { Rng, seedToString, type RngState } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rng.ts";
+import { Rng, seedToString, type RngState, JavaRandom, javaShuffle } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rng.ts";
 import { MAP_HEIGHT, MAP_WIDTH } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/mapGen.ts";
 import { buildEventScreen } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/eventRuntime.ts";
 import { restOptionAvailable, resolveUnknownRoom } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/run/runFlow.ts";
@@ -25,6 +25,7 @@ import { RngRegistry } from "/home/mix/projects/terminal_game/refs/slay-the-cli/
 import type { EffectCtx } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/content/defs.ts";
 import { monster } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/ids.ts";
 import { applyPower } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/powerRuntime.ts";
+import { canUpgradeInCombat, upgradeInCombat } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/content/relics/lib.ts";
 import type { CombatState } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/combatState.ts";
 
 type Policy = {
@@ -155,6 +156,46 @@ function renameBurningRegen(s: GameState): void {
     for (const p of m.powers) {
       if (p.id === "REGEN") p.id = "BURNING_REGEN";
     }
+  }
+}
+
+// ---- 参考侧缺口的驱动补偿:变形钳(Warped Tongs)的时点与随机流 ----
+//
+// 反编译把 WARPED_TONGS 放在"抽牌之后"(Player::applyStartOfTurnPostDrawRelics,
+// refs/sts_lightspeed/src/combat/Player.cpp:663-672),它执行的
+// Actions::UpgradeRandomCardAction(refs/sts_lightspeed/src/combat/Actions.cpp:940-962):
+//   ① 先在手里挑出"还能升级"的牌(canUpgrade,诅咒/状态豁免);
+//   ② 一张候选都没有就整段跳过、**不掷点**;
+//   ③ 否则从 **shuffleRng** 取一个 long 做种,喂 java.util.Random 洗这份候选下标表,
+//      升级洗后的第一张.
+// 本作引擎照此实现(src/core/combat.rs start_turn 的 upgrade_random_hand_at_turn_start
+// 分支:候选 = can_upgrade 的手牌,动 shuffleRng,升级洗后第一张).
+//
+// 参考实现却把 WARPED_TONGS 挂在 atStartOfTurn(抽牌**前**,
+// refs/slay-the-cli/src/content/relics/event.ts:237-249):那一刻手里还没牌、候选恒空,
+// 于是永远不升级;即便有候选,它也是用 miscRng.random 直接挑一张,不动 shuffleRng.
+// 时点、随机流、选法三处都对不上原版.这里在驱动侧按反编译换成等价实现
+// (改挂 atStartOfTurnPostDraw,用 shuffleRng + Collections.shuffle).本作引擎不动.
+//
+// 影响:act2 seed110 那一场(被选中者)整段抽牌堆顺序由此错位 —— 本作每回合开始都按
+// 原版掷一次 shuffleRng 升级手牌,参考不掷,于是之后每一次洗牌的种子整体偏移一格,
+// 洗出的抽牌堆顺序分家(本作多抽到一张"痛苦",那个回合多掉 2 血,之后整幕 hp 步错开).
+// 这里补的是参考侧缺口,不是本作口径.
+{
+  const def = bundle.relics.get("WARPED_TONGS" as never);
+  if (def) {
+    def.hooks.atStartOfTurn = undefined;
+    def.hooks.atStartOfTurnPostDraw = (ctx) => {
+      const combat = ctx.combat;
+      if (!combat) return;
+      const candidates = combat.player.piles.hand.filter((iid) =>
+        canUpgradeInCombat(ctx, combat.cards[iid]!),
+      );
+      if (candidates.length === 0) return;
+      const seed = ctx.rng("shuffleRng").randomLong();
+      javaShuffle(candidates, new JavaRandom(seed));
+      upgradeInCombat(ctx, combat.cards[candidates[0]!]!);
+    };
   }
 }
 
@@ -293,6 +334,7 @@ function advanceWithEggs(s: GameState, cmd: Command): GameState {
     refundStolenGold(s, out);
     renameBurningRegen(out);
     ensureFairyWatch(out);
+    ensureIntangibleLossWatch(out);
     fixSummonerSlotLayout(out);
   }
   return out;
@@ -358,6 +400,51 @@ function ensureFairyWatch(s: GameState): void {
   if (!c) return;
   if (c.player.powers.some((p) => p.id === ("FAIRY_SAVE" as never))) return;
   c.player.powers.push({ id: "FAIRY_SAVE" as never, amount: 0, justApplied: false, data: null });
+}
+
+// ---- 参考侧缺口的驱动补偿:无形对"直接掉血"的折算 ----
+//
+// 反编译 Player::loseHp 第一句就是 `if (hasStatus<PS::INTANGIBLE>()) amount = 1;`
+// (refs/sts_lightspeed/src/combat/Player.cpp:261-275),原版无形的能力文本也写明
+// "受到的伤害与生命流失都降为 1".本作引擎照此实现(combat.rs 的 lose_hp_player,
+// 见测试 intangible_clamps_direct_hp_loss).
+//
+// 参考实现的玩家侧"直接掉血"(applyHpLoss,refs/slay-the-cli/src/engine/combat/interpreter.ts:225-240)
+// 只折 onLoseHp 钩子(钨钢棒那类),**不折 INTANGIBLE** —— 它把无形只挂在伤害管线的
+// atDamageFinalReceive 上(engine/combat/damageCalc.ts),不覆盖 loseHp 这条独立的路.
+// 于是自伤牌(以血债 Hemokinesis"失去 2 点生命"为例)在手里有幽影时,本作掉 1、参考
+// 掉满额,act2 seed 92 由此一场差 2 血(参考侧 hp 更低).
+//
+// 这里在驱动侧按原版补上:注册一枚隐藏的 INTANGIBLE_LOSEHP 玩家能力,开战时挂到玩家
+// 身上,onLoseHp 里若玩家身上有 INTANGIBLE 就把这次掉血压到 1(幂等 —— 攻击伤害在
+// calcMonsterDamage 里已经折过一遍,再折一次仍是 1).只作用玩家侧;怪物身上的无形不动
+// (怪物的直接掉血不走本补偿).本作引擎不动.
+const INTANGIBLE_LOSEHP_POWER = {
+  id: "INTANGIBLE_LOSEHP",
+  name: "Intangible",
+  kind: "buff" as const,
+  stacking: "none" as const,
+  turnBased: false,
+  hidden: true, // 不显示成 buff 图标、不写日志
+  hooks: {
+    onLoseHp: (ctx: EffectCtx, amount: number): number => {
+      const c = ctx.combat;
+      if (!c) return amount;
+      const on = c.player.powers.some((p) => p.id === ("INTANGIBLE" as never) && p.amount > 0);
+      return on ? Math.min(amount, 1) : amount;
+    },
+  },
+};
+bundle.powers.set("INTANGIBLE_LOSEHP" as never, INTANGIBLE_LOSEHP_POWER as never);
+
+/** 开战时给玩家挂上"无形折直接掉血"的补偿符(不在战斗里或已经挂了就不动).
+ *  用 unshift 排在最前:原版是先折无形、再看钨钢棒/将死(Player::loseHp -> wouldDie),
+ *  这样它排在 FAIRY_SAVE 之前,口径才对得上. */
+function ensureIntangibleLossWatch(s: GameState): void {
+  const c = s.combat;
+  if (!c) return;
+  if (c.player.powers.some((p) => p.id === ("INTANGIBLE_LOSEHP" as never))) return;
+  c.player.powers.unshift({ id: "INTANGIBLE_LOSEHP" as never, amount: 0, justApplied: false, data: null });
 }
 
 // ---- 参考侧时序补丁:怪物"下一招掷点"早于它本招排队的回血结算 ----

@@ -3713,7 +3713,9 @@ impl Combat {
 
     fn hit_player_kind(&mut self, damage: i32, attack: bool) -> (i32, i32) {
         let mut dmg = damage.max(0);
-        // 无形:受到的所有伤害降为 1(幽灵在瓶中)
+        // 无形:把这一击压到 1.攻击伤害在进这里之前,enemy_attack_damage 已经折过
+        // 一遍(那里等于反编译的 Monster::calculateDamageToPlayer),这里再折是幂等的;
+        // 非攻击伤害(荆棘/燃烧/死亡律动)与直接掉血没有那条前置链路,就在这一步折.
         if dmg > 1 && self.player.statuses.has(Status::Intangible) {
             dmg = 1;
         }
@@ -3841,7 +3843,7 @@ impl Combat {
     ///   3  怪物自身 WEAK x0.75 / 纸鹤 Paper Krane x0.6   | give    | 乘 | 本函数(weak_pct)
     ///   4  玩家 VULNERABLE x1.5 / 奇异蘑菇 Odd Mushroom x1.25 | receive | 乘 | 本函数
     ///   5  玩家 Wrath x2(stance receive)                | receive | 乘 | 未实现(观者,超范围)
-    ///   6  玩家 INTANGIBLE -> min(d,1)                   | receive | 取值 | hit_player_kind(开头)
+    ///   6  玩家 INTANGIBLE -> min(d,1)                   | receive | 取值 | 本函数(末尾,floor 之前)
     ///      floor 一次 + clamp >= 0                       |         |    | 本函数
     /// 之后的应用侧(反编译 Player::attacked 210-257 / Player::damage 174-208):
     ///   扣格挡 -> Buffer(化石螺壳)免掉 -> 鸟居 Torii(1..5 -> 1)->
@@ -3878,6 +3880,18 @@ impl Combat {
             // 奇异蘑菇:自己身上的易伤只多受 25% 伤害(默认 50%)
             let pct = self.relic_max(|fx| fx.vulnerable_taken_pct);
             d *= if pct > 0 { pct as f32 / 100.0 } else { 1.5 };
+        }
+        // 无形:受到的所有伤害压到 1.反编译的 Monster::calculateDamageToPlayer 末尾就是
+        // `if (p.hasStatus<PS::INTANGIBLE>()) damage = std::min(damage, 1.0f);`
+        // (refs/sts_lightspeed/src/combat/Monster.cpp:590-592),在 floor 之前.
+        // 这一步必须落在"来袭估算"里:重放策略(replay.rs 的 incoming)与 UI 的意图预览
+        // 都走本函数,而真实结算 hit_player_kind 也折无形 —— 只在结算侧折、估算侧漏折,
+        // 会让两者对不上.act2 seed 92 就是这么分家的:手里有幽影时估算按 10 点威胁选牌,
+        // 实际只掉 1 点,参考侧(previewIncoming 读的是已折无形的排队伤害)算出 2,选牌不同.
+        // 挂上之后,predicted_damage 与 hit_player_kind 的口径完全一致(见测试
+        // predicted_damage_matches_actual_hp_loss_with_intangible).
+        if self.player.statuses.has(Status::Intangible) {
+            d = d.min(1.0);
         }
         // 鸟居不在这一步做:它作用在"扣掉格挡之后"剩下的伤害上,见 hit_player_kind
         // (反编译 Player::attacked 的顺序是 格挡 -> 鸟居 -> 钨钢棒)
@@ -12574,6 +12588,43 @@ mod ascension_move_branches {
         let hp0 = c.player.hp;
         c.lose_hp_player(6, true);
         assert_eq!(hp0 - c.player.hp, 5, "钨钢棒对直接掉血也有效");
+    }
+
+    /// 来袭估算与真实结算必须同一口径:玩家有无形时,敌人攻击的 predicted_damage
+    /// 要等于真打这一下掉的血.
+    /// 依据:反编译 Monster::calculateDamageToPlayer 末尾就折无形
+    /// (refs/sts_lightspeed/src/combat/Monster.cpp:590-592),Player::attacked 反而不折
+    /// ("assume intangible is already handled",Player.cpp:211-213).本作真实结算走
+    /// hit_player_kind、估算走 enemy_attack_damage,两边都要折.act2 seed 92 的重放策略
+    /// 分家就是估算侧漏折无形(估 10、真掉 1)造成的.
+    #[test]
+    fn predicted_damage_matches_actual_hp_loss_with_intangible() {
+        // 邪教徒的 Dark Strike 是 6 点攻击,玩家 0 格挡
+        let mut c = combat("cultist_solo", 0);
+        c.enemies[0].next_move = 1;
+        assert_eq!(c.predicted_damage(0), (6, 1), "没有无形时估 6");
+        let hp0 = c.player.hp;
+        c.enemy_attack(0, 6, 1, "Cultist", "Dark Strike");
+        assert_eq!(hp0 - c.player.hp, 6, "没有无形时真掉 6");
+
+        // 有无形:估算压到 1,真打也掉 1
+        let mut c = combat("cultist_solo", 0);
+        c.enemies[0].next_move = 1;
+        c.player.statuses.add(Status::Intangible, 1);
+        assert_eq!(c.predicted_damage(0), (1, 1), "无形把这一击估到 1");
+        let (per, _times) = c.predicted_damage(0);
+        let hp0 = c.player.hp;
+        c.enemy_attack(0, 6, 1, "Cultist", "Dark Strike");
+        assert_eq!(hp0 - c.player.hp, per, "单段:估算 == 实伤");
+
+        // 多段:每段都折到 1,总实伤 = 段数,与策略算的 per * times 一致
+        let mut c = combat("cultist_solo", 0);
+        c.enemies[0].next_move = 1;
+        c.player.statuses.add(Status::Intangible, 1);
+        let (per, _) = c.predicted_damage(0);
+        let hp0 = c.player.hp;
+        c.enemy_attack(0, 6, 4, "Cultist", "Dark Strike");
+        assert_eq!(hp0 - c.player.hp, per * 4, "四段:估算总和 == 实伤");
     }
 
     /// 移形换影在"非攻击伤害"上也触发.依据:反编译把它同时挂在
