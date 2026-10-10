@@ -1341,8 +1341,12 @@ impl Combat {
             self.push_log(LogKind::Player, "Orange Pellets clears your debuffs".to_string());
             self.rs.types_played = 0;
         }
-        // 不休陀螺:手里空了就补一张
-        if self.hand.is_empty() && self.relic_any(|fx| fx.draw_on_empty_hand) {
+        // 不休陀螺:手里空了就补一张.这一回合已经被时间扭曲掐掉时(force_end_turn)
+        // 不补:反编译的主循环里 Unceasing Top 的检查排在"这一回合已经排队结束"
+        // 分支之后(refs/sts_lightspeed/src/combat/BattleContext.cpp:802-815 的
+        // endTurnQueued 分支先 continue,assert(!endTurnQueued) 就守着这一步),
+        // 回合既然结束就不再补牌.
+        if self.hand.is_empty() && !self.force_end_turn && self.relic_any(|fx| fx.draw_on_empty_hand) {
             self.draw_cards(1);
         }
     }
@@ -8292,6 +8296,52 @@ mod power_tests {
         // 时间扭曲已经把这一回合掐掉了:再出牌要被拦下(参考实现 queueEndTurn)
         c.hand.push(cards::card("strike"));
         assert!(c.play_card(c.hand.len() - 1, Some(0)).is_err(), "第 12 张之后再出牌无效");
+    }
+
+    /// 不休陀螺不补"被时间扭曲掐掉的那一回合":第 12 张牌打空了手牌,也不补牌.
+    /// 依据反编译 BattleContext.cpp:802-815 的主循环 —— endTurnQueued 的分支先
+    /// continue,底下那段"手里空了补一张"根本走不到(那里还压着 assert(!endTurnQueued)).
+    #[test]
+    fn unceasing_top_does_not_refill_after_time_warp() {
+        let mut c = lock("time_eater");
+        c.relics
+            .push(crate::core::relics::relic_def_or_panic("unceasing_top"));
+        c.hand.clear();
+        for _ in 0..12 {
+            let mut inst = cards::card("strike");
+            inst.cost_delta = -1;
+            c.hand.push(inst);
+        }
+        c.energy = 12;
+        for _ in 0..12 {
+            if c.force_end_turn || c.phase != Phase::PlayerTurn {
+                break;
+            }
+            let _ = c.play_card(0, Some(0));
+        }
+        assert!(c.force_end_turn, "第 12 张牌打完就该结束回合");
+        assert!(!c.draw.is_empty(), "抽牌堆还有牌,补不补才看得出差别");
+        assert!(c.hand.is_empty(), "回合已被掐掉,不休陀螺不该补牌");
+
+        // 反例对照:不是时间扭曲掐掉的那一张(第 11 张)打空手牌照常补
+        let mut c = lock("time_eater");
+        c.relics
+            .push(crate::core::relics::relic_def_or_panic("unceasing_top"));
+        c.hand.clear();
+        for _ in 0..11 {
+            let mut inst = cards::card("strike");
+            inst.cost_delta = -1;
+            c.hand.push(inst);
+        }
+        c.energy = 11;
+        for _ in 0..11 {
+            if c.force_end_turn || c.phase != Phase::PlayerTurn {
+                break;
+            }
+            let _ = c.play_card(0, Some(0));
+        }
+        assert!(!c.force_end_turn, "第 11 张还不结束回合");
+        assert_eq!(c.hand.len(), 1, "手里空了不休陀螺补一张");
     }
 
     /// 时间吞噬者的重击:少抽一次要撑到下一个玩家回合,用掉之后才消失

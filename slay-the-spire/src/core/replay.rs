@@ -2105,13 +2105,25 @@ mod e2e {
     /// 攻击伤害 1..4 抬到 5"放在格挡与目标侧飞行/慢速/无形之后,所以打 writhing_mass
     /// (延展越打格挡越多)时挡剩的 1..4 会被本作抬到 5;参考实现 relics/common.ts 的
     /// THE_BOOT 是 ENGINE-GAP(空实现),不抬 —— 属 (b) 参考未实现,不是本作的错.
-    /// 剩下的种子会在下面这些分叉上分道扬镳(分类与最小修法见 report):
-    ///   (b) 参考未实现:颚虫部落那只怪的预置状态(力量 3/格挡 5/已行动一回合),参考侧
-    ///       既没有这套预置、也不按"已行动过"重掷第一招;
-    ///   (b) 参考未实现:第三幕事件 Mind Bloom 的"打一个 Boss"选项,参考侧开战时抛
-    ///       `unknown monster DONU_AND_DECA`,整局跑不完(这些种子连 fixture 都落不了);
-    ///   (d) 未定论:暗灵半死复活之后,"重咬不能连续两次"那条历史算不算复活期间摆的
-    ///       再生/转生,两边不一致.
+    /// 最终口径(这 7 颗种子的按颗归因):
+    ///   29/30/121/237/494/510 = 两边逐字节一致(每步的 hp/金币/牌堆/遗物/药水都对上);
+    ///   284 = 11 处,全部来自 The Boot(归类 (b),见下).
+    /// (b) 唯一还露头的一条:靴子 The Boot 参考未实现.
+    ///   本作按反编译 refs/sts_lightspeed/src/combat/Monster.cpp:339-341 的
+    ///   attackedUnblockedHelper 判定"未被格挡的攻击伤害 1..4 -> 5"(调用点在同文件
+    ///   407-440 的 Monster::attacked:先扣格挡、再 helper),实现在 combat.rs 的
+    ///   hit_enemy_final(拿 relic 的 small_attack_boost_to),断言在 combat.rs 的
+    ///   boot_boosts_unblocked_damage_after_reductions.
+    ///   参考实现的 THE_BOOT 是 ENGINE-GAP 空实现(refs/slay-the-cli/src/content/relics/common.ts:436-441
+    ///   `hooks: {}`):参考侧没有"扣完格挡、掉血之前改伤害"这条玩家->怪物的钩子
+    ///   (interpreter.ts:184-208 的怪侧只 fold 目标自己的 powers),补不了,归 (b).
+    ///   seed 284 的 11 处就是这么来的:打 writhing_mass(延展越打格挡越多)时挡剩的 1..4
+    ///   被本作抬到 5,参考不抬,于是从第 29 步起整段错开(逐帧核对:两边第 29 步前一行不差,
+    ///   本作这一刀比参考多 1 点,后续因"斩杀线/canKill"判据翻面而走法分叉,终局多掉 42 血).
+    /// 历史上登记过、现已不再露头的两条(留档,别当成还差):
+    ///   - 颚虫部落那只怪的预置状态(参考既没预置、也不按"已行动过"重掷第一招);
+    ///   - Mind Bloom 的"打一个 Boss"选项(参考开战时抛 unknown monster DONU_AND_DECA);
+    ///   - 暗灵半死复活的历史归属(参考侧 ENGINE-GAP,见下方 ASC3 注释的 (c)).
     const ACT3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2387,11 +2399,65 @@ mod e2e {
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
 
+    /// 飞升 20 第三幕的登记表:a20a3.script = act3.script + `asc 20`(路径/策略同第三幕那张
+    /// act3 表,只把飞升抬到 20).A20 第三幕要连打两个 Boss(顿努与德卡 / 觉醒者 / 时间
+    /// 吞噬者里挑两个),所以本作的步数比 A0 多 1~2 步.逐颗口径(复跑命令
+    /// `bun tools/e2e_diff.ts --all --script tools/golden/e2e/a20a3.script`):
+    ///   本表合计 30 处 -> 25 处(本轮).逐颗:
+    ///   seed 29 / 121 / 494:两边逐字节一致(0 处),本轮不变.
+    ///   seed 30:3 处 -> 0 处.首分叉在第 42 步的顿努与德卡战,成因是 (c)
+    ///     参考的"方阵护御"板甲时点(见 (c)1),已在驱动侧补偿掉.
+    ///   seed 237:2 处 -> 0 处.第 41 步(A20 第二个 Boss:时间吞噬者)的 2 处有两个成因,
+    ///     都在本轮解决:先是 (c)1 的顿努与德卡板甲时点(第 39 步那场),再是本作真 bug
+    ///     (a)1 —— 时间扭曲掐掉回合时"不休陀螺"不该补牌(见 (a)1).
+    ///   seed 284:14 处,不变,全部来自 The Boot(归类 (b),依据见 ACT3_CASES 上方那段).
+    ///   seed 510:11 处,不变,全部来自暗灵的掷点归属(归类 (c)2).
+    ///
+    /// (a)1 时间扭曲掐掉回合后不休陀螺还补牌(本轮修 + 断言).反编译的主循环
+    ///   refs/sts_lightspeed/src/combat/BattleContext.cpp:802-815 里,"这一回合已经排队结束"
+    ///   (endTurnQueued)的分支先 `continue`,底下那段 `if (player.hasRelic<UNCEASING_TOP>())
+    ///   { if (cards.cardsInHand == 0) drawCards(1); }` 根本走不到(那里还压着
+    ///   `assert(!endTurnQueued)`).也就是说:时间扭曲掐掉这一回合的那张牌哪怕打空了手牌,
+    ///   也不再补牌.本作原先在 combat.rs 的 on_relic_card_played 里不看这个标志、照样补
+    ///   (补出来的那张在回合末被弃掉,连洗牌次序都跟着变),seed 237 时间吞噬者战第 12 回合
+    ///   因此整段错开.修法 = 补牌前加 `!self.force_end_turn`(force_end_turn 只由时间扭曲
+    ///   置位).断言 = combat.rs 的 unceasing_top_does_not_refill_after_time_warp(正例第 12 张
+    ///   不补、反例第 11 张照补);参考侧同一处缺口感(rare.ts:410-417 的 UNCEASING_TOP 不看
+    ///   endTurnQueued,而且它的 TIME_WARP 把 endPlayerTurn 排在了补牌之前,于是那 1 张会拖到
+    ///   下一回合)在 tools/replay_ref.ts 里按同一个标志补偿掉.
+    ///
+    /// (c)1 顿努与德卡的"方阵护御"板甲时点(驱动侧补偿).反编译
+    ///   refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:1667-1677 的 DECA_SQUARE_OF_PROTECTION
+    ///   给两只各 16 格挡、asc19 再各挂 3 层 PLATED_ARMOR;板甲本身在**整轮怪物行动结束之后**
+    ///   才统一结算(refs/sts_lightspeed/src/combat/BattleContext.cpp:2132-2149 的
+    ///   applyEndOfRoundPowers -> Monster::applyEndOfTurnTriggers ->
+    ///   refs/sts_lightspeed/src/combat/Monster.cpp:51-53 的 addBlock(getStatus<PLATED_ARMOR>())),
+    ///   所以这一轮两只都该多 3 格挡.本作(combat.rs 的 enemy_end_of_turn 按板甲层数加格挡)
+    ///   给的是 deca 19 / donu 19,与反编译一致;参考实现的 executeMonsterMove
+    ///   (refs/slay-the-cli/src/engine/combat/interpreter.ts:748-768)在 move.execute 一返回就
+    ///   同步 fireHook(atEndOfTurn),那时本招排队里的 applyPower 还没结算,德卡自己这一轮
+    ///   就漏掉 3 点(donu 反而拿得到,因为它的板甲是 deca 那一招在更早一轮结算好的),
+    ///   于是参考给 16 / 19.这是参考侧自相矛盾(归类 (c)),不是本作的错;补偿见
+    ///   tools/replay_ref.ts 里对 DECA 那一招的等价重写.
+    ///
+    /// (c)2 暗灵的掷点归属(参考 ENGINE-GAP,本轮确认、不补偿).
+    ///   反编译 MonsterGroup::doMonsterTurn(refs/sts_lightspeed/src/combat/MonsterGroup.cpp:571-586)
+    ///   的守卫是 `(!m.isDeadOrEscaped() || m.isHalfDead())` —— 半死的暗灵**照常在自己那一格
+    ///   行动**:出 REGROW(空过)或 REINCARNATE(复活),然后 rollMove 掷 1 次 aiRng
+    ///   (招式分派与掷点见同文件 1437-1470 与 3018-3042).本作照此实现(enemies/act34.rs 的
+    ///   pick_darkling + combat.rs 的 enemy_end_of_turn 倒计时),掷点在**槽位顺序**里;
+    ///   参考实现把半死的那只从怪物阶段整只跳过,改到回合末的 REGROW atEndOfRound 里补一次
+    ///   "parity roll"(refs/slay-the-cli/src/content/powers/monstersAct34.ts:8-10、52-70),
+    ///   掷点被挪到了这一轮所有活怪之后 —— 掷点总数一样,归属顺序变了,于是后续所有 aiRng
+    ///   掷值错位(逐帧核对 seed 510:两边前 24 次 aiRng 掷点与掷值完全一致,第 25 次本作是
+    ///   第 3 只怪的 rollMove r0..99、参考是第 2 只怪的补掷 rr40..99,从这一刻起 move 分家,
+    ///   t8 的意图一个 Nip 一个 Chomp、来袭 28 vs 35).这是参考自己声明的 ENGINE-GAP,
+    ///   想补得让参考的怪物阶段也放半死怪进去(引擎内部,驱动侧够不着),故只登记不补偿.
     const ASC3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 42, diff_steps: &[42, 43, 44], diff_digest: 0x67ba70f354005651 },
+    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 41, diff_steps: &[41, 42], diff_digest: 0xa407897b9324d3c },
+    Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0xb463229127031499 },
     Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39], diff_digest: 0xd031f152ee8f5222 },

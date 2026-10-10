@@ -23,6 +23,8 @@ import { executeAction } from "/home/mix/projects/terminal_game/refs/slay-the-cl
 import type { GameAction } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/actions.ts";
 import { RngRegistry } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rngRegistry.ts";
 import type { EffectCtx } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/content/defs.ts";
+import { monster } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/ids.ts";
+import { applyPower } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/powerRuntime.ts";
 import type { CombatState } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/combat/combatState.ts";
 
 type Policy = {
@@ -153,6 +155,60 @@ function renameBurningRegen(s: GameState): void {
     for (const p of m.powers) {
       if (p.id === "REGEN") p.id = "BURNING_REGEN";
     }
+  }
+}
+
+// ---- 参考侧缺口的驱动补偿:顿努与德卡的"方阵护御"板甲时点 ----
+//
+// 反编译里 DECA 的方阵护御(refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:1667-1677):
+// `deca.addBlock(16); donu.addBlock(16);` 再加 asc19 的 `buff<PLATED_ARMOR>(3)` 两只;
+// 板甲本身在**整轮怪物行动结束之后**才统一结算(refs/sts_lightspeed/src/combat/BattleContext.cpp:2132-2149
+// 的 applyEndOfRoundPowers -> Monster::applyEndOfTurnTriggers ->
+// refs/sts_lightspeed/src/combat/Monster.cpp:51-53 的 addBlock(getStatus<PLATED_ARMOR>())),
+// 所以两只这轮都该多拿 3 格挡.参考实现的怪招处理
+//(refs/slay-the-cli/src/engine/combat/interpreter.ts:748-768 的 executeMonsterMove)在
+// move.execute 一返回就**同步** fireHook(atEndOfTurn),那时本招里排队的 applyPower 还没结算,
+// 德卡自己这一轮就漏掉这 3 点(donu 反而拿得到 —— 它的板甲是 deca 那一招在更早一轮结算的,
+// 轮到 donu 时已经挂在身上).这既不是本作的错,也不能靠引擎现成钩子补.
+// 做法 = 在驱动侧把这一招的执行换成等价实现,唯一区别是板甲用**同步** applyPower 立刻挂上,
+// 于是 deca 自己的 atEndOfTurn 也能看见.招式内容(每格 16 格挡、asc19 每格 +3 板甲、
+// 跳过已逃跑的)与 refs/slay-the-cli/src/content/monsters/act34/donuDeca.ts:74-91 逐字一致.
+{
+  const decaDef = bundle.monsters.get("DECA" as never);
+  if (decaDef) {
+    decaDef.moves.DECA_SQUARE_OF_PROTECTION = {
+      ...decaDef.moves.DECA_SQUARE_OF_PROTECTION,
+      execute: (ctx: EffectCtx, self: { idx: number }) => {
+        for (const m of ctx.combat!.monsters) {
+          if (m.isEscaped) continue;
+          ctx.queue.addToBottom({ kind: "gainBlock", target: monster(m.idx), amount: 16, fromCard: false });
+          if (ctx.asc >= 19) {
+            applyPower(ctx, monster(self.idx), monster(m.idx), "PLATED_ARMOR", 3);
+          }
+        }
+      },
+    };
+  }
+}
+
+// ---- 参考侧缺口的驱动补偿:不休陀螺与时间扭曲"这一回合已经结束"的先后 ----
+//
+// 反编译的主循环(BattleContext.cpp:802-815)里,"这一回合已经排队结束"(endTurnQueued)
+// 的分支先 continue,底下那段 Unceasing Top 的"手里空了补一张"根本走不到 —— 也就是
+// 时间扭曲掐掉这一回合的那张牌哪怕打空了手牌,也不再补牌.参考实现的
+// UNCEASING_TOP(refs/slay-the-cli/src/content/relics/rare.ts:410-417)挂在
+// onAfterCardPlayed 上、不看这个标志,而 TIME_WARP 的钩子又把 endPlayerTurn 排在了
+// 它前面,于是那 1 张会拖到这一回合结束之后才抽(下一回合平白多一张).本作引擎按
+// 反编译实现(combat.rs 的 on_relic_card_played:force_end_turn 时不补,见测试
+// unceasing_top_does_not_refill_after_time_warp),这里让参考侧对齐.
+{
+  const top = bundle.relics.get("UNCEASING_TOP" as never);
+  const hook = top?.hooks.onAfterCardPlayed;
+  if (top && hook) {
+    top.hooks.onAfterCardPlayed = (ctx) => {
+      if (ctx.combat?.turnFlags.endTurnQueued) return;
+      hook(ctx);
+    };
   }
 }
 
