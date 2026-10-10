@@ -3690,12 +3690,17 @@ pub fn prismatic_reward_pool(rarity: Rarity) -> Vec<&'static CardDef> {
     out
 }
 
-/// 诅咒牌(事件与遗物会把它们塞进牌组)
+/// 诅咒牌(事件与遗物会把它们塞进牌组).
+/// 顺序按参考实现(与语料位次一致):随机取诅咒的地方都按这个顺序取,
+/// 参考实现的两套池子——事件里的 randomCurse(只 10 张稀有度 curse)与
+/// rewards 里的 cursePool(全 14 张 type curse)——都按 curses.ts 的数组顺序走.
 pub fn curses() -> Vec<&'static CardDef> {
-    CARDS
+    let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| c.kind == CardType::Curse)
-        .collect()
+        .collect();
+    bundle_order(&mut out);
+    out
 }
 
 #[cfg(test)]
@@ -3859,6 +3864,49 @@ mod tests {
             .collect();
         statuses.sort();
         assert_eq!(statuses, vec!["burn", "dazed", "slimed", "void", "wound"]);
+    }
+
+    /// 随机取诅咒的池子顺序要跟参考实现一致,否则翻牌(事件)/Neow 代价/诅咒钥匙
+    /// 会取到不同的诅咒.依据:参考 content/cards/curses.ts 的数组顺序(与语料位次一致),
+    /// 事件用的 randomCurse 只挑稀有度 curse 的 10 张(content/events/lib.ts:214-221),
+    /// Neow 代价 / 诅咒钥匙走的 cursePool 取全部 14 张 type curse
+    /// (engine/run/rewards.ts:87-94).
+    #[test]
+    fn curse_pool_follows_reference_order() {
+        let ids: Vec<&str> = curses().iter().map(|c| c.id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "ascenders_bane",
+                "clumsy",
+                "curse_of_the_bell",
+                "decay",
+                "doubt",
+                "injury",
+                "necronomicurse",
+                "normality",
+                "pain",
+                "parasite",
+                "pride",
+                "regret",
+                "shame",
+                "writhe"
+            ],
+            "诅咒池要按参考实现 curses.ts 的顺序"
+        );
+        // 事件里的 randomCurse 只取稀有度 curse 的那 10 张(去掉祸根/钟之诅咒/死灵诅咒/傲慢)
+        let event_pool: Vec<&str> = curses()
+            .into_iter()
+            .filter(|c| pool_of(c) == "curse")
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(
+            event_pool,
+            vec![
+                "clumsy", "decay", "doubt", "injury", "normality", "pain", "parasite", "regret", "shame", "writhe"
+            ],
+            "事件 randomCurse 的池子要按参考顺序"
+        );
     }
 
     #[test]

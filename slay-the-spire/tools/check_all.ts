@@ -1,11 +1,16 @@
 // 全量回归总入口:一条命令跑齐本项目的所有检查,最后打印汇总 PASS/FAIL。
 //
-//   bun tools/check_all.ts                      # 全跑(build + test + 9 张 e2e 表 + 全部审计 + smoke)
-//   bun tools/check_all.ts --skip smoke         # 跳过某项(可重复;名字见下表 step 名)
-//   bun tools/check_all.ts --smoke-seeds "7 42" # 自定义 smoke 种子(默认 7 42)
-//   bun tools/check_all.ts --timing             # 每项耗时(汇总行 + 末端降序表)
-//   bun tools/check_all.ts --serial             # 关掉并发(逐项串行;排查并发互扰用)
-//   bun tools/check_all.ts --jobs N             # 并发度(默认 min(8, 核数);build/test 恒串行在最前)
+//   bun tools/check_all.ts                       # 全跑 23 项(build + test + 9 张 e2e 表 + 全部审计 + smoke)
+//                                                #   实测约 74s;临界路径 = smoke(单颗种子一分多钟,
+//                                                #   其余 22 项都塞在它这段时间里并发跑完)
+//   bun tools/check_all.ts --quick                # 日常快速验证:跳过 smoke(最长的临界路径),其余
+//                                                #   22 项照常并发全跑,实测约 10s(目标 <15s)
+//   bun tools/check_all.ts --skip <name>          # 跳过某项(可重复;name 见下表 step 名)
+//   bun tools/check_all.ts --smoke-seeds "7 42"  # 自定义 smoke 种子(默认 7 42;冒烟一局一分多钟)
+//   bun tools/check_all.ts --timing               # 逐项耗时:汇总行后缀 + 末端降序表 + 各批墙钟 + 并发度
+//   bun tools/check_all.ts --serial               # 关掉并发(逐项串行;排查并发互扰用,墙钟明显变长)
+//   bun tools/check_all.ts --jobs N               # 并发度(默认 min(8, 核数);build/test 恒串行在最前)
+//   bun tools/check_all.ts --help                 # 打印本段用法(直接读本文件头部的 // 注释)
 //
 // 各项:
 //   build         cargo build(要求 0 告警)
@@ -29,6 +34,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -40,8 +46,20 @@ const flag = (name: string) => {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
 };
-const skipped = new Set<string>();
-for (let i = 0; i < argv.length; i++) if (argv[i] === "--skip" && argv[i + 1]) skipped.add(argv[i + 1]!);
+// --help:直接把本文件头部的 // 用法注释打出来(单一来源,不另抄一份)
+if (argv.includes("--help")) {
+  for (const line of readFileSync(new URL(import.meta.url), "utf8").split("\n")) {
+    if (!line.startsWith("//")) break;
+    console.log(line.replace(/^\/\/ ?/, ""));
+  }
+  process.exit(0);
+}
+/** 跳过的项 -> 跳过原因(--skip 或 --quick);汇总时要把"跳过哪些"写清楚 */
+const skipped: Record<string, string> = {};
+for (let i = 0; i < argv.length; i++) if (argv[i] === "--skip" && argv[i + 1]) skipped[argv[i + 1]!] = "--skip";
+const isSkipped = (name: string): boolean => skipped[name] !== undefined;
+/** --quick:跳过 smoke(全流程最长的临界路径),其余各项照常并发全跑 */
+if (argv.includes("--quick")) skipped["smoke"] = "--quick";
 const SMOKE_SEEDS = (flag("--smoke-seeds") ?? "7 42").split(/\s+/).filter((s) => s !== "");
 /** 并发度:--serial 退回逐项串行,--jobs N 显式指定,默认 min(8, 核数) */
 const LIMIT = argv.includes("--serial")
@@ -365,7 +383,7 @@ async function stepSmoke(limit: number): Promise<Step> {
 // 其余各项互不依赖,丢进并发池(mapPool),任一步失败都照常进汇总。
 const steps: Step[] = [];
 const runSync = (name: string, fn: () => Step) => {
-  if (skipped.has(name)) return;
+  if (isSkipped(name)) return;
   process.stderr.write(`… 跑 ${name}\n`);
   const t0 = performance.now();
   const s = fn();
@@ -380,13 +398,13 @@ runSync("test", stepTest);
 interface Job { name: string; fn: () => Promise<Step[]> }
 const jobs: Job[] = [];
 const addStep = (name: string, fn: () => Promise<Step>) => {
-  if (skipped.has(name)) return;
+  if (isSkipped(name)) return;
   jobs.push({ name, fn: async () => [await fn()] });
 };
 // smoke 最长的那个种子要一分多钟,是全流程的临界路径:排在第一个,开跑就先占一格,
 // 其余各项(每项几秒)填满剩下的格子在它这段时间里跑完。
 addStep("smoke", () => stepSmoke(LIMIT));
-const E2E_TABLES = Object.keys(E2E_BASELINE).filter((t) => !skipped.has(`e2e:${t}`));
+const E2E_TABLES = Object.keys(E2E_BASELINE).filter((t) => !isSkipped(`e2e:${t}`));
 if (E2E_TABLES.length > 0) {
   jobs.push({ name: `e2e(${E2E_TABLES.length}表)`, fn: () => stepE2eBatch(E2E_TABLES) });
 }
@@ -452,6 +470,13 @@ for (const s of bad) {
   console.log(`---- ${s.name} 详情(FAIL)----`);
   for (const l of s.fail ?? []) console.log(`  ${l}`);
 }
+const skipList = Object.entries(skipped);
+const skipNote =
+  skipList.length === 0 ? "" : `,跳过 ${skipList.length} 项(${skipList.map(([n, r]) => `${n}:${r}`).join(", ")})`;
 console.log("");
-console.log(bad.length === 0 ? `全部 PASS(${steps.length} 项)` : `FAIL ${bad.length} 项 / 共 ${steps.length} 项:${bad.map((s) => s.name).join(", ")}`);
+console.log(
+  bad.length === 0
+    ? `全部 PASS(${steps.length} 项${skipNote})`
+    : `FAIL ${bad.length} 项 / 共 ${steps.length} 项${skipNote}:${bad.map((s) => s.name).join(", ")}`,
+);
 if (bad.length > 0) process.exit(1);
