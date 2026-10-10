@@ -10362,3 +10362,285 @@ mod relic_hook_tests {
     }
 }
 
+
+/// 覆盖率补丁:一批"代码在、但没有任何断言约束"的分支.每条都注明反编译出处;
+/// 其中若发现与出处不符的,在对应行注明.这里的断言只钉"真实分支",不写空泛判断.
+#[cfg(test)]
+mod branch_assertions {
+    use super::*;
+    use crate::core::cards::card;
+    use crate::core::relics::relic_def_or_panic;
+
+    fn enc(id: &'static str) -> &'static crate::core::enemy::Encounter {
+        crate::core::enemies::encounter_def(id).unwrap_or_else(|| panic!("no encounter {id}"))
+    }
+
+    /// 一只怪(颚虫)、指定牌组与遗物,清空四个牌堆、能量给 9
+    fn board(ids: &[&'static str], relics: &[&'static RelicDef], asc: u32) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: ids.iter().map(|id| card(id)).collect(),
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc,
+        };
+        let mut c = Combat::new(enc("jaw_worm_solo"), setup, RngRegistry::new(1));
+        c.hand.clear();
+        c.draw.clear();
+        c.discard.clear();
+        c.exhaust.clear();
+        c.energy = 9;
+        c
+    }
+
+    /// 红骷髅:血量从半血以上掉到半血以下补 3 力量,再治疗回到半血以上收回那 3 点.
+    /// 反编译 Player::heal(`wasBloodied && curHp > maxHp/2` 才 debuff<STRENGTH>(3),
+    /// refs/sts_lightspeed/src/combat/Player.cpp:169-171);"掉血补力量"那一半由
+    /// tools/sandbox_relics.ts 的 red_skull 行覆盖,"治回来收回"这一半此前没有任何断言.
+    #[test]
+    fn red_skull_takes_back_the_strength_when_healing_above_half() {
+        let relics = [relic_def_or_panic("red_skull")];
+        let mut c = board(&["defend"], &relics, 0);
+        assert_eq!(c.player.statuses.get(Status::Strength), 0, "满血时不加");
+        c.lose_hp_player(50, false); // 80 -> 30,跨过半血
+        assert_eq!(c.player.hp, 30);
+        assert_eq!(c.player.statuses.get(Status::Strength), 3, "掉到半血以下补 3");
+        c.heal_player(30); // 30 -> 60
+        assert_eq!(c.player.hp, 60);
+        assert_eq!(c.player.statuses.get(Status::Strength), 0, "回到半血以上收回 3");
+    }
+
+    /// 圆球哨卫的停滞:持有者被打死时把偷走的牌还给玩家;手牌没满进手牌,满了进弃牌堆.
+    /// 反编译 Monster::died 的 returnStasisCard(refs/sts_lightspeed/src/combat/Monster.cpp:308-310)
+    /// 与 moveToHandHelper(refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:3502-3513);
+    /// 此前只有"偷"有断言(stasis_steals_the_highest_rarity_card),"还"整条路径没有.
+    #[test]
+    fn killing_a_stasis_holder_returns_the_card() {
+        let mut c = board(&["strike"; 5], &[], 0);
+        c.draw = vec![card("bludgeon"), card("strike")];
+        c.enemy_steal_card(0, "Bronze Orb");
+        assert_eq!(c.stasis.len(), 1, "先偷走一张");
+        c.enemies[0].hp = 0;
+        c.settle_deaths();
+        assert!(c.stasis.is_empty(), "持有者死了要还回来");
+        assert!(c.hand.iter().any(|x| x.def.id == "bludgeon"), "手牌没满就进手牌");
+        assert!(!c.discard.iter().any(|x| x.def.id == "bludgeon"));
+
+        // 手牌满 10 张:只能进弃牌堆
+        let mut c = board(&["strike"; 5], &[], 0);
+        c.hand = (0..HAND_LIMIT).map(|_| card("defend")).collect();
+        c.draw = vec![card("bludgeon")];
+        c.enemy_steal_card(0, "Bronze Orb");
+        c.enemies[0].hp = 0;
+        c.settle_deaths();
+        assert!(
+            c.discard.iter().any(|x| x.def.id == "bludgeon"),
+            "手牌满时进弃牌堆"
+        );
+    }
+
+    /// 浩劫从抽牌堆顶打出的若是一张能力牌:能力牌一样"打完就退场",不进任何牌堆.
+    /// 反编译 PlayTopCard 把牌打出去(refs/sts_lightspeed/src/combat/Actions.cpp:213-217),
+    /// 能力牌打出后进 powers(等价本作的 vanish);此前浩劫的测试顶牌全是攻击/技能牌.
+    #[test]
+    fn havoc_plays_a_power_off_the_top_and_it_leaves_play() {
+        let mut c = board(&["havoc", "demon_form", "strike", "strike"], &[], 0);
+        c.hand = vec![card("havoc")];
+        c.draw = vec![card("demon_form"), card("strike")];
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.statuses.get(Status::DemonForm), 2, "能力牌结算(恶魔形态每回合 +2 力量)");
+        assert!(
+            !c.discard.iter().any(|x| x.def.id == "demon_form"),
+            "能力牌不进弃牌堆"
+        );
+        assert!(
+            !c.exhaust.iter().any(|x| x.def.id == "demon_form"),
+            "能力牌不进消耗堆"
+        );
+        assert!(
+            c.havoc_chain.iter().any(|(_, l)| l.contains("Demon Form")),
+            "记进了浩劫链"
+        );
+    }
+
+    /// 炼狱之焰在手牌只剩自己时不打任何一段(段数 = 手牌数 - 自己).
+    /// 反编译 Actions::FiendFireAction 按 cardsInHand 段数结算
+    /// (refs/sts_lightspeed/src/combat/Actions.cpp:1092-1100);空手那条 false 分支此前没有断言.
+    #[test]
+    fn fiend_fire_with_only_itself_in_hand_hits_nothing() {
+        let mut c = board(&["fiend_fire"], &[], 0);
+        c.hand = vec![card("fiend_fire")];
+        c.enemies[0].hp = 999;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 999, "没有别的牌可消耗,一段也不打");
+    }
+
+    /// 御守也能顶掉战斗中怪物塞进牌组的诅咒(反编译 Deck::obtain 的 CURSE 分支,
+    /// refs/sts_lightspeed/src/game/Deck.cpp:157-166).战斗内这条路此前没有任何断言
+    /// (所有测试 setup 的 curse_negate 都是 0).
+    #[test]
+    fn omamori_negates_a_curse_pushed_into_the_deck_in_combat() {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: vec![card("strike"); 5],
+            relics: Vec::new(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 2,
+            asc: 0,
+        };
+        let mut c = Combat::new(enc("jaw_worm_solo"), setup, RngRegistry::new(1));
+        let implant = EnemyFx::PlayerCard {
+            card: "parasite",
+            spot: CardSpot::Deck,
+            n: 1,
+        };
+        c.apply_enemy_fx(0, implant, 1, "Writhing Mass", "Implant");
+        assert_eq!(c.curse_negate, 1, "顶掉一层");
+        assert!(
+            !c.deck_cards.iter().any(|x| x.def.id == "parasite"),
+            "顶掉的诅咒不进牌组"
+        );
+        c.apply_enemy_fx(0, implant, 1, "Writhing Mass", "Implant");
+        c.apply_enemy_fx(0, implant, 1, "Writhing Mass", "Implant");
+        assert_eq!(c.curse_negate, 0, "两次用光");
+        assert_eq!(
+            c.deck_cards
+                .iter()
+                .filter(|x| x.def.id == "parasite")
+                .count(),
+            1,
+            "用光之后那次进牌组"
+        );
+    }
+
+    /// 死灵之书每回合只翻倍第一张 >=2 费攻击,回合结束重置.
+    /// 反编译 BattleContext.cpp:1691-1694 的 haveUsedNecronomiconThisTurn;
+    /// "同回合第二张不再翻倍"与"下回合重置"两个分支此前都没有断言.
+    #[test]
+    fn necronomicon_doubles_only_the_first_big_attack_each_turn() {
+        let relics = [relic_def_or_panic("necronomicon")];
+        let mut c = board(&["bludgeon"; 4], &relics, 0);
+        c.hand = vec![card("bludgeon"), card("bludgeon")];
+        c.enemies[0].hp = 999;
+        let hp0 = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(hp0 - c.enemies[0].hp, 64, "第一张 3 费攻击翻倍(32x2)");
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(hp0 - c.enemies[0].hp, 96, "同回合第二张不再翻倍");
+        c.end_turn();
+        assert!(!c.rs.necro_used, "回合结束重置,下回合还能再翻一次");
+    }
+
+    /// 腕刃看"本回合实际费用为 0":被降费到 0 的攻击也算(反编译判 costForTurn == 0,
+    /// 参考实现 damageCalc 的 wristBlade 判据);此前只测过印刷 0 费的迅捷打击.
+    #[test]
+    fn wrist_blade_boosts_an_attack_whose_cost_was_reduced_to_zero() {
+        let relics = [relic_def_or_panic("wrist_blade")];
+        let mut c = board(&["bludgeon"], &relics, 0);
+        let mut b = card("bludgeon");
+        b.cost_delta = -3; // 本回合实际费用被降到 0(疯狂/腐化那一类)
+        c.hand = vec![b];
+        c.enemies[0].hp = 999;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 999 - 36, "0 费攻击 32+4");
+
+        // 对照:没有腕刃,同样降费也只有 32
+        let mut c2 = board(&["bludgeon"], &[], 0);
+        let mut b2 = card("bludgeon");
+        b2.cost_delta = -3;
+        c2.hand = vec![b2];
+        c2.enemies[0].hp = 999;
+        c2.play_card(0, Some(0)).unwrap();
+        assert_eq!(c2.enemies[0].hp, 999 - 32, "没有腕刃就是原伤害");
+    }
+
+    /// 化石螺壳:本场第一次受到的攻击伤害被直接免掉(Buffer).
+    /// 反编译 BattleContext.cpp:271-273 给 BUFFER(1),Buffer 在 Player::damage 的
+    /// 格挡之后、钨钢棒之前消耗(refs/sts_lightspeed/src/combat/Player.cpp:193-196);
+    /// 此前 sandbox_relics 只测了反向(放血的自伤不该被免),正面这一半没有任何断言.
+    #[test]
+    fn fossilized_helix_absorbs_the_first_hit() {
+        let relics = [relic_def_or_panic("fossilized_helix")];
+        let mut c = board(&["defend"], &relics, 0);
+        let hp = c.player.hp;
+        c.phase = Phase::EnemyTurn;
+        c.enemies[0].next_move = 0; // 颚虫的 Chomp
+        c.enemy_act(0);
+        assert_eq!(c.player.hp, hp, "第一次攻击伤害被免掉");
+        c.enemies[0].next_move = 0;
+        c.enemy_act(0);
+        assert!(c.player.hp < hp, "第二次照常挨打");
+    }
+
+    /// 军备(Armaments):手里一张能升级的牌都没有时不挂选牌窗口(效果里那条 false 分支)
+    /// (refs/sts_lightspeed 的 Armaments 升级选牌与 cards.rs:820 的 UpgradeChosenInHand;
+    /// 此前 sandbox_diff 的 armaments 场景手牌里总有可升级牌,只走 true 分支).
+    #[test]
+    fn armaments_with_no_upgradable_card_opens_no_choice() {
+        let mut c = board(&["armaments", "strike"], &[], 0);
+        let mut upgraded = card("strike");
+        upgraded.upgraded = true;
+        c.hand = vec![card("armaments"), upgraded];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "没有能升级的牌就不挂选牌窗口");
+        assert_eq!(c.player.block, 5, "格挡照给");
+    }
+
+    /// 坚毅:手里没牌可随机消耗时,格挡照给、消耗堆不动
+    /// (refs/sts_lightspeed 的 True Grit 语义;此前只测过手里有牌的那条路).
+    #[test]
+    fn true_grit_with_an_empty_hand_blocks_and_exhausts_nothing() {
+        let mut c = board(&["true_grit"], &[], 0);
+        c.hand = vec![card("true_grit")];
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.block, 7, "格挡照给");
+        assert!(c.exhaust.is_empty(), "手里没牌可消耗");
+    }
+
+    /// 巨首的"时候到了"在 A18 提前一回合.反编译没有这条分支
+    /// (refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:3157-3179 恒 turnNumber >= 4);
+    /// 本作按 wiki 与参考实现头注 "CONFLICT HONORED (asc18)"(giantHead.ts)采信
+    /// "A18 起只数 3 回合",这条此前没有任何断言.
+    #[test]
+    fn giant_head_uses_it_is_time_one_turn_earlier_at_a18() {
+        let seq = |asc: u32| -> Vec<&'static str> {
+            let setup = CombatSetup {
+                rested: false,
+                hp: 999,
+                max_hp: 999,
+                deck: vec![card("defend"); 10],
+                relics: Vec::new(),
+                gold: 0,
+                lift_strength: 0,
+                relic_counters: RunRelicCounters::default(),
+                curse_negate: 0,
+                asc,
+            };
+            let mut c = Combat::new(enc("giant_head_solo"), setup, RngRegistry::new(3));
+            let mut v = Vec::new();
+            for _ in 0..6 {
+                v.push(c.enemies[0].def.moves[c.enemies[0].next_move].name);
+                c.end_turn();
+            }
+            v
+        };
+        let first = |v: &[&'static str]| {
+            v.iter()
+                .position(|m| *m == "It Is Time")
+                .expect("六回合内一定会打出 It Is Time")
+        };
+        let a0 = seq(0);
+        let a18 = seq(18);
+        assert_eq!(first(&a0), 4, "A0 已经行动 4 回合才摆 It Is Time");
+        assert_eq!(first(&a18), 3, "A18 提前一回合");
+    }
+}

@@ -4223,6 +4223,84 @@ mod ascension_event_tests {
             }
         }
     }
+
+    /// 直接开一局指定飞升(铁甲战士)
+    fn run_asc(asc: u32) -> crate::core::run::Run {
+        run_asc_seed(7, asc)
+    }
+
+    fn run_asc_seed(seed: u64, asc: u32) -> crate::core::run::Run {
+        let ch = crate::core::roster::find("ironclad").unwrap();
+        crate::core::run::Run::new_for_asc(seed, ch, asc).unwrap()
+    }
+
+    /// 心智绽放的"我是战争":A15 起幻影 Boss 的奖励从 50 金降到 25 金
+    /// (参考实现 GameContext.cpp:3028 `const int goldAmt = unfavorable ? 25 : 50;`).
+    /// 此前测试与 audit_events 都只用 A0,这条变体没有任何断言.
+    #[test]
+    fn mindbloom_a15_lowers_the_phantom_boss_gold() {
+        let c = find("mindbloom", "I am War");
+        let gold = |asc: u32| c.effective(asc).outcome.fight_reward.expect("有战斗奖励").gold;
+        assert_eq!(gold(14), Some((50, 50)));
+        assert_eq!(gold(15), Some((25, 25)));
+    }
+
+    /// 废料泥怪"把手伸进去"的代价:A15 起从 3 点血涨到 5 点
+    /// (参考实现 GameContext.cpp:3179-3181 `damagePlayer(unfavorable ? 5 : 3)`).
+    #[test]
+    fn scrap_ooze_a15_charges_five_hp() {
+        for (asc, want) in [(0u32, 3), (14, 3), (15, 5), (20, 5)] {
+            let mut r = run_asc(asc);
+            r.debug_open_event("scrap_ooze").expect("事件应存在");
+            let before = r.player.hp;
+            r.choose_event(0).expect("伸手");
+            assert_eq!(before - r.player.hp, want, "A{asc} 的伸手代价");
+        }
+    }
+
+    /// 翻牌小游戏的 A15 变体:第 4 个牌位从"非普通无色牌"换成第二张随机诅咒
+    /// (参考实现 GameContext.cpp:963-979 `if (unfavorable) cards[3] = getRandomCurse(cardRng);`).
+    /// events.rs 的 5 个 match_and_keep 测试与 audit_events 全走 asc=0,这条分支从未被执行.
+    #[test]
+    fn match_and_keep_a15_replaces_the_colorless_slot_with_a_curse() {
+        let a0 = MatchKeep::new(&mut RngRegistry::new(12345), "ironclad", 0);
+        let a15 = MatchKeep::new(&mut RngRegistry::new(12345), "ironclad", 15);
+        let count = |mk: &MatchKeep, pool: &str| {
+            mk.slots
+                .iter()
+                .flatten()
+                .filter(|id| {
+                    cards::card_def(id).is_some_and(|d| cards::pool_of(d) == pool)
+                })
+                .count()
+        };
+        assert_eq!(count(&a0, "colorless"), 1, "A0 的第 4 格是非普通无色牌");
+        assert_eq!(count(&a15, "colorless"), 0, "A15 那格换成诅咒,不再有无色牌");
+        assert_eq!(count(&a15, "curse"), count(&a0, "curse") + 1, "多出一张诅咒");
+    }
+
+    /// 死亡冒险家的伏击率:A15 起同一掷点从 25% 基数涨到 35%
+    /// (参考实现 GameContext.cpp:2602 `info.phase*25 + (unfavorable ? 35 : 25)`).
+    /// 找一颗"A0 不伏击、A15 伏击"的种子把 35% 基数钉死,并要求 A15 不会比 A0 更低.
+    #[test]
+    fn dead_adventurer_a15_raises_the_ambush_chance() {
+        let ambushes = |seed: u64, asc: u32| -> bool {
+            let mut r = run_asc_seed(seed, asc);
+            r.debug_open_event("dead_adventurer").expect("事件应存在");
+            r.choose_event(0).expect("搜索");
+            r.screen == crate::core::run::Screen::Combat
+        };
+        let mut found = false;
+        for seed in 0..300u64 {
+            let (a0, a15) = (ambushes(seed, 0), ambushes(seed, 15));
+            assert!(!(a0 && !a15), "seed {seed}: A15 的伏击率不该比 A0 低");
+            if !a0 && a15 {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "300 颗种子里总该有 A0 不中、A15 中的");
+    }
 }
 
 #[cfg(test)]
@@ -4305,6 +4383,25 @@ mod event_audit_fix_tests {
         assert_eq!(r.screen, Screen::Reward);
         assert!(r.reward.as_ref().unwrap().relic.is_some(), "奖励屏要有稀有遗物");
         assert_eq!(r.player.relics.len(), before + 1, "第二件(low tier)遗物直接进包");
+    }
+
+    /// 事件里的精英战不吃黑星:原版只有 Room::ELITE 的地图精英走 createEliteCombatReward
+    /// (refs/sts_lightspeed/src/game/GameContext.cpp:1141),竞技场第二场是事件战斗
+    /// (参考实现 act2.ts 注释 "COLOSSEUM_EVENT_NOBS ... Black Star adds no extra relic").
+    #[test]
+    fn colosseum_elite_does_not_trigger_black_star() {
+        let mut r = open_id("colosseum", 37);
+        r.debug_add_relic("black_star").unwrap();
+        r.choose_event(0).unwrap();
+        finish_fight(&mut r);
+        let before = r.player.relics.len();
+        r.choose_event(1).unwrap();
+        finish_fight(&mut r);
+        assert_eq!(
+            r.player.relics.len(),
+            before + 1,
+            "只多第二件遗物,黑星不在事件精英上多给"
+        );
     }
 
     #[test]

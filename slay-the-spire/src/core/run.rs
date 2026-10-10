@@ -2017,13 +2017,6 @@ impl Run {
             }
             return;
         }
-        // 黑星:精英多掉一件遗物(在正常那一件之前先给)
-        if kind == EnemyKind::Elite && self.player.relic_fx_sum(|r| r.fx.extra_elite_relic) > 0 {
-            let tier = self.roll_elite_relic_tier();
-            let extra = self.take_relic_of_tier(tier);
-            self.gain_relic(extra);
-            self.say(format!("Black Star grants {}", extra.name));
-        }
         // 顺序照参考实现的 buildCombatRewards:金币 → 遗物(精英)→ 药水 → 卡牌
         // 区间上下限相同就是"定值金币"(事件战斗的金币,原版直接给这个数):
         // 不能掷点 —— 掷一次 random_range(50,50) 值一样,但会让宝箱与后续奖励
@@ -2072,6 +2065,25 @@ impl Run {
                 EnemyKind::Boss | EnemyKind::Normal => None,
             },
         };
+        // 黑星:精英多掉一件遗物.原版 buildEliteCombatRewards 先取普通那件、再取黑星那件
+        // (refs/sts_lightspeed/src/game/GameContext.cpp:1943-1946),黑星那件还要走
+        // returnNonCampfireRelic —— 抽到营火专属的(和平烟斗/铲子/吉利亚)换下一件.
+        // 另外原版只有 Room::ELITE 的地图精英走这条路,事件里的精英战不走,所以要求 plan 为空.
+        if kind == EnemyKind::Elite
+            && plan.is_none()
+            && self.player.relic_fx_sum(|r| r.fx.extra_elite_relic) > 0
+        {
+            // 档次是第二次掷(elite 档),身份跳过营火三件
+            let tier = self.roll_elite_relic_tier();
+            let extra = loop {
+                let def = self.take_relic_of_tier(tier);
+                if !matches!(def.id, "peace_pipe" | "shovel" | "girya") {
+                    break def;
+                }
+            };
+            self.gain_relic(extra);
+            self.say(format!("Black Star grants {}", extra.name));
+        }
         // 斗兽场第二场的第二件遗物:奖励屏一次只摆一件,这件打赢就直接进背包
         if let Some(rarity) = plan.and_then(|p| p.relic_rarity2) {
             if let Some(def) = self.take_relic_of(rarity) {
@@ -4762,23 +4774,14 @@ impl Run {
             self.gain_gold(gold);
             self.say(format!("the chest holds ${gold}"));
         }
-        if take_sapphire {
-            // 遗物身份照参考实现先定下来(从池子里取走),拿钥匙就等于作废它
-            if !chest.empty {
-                let _ = self.take_relic_of_tier(chest.tier);
-            }
-            self.keys.sapphire = true;
-            self.treasure = None;
-            self.say("you take the Sapphire Key");
-            self.finish_chest();
-            return;
-        }
         // 俄罗斯套娃:还带次数就先给一件,再算箱子自己的那件.原版
         // refs/sts_lightspeed/src/game/GameContext.cpp:1888-1892 的这套娃结算排在金币与箱子遗物**之前**,所以这一次
         // 开箱本身开出的套娃不算次数(拿到手时 charges 还是 0),要等下一个箱子才生效;
         // 额外那件的档次固定 75% 普通 / 25% 罕见,与箱子大小无关(getMatryoshkaRelicTier),
         // 饥肠辘辘之脸吃空的箱子也照给.玩家 relic 列表里套娃那件排在箱子遗物之前
         // (原版 reward.addRelic 的顺序).
+        // 拿蓝钥匙时也照给:原版奖励里"套娃那件"和"蓝钥匙"是两项独立的东西,
+        // 拿钥匙只作废箱子自己那件(GameAction.cpp:349-354 只删 reward 里最后一件遗物).
         if self.chest_extra_left > 0 {
             self.chest_extra_left -= 1;
             let tier = if self
@@ -4794,16 +4797,27 @@ impl Run {
             self.gain_relic(second);
             self.say(format!("the chest also holds {}", second.name));
         }
-        if !chest.empty {
-            let def = self.take_relic_of_tier(chest.tier);
-            self.gain_relic(def);
-            self.say(format!("you found {}", def.name));
-        } else {
-            self.say("the chest is empty");
-        }
-        // 诅咒钥匙:非 Boss 宝箱里附带一张诅咒
+        // 诅咒钥匙:非 Boss 宝箱里附带一张诅咒.原版 GameContext.cpp:1895 在生成宝箱奖励时就
+        // 无条件把这张诅咒塞进牌组,与"拿不拿蓝钥匙"无关,所以排在蓝钥匙分支之前.
         if self.has_relic_fx(|fx| fx.curse_on_chest) {
             self.add_random_curse();
+        }
+        // 箱子自己那件遗物:原版生成奖励时就已经从池子里取走(GameContext.cpp:1907 无条件
+        // returnRandomRelic),饥肠辘辘之脸吃掉、或拿蓝钥匙作废,都只是"不发给玩家"而已,
+        // 池子里那件已经没了 —— 不取走的话它会留在池里被后面的宝箱再抽到.
+        let own = self.take_relic_of_tier(chest.tier);
+        if take_sapphire {
+            self.keys.sapphire = true;
+            self.treasure = None;
+            self.say("you take the Sapphire Key");
+            self.finish_chest();
+            return;
+        }
+        if !chest.empty {
+            self.gain_relic(own);
+            self.say(format!("you found {}", own.name));
+        } else {
+            self.say("the chest is empty");
         }
         self.finish_chest();
     }
@@ -8274,6 +8288,103 @@ mod tests {
         // 再开一个箱子:不该再给第二把
         r.debug_room("treasure").expect("再开一个宝箱房");
         assert!(!r.chest_sapphire_available(), "已有蓝钥匙就不再提供");
+    }
+
+    /// 拿蓝钥匙躲不掉诅咒钥匙的诅咒:原版 openTreasureRoomChest 在生成宝箱奖励时就无条件
+    /// 塞诅咒(refs/sts_lightspeed/src/game/GameContext.cpp:1895-1897),与拿不拿蓝钥匙无关.
+    /// (此前的早期 return 让这条路整段跳过,且没有任何断言约束到它.)
+    #[test]
+    fn cursed_key_still_curses_when_the_sapphire_key_is_taken() {
+        let mut r = run(5);
+        r.debug_add_relic("cursed_key").expect("装上诅咒钥匙");
+        r.debug_room("treasure").expect("开宝箱房");
+        let curses = |r: &Run| {
+            r.player
+                .deck
+                .iter()
+                .filter(|c| c.kind() == CardType::Curse)
+                .count()
+        };
+        let before = curses(&r);
+        r.take_sapphire_key();
+        assert!(r.keys.sapphire, "拿到蓝钥匙");
+        assert_eq!(curses(&r), before + 1, "拿钥匙也要吃诅咒钥匙的诅咒");
+    }
+
+    /// 拿蓝钥匙只作废箱子自己那件:套娃那件照给,次数也照扣.原版奖励里两件遗物是分开的,
+    /// 拿钥匙只删 reward 里最后一件(refs/sts_lightspeed/src/sim/search/GameAction.cpp:349-354).
+    #[test]
+    fn matryoshka_extra_relic_survives_the_sapphire_key() {
+        let mut r = run(7);
+        r.debug_add_relic("matryoshka").expect("装上套娃");
+        let base = r.player.relics.len();
+        r.debug_room("treasure").expect("开宝箱房 1");
+        r.take_sapphire_key();
+        assert!(r.keys.sapphire, "拿到蓝钥匙");
+        assert_eq!(r.player.relics.len(), base + 1, "套娃那件照给,箱子那件作废");
+        assert!(r.save_text().contains("chest_extras=1,"), "套娃次数照扣");
+        r.debug_room("treasure").expect("开宝箱房 2");
+        r.take_treasure();
+        assert_eq!(r.player.relics.len(), base + 3, "第二个箱子:套娃 +1 与箱子 +1");
+        assert!(r.save_text().contains("chest_extras=0,"), "两次用光");
+    }
+
+    /// 黑星那件当场进包的额外遗物跳过营火专属(和平烟斗/铲子/吉利亚):
+    /// 原版走 returnNonCampfireRelic,抽到营火三件要换下一件
+    /// (refs/sts_lightspeed/src/game/GameContext.cpp:1943-1946,1537-1543).
+    /// 原来的实现在普通那件之前掷档、且不做这个过滤,两个分支都没有断言.
+    #[test]
+    fn black_star_extra_relic_skips_the_campfire_pool() {
+        for seed in 0..40u64 {
+            let mut r = Run::new(seed);
+            r.debug_add_relic("black_star").unwrap();
+            // 把营火三件顶到稀有池最前,这样只要那一次掷到稀有就一定会碰到过滤分支
+            for (k, id) in ["peace_pipe", "girya", "shovel"].iter().enumerate() {
+                if let Some(i) = r.relic_pools.rare.iter().position(|d| d.id == *id) {
+                    r.relic_pools.rare.swap(k, i);
+                }
+            }
+            let before: Vec<&'static str> = r.player.relics.iter().map(|d| d.id).collect();
+            let enc = crate::core::enemies::encounter_def("gremlin_nob_solo").unwrap();
+            r.debug_start_combat(enc);
+            r.debug_win_battle();
+            settle(&mut r);
+            let added: Vec<&'static str> = r
+                .player
+                .relics
+                .iter()
+                .map(|d| d.id)
+                .filter(|id| !before.contains(id))
+                .collect();
+            assert_eq!(added.len(), 1, "seed {seed}: 黑星当场多给一件");
+            assert!(
+                !["peace_pipe", "girya", "shovel"].contains(&added[0]),
+                "seed {seed}: 黑星那件不该是营火遗物({})",
+                added[0]
+            );
+        }
+    }
+
+
+    /// 饥肠辘辘之脸吃空箱时,池子里那件照样取出作废:原版无条件 returnRandomRelic
+    /// (refs/sts_lightspeed/src/game/GameContext.cpp:1905-1910),只是不入奖励 ——
+    /// 不取走的话它会留在池里被后面的宝箱再抽到.
+    #[test]
+    fn nloths_hungry_face_still_draws_the_relic_out_of_the_pool() {
+        let mut r = run(5);
+        r.debug_add_relic("nloths_hungry_face").expect("装上饥肠辘辘之脸");
+        r.debug_room("treasure").expect("开宝箱房");
+        let tier = r.chest.expect("宝箱房").tier;
+        let pool_before = r.relic_pools.slot(tier).expect("该档次有池子").len();
+        let relics_before = r.player.relics.len();
+        r.take_treasure();
+        assert!(r.chest.is_none(), "箱子已开");
+        assert_eq!(r.player.relics.len(), relics_before, "空箱子不给遗物");
+        assert_eq!(
+            r.relic_pools.slot(tier).expect("池子还在").len(),
+            pool_before - 1,
+            "池子里那件被取走作废"
+        );
     }
 
     /// 俄罗斯套娃:接下来两个非 Boss 宝箱各多给一件,之后就只剩原有的那件;
