@@ -81,6 +81,8 @@ pub struct App {
     pub msg: String,
     pub warn: bool,
     pub quit: bool,
+    /// ctrl-c 按过一次了(再按一次才真退,免得手滑丢掉长局)
+    pub quit_armed: bool,
     /// 开始界面光标
     pub title_sel: usize,
     /// 角色选择光标
@@ -145,6 +147,7 @@ impl App {
             msg: String::new(),
             warn: false,
             quit: false,
+            quit_armed: false,
             title_sel: 0,
             char_sel: 0,
             comp_sel: 0,
@@ -205,7 +208,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.title_sel = (self.title_sel + n - 1) % n,
             KeyCode::Char('g') => self.title_sel = 0,
             KeyCode::Char('G') => self.title_sel = n - 1,
-            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('q') => self.quit_now("title: q"),
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let (label, ok, _) = self.title_entries()[self.title_sel];
                 if !ok {
@@ -225,10 +228,10 @@ impl App {
                         self.comp_sel = 0;
                         self.msg = String::new();
                     }
-                    _ => self.quit = true,
+                    _ => self.quit_now("title: quit"),
                 }
             }
-            KeyCode::Esc => self.quit = true,
+            KeyCode::Esc => self.quit_now("title: esc"),
             _ => {}
         }
     }
@@ -408,6 +411,13 @@ impl App {
 
     /// 在地图界面(每层开头)自动存档;结算时清掉存档。
     /// 只有真正的事件循环会调它,单测不该碰磁盘。
+    /// 退出前先往 stderr 记一笔原因:下次 tmux 会话没了,
+    /// 看日志就能分清是"我们干净退的"、还是被信号/OOM 干掉的
+    fn quit_now(&mut self, why: &str) {
+        eprintln!("spire: quit ({why})");
+        self.quit = true;
+    }
+
     pub fn maybe_save(&mut self) {
         match self.run.screen {
             Screen::Map => {
@@ -729,9 +739,16 @@ impl App {
             return;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.quit = true;
+            // 手滑按到 ctrl-c 不该把长局直接丢掉:再按一次才真退
+            if self.quit_armed {
+                self.quit_now("ctrl-c twice");
+            } else {
+                self.quit_armed = true;
+                self.info("press ctrl-c again to quit");
+            }
             return;
         }
+        self.quit_armed = false;
         match self.mode {
             Mode::Command => {
                 self.command_key(key);
@@ -1781,7 +1798,7 @@ impl App {
                 self.remember_seed(seed);
                 self.restart(seed);
             }
-            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('q') => self.quit_now("key: q"),
             _ => {}
         }
     }
@@ -1925,7 +1942,7 @@ impl App {
             None => (cmd, ""),
         };
         match head {
-            "q" | "quit" => self.quit = true,
+            "q" | "quit" => self.quit_now(":q"),
             "help" => self.open_overlay(Overlay::Help),
             // 种子按参考实现的形式(base-35)显示.
             // 无参:开种子窗口(显示当前串,可改,回车起新局);有参:直接设"待用种子".
