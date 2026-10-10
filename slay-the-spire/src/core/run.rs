@@ -6132,6 +6132,8 @@ impl Run {
     /// 调试用:直接进某个房间。不改地图、不动位置,退出后照旧回到原来的地图。
     /// what: shop / event [事件id] / battle(随机 boss|elite|enemy) / boss / elite / enemy
     pub fn debug_room(&mut self, what: &str) -> Result<String, String> {
+        // 调试跳房间:先把还活着的战斗收掉,免得"界面已经换了、状态里还挂着一场战斗"
+        self.combat = None;
         let (kind, arg) = match what.split_once(' ') {
             Some((k, a)) => (k, Some(a.trim())),
             None => (what, None),

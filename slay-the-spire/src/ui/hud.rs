@@ -40,8 +40,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     x = seg(buf, x, y, limit, &format!("${}", p.gold), theme::fg(theme::GOLD));
     x += 2;
 
-    // 三把钥匙(绿/红/蓝):拿到的是彩字,没有的是暗色 -
-    x = seg(buf, x, y, limit, "K:", theme::dim());
+    // 三把钥匙:拿到的用对应颜色的 ↑,没拿到的是暗色 ↑(不写 K:,也不用 - 占位)
     let key = |owned: bool, c| {
         if owned {
             theme::fg(c)
@@ -49,9 +48,9 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
             theme::dim()
         }
     };
-    x = seg(buf, x, y, limit, if run.keys.emerald { "E" } else { "-" }, key(run.keys.emerald, theme::GOOD));
-    x = seg(buf, x, y, limit, if run.keys.ruby { "R" } else { "-" }, key(run.keys.ruby, theme::BAD));
-    x = seg(buf, x, y, limit, if run.keys.sapphire { "S" } else { "-" }, key(run.keys.sapphire, theme::BLOCK));
+    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.emerald, theme::GOOD));
+    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.ruby, theme::BAD));
+    x = seg(buf, x, y, limit, "\u{2191}", key(run.keys.sapphire, theme::BLOCK));
     x += 3;
 
     // 最右:Act 紧挨着 Floor 再紧挨着 Deck,整组右对齐,右边留 2 格.
