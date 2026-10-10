@@ -9,7 +9,7 @@ use crate::app::App;
 use crate::core::map::{NodeKind, COLS};
 use crate::core::run::Run;
 use crate::ui::theme;
-use crate::ui::{put, truncate};
+use crate::ui::{display_width, put, put_padded, truncate};
 
 /// 每层占的列数:1 列画节点,3 列画连线
 pub const CELL_W: u16 = 4;
@@ -244,30 +244,34 @@ fn render_floor(
         let is_candidate = reach.contains(i);
         let on_path = future.map(|f| f[*i]).unwrap_or(false);
         if node.kind == NodeKind::Boss {
-            // 名字写在节点右边;只有这一行真的和图例同排时才让位
+            // Boss:一整块和精英同色的底,纵向铺满整张地图(所有岔路),
+            // 名字横排写在块里(黑字);右边要给图例让位
             let room = match legend {
-                Some((lx, legend_bottom)) if y < legend_bottom => {
-                    lx.saturating_sub(1).saturating_sub(x)
-                }
+                Some((lx, _)) => lx.saturating_sub(1).saturating_sub(x),
                 _ => buf.area.width.saturating_sub(x),
             };
             let name = run.boss_name();
-            // Boss 不铺底色:在路线上/选中都是现在那支红字,选中再叠闪烁
-            let (style, label) = if is_sel {
-                (
-                    theme::kind_style(NodeKind::Boss).add_modifier(Modifier::SLOW_BLINK),
-                    name.to_string(),
-                )
-            } else if on_path {
-                (theme::kind_style(NodeKind::Boss), name.to_string())
+            let block_h = COLS as u16 * ROW_H - 1;
+            let w = ((display_width(name) + 2) as u16).min(room);
+            if w >= 3 && y0 + block_h <= buf.area.height {
+                let mut style = theme::kind_chip(NodeKind::Boss);
+                if is_sel {
+                    style = style.add_modifier(Modifier::SLOW_BLINK);
+                }
+                for yy in y0..y0 + block_h {
+                    put_padded(buf, x, yy, "", w as usize, style);
+                }
+                let label = truncate(name, (w - 2) as usize);
+                put(buf, x + 1, y, &label, style);
             } else {
-                (theme::dim(), name.to_string())
-            };
-            if room as usize >= crate::ui::display_width(&label) {
-                put(buf, x, y, &truncate(&label, room as usize), style);
-            } else {
-                // 实在放不下名字就退回符号,图例那一行仍然写着全名
-                put(buf, x, y, "[B]", style);
+                // 右边放不下整块就退回一行红字
+                put(
+                    buf,
+                    x,
+                    y,
+                    &truncate(name, room as usize),
+                    theme::kind_style(NodeKind::Boss),
+                );
             }
             continue;
         }

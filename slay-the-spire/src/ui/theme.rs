@@ -53,7 +53,7 @@ pub fn kind_style(kind: NodeKind) -> Style {
 
 /// 色块(在路线上/选中/已到达的房间才有底色):
 /// 到达=绿,怪物=白,精英与燃烧精英=现在的精英红,休息=现在的休息血红,
-/// 商店=金,未知=灰,宝箱=紫,Boss 不铺底(保持现在的红字)
+/// 商店=金,未知=灰,宝箱=紫;一律黑字
 pub const CHIP_ARRIVED: Color = Color::Rgb(46, 140, 74);
 pub const CHIP_ENEMY: Color = Color::Rgb(245, 246, 250);
 pub const CHIP_ELITE: Color = Color::Rgb(150, 30, 42);
@@ -61,21 +61,22 @@ pub const CHIP_REST: Color = Color::Rgb(236, 96, 108);
 pub const CHIP_MERCHANT: Color = Color::Rgb(250, 186, 66);
 pub const CHIP_EVENT: Color = Color::Rgb(128, 134, 150);
 pub const CHIP_TREASURE: Color = Color::Rgb(146, 92, 214);
-/// 色块上的字:一律白字 + 加粗,只有怪物是黑字
-pub const CHIP_FG: Color = Color::Rgb(255, 255, 255);
+/// 色块上的字:一律黑字(和终端底色同色)+ 加粗
+pub const CHIP_FG: Color = BG;
 
 /// 房间色块(选中/在路线上共用;调用方自己再叠闪烁之类的修饰)
 pub fn kind_chip(kind: NodeKind) -> Style {
-    let (fg, bg) = match kind {
-        NodeKind::Monster => (BG, CHIP_ENEMY),
-        NodeKind::Elite => (CHIP_FG, CHIP_ELITE),
-        NodeKind::Event => (CHIP_FG, CHIP_EVENT),
-        NodeKind::Rest => (CHIP_FG, CHIP_REST),
-        NodeKind::Shop => (CHIP_FG, CHIP_MERCHANT),
-        NodeKind::Treasure => (CHIP_FG, CHIP_TREASURE),
-        // Boss 不铺底:就用现在的红字
-        NodeKind::Boss => (ELITE_FG, BG),
+    let bg = match kind {
+        NodeKind::Monster => CHIP_ENEMY,
+        NodeKind::Elite => CHIP_ELITE,
+        // Boss 和精英同一块底色
+        NodeKind::Boss => CHIP_ELITE,
+        NodeKind::Event => CHIP_EVENT,
+        NodeKind::Rest => CHIP_REST,
+        NodeKind::Shop => CHIP_MERCHANT,
+        NodeKind::Treasure => CHIP_TREASURE,
     };
+    let fg = CHIP_FG;
     Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
 }
 
