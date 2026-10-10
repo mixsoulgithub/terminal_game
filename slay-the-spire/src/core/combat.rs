@@ -6102,11 +6102,14 @@ mod tests {
             "打出的牌应该被消耗"
         );
 
-        // 灼热攻击:一直能升,伤害跟着涨
+        // 灼热攻击:一直能升,伤害按 n*(n+7)/2+12 涨(反编译 BattleContext.cpp:1136)
         let mut card = crate::core::cards::card("searing_blow");
         let base = card.bonus_damage();
+        assert_eq!(base, 12, "灼热攻击基础 12");
         card.upgrade();
+        assert_eq!(card.bonus_damage(), 16, "第一次升级 16");
         card.upgrade();
+        assert_eq!(card.bonus_damage(), 21, "第二次升级 21");
         assert_eq!(card.plus, 2, "升了两次");
         assert!(card.bonus_damage() > base, "越升越痛");
         assert!(card.can_upgrade(), "还能继续升");
@@ -6571,6 +6574,21 @@ mod tests {
         let mut fresh = cards::card("strike");
         c.fix_new_card(&mut fresh);
         assert!(fresh.upgraded, "神化之后新拿到的牌应直接升级");
+    }
+
+    /// 哨卫+ 被消耗时回 3 能量(基础 2);反编译 CardInstance.cpp:203 triggerOnExhaust
+    #[test]
+    fn sentinel_upgrade_grants_three_energy_on_exhaust() {
+        // 重整旗鼓会把手里所有非攻击牌消耗掉,正好触发哨卫的消耗效果
+        let mut c = staged(&["second_wind", "sentinel"], &["second_wind", "sentinel"]);
+        let s = hand_idx(&c, "sentinel");
+        c.hand[s].upgrade();
+        let sw = hand_idx(&c, "second_wind");
+        let e0 = c.energy;
+        c.play_card(sw, None).unwrap();
+        // second_wind 1 费 + 哨卫+ 回 3 能
+        assert_eq!(c.energy, e0 - 1 + 3, "Sentinel+ 消耗时应回 3 能量");
+        assert!(c.exhaust.iter().any(|x| x.def.id == "sentinel"));
     }
 
     #[test]
@@ -11471,6 +11489,29 @@ mod branch_assertions {
         c.play_card(0, None).unwrap();
         assert!(c.choice.is_none(), "没有能升级的牌就不挂选牌窗口");
         assert_eq!(c.player.block, 5, "格挡照给");
+    }
+
+    /// 军备+(Armaments+):升级手里所有"能升级的牌",不开选牌窗口
+    /// (refs/sts_lightspeed/src/combat/Actions.cpp:901 UpgradeAllCardsInHand;
+    /// cards.rs 的 UpgradeAllInHand.此前只测过基础版选牌/0 候选两条路).
+    #[test]
+    fn armaments_plus_upgrades_the_whole_hand() {
+        let mut c = board(&["armaments", "strike", "defend", "wound"], &[], 0);
+        let mut up = card("armaments");
+        up.upgraded = true;
+        let mut already = card("defend");
+        already.upgraded = true;
+        c.hand = vec![up, card("strike"), already, card("wound")];
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "升级版不开选牌窗口");
+        assert_eq!(c.player.block, 5, "格挡仍是 5(升级不改格挡)");
+        let strike = c.hand.iter().find(|x| x.def.id == "strike").unwrap();
+        assert!(strike.upgraded, "打击被升级");
+        assert_eq!(strike.effects(), &[Effect::Damage { amount: 9, times: 1 }]);
+        assert!(
+            c.hand.iter().any(|x| x.def.id == "wound" && !x.upgraded),
+            "伤口不可升级,保持原样"
+        );
     }
 
     /// 坚毅:手里没牌可随机消耗时,格挡照给、消耗堆不动

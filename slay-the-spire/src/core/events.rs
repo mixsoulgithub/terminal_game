@@ -2346,6 +2346,7 @@ macro_rules! event_up {
             ethereal: None,
             innate: None,
             on_end_turn: None,
+            target: None,
         })
     };
 }
@@ -2479,6 +2480,7 @@ pub static EVENT_CARDS: &[CardDef] = &[
             ethereal: Some(false),
             innate: None,
             on_end_turn: None,
+            target: None,
         }),
     },
 ];

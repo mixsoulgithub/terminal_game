@@ -15,6 +15,7 @@ macro_rules! up {
             ethereal: None,
             innate: None,
             on_end_turn: None,
+            target: None,
         })
     };
 }
@@ -31,6 +32,7 @@ macro_rules! up_innate {
             ethereal: None,
             innate: Some(true),
             on_end_turn: None,
+            target: None,
         })
     };
 }
@@ -47,6 +49,24 @@ macro_rules! up_no_exhaust {
             ethereal: None,
             innate: None,
             on_end_turn: None,
+            target: None,
+        })
+    };
+}
+
+/// 升级后从单体目标改成全体(致盲+/绊倒+):效果换成"所有敌人",也不再需要先选敌人.
+macro_rules! up_all {
+    ($cost:expr, $text:expr, [$($e:expr),* $(,)?]) => {
+        Some(CardUpgrade {
+            cost: $cost,
+            text: $text,
+            effects: Some(&[$($e),*]),
+            exhaust: None,
+            retain: None,
+            ethereal: None,
+            innate: None,
+            on_end_turn: None,
+            target: Some(Target::All),
         })
     };
 }
@@ -217,6 +237,7 @@ pub static CARDS: &[CardDef] = &[
             ethereal: None,
             innate: None,
             on_end_turn: Some(&[Effect::DamageSelf { amount: 4 }]),
+            target: None,
         }),
     },
     CardDef {
@@ -2326,10 +2347,10 @@ pub static CARDS: &[CardDef] = &[
         ],
         upgrade: up!(
             None,
-            "Gain 8 Block. If this card is Exhausted, gain (2).",
+            "Gain 8 Block. If this card is Exhausted, gain (3).",
             [
                 Effect::Block { amount: 8 },
-                Effect::EnergyOnExhaust { n: 2 }
+                Effect::EnergyOnExhaust { n: 3 }
             ]
         ),
     },
@@ -2635,7 +2656,7 @@ pub static CARDS: &[CardDef] = &[
             status: Status::Weak,
             n: 2,
         }],
-        upgrade: up!(
+        upgrade: up_all!(
             None,
             "Apply 2 Weak to ALL enemies.",
             [Effect::AddAllEnemiesStatus {
@@ -3103,7 +3124,7 @@ pub static CARDS: &[CardDef] = &[
             status: Status::Vulnerable,
             n: 2,
         }],
-        upgrade: up!(
+        upgrade: up_all!(
             None,
             "Apply 2 Vulnerable to ALL enemies.",
             [Effect::AddAllEnemiesStatus {
@@ -3972,6 +3993,32 @@ mod tests {
         // Anger 的复制目标必须是它自己(而且副本要照抄升级数).
         let anger = card_def("anger").unwrap();
         assert!(anger.effects.contains(&Effect::AddSelfToDiscard { n: 1 }));
+    }
+
+    /// 哨卫升级后消耗回能 2 -> 3(反编译 CardInstance.cpp:203 triggerOnExhaust)
+    #[test]
+    fn sentinel_upgrade_raises_exhaust_energy() {
+        let s = card_def("sentinel").unwrap();
+        assert!(s.effects.contains(&Effect::EnergyOnExhaust { n: 2 }));
+        let up = s.upgrade.unwrap();
+        assert!(up
+            .effects
+            .unwrap()
+            .contains(&Effect::EnergyOnExhaust { n: 3 }));
+    }
+
+    /// 致盲+/绊倒+ 打全体,不再需要先选一个敌人
+    /// (反编译 Cards.h cardTargetsEnemy:BLIND/TRIP 只有未升级才要目标)
+    #[test]
+    fn upgraded_blind_and_trip_target_all_enemies() {
+        for id in ["blind", "trip"] {
+            let mut c = card(id);
+            assert!(c.needs_target(), "{id} 基础应需要目标");
+            assert_eq!(c.target(), Target::Enemy);
+            c.upgrade();
+            assert!(!c.needs_target(), "{id}+ 打全体,不应要求选目标");
+            assert_eq!(c.target(), Target::All);
+        }
     }
 
     /// 一张牌基础 + 升级用到的所有效果

@@ -224,6 +224,8 @@ pub struct CardUpgrade {
     pub innate: Option<bool>,
     /// 升级后换一份"回合结束结算"的效果(灼伤 2 -> 4)
     pub on_end_turn: Option<&'static [Effect]>,
+    /// 升级后改目标(致盲+/绊倒+ 从单体变全体,不再需要先选敌人)
+    pub target: Option<Target>,
 }
 
 #[derive(Debug)]
@@ -324,8 +326,12 @@ impl CardInstance {
         self.def.rarity
     }
 
+    /// 生效的目标:升级可改(致盲+/绊倒+ 从单体变全体)
     pub fn target(&self) -> Target {
-        self.def.target
+        match (&self.def.upgrade, self.upgraded) {
+            (Some(up), true) => up.target.unwrap_or(self.def.target),
+            _ => self.def.target,
+        }
     }
 
     /// 是否属于"打击"系列(Perfected Strike 用)
