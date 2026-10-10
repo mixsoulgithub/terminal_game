@@ -1770,12 +1770,14 @@ mod e2e {
     /// (b) 参考缺口(参考侧没实现,本作按原版,不改本作):这张表目前为空 —— 原先唯一一条
     ///   退赃已改由参考驱动侧补偿折掉(见上),不再算差异.
     ///
-    /// (c) 参考侧反着来 / 缺一块(本作按原版/反编译,不改本作).两条本轮都在驱动侧折平,
+    /// (c) 参考侧反着来 / 缺一块(本作按原版 wiki/corpus,不改本作).两条本轮都在驱动侧折平,
     ///   本表 19 颗全部逐字节对齐(原 77 处 -> 0):
     ///   1) 六角幽魂的炼狱(Inferno):原版这一招除了 2x6 还会往弃牌堆塞 3 张 Burn+、并把
-    ///      已有的灼伤全部升级.语料 refs/slay-the-cli/data/corpus/monsters-act1.json 的
-    ///      HEXAGHOST.conflicts[0] 记着 "lightspeed omits the 3 added Burn+ and the retroactive
-    ///      upgrade"(灯光速与参考都省了).本作照原版实现(enemies/act1.rs 的 HEXAGHOST
+    ///      已有的灼伤全部升级.反编译 MonsterSpecific.cpp:807-812 的 HEXAGHOST_INFERNO
+    ///      只做 attackPlayerHelper(asc4?3:2, 6),**既没塞牌也没追升**;语料
+    ///      refs/slay-the-cli/data/corpus/monsters-act1.json 的 HEXAGHOST.conflicts[0] 记着
+    ///      "lightspeed omits the 3 added Burn+ and the retroactive upgrade"(灯光速与参考
+    ///      都省了).本作照原版行为实现(enemies/act1.rs 的 HEXAGHOST
     ///      INFERNO:PlayerCardUpgraded{burn,3} + UpgradePlayerBurns);本轮在驱动侧包住参考的
     ///      HEXAGHOST_INFERNO execute,补上塞 3 张 Burn+ 与追升已有灼伤(见 tools/replay_ref.ts),
     ///      seed 2474/23808/4327 归零.
@@ -2314,8 +2316,11 @@ mod e2e {
     //
     // A20 第一幕扫了 seed 1..160,CASES 里登记 25 颗(23 颗逐字节全对齐,2 颗是参考缺口).
     // 扩表时又修掉一条:飞升 18+ 的 Gremlin Nob 换固定节奏(头槌只在"最近两招里没有头槌"
-    // 时出,即 Bellow 之后 头槌/冲锋/冲锋 循环).反编译 MonsterSpecific.cpp 那段 asc18 分支
-    // 写成"恒为冲锋",是转写错误,依据见语料 monsters-act1.json 的 conflicts;修前
+    // 时出,即 Bellow 之后 头槌/冲锋/冲锋 循环).反编译 MonsterSpecific.cpp:2412-2424 那段
+    // asc18 分支条件退化(先判 !lastTwoMoves(SKULL_BASH) 就 return RUSH,头槌永不入历史,
+    // 于是恒为冲锋),语料 monsters-act1.json 的 conflicts:817-820 记为转写错误并给出
+    // "wiki/real pattern [SKULL_BASH, RUSH, RUSH] should be treated as correct";
+    // 本作按 wiki/corpus 的真游戏节奏.修前
     // seed 3/42/45 的头目小鬼精英战各差 17~21 hp(seed 44 也有这场,但它另外还撞上仙女
     // 回血那条缺口,见下),修后 seed 3/42/45 全对齐.断言 = combat.rs
     // gremlin_nob_a18_locks_the_skull_bash_rush_rush_pattern.

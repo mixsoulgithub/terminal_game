@@ -677,13 +677,18 @@ report.push("    断言 = event_spawn_floor_uses_the_global_floor。knowing_skul
 report.push("  tomb_of_lord(events.rs/run.rs): \"Offer gold\" 补 req_no_relic 门控(反编译两张位掩码互斥);");
 report.push("    断言 = tomb_of_lord_stops_offering_the_mask_once_you_wear_it。");
 report.push("");
-report.push("登记(本轮不改,附理由):");
-report.push("  [d] smiling_mask 删牌价: 反编译 Shop::getRemoveCost 对 50 也叠信使/会员卡折扣、且不吃 A16;");
-report.push("      wiki 与参考实现(shop.ts 头注 DISPUTED)都取\"固定 50、吃 A16\";本作照 wiki(与 fixture 一致),待定夺。");
-report.push("  [b] fairy_potion 可被手动喝掉并消耗: 反编译把\"饮 FAIRY_POTION\"归入 assert(false) 的非法分支,");
-report.push("      refs/slay-the-cli 注释亦标 non-drinkable;本作当前允许(喝掉无效果),保留现状登记。");
-report.push("  [b] toy_ornithopter 在地图/事件上喝药是否回 5: 反编译未实现该遗物,证据弱,登记。");
-report.push("  [b] dingy_rug: 反编译/语料/本作都查不到,未核。");
+report.push("登记(附精确口径与出处):");
+report.push("  [d] smiling_mask 与删牌价: 反编译 Shop::getRemoveCost(src/game/Shop.cpp:218-235)把 50 也算信使/会员卡折扣");
+report.push("      (50 x 0.8 或 x 0.5),且删牌价不吃 A16(A16 的折扣在 Shop.cpp:17 只落在商品价上);");
+report.push("      wiki 与参考实现(shop.ts 头注 DISPUTED)取\"固定 50、不再叠信使/会员卡折扣\";本作照 wiki/参考(与 fixture 一致):");
+report.push("      微笑面具固定 50、不上折。普通删牌价本作按 wiki 的 A16 +10%(run.rs 的 discount)。");
+report.push("  [b] fairy_potion 不可手动喝: 反编译 BattleContext.cpp:2435-2440 对 FAIRY_POTION 直接 assert(它只在死亡时自动生效);");
+report.push("      参考 potions/index.ts:316-324 自注 non-drinkable;本作已是 PotionFx::Passive,quaff_potion/use_potion 一律拒绝");
+report.push("      (断言 fairy_in_a_bottle_is_not_drinkable)。此条此前误记为\"本作当前允许\",已随该修复作废。");
+report.push("  [b] toy_ornithopter 在地图/事件上喝药是否回 5: 反编译只在 Relics.h:90 登记枚举,全 src/ 无该遗物的任何处理(未实现);");
+report.push("      参考实现 common.ts:451-460 战斗内外都回 5;本作照语料 desc + 参考(heal_on_potion_use = 5)。");
+report.push("  [c] dingy_rug 是《杀戮尖塔 2》的遗物(refs/sts2-cli/localization_eng/relics.json:203: \"Card rewards can now contain"),
+report.push("      Colorless cards.\"),StS1 反编译/语料/本作都没有,不在范围。");
 report.push("  [c] 26 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。");
 const text = report.join("\n") + "\n";
 process.stdout.write(text);

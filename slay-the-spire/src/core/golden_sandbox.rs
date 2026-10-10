@@ -14,6 +14,14 @@
 //!      —— 发现原先连抽三次不剔重,按 Game.cpp:228-260 改成三张互不相同;
 //!   3) combat.rs 的 add_random_colorless_to_hand 溢出分支
 //!      —— 手牌满时原先把这张牌直接丢掉,改成进弃牌堆(参考 makeTempCard 的口径)。
+//!
+//! 沙盒里两件"随机类遗物"的 (b) 也一并钉清了(原先被笼统记成"(b) 参考缺口(随机池)"):
+//!   - warped_tongs:参考把钩子挂在抽牌前的 atStartOfTurn,那一刻手里没牌、永不升级;
+//!     反编译放在抽牌后的 applyStartOfTurnPostDrawRelics(Player.cpp:669-671)。本作照反编译,
+//!     且掷点/候选一并改正(Actions.cpp:940-962:剔不可升级的候选、没候选不掷点、
+//!     用 shuffleRng 取一个 long 洗下标表),断言 warped_tongs_upgrades_after_draw_off_shuffle_rng;
+//!   - nilrys_codex:参考的 NILRY_CODEX hooks 为空、没实现(event.ts:146-153),本作照反编译
+//!     (BattleContext.cpp:2046-2047 + Actions.cpp:964-969 + CardManager.cpp:215-223)。
 
 use crate::core::card::{CardInstance};
 use crate::core::combat::{Combat, CombatSetup, RunRelicCounters};

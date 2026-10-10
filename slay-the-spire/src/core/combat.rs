@@ -438,8 +438,11 @@ pub struct Combat {
     sharp_hide: Vec<(usize, i32)>,
     /// headless 对拍:参考实现没实现尼尔瑞的抄本
     /// (refs/slay-the-cli/src/content/relics/event.ts:146-153 标了 ENGINE-GAP:
-    /// "回合中段请求选牌会把排在其后的动作(交给回合)整段丢掉"),
-    /// 连"亮三张"那几次 cardRandomRng 都不掷.原版这件遗物是可选(shuffle 或不 shuffle),
+    /// "回合中段请求选牌会把排在其后的动作(交给回合)整段丢掉",hooks:{}),
+    /// 连"亮三张"那几次 cardRandomRng 都不掷.反编译其实有完整实现
+    /// (refs/sts_lightspeed/src/combat/BattleContext.cpp:2046-2047 挂 CodexAction、
+    /// Actions.cpp:964-970 开 CODEX 选牌、BattleContext.cpp:2929-2932 处理选择),
+    /// 是参考实现这侧缺一块.原版这件遗物是可选(shuffle 或不 shuffle),
     /// 驱动侧统一按"跳过"处理:回合结束不亮牌、不掷点,两边才对得上.
     pub suppress_codex: bool,
 }
@@ -1053,15 +1056,33 @@ impl Combat {
                 self.gain_block(b, false, false);
             }
         }
-        // 扭曲的钳子:回合开始随机升级手里一张牌
-        if self.relic_any(|fx| fx.upgrade_random_hand_at_turn_start) && !self.hand.is_empty() {
-            let idx = self
-                .streams
-                .floor(FloorStream::MiscRng)
-                .random(self.hand.len() as u32 - 1) as usize;
-            if self.hand[idx].upgrade() {
-                let label = self.hand[idx].label();
-                self.push_log(LogKind::Player, format!("Warped Tongs upgrades {label}"));
+        // 扭曲的钳子:反编译 Actions::UpgradeRandomCardAction
+        // (refs/sts_lightspeed/src/combat/Actions.cpp:940-962),在**抽牌后**的
+        // applyStartOfTurnPostDrawRelics(Player.cpp:669-671)里:
+        //   ①先在手里挑出"还能升级"的牌(canUpgrade,941-947);
+        //   ②一张都没有就整段跳过、**不掷点**(949-951);
+        //   ③否则从 shuffleRng 取一个 long 做种,喂 java.util.Random 洗这份手牌下标表
+        //     (953-957),升级洗后的第一张。
+        // 参考实现把 WARPED_TONGS 挂在 atStartOfTurn(抽牌前,event.ts:237-249),那一刻
+        // 手里还没有牌、挑不出候选,于是它永远不升级(见 sandbox 的 warped_tongs/play)。
+        // 本作照反编译:动 shuffleRng、不动 miscRng;候选只含能升级的牌。
+        if self.relic_any(|fx| fx.upgrade_random_hand_at_turn_start) {
+            let cands: Vec<usize> = self
+                .hand
+                .iter()
+                .enumerate()
+                .filter(|(_, k)| k.can_upgrade())
+                .map(|(i, _)| i)
+                .collect();
+            if !cands.is_empty() {
+                let mut cands = cands;
+                let seed = self.streams.floor(FloorStream::ShuffleRng).random_long();
+                java_shuffle(&mut cands, &mut JavaRandom::new(seed));
+                let idx = cands[0];
+                if self.hand[idx].upgrade() {
+                    let label = self.hand[idx].label();
+                    self.push_log(LogKind::Player, format!("Warped Tongs upgrades {label}"));
+                }
             }
         }
         // 魔法书:战斗开始时往手里塞一张随机能力牌,本回合 0 费(只在开局,不是每回合)
@@ -2351,6 +2372,12 @@ impl Combat {
                 self.enemies[idx].state.charge += 1;
             }
             EnemyFx::WakeUp { at_turn } => {
+                // 拉格瓦林的自然醒(回合数到点):原版两个醒法(挨够伤害 / 满 3 回合)都会
+                // 掉光 Metallicize;wiki 与语料 monsters-act1.json conflicts:883-886 都这么记
+                // ("lightspeed simplification; wiki: removed both wake paths").
+                // 反编译只在挨打/掉血那条路 decrement(Monster.cpp:388-391 / 448-451),
+                // SLEEP@turn==2 的自然醒(MonsterSpecific.cpp:888-895)只 setMove(ATTACK)、
+                // 不清 Metallicize —— 是反编译省了一块,故这里按 wiki/corpus.
                 if turn >= at_turn && self.enemies[idx].statuses.holds(Status::Asleep) {
                     self.enemies[idx].statuses.add(Status::Asleep, -1);
                     let met = self.enemies[idx].statuses.get(Status::Metallicize);
@@ -3396,7 +3423,12 @@ impl Combat {
         // 花开彼岸(不能回血)把两种保命符一起挡掉:反编译 Player::wouldDie 里
         // 仙女与蜥蜴尾巴整段都包在 `if (!hasRelic<MARK_OF_THE_BLOOM>())` 里
         if !self.relic_any(|fx| fx.no_heal) {
-            // 仙女在瓶中先判(反编译 wouldDie 先扫药水栏,再查蜥蜴尾巴)
+            // 仙女在瓶中先判(反编译 wouldDie 先扫药水栏,再查蜥蜴尾巴).
+            // 两条保命符都走 Player::heal(Player.cpp:156-170):
+            // 先把 curHp 归零(wouldDie 第一句),再 heal —— 于是**魔法花会把回血量
+            // 再乘 3/2**(仙女 30%->45%、树皮 60%->90%、蜥蜴尾 50%->75%),
+            // 并顺带触发红骷髅的"回到半血以上"记账.此前直接 self.player.hp = back
+            // 漏了魔法花这一档.
             if self.fairy_save {
                 self.fairy_save = false;
                 self.fairy_used = true;
@@ -3406,8 +3438,10 @@ impl Combat {
                 } else {
                     30
                 };
-                let back = (self.player.max_hp * pct / 100).max(1);
-                self.player.hp = back;
+                let amount = (self.player.max_hp * pct / 100).max(1);
+                self.player.hp = 0;
+                self.heal_player(amount);
+                let back = self.player.hp;
                 self.push_log(
                     LogKind::Info,
                     format!("Fairy in a Bottle heals you to {back} HP"),
@@ -3418,8 +3452,10 @@ impl Combat {
             let pct = self.relic_max(|fx| fx.death_save_pct);
             if pct > 0 && !self.rs.lizard_used {
                 self.rs.lizard_used = true;
-                let back = (self.player.max_hp * pct / 100).max(1);
-                self.player.hp = back;
+                let amount = (self.player.max_hp * pct / 100).max(1);
+                self.player.hp = 0;
+                self.heal_player(amount);
+                let back = self.player.hp;
                 self.push_log(
                     LogKind::Info,
                     format!("Lizard Tail heals you to {back} HP"),
@@ -4933,14 +4969,14 @@ impl Combat {
                 }
                 Effect::OfferRandomCardsFromClass { n } => {
                     // 发现:原版 generateDiscoveryCards(refs/sts_lightspeed/src/game/Game.cpp:228-260)
-                    // 反复掷点直到凑够 n 张**互不相同**的本职业牌(掷到重的就重掷),
+                    // 反复掷点直到凑够 n 张**互不相同**的本职业牌(掷到重的就重掷,可能多掷几次),
                     // 牌池是本职业全部非基础牌(getTrulyRandomCardInCombat 的 CombatCardPool).
                     // 参考实现那条路(randomCardDefs,slay-the-cli relics/lib.ts:108-117)是
-                    // "抽一张就把它从池子里拿走",与药水侧本作既有口径一致,故这里复用 offer_pick.
+                    // "抽一张就把它从池子里拿走"、恰好掷 n 次,与反编译的流错位;
+                    // offer_pick 已改成重掷口径(见其文档注释).
                     // 原先直接 pick n 次、不剔重,会亮出重复候选 —— 与两边都不符.
                     let mut pool = cards::class_card_pool();
-                    // 同参考实现:发现类亮牌的本职业池子按 id 排序
-                    // (slay-the-cli colorless/effects.ts:97-110 的 classPool).
+                    // 池子顺序按 id 排(见上面随机池那一段的说明).
                     pool.sort_by_key(|c| c.id);
                     self.offer_pick(pool, n as usize, true, "choose 1 of 3 random cards");
                 }
@@ -5344,20 +5380,29 @@ impl Combat {
 
     /// 亮出 n 张不重样的候选,开一次"挑一张"的选择;牌池抽干了就少亮几张.
     /// free 表示选中的那张本回合 0 费(发现类药水);工具箱与抄本不免费.
+    ///
+    /// **掷点口径照反编译**:generateDiscoveryCards
+    /// (refs/sts_lightspeed/src/game/Game.cpp:228-260)每次从整个池子里随机取一张,
+    /// 掷到重的**重掷**(可能多掷几次),直到凑够 n 张互不相同 —— 不是"抽一张就从池里拿走".
+    /// 参考实现那条路(randomCardDefs,refs/slay-the-cli/src/content/relics/lib.ts:108-117)
+    /// 会 splice 掉已抽的、恰好掷 n 次,与反编译的流错位;本轮改成重掷口径.
     fn offer_pick(
         &mut self,
-        mut pool: Vec<&'static crate::core::card::CardDef>,
+        pool: Vec<&'static crate::core::card::CardDef>,
         n: usize,
         free: bool,
         label: &str,
     ) {
         let mut offered: Vec<CardInstance> = Vec::new();
-        while offered.len() < n && !pool.is_empty() {
+        while offered.len() < n && offered.len() < pool.len() {
             let i = self
                 .streams
                 .floor(FloorStream::CardRandomRng)
                 .random(pool.len() as u32 - 1) as usize;
-            let def = pool.remove(i);
+            let def = pool[i];
+            if offered.iter().any(|c| c.def.id == def.id) {
+                continue; // 掷到重样的:重掷(反编译 while 循环不推进 cardCount)
+            }
             let mut inst = CardInstance::new(def);
             self.fix_new_card(&mut inst);
             offered.push(inst);
@@ -6579,12 +6624,15 @@ mod tests {
     // 分三层:
     //  1) 牌面规则(张数/费用/消耗/时点/剔重)一律对反编译 refs/sts_lightspeed/,
     //     下面的测试就是这些断言的固化(每条都写了出处行号);
-    //  2) "抽到哪张"这一层:原版真正用的是反编译里打散的 Java HashMap 序
-    //     (CardPools.h:189-196 的 CombatColorlessCardPool、150-156 的 CombatTypeCardPool),
-    //     而且那两张表本身不全(漏 BANDAGE_UP / FEED / REAPER),无法复现;本作与参考实现
-    //     同口径 —— 战斗内随机一律把池子按 id 排序(slay-the-cli ironclad/uncommon.ts:300-306
-    //     与 colorless/effects.ts:34-56 的 ENGINE-NOTE)。断言见
-    //     colorless_random_pool_is_the_decompiled_35;
+    //  2) "抽到哪张"这一层:反编译里战斗内随机无色牌走 CombatColorlessCardPool,
+    //     是一张写死的 34 项数组(CardPools.h:189-196,Java HashMap 打散序),比
+    //     ColorlessRarityCardPool 的 35 张(CardPools.h:133-138)少一张 BANDAGE_UP;
+    //     CombatTypeCardPool(CardPools.h:150-156)同样缺 FEED / REAPER。按原序复刻时缺牌
+    //     会让池成员与真实游戏对不上、分布也歪(已试过),而"缺的几张插在哪"反编译里没有
+    //     (它是运行期从卡牌库拼的),**故无法复现**;本作与参考实现同口径 —— 战斗内随机
+    //     一律把池子按 id 排序(slay-the-cli ironclad/uncommon.ts:300-306 与
+    //     colorless/effects.ts:34-56 的 ENGINE-NOTE)。断言见
+    //     colorless_random_pool_is_the_decompiled_35(池成员=ColorlessRarityCardPool 的 35 张);
     //  3) 化茧/变形多一层"先抽后落位"的时点,与参考实现的"逐个交替"不同,见
     //     chrysalis_and_metamorphosis_pick_then_place_like_the_decompile。
     // ==========================================================================
@@ -6849,19 +6897,27 @@ mod tests {
     }
 
     /// 发现:反编译 generateDiscoveryCards(Game.cpp:228-260)反复掷点,凑够 3 张
-    /// **互不相同**的本职业牌;牌池是本职业全部非基础牌(getTrulyRandomCardInCombat(cc)
-    /// 的 CombatCardPool);挑中的那张本回合 0 费;基础版消耗、升级版不消耗
-    /// (Cards.h:590-637 的 doesCardExhaust(DISCOVERY) = !upgraded)。
-    /// 旧写法是从同一个池子连抽三次、允许重复,这条按"换 120 个种子都不许出现重复"卡住它。
+    /// **互不相同**的本职业牌 —— 掷到重样的**重掷**(所以 cardRandomRng 可能掷 >3 次),
+    /// 不是"抽一张就从池里拿走"的恰好 3 次;牌池是本职业全部非基础牌
+    /// (getTrulyRandomCardInCombat(cc) 的 CombatCardPool);挑中的那张本回合 0 费;
+    /// 基础版消耗、升级版不消耗(Cards.h:590-637 的 doesCardExhaust(DISCOVERY) = !upgraded)。
+    /// 旧写法是从同一个池子连抽三次、允许重复,这条按"换 120 个种子都不许出现重复"卡住它;
+    /// 另一条("至少有一次掷点 >3")卡住"抽一张就从池里 remove"的 3 次口径 ——
+    /// 参考实现(randomCardDefs,lib.ts:108-117)正是那样,与反编译的流错位。
     #[test]
     fn discovery_offers_three_distinct_class_cards() {
+        let mut max_rolls = 0u32;
         for seed in 1u64..=120 {
             let mut c = staged_seed(
                 seed,
                 &["discovery", "strike", "strike", "strike", "strike", "strike"],
                 &["discovery"],
             );
+            let cr0 = c.streams.floor(FloorStream::CardRandomRng).counter();
             c.play_card(0, None).unwrap();
+            let rolls = c.streams.floor(FloorStream::CardRandomRng).counter() - cr0;
+            assert!(rolls >= 3, "seed {seed}: 至少掷 3 次,实际 {rolls}");
+            max_rolls = max_rolls.max(rolls);
             let ids: Vec<&str> = {
                 let ch = c.choice.as_ref().expect("发现要开选择");
                 assert_eq!(ch.offered.len(), 3, "seed {seed}: 亮三张");
@@ -6876,6 +6932,10 @@ mod tests {
             uniq.dedup();
             assert_eq!(uniq.len(), 3, "seed {seed}: 三张候选不能重复,实际 {ids:?}");
         }
+        assert!(
+            max_rolls > 3,
+            "120 个种子里必然有掷到重样而重掷的(>3 次),否则说明退回成了 remove-from-pool 的 3 次口径"
+        );
 
         // 挑中的那张:进手牌、本回合 0 费;基础版自己消耗
         let mut c = staged(
@@ -9789,6 +9849,32 @@ mod summon_tests {
         assert!(!c.rs.lizard_used, "反过来蜥蜴尾巴留着");
     }
 
+    /// 魔法花把保命符的回血量也放大 3/2:反编译 wouldDie 走 Player::heal,
+    /// heal 里 MAGIC_FLOWER 把 amount 乘 3/2(Player.cpp:156-170 / 320-345)。
+    /// 仙女 30% -> 45%(80 上限给 36),蜥蜴尾 50% -> 75%(给 60)。
+    #[test]
+    fn magic_flower_boosts_death_save_heals() {
+        // 仙女在瓶中:80 的 30% = 24,魔法花 → 36
+        let relics = vec![relic_def_or_panic("magic_flower")];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.fairy_save = true;
+        c.player.hp = 3;
+        c.hit_player(999);
+        assert_eq!(c.player.hp, 36, "仙女 30% 被魔法花放大到 45%");
+        assert_ne!(c.phase, Phase::Lost);
+
+        // 蜥蜴尾巴:80 的 50% = 40,魔法花 → 60
+        let relics = vec![
+            relic_def_or_panic("magic_flower"),
+            relic_def_or_panic("lizard_tail"),
+        ];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.player.hp = 3;
+        c.hit_player(999);
+        assert_eq!(c.player.hp, 60, "蜥蜴尾 50% 被魔法花放大到 75%");
+        assert_ne!(c.phase, Phase::Lost);
+    }
+
     /// 花开彼岸:两种保命符都不生效(反编译 wouldDie 整段被跳过)
     #[test]
     fn mark_of_the_bloom_blocks_fairy_and_lizard_tail() {
@@ -10055,6 +10141,93 @@ mod relic_hook_tests {
         // 对面行动后自己抽了开局五张,抽牌堆只少这五张(没有多的牌被塞进来)
         assert_eq!(c.draw.len(), before - DRAW_PER_TURN, "跳过就不塞牌");
         assert_eq!(c.turn, 2, "跳过也要把回合交出去");
+    }
+
+    /// 扭曲的钳子:照反编译在**抽牌后**升级一张手牌,且掷点账 = 动一次 shuffleRng、
+    /// 不动 miscRng;候选只含"还能升级"的牌(一张都没有就整段不掷点)。
+    /// 反编译 Actions.cpp:940-962(筛 canUpgrade → 空则 return → 否则 shuffleRng.randomLong()
+    /// 喂 JavaRandom 洗下标表取第一张);参考实现把钩子挂在抽牌前的 atStartOfTurn(event.ts:237),
+    /// 那一刻手里没牌,永远不升级,所以这条不能靠参考对拍,只能自证。
+    #[test]
+    fn warped_tongs_upgrades_after_draw_off_shuffle_rng() {
+        let relics = vec![relic_def_or_panic("warped_tongs")];
+        // 抽牌堆全是未升级的打击;手里空.回合开始先抽 5 张,再触发升级(=抽牌后)
+        let mut c = staged(&["strike"; 12], &[], &relics);
+        c.hand.clear();
+        c.draw = (0..12).map(|_| cards::card("strike")).collect();
+        c.discard.clear();
+        c.exhaust.clear();
+        let misc0 = c.streams.floor(FloorStream::MiscRng).counter();
+        let sh0 = c.streams.floor(FloorStream::ShuffleRng).counter();
+        c.end_turn();
+        assert_eq!(
+            c.streams.floor(FloorStream::MiscRng).counter(),
+            misc0,
+            "钳子不动 miscRng"
+        );
+        assert_eq!(
+            c.streams.floor(FloorStream::ShuffleRng).counter(),
+            sh0 + 1,
+            "钳子正好从 shuffleRng 取一个 long"
+        );
+        assert_eq!(
+            c.hand.iter().filter(|k| k.upgraded).count(),
+            1,
+            "抽牌后升级了恰好一张"
+        );
+
+        // 手里一张能升的都没有 → 整段跳过,两条流都不动(反编译 949-951 的 return)
+        let mut c = staged(&[], &[], &relics);
+        c.hand.clear();
+        c.draw = (0..10)
+            .map(|_| {
+                let mut k = cards::card("strike");
+                k.upgrade();
+                k
+            })
+            .collect();
+        c.discard.clear();
+        c.exhaust.clear();
+        let misc0 = c.streams.floor(FloorStream::MiscRng).counter();
+        let sh0 = c.streams.floor(FloorStream::ShuffleRng).counter();
+        c.end_turn();
+        assert_eq!(
+            c.streams.floor(FloorStream::MiscRng).counter(),
+            misc0,
+            "没候选时 miscRng 不动"
+        );
+        assert_eq!(
+            c.streams.floor(FloorStream::ShuffleRng).counter(),
+            sh0,
+            "没候选时不掷 shuffleRng(反编译先判空再掷)"
+        );
+
+        // 候选要剔掉不可升级的:手里 5 张已升级、抽牌堆 1 张未升级,
+        // 升级必须落在那张未升级的上(旧写法对整只手均匀抽会白抽一次、什么都不升)
+        let mut c = staged(&["strike"], &[], &relics);
+        c.hand = (0..5)
+            .map(|_| {
+                let mut k = cards::card("strike");
+                k.upgrade();
+                k
+            })
+            .collect();
+        c.draw = vec![cards::card("strike")];
+        c.discard.clear();
+        c.exhaust.clear();
+        c.end_turn();
+        // 回合末弃 5 张、抽 5 张(先从唯一的抽牌堆牌=未升级那张抽起),钳子升级未升级的那张,
+        // 于是这一手 5 张全是升级态(旧写法对整只手均匀抽,抽到已升级的牌就白抽、留下未升级的)
+        let up = c.hand.iter().filter(|k| k.upgraded).count();
+        assert_eq!(up, c.hand.len(), "候选剔重:未升级那张被升了,整手都是升级态");
+        assert_eq!(
+            c.hand
+                .iter()
+                .filter(|k| k.def.id == "strike" && k.upgraded)
+                .count(),
+            c.hand.len(),
+            "全是升级打击(候选剔重生效)"
+        );
     }
 
     /// 冠军腰带:给敌人上易伤时附带 1 层虚弱

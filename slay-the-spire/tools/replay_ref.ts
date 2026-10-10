@@ -120,9 +120,9 @@ const bundle = buildBaseContentBundle();
 // REGEN 能力(src/content/relics/supportPowers.ts:93)是玩家侧"回合末回血、每回合
 // 递减"(Regen Potion 用的),钩子里 owner.kind === "player" 才回血,于是燃烧精英
 // 抽到 3 号增益时怪物一点血都不回.
-// 原版 Monster::applyStartOfTurnPowers 会按层数回血、且**不递减**
-// (反编译 refs/sts_lightspeed/src/combat/Monster.cpp:59-60;挂载见 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:622),本作引擎
-// 照原版实现(combat.rs 敌人回合开始按 Regenerate 回血、不减层),不动.
+// 原版怪物在**自己回合末**的 Monster::applyEndOfTurnTriggers 里按 REGEN 层数回血、
+// 且**不递减**(反编译 refs/sts_lightspeed/src/combat/Monster.cpp:59-60;挂载见 refs/sts_lightspeed/src/combat/MonsterGroup.cpp:622),本作引擎
+// 照原版实现(combat.rs 的 enemy_end_of_turn 按 Regenerate 回血、不减层).
 // 注意:不能直接 bundle.powers.set("REGEN", ...) —— 那会把玩家侧的 Regen Potion
 // 能力一起换掉(misc: 喝过 Regen Potion 的种子在参考侧反向给怪回血,acts 77->161).
 // 做法 = 另立一枚怪专用的 BURNING_REGEN(回合开始按层数回血、不递减),并在每次
@@ -216,8 +216,9 @@ function renameBurningRegen(s: GameState): void {
 //
 // 参考实现的 MOLTEN_EGG/TOXIC_EGG/FROZEN_EGG(src/content/relics/*.ts)都是
 // `hooks: {}` 的空壳,只留了一条 "RUN-LAYER" 注释 —— 往牌组里加攻击/技能/能力牌时
-// 该给的强化它没给(原版:card.canUpgrade() 就升一级;语料 relics 的 text 与
-// 本作 relics.rs 的 egg 实现一致).任其带着走,fixture 会把"参考缺口"当成整串
+// 该给的强化它没给(原版 Deck::obtain 对蛋对应的类型**无条件** card.upgrade(),
+// 没有 canUpgrade 门槛,反编译 refs/sts_lightspeed/src/game/Deck.cpp:123-152;
+// 语料 relics 的 text 与本作 relics.rs 的 egg 实现一致).任其带着走,fixture 会把"参考缺口"当成整串
 // 战斗的 hp/抽牌差异(acts seed 12691 的 128 处就是它).这里在驱动侧按原版规则
 // 补上:每一步 advance 之后,把这一步新加进牌组的牌按身上的蛋升一级.
 // 本作引擎不动.
@@ -418,11 +419,12 @@ patchMonsterRollAfterQueuedHeal();
 // 原版 Inferno 除了 2x6(飞升 3x6)攻击,还要"往弃牌堆塞 3 张 Burn+,并把已有的
 // 灼伤全部升级"(语料 refs/slay-the-cli/data/corpus/monsters-act1.json 的
 // HEXAGHOST.conflicts 条:"wiki:Hexaghost (Enemies.lua Inferno text): 'Adds 3 Burns+
-// into your discard pile. Upgrades all Burns.'";wiki 与反编译同源的 Java
-// BurnIncreaseAction + burnUpgraded).参考实现有**意**省掉了这半
+// into your discard pile. Upgrades all Burns.'").**反编译省了这半**
+// (refs/sts_lightspeed/src/combat/MonsterSpecific.cpp:807-812 的 HEXAGHOST_INFERNO
+// 只有 attackPlayerHelper,不塞牌不升级),参考实现也省了
 //(refs/slay-the-cli/src/content/monsters/act1/hexaghost.ts 的 HEXAGHOST_INFERNO
-// 只 attackPlayer,文件头注明"omitted here as in the transcription"),本作引擎照
-// 原版实现(enemies/act1.rs 的 Inferno:PlayerCardUpgraded{burn,3,from_turn:None} +
+// 只 attackPlayer,文件头注明"omitted here as in the transcription"),本作引擎按
+// wiki/corpus 的真游戏行为实现(enemies/act1.rs 的 Inferno:PlayerCardUpgraded{burn,3,from_turn:None} +
 // UpgradePlayerBurns).这里在驱动侧把参考缺的那半补上:包住 HEXAGHOST_INFERNO 的
 // execute,攻击照旧(原 exec),再把玩家各堆里已有的灼伤就地升级(升过的跳过)、
 // 往弃牌堆塞 3 张 Burn+(与 Sear 用同一个 makeTempCard 动作).不掷点;本作引擎不动.

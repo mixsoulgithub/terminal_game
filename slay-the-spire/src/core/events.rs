@@ -2543,7 +2543,9 @@ pub fn neow_options(rng: &mut Rng) -> Vec<NeowOption> {
         bonus: "boss_relic",
         drawback: "lose_starter_relic",
     });
-    // Boss 遗物那项定下来之后参考实现还多掷一次 random(0)(随机数不参与选择)
+    // Boss 遗物那项定下来之后还要空烧一次 random(0)
+    // (反编译 Neow::getOptions,refs/sts_lightspeed/src/game/Neow.cpp:72);
+    // 这一掷不参与选择,但会推 neowRng 的计数器,固定要补上.
     rng.random_range(0, 0);
     out
 }
@@ -3501,7 +3503,8 @@ mod tests {
     #[test]
     fn falling_never_takes_a_bottled_card() {
         let mut r = Run::new(44);
-        // 把牌组里的技能牌全封进瓶子:原版"坠落"不夺瓶装牌(参考实现没做这条)
+        // 把牌组里的技能牌全封进瓶子:原版"坠落"不夺瓶装牌
+        // (反编译 GameContext.cpp:886 自标 CANNOT BE BOTTLED;参考实现没做这条)
         for c in r.player.deck.iter_mut() {
             if c.kind() == CardType::Skill {
                 c.bottled = true;

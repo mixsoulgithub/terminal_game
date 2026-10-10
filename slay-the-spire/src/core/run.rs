@@ -765,8 +765,9 @@ pub struct Run {
     note_path: Option<std::path::PathBuf>,
     /// 便条存卡是否落盘:headless 对拍/回放关掉,免得读到玩家存档或把回放写进存档
     note_persist: bool,
-    /// headless 对拍:参考实现没实现尼尔瑞的抄本(引擎缺口),把这场战斗里的这件
-    /// 遗物当不存在(回合结束不亮牌、不掷点).见 Combat::suppress_codex
+    /// headless 对拍:参考实现没实现尼尔瑞的抄本(参考侧 ENGINE-GAP,
+    /// refs/slay-the-cli/src/content/relics/event.ts:146-153;反编译有实现,见
+    /// Combat::suppress_codex),把这场战斗里的这件遗物当不存在(回合结束不亮牌、不掷点).
     no_codex: bool,
     /// 玩家当前所在节点;None 表示还没上路
     pub pos: Option<usize>,
@@ -2096,14 +2097,14 @@ impl Run {
         let cards: Vec<CardInstance> = if no_cards {
             Vec::new()
         } else {
-            self.create_card_reward(kind)
+            self.create_card_reward(kind, false)
         };
         // 祈祷轮:普通战斗多掉几组卡牌奖励(参考实现 buildCombatRewards)
         let extra_groups = self.player.relic_fx_sum(|r| r.fx.extra_card_reward_group);
         let mut queued: Vec<Vec<CardInstance>> = Vec::new();
         if kind == EnemyKind::Normal && !no_cards {
             for _ in 0..extra_groups.max(0) {
-                queued.push(self.create_card_reward(kind));
+                queued.push(self.create_card_reward(kind, false));
             }
         }
         let next = if kind == EnemyKind::Boss {
@@ -2416,7 +2417,7 @@ impl Run {
         self.screen = Screen::Map;
         // 梦中情网:休息之后可以再挑一张牌进牌组(参考实现 Dream Catcher)
         if self.has_relic_fx(|fx| fx.rest_card_reward) {
-            self.add_card_choice(1);
+            self.add_card_choice(1, true);
         }
     }
 
@@ -2866,7 +2867,7 @@ impl Run {
     /// 补一张本职业牌:稀有度按"商店房间"掷(和普通怪一样 3/37;恩洛斯礼物翻三倍),
     /// 再从该稀有度的职业牌池里用 mathUtilRng 抽一张(稀有位次用本作的池子序).
     fn roll_courier_class_card(&mut self) -> Option<ShopItem> {
-        let rarity = self.roll_card_rarity(EnemyKind::Normal);
+        let rarity = self.roll_card_rarity(EnemyKind::Normal, false);
         let pool = cards::reward_pool(rarity);
         if pool.is_empty() {
             return None;
@@ -3282,7 +3283,10 @@ impl Run {
         if c.req_upgradeable && !self.player.deck.iter().any(|c| c.can_upgrade()) {
             return false;
         }
-        // 坠落:某类型一张可移除的牌都没有,对应选项锁住(原版;参考实现没做)
+        // 坠落:某类型一张可移除的牌都没有,对应选项锁住.
+        // 反编译 Event::FALLING 对该类型把 *CardDeckIdx 置 -1
+        // (refs/sts_lightspeed/src/game/GameContext.cpp:890-895),界面即锁住;
+        // 参考实现没做这条.
         if let Some(kind) = c.req_card_type {
             if !self.deck_has_removable_of_type(kind) {
                 return false;
@@ -3696,7 +3700,7 @@ impl Run {
     fn open_library_read(&mut self, note: &'static str) -> Result<(), String> {
         let mut rolled: Vec<&'static CardDef> = Vec::new();
         for _ in 0..LIBRARY_CARD_COUNT {
-            let rarity = self.roll_card_rarity(EnemyKind::Normal);
+            let rarity = self.roll_card_rarity(EnemyKind::Normal, false);
             let pool = cards::reward_pool(rarity);
             if pool.is_empty() {
                 continue;
@@ -4015,8 +4019,11 @@ impl Run {
             }
         }
         if let Some(rule) = o.remove_random {
-            // "坠落"随机夺走的那张牌:原版会把封进瓶子的牌排除在外
-            // (参考实现这里没做,是它自认的 TODO;本作按原版来)
+            // "坠落"随机夺走的那张牌:原版会把封进瓶子的牌排除在外.
+            // 反编译 Event::FALLING 自标 `// todo test and CANNOT BE BOTTLED`
+            // (refs/sts_lightspeed/src/game/GameContext.cpp:886)且实现仍按"全部牌"计数
+            // (890-895),即它自己知道该排除、但没做;参考实现同样没做(它自认的 TODO).
+            // 本作按原版/反编译注释排除瓶装牌.
             let cands: Vec<usize> = self
                 .player
                 .deck
@@ -5319,7 +5326,7 @@ impl Run {
                     self.add_potion(p);
                 }
             }
-            self.add_card_choice(1);
+            self.add_card_choice(1, false);
             return;
         }
         let fx = def.fx;
@@ -5481,7 +5488,7 @@ impl Run {
         }
         // 浑天仪:连开五次卡牌三选一
         if fx.pickup_card_picks > 0 {
-            self.add_card_choice(fx.pickup_card_picks as usize);
+            self.add_card_choice(fx.pickup_card_picks as usize, false);
         }
         if fx.remove_cards > 0 {
             self.open_picker_n(PickPurpose::Remove, back, 0, None, fx.remove_cards as u8);
@@ -5506,7 +5513,7 @@ impl Run {
             }
         }
         if fx.add_cards > 0 {
-            self.add_card_choice(fx.add_cards as usize);
+            self.add_card_choice(fx.add_cards as usize, false);
         }
         if let Some(id) = fx.add_card {
             // 原版走 masterDeck.addToTop,不经过御守/黑石护符/蛋那条加牌钩子
@@ -5562,7 +5569,7 @@ impl Run {
             None
         };
         let potion = self.roll_potion_reward(1 + usize::from(relic.is_some()));
-        let cards = self.create_card_reward(EnemyKind::Elite);
+        let cards = self.create_card_reward(EnemyKind::Elite, false);
         let mut r = RewardState::empty(Screen::Map);
         r.gold = gold;
         r.gold_taken = false;
@@ -5579,13 +5586,13 @@ impl Run {
 
     /// 排 n 组卡牌三选一(小房子的"获得一张牌"/浑天仪的五次/梦中情网的一次).
     /// 第一组直接放进当前(或新建的)奖励屏,其余排队,拿完一组再顶上来一组.
-    fn add_card_choice(&mut self, n: usize) {
+    fn add_card_choice(&mut self, n: usize, at_rest: bool) {
         if n == 0 {
             return;
         }
         let mut groups: Vec<Vec<CardInstance>> = Vec::new();
         for _ in 0..n {
-            let cards = self.create_card_reward(EnemyKind::Normal);
+            let cards = self.create_card_reward(EnemyKind::Normal, at_rest);
             if !cards.is_empty() {
                 groups.push(cards);
             }
@@ -6180,14 +6187,14 @@ impl Run {
     }
 
     /// 卡牌奖励:三张,每张先掷稀有度(带动保底)再从对应池子里抽一张,同一次不重样
-    fn create_card_reward(&mut self, kind: EnemyKind) -> Vec<CardInstance> {
+    fn create_card_reward(&mut self, kind: EnemyKind, at_rest: bool) -> Vec<CardInstance> {
         let mut out: Vec<CardInstance> = Vec::new();
         let bonus = self.player.relic_fx_sum(|r| r.fx.card_reward_bonus);
         let count = (CARD_REWARD_COUNT as i32 + bonus).max(0) as usize;
         // 棱彩碎片:奖励池混入无色牌与其它颜色
         let prismatic = self.has_relic_fx(|fx| fx.prismatic_rewards);
         for _ in 0..count {
-            let rarity = self.roll_card_rarity(kind);
+            let rarity = self.roll_card_rarity(kind, at_rest);
             match rarity {
                 Rarity::Rare => self.card_rarity_factor = CARD_RARITY_PITY_START,
                 Rarity::Common => {
@@ -6241,7 +6248,7 @@ impl Run {
         let bonus = self.player.relic_fx_sum(|r| r.fx.card_reward_bonus);
         let count = (CARD_REWARD_COUNT as i32 + bonus).max(0) as usize;
         for _ in 0..count {
-            let mut rarity = self.roll_card_rarity(EnemyKind::Normal);
+            let mut rarity = self.roll_card_rarity(EnemyKind::Normal, false);
             match rarity {
                 Rarity::Rare => self.card_rarity_factor = CARD_RARITY_PITY_START,
                 Rarity::Common => {
@@ -6288,7 +6295,7 @@ impl Run {
     }
 
     /// 抽稀有度:Boss 直接稀有,其余 d100 + 保底值比 3/37(精英 10/40)
-    fn roll_card_rarity(&mut self, kind: EnemyKind) -> Rarity {
+    fn roll_card_rarity(&mut self, kind: EnemyKind, at_rest: bool) -> Rarity {
         if kind == EnemyKind::Boss {
             return Rarity::Rare;
         }
@@ -6298,10 +6305,11 @@ impl Run {
         } else {
             (CARD_RARE_CHANCE_NON_ELITE, CARD_UNCOMMON_CHANCE_NON_ELITE)
         };
-        // 恩洛斯的礼物:稀有牌概率翻三倍(营火之外)
-        if self.has_relic_fx(|fx| fx.rare_card_chance_x3)
-            && self.screen != Screen::Rest
-        {
+        // 恩洛斯的礼物:稀有牌概率翻三倍,但**营火房间的奖励不算**.
+        // 反编译 rollCardRarity(GameContext.cpp:1607-1620)只在 `room != REST` 时翻倍;
+        // 营火里梦中情网的奖励走 createCardReward(Room::REST)(GameContext.cpp:3706-3709).
+        // rest_heal 调到这里时屏幕已被置成 Map,不能拿屏幕当房间判,要用传进来的 at_rest.
+        if self.has_relic_fx(|fx| fx.rare_card_chance_x3) && !at_rest {
             rare *= 3;
         }
         if roll < rare {
@@ -6398,6 +6406,36 @@ mod tests {
         let before = r.player.deck.len();
         r.reward_take().unwrap();
         assert_eq!(r.player.deck.len(), before + 1, "挑中的进牌组");
+    }
+
+    /// 恩洛斯的礼物 ×3 稀有**不作用于营火房间**的奖励:反编译 rollCardRarity
+    /// 只在 room != REST 时翻倍(GameContext.cpp:1607-1620),梦中情网的营火奖励走
+    /// createCardReward(Room::REST)(GameContext.cpp:3706-3709)。带着和不带这件遗物,
+    /// 同一颗种子的营火三选一稀有度必须一模一样(否则就是把礼物错套到营火上了)。
+    #[test]
+    fn nloths_gift_does_not_boost_rest_site_card_rewards() {
+        for seed in 1u64..=30 {
+            let rarities = |gift: bool| -> Vec<String> {
+                let mut r = run(seed);
+                r.debug_add_relic("dream_catcher").unwrap();
+                if gift {
+                    r.debug_add_relic("nloths_gift").unwrap();
+                }
+                r.rest_heal();
+                r.reward
+                    .as_ref()
+                    .expect("休息后开三选一")
+                    .cards
+                    .iter()
+                    .map(|c| format!("{:?}", c.rarity()))
+                    .collect()
+            };
+            assert_eq!(
+                rarities(false),
+                rarities(true),
+                "seed {seed}: 营火奖励不该吃恩洛斯的礼物"
+            );
+        }
     }
 
     /// 和平烟斗:营火多出"删牌",选完那张从牌组里消失
@@ -6636,7 +6674,7 @@ mod tests {
         r.debug_add_relic("prismatic_shard").unwrap();
         let mut colorless = 0;
         for _ in 0..40 {
-            for c in r.create_card_reward(EnemyKind::Normal) {
+            for c in r.create_card_reward(EnemyKind::Normal, false) {
                 if cards::pool_of(c.def) == "colorless" {
                     colorless += 1;
                 }

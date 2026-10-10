@@ -67,8 +67,16 @@ for (const row of dump("gated")) {
 }
 
 /**
- * 本作把机制记在别处、不挂成一条状态,所以只差一条"能力条目"的算表示差异,
+ * 本作把机制记在别处、不挂成一条"能力条目",所以只差一条"能力条目"的算表示差异,
  * 不是玩法差异(逐条核对过:同一个场景里其余字段全部一致)。
+ *   - 反常/痛苦:反编译记成**手牌计数**(refs/sts_lightspeed/src/combat/CardManager.cpp:280-310
+ *     的 handNormalityCount / handPainCount),闸门在 BattleContext.cpp:714 与 2656-2661;
+ *     参考实现把它们建模成玩家 power,于是输出里多一条 powers.normality / powers.pain。
+ *     本作照反编译用计数,故没有那条 power。断言:combat.rs curse_hand_counters_match_the_decompile。
+ *   - 嗜血:反编译用 CardInstance::tookDamage(CardInstance.cpp:175-181)每掉一次血把三堆里的
+ *     每张嗜血都降 1 费;参考实现自认 ENGINE-GAP(cards/ironclad/uncommon.ts:55-62:dynamicCost
+ *     不被引擎读取,改用一张隐藏 power 在"抽到时"才开始计数,首张抽到前的掉血全丢),
+ *     输出里多一条 powers.blood_for_blood。本作照反编译,故没有那条 power。
  */
 const REPRESENTATION_ONLY: Record<string, string[]> = {
   "cards/normality": ["normality"],
@@ -77,33 +85,33 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
 };
 
 /**
- * 从池子里随机抽牌的牌。这里的"抽到哪张"分三层,本轮逐条核对后的结论:
+ * 从池子里随机抽牌的卡牌。这里的"抽到哪张"分三层,本轮逐条核对后的结论:
  *
  *  1) 牌面规则(张数/费用/消耗/时点/剔重)以反编译 refs/sts_lightspeed/ 为准,
  *     已在不依赖参考的自证里固化(见 src/core/combat.rs 的
  *     "colorless_random_pool_is_the_decompiled_35" 一段,共 8 条断言);
- *  2) 池子顺序:原版真正用的是反编译里打散的 Java HashMap 序
- *     (CardPools.h:189-196 CombatColorlessCardPool / 150-156 CombatTypeCardPool),
- *     那两张表本身还漏牌(漏 BANDAGE_UP / FEED / REAPER),无从复现;参考实现的做法是
- *     把池子按 id 排序(slay-the-cli colorless/effects.ts:34-56 与 ironclad/uncommon.ts:300-306
- *     的 ENGINE-NOTE),本作战斗内随机一律照此口径 —— 万事通/磁力/嬗变/发现四处此前漏了排序
- *     (炼狱之刃早就排了),已补齐,这批场景现在通过;
+ *  2) 池子顺序:反编译里战斗内随机无色牌走 CombatColorlessCardPool —— 一张写死的 34 项
+ *     数组(CardPools.h:189-196),内容是 Java HashMap 的打散序;它比 ColorlessRarityCardPool
+ *     的 35 张(CardPools.h:133-138)少一张 BANDAGE_UP,CombatTypeCardPool(CardPools.h:150-156)
+ *     同样缺 FEED / REAPER。**为什么无法复现**:按原序复刻时这些缺牌会让池成员与真实游戏
+ *     对不上、分布也歪,而"缺的那几张该插在哪"反编译里没有(它是运行期从卡牌库拼的)。
+ *     **已尝试**:照 CardPools.h 数组原序建池比对,发现成员数/内容不一致。**采用口径**:
+ *     照参考实现——战斗内随机一律把池子按 id 排序(slay-the-cli colorless/effects.ts:34-56
+ *     与 ironclad/uncommon.ts:300-306 的 ENGINE-NOTE)。万事通/磁力/嬗变/发现四处此前漏了
+ *     排序(炼狱之刃早就排了),已补齐,这批场景现在通过;
  *  3) 抽/落位的**时点**:化茧/变形要先把 3(5)张一次抽完、再逐张落位
  *     (refs/sts_lightspeed/src/combat/Actions.cpp:546-561),参考实现是"抽一张落一张"交替
  *     (colorless/effects.ts:97-110),两条流的掷点次序不同 —— 这是参考实现与反编译的差别,
- *     本作按反编译;所以 chrysalis/metamorphosis 这两个 id 仍会出现在下面的清单里
- *     (已是"参考缺口(随机池)"里仅剩的两组).
+ *     本作按反编译;所以 chrysalis/metamorphosis 这两个 id 仍会出现在下面的清单里。
  *
- * 状态计数:(b) 参考缺口(随机池) 31 -> 10(化茧 5 + 变形 5),其余 21 条已通过;
- * 另有 3 条表示差异(玩法一致),见 REPRESENTATION_ONLY.
- * 逐条结论(共 34 = 31 随机池 + 3 表示差异):
- *   已自证 34 条 —— 21 条(万事通 6 + 磁力 5 + 嬗变 5 + 发现 5)自证后已通过,
- *     10 条(化茧/变形)自证为"本作按反编译、参考实现掷点次序不同"仍留在本清单,
- *     3 条表示差异(反常/痛苦/嗜血)规则已自证、只差一条能力条目;
- *   仍为参考缺口 10 条(化茧/变形,原因见上第 3 点);
- *   无法自证 0 条。
- * 断言位置:src/core/combat.rs 的 "colorless_random_pool_is_the_decompiled_35" 那一段
- * (8 条测试,每条注释里都写了反编译出处行号)。
+ * 状态计数(seed=12345;本类内容 34 = 卡池卡 31 + 表示差异 3):
+ *   - 卡池卡 31:此前 21 条(万事通 6 + 磁力 5 + 嬗变 5 + 发现 5)已自证并通过;
+ *     剩 10 条(化茧 5 + 变形 5)是参考实现掷点次序不同(见上第 3 点),本作按反编译;
+ *   - 表示差异 3:反常 / 痛苦 / 嗜血,规则已自证、只差一条能力条目(见 REPRESENTATION_ONLY)。
+ *   已自证 34 条,无法自证 0 条。
+ * 断言位置:src/core/combat.rs 的 "colorless_random_pool_is_the_decompiled_35" 一段(8 条测试)
+ * 与 chrysalis_and_metamorphosis_pick_then_place_like_the_decompile /
+ * curse_hand_counters_match_the_decompile;每条注释里都写了反编译出处行号。
  */
 const RANDOM_CARD_IDS = [
   "infernal_blade",
@@ -115,7 +123,16 @@ const RANDOM_CARD_IDS = [
   "transmutation",
   "white_noise",
 ];
-const RANDOM_CARD_RELICS = ["enchiridion", "warped_tongs", "toolbox", "nilrys_codex", "dead_branch"];
+/** 从池子里随机抽牌的遗物(抽到哪张可能因池序不同而不同);这三件的场景目前全通过 */
+const RANDOM_CARD_RELICS = ["enchiridion", "toolbox", "dead_branch"];
+
+/** 随机类卡牌失败场景的精确口径(前缀 + 原因 + 自证位置) */
+const RANDOM_CARD_NOTES: Record<string, string> = {
+  "cards/chrysalis":
+    "参考是抽一张落一张(colorless/effects.ts:97-110),反编译是先抽完 3 张再逐张随机落位(Actions.cpp:546-561),掷点次序不同;本作按反编译。掷点账见 combat.rs chrysalis_and_metamorphosis_pick_then_place_like_the_decompile(2n 次 cardRandomRng、shuffleRng 不动、抽牌堆原序不变)",
+  "cards/metamorphosis":
+    "参考是抽一张落一张(colorless/effects.ts:97-110),反编译是先抽完 3(5)张再逐张随机落位(Actions.cpp:546-561),掷点次序不同;本作按反编译。掷点账见 combat.rs chrysalis_and_metamorphosis_pick_then_place_like_the_decompile",
+};
 
 /**
  * (a) 我们错:已经定位到根因、但要动引擎核心才修得干净的,先记在这里。
@@ -123,9 +140,17 @@ const RANDOM_CARD_RELICS = ["enchiridion", "warped_tongs", "toolbox", "nilrys_co
  */
 const OURS_WRONG: Record<string, string> = {};
 
-/** (b) 参考缺口:参考实现自己坏掉/没实现的地方(不是我们的锅) */
+/**
+ * (b) 参考缺口:参考实现自己坏掉/没实现的地方(不是我们的锅)。
+ * key 是场景前缀(类别/内容 id),值写清"参考在哪、反编译在哪、本作照哪边"。
+ */
 const REF_GAP: Record<string, string> = {
-  "potions/smoke_bomb": "脱战时参考实现崩了(build 后 state.combat 已清空,还去读 c.monsters)",
+  "potions/smoke_bomb":
+    "脱身是**跑局层**结果(本作 run.rs smoke_bomb_leaves_a_normal_fight / smoke_bomb_refuses_a_boss_fight,只对非 Boss 战生效),沙盒只建模单场战斗、看不到;参考在 onUse 里设 combatOver=escape(content/potions/index.ts:529-541),沙盒渲染时 combat 已被清空、去读 c.monsters 崩掉。反编译 BattleContext.cpp:2398-2400 对 SMOKE_BOMB 只写 // todo,给不出口径",
+  "relics/warped_tongs":
+    "参考把 WARPED_TONGS 挂在 atStartOfTurn(抽牌前,content/relics/event.ts:237-249),那一刻手里还没有牌、挑不出候选,于是永不升级;反编译放在抽牌后的 applyStartOfTurnPostDrawRelics(Player.cpp:669-671 + Actions.cpp:940-962),本作照反编译",
+  "relics/nilrys_codex":
+    "参考的 NILRY_CODEX hooks 为空、根本没实现(content/relics/event.ts:146-153);反编译有完整实现(BattleContext.cpp:2046-2047 + Actions.cpp:964-969 + CardManager.cpp:215-223),本作照反编译",
 };
 
 // ---- 场景生成 ----
@@ -379,7 +404,7 @@ for (const item of list) {
         : REF_GAP[prefix]
           ? "(b) 参考缺口"
           : "(a) 我们错(待判定)";
-  const note = OURS_WRONG[prefix] ?? REF_GAP[prefix];
+  const note = OURS_WRONG[prefix] ?? REF_GAP[prefix] ?? (randomish ? RANDOM_CARD_NOTES[prefix] : undefined);
   fails.push({ name: item.name, group, kind, diffs: note ? [`根因: ${note}`, ...diffs] : diffs });
 }
 
