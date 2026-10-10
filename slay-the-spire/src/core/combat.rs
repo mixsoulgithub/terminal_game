@@ -7852,6 +7852,7 @@ mod monster_tests {
 mod power_tests {
     use super::*;
     use crate::core::cards::card;
+    use crate::core::relics::relic_def_or_panic;
 
     /// 打一场指定遭遇:80 血,牌组给几张打击/防御
     fn lock(id: &'static str) -> Combat {
@@ -7942,9 +7943,16 @@ mod power_tests {
         assert_eq!(c.enemies[0].hp, 50 - 11);
     }
 
-    /// 靴子 The Boot:未被格挡的攻击伤害只剩 1..4 点时提到 5.依据反编译
-    /// (sts_lightspeed Monster::attackedUnblockedHelper)这一步排在格挡与目标侧的
-    /// 飞行/慢速/无形之后,所以 4 点打在无形怪身上也是 5,不是 1.
+    /// 靴子 The Boot 表驱动:未被格挡的攻击伤害只剩 1..4 点时提到 5.
+    /// 出处(不依赖参考实现,直接对反编译):
+    ///   - refs/sts_lightspeed/src/combat/Monster.cpp:339-341 的 `attackedUnblockedHelper`
+    ///     是全工程唯一一处 Boot:`damage > 0 && damage < 5 -> damage = 5`;
+    ///   - 它只在 Monster.cpp:437-438 被 `Monster::attacked` 调用,而 attacked 先按无形压 1
+    ///     (Monster.cpp:418-421)、再做 `damage -= block`(Monster.cpp:430-431);
+    ///     所以 Boot 判的是"扣完格挡、过完目标侧减免之后"的剩余值,完全被格挡时因为
+    ///     进不到 helper(Monster.cpp:437 的 `if (damage > 0)`)而不抬;
+    ///   - 飞行减半在玩家侧伤害计算里(BattleContext.cpp:2733-2735 的 `FLIGHT -> *0.5`),
+    ///     排在 Monster::attacked 之前,所以 4 点打飞行怪 = 5 而不是 2.
     #[test]
     fn boot_boosts_unblocked_damage_after_reductions() {
         let boot = crate::core::relics::relic_def_or_panic("the_boot");
@@ -7954,45 +7962,212 @@ mod power_tests {
             c
         };
 
-        // 无形:4 点先被压到 1,靴子再抬到 5
-        let mut c = booted("jaw_worm_solo");
-        c.add_enemy_status(0, Status::Intangible, 2);
-        let hp = c.enemies[0].hp;
-        assert_eq!(c.damage_enemy(0, 4), 5, "无形之下的 4 点被靴子抬到 5");
-        assert_eq!(c.enemies[0].hp, hp - 5);
+        // 表:(描述, 招式伤害, 目标已有格挡, 无形, 飞行, 期望实际掉血)
+        let cases: &[(&str, i32, i32, bool, bool, i32)] = &[
+            ("1 点 -> 5", 1, 0, false, false, 5),
+            ("2 点 -> 5", 2, 0, false, false, 5),
+            ("3 点 -> 5", 3, 0, false, false, 5),
+            ("4 点 -> 5", 4, 0, false, false, 5),
+            ("5 点已经是 5,不抬", 5, 0, false, false, 5),
+            ("无形:4 先压成 1,再抬到 5(不是 1)", 4, 0, true, false, 5),
+            ("飞行:4 先减半成 2,再抬到 5(不是 2)", 4, 0, false, true, 5),
+            ("6 点打 1 格挡,剩 5 不抬", 6, 1, false, false, 5),
+            ("4 点打 3 格挡只剩 1,抬到 5", 4, 3, false, false, 5),
+            ("完全被格挡:4 点打 4 格挡,不抬", 4, 4, false, false, 0),
+        ];
+        for (what, dmg, block, intangible, flight, expect) in cases.iter().copied() {
+            let mut c = booted("jaw_worm_solo");
+            c.enemies[0].block = block;
+            if intangible {
+                c.add_enemy_status(0, Status::Intangible, 2);
+            }
+            if flight {
+                c.add_enemy_status(0, Status::Flight, 3);
+            }
+            let hp = c.enemies[0].hp;
+            assert_eq!(c.damage_enemy(0, dmg), expect, "{what}:实际掉血");
+            assert_eq!(c.enemies[0].hp, hp - expect, "{what}:血量");
+            assert_eq!(c.enemies[0].block, (block - dmg).max(0), "{what}:格挡照扣");
+        }
 
-        // 飞行:4 点先减半到 2,靴子再抬到 5
+        // 真实飞行怪(拜德)也对得上:4 点先被飞行减半成 2
         let mut c = booted("three_byrds");
         let hp = c.enemies[0].hp;
-        assert_eq!(c.damage_enemy(0, 4), 5, "飞行之下 4 点减半到 2 也被靴子抬到 5");
+        assert_eq!(c.damage_enemy(0, 4), 5, "拜德的飞行把 4 减半成 2 再抬到 5");
         assert_eq!(c.enemies[0].hp, hp - 5);
-
-        // 无减伤无格挡:4 -> 5
-        let mut c = booted("jaw_worm_solo");
-        let hp = c.enemies[0].hp;
-        assert_eq!(c.damage_enemy(0, 4), 5);
-        assert_eq!(c.enemies[0].hp, hp - 5);
-
-        // 被格挡的部分不算:6 点打在 5 格挡上,剩 1 也抬到 5
-        let mut c = booted("jaw_worm_solo");
-        c.enemies[0].block = 5;
-        let hp = c.enemies[0].hp;
-        assert_eq!(c.damage_enemy(0, 6), 5, "6 打 5 格挡,剩 1 被靴子抬到 5");
-        assert_eq!(c.enemies[0].hp, hp - 5);
-        assert_eq!(c.enemies[0].block, 0, "5 点格挡照扣");
-
-        // 全挡住就不抬:4 点打在 4 格挡上
-        let mut c = booted("jaw_worm_solo");
-        c.enemies[0].block = 4;
-        let hp = c.enemies[0].hp;
-        assert_eq!(c.damage_enemy(0, 4), 0, "全挡住不掉血也不抬");
-        assert_eq!(c.enemies[0].hp, hp);
 
         // 没有靴子时 4 点还是 4
         let mut c = lock("jaw_worm_solo");
         let hp = c.enemies[0].hp;
         assert_eq!(c.damage_enemy(0, 4), 4);
         assert_eq!(c.enemies[0].hp, hp - 4);
+    }
+
+    /// Boot 对多段攻击逐段各判一次:反编译里每一段攻击都各走一遍
+    /// Monster::attacked -> attackedUnblockedHelper(Monster.cpp:407-438),
+    /// 所以 4x3 的每一段都被抬到 5,合计 15;单段 4 也是 5.
+    #[test]
+    fn boot_applies_to_each_hit_segment() {
+        let boot = crate::core::relics::relic_def_or_panic("the_boot");
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(boot);
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy_times(0, 4, true, 3), 15, "3 段各 4 -> 各 5");
+        assert_eq!(c.enemies[0].hp, hp - 15);
+
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(boot);
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy_times(0, 4, true, 1), 5, "单段 4 -> 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+    }
+
+    /// Boot 只抬"玩家打出去的攻击伤害".反编译里攻击走 Monster::attacked ->
+    /// attackedUnblockedHelper(Monster.cpp:407-438);非攻击伤害走 Monster::damage ->
+    /// damageUnblockedHelper(Monster.cpp:442-448 / 466-493),那条路径里根本没有 Boot.
+    /// 玩家自己吃到的伤害(灼烧/荆棘/死亡律动)在 Player 侧结算,也不经过 Boot.
+    #[test]
+    fn boot_does_not_boost_non_attack_damage() {
+        let boot = crate::core::relics::relic_def_or_panic("the_boot");
+        // 敌方吃到的非攻击伤害(Monster::damage 那条):4 点不抬
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(boot);
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy_plain(0, 4), 4, "非攻击伤害不吃 Boot");
+        assert_eq!(c.enemies[0].hp, hp - 4);
+
+        // 真实的非攻击来源:火焰屏障的荆棘反伤打敌人,也不抬
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(boot);
+        c.player.statuses.add(Status::FlameBarrier, 4);
+        let hp = c.enemies[0].hp;
+        c.enemy_attack(0, 10, 1, "Jaw Worm", "Chomp");
+        assert_eq!(c.enemies[0].hp, hp - 4, "火焰屏障反伤 4 点不被 Boot 抬");
+
+        // 玩家自己挨的伤害:4 点照收(Boot 是加伤遗物,不加自己受的伤)
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(boot);
+        let hp = c.player.hp;
+        let (taken, _) = c.hit_player(4);
+        assert_eq!(taken, 4, "玩家吃到的伤害不被 Boot 抬");
+        assert_eq!(c.player.hp, hp - 4);
+        let hp = c.player.hp;
+        c.lose_hp_player(3, true);
+        assert_eq!(c.player.hp, hp - 3, "直接掉血(灼烧/死亡律动)不被 Boot 抬");
+    }
+
+    /// Battle Trance 的"本回合不能再抽牌":反编译把闸门放在**唯一**的抽牌入口上
+    /// —— refs/sts_lightspeed/src/combat/BattleContext.cpp:2439-2444 的
+    /// `BattleContext::drawCards` 开头就是
+    /// `count <= 0 || player.hasStatus<PS::NO_DRAW>() || ... -> return`,
+    /// 全工程的抽牌都从它进(Actions::DrawCards -> drawCards),所以"所有入口"其实就是
+    /// 这一个闸门.本作同构:闸门落在 combat.rs:1485-1493 的 `Combat::draw_cards` 开头.
+    /// 这条证据不依赖参考实现:列的是反编译里的入口清单,逐个触发本作的同名入口.
+    #[test]
+    fn no_draw_vetoes_every_draw_entry_point() {
+        use crate::core::card::CardType;
+        let no_draw = |c: &mut Combat| c.player.statuses.add(Status::NoDraw, 1);
+        let vetoed = |c: &Combat| c.log.iter().any(|l| l.text.contains("No Draw"));
+
+        // 1) 出牌抽:拨击(Pommel Strike)打 9 抽 1
+        let mut c = lock("jaw_worm_solo");
+        c.hand = vec![card("pommel_strike")];
+        c.energy = 3;
+        no_draw(&mut c);
+        c.play_card(0, Some(0)).unwrap();
+        assert!(c.hand.is_empty(), "出牌抽被 NoDraw 卡住");
+        assert!(vetoed(&c), "出牌抽走到了 draw_cards 的闸门");
+
+        // 2) 遗物抽:掉血抽(第一次掉血同时触发百年拼图 3 张 + 符文方块 1 张)
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(relic_def_or_panic("centennial_puzzle"));
+        c.relics.push(relic_def_or_panic("runic_cube"));
+        let hand = c.hand.len();
+        no_draw(&mut c);
+        c.lose_hp_player(1, false);
+        assert_eq!(c.hand.len(), hand, "掉血触发的遗物抽被卡住");
+        assert!(vetoed(&c));
+
+        // 3) 遗物抽:墨水瓶(打满 10 张抽 1)
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(relic_def_or_panic("ink_bottle"));
+        let hand = c.hand.len();
+        no_draw(&mut c);
+        c.rs.cards_total = 9;
+        c.note_card_played(CardType::Attack);
+        assert_eq!(c.hand.len(), hand, "墨水瓶抽被卡住");
+
+        // 4) 遗物抽:不休陀螺(手里空了补 1)
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(relic_def_or_panic("unceasing_top"));
+        c.hand = vec![card("defend")];
+        no_draw(&mut c);
+        c.play_card(0, None).unwrap();
+        assert!(c.hand.is_empty(), "不休陀螺补牌被卡住");
+
+        // 5) 能力抽:残暴(自己回合开始抽,掉血那一下不受 NoDraw 影响)
+        let mut c = lock("jaw_worm_solo");
+        let hand = c.hand.len();
+        let hp = c.player.hp;
+        no_draw(&mut c);
+        c.player.statuses.add(Status::Brutality, 1);
+        c.start_turn(0);
+        assert_eq!(c.hand.len(), hand, "残暴的抽牌被卡住");
+        assert_eq!(c.player.hp, hp - 1, "残暴的掉血照旧");
+
+        // 6) 能力抽:死亡拥抱(消耗一张就抽 1)
+        let mut c = lock("jaw_worm_solo");
+        c.hand = vec![card("defend")];
+        let hand = c.hand.len();
+        no_draw(&mut c);
+        c.player.statuses.add(Status::DarkEmbrace, 1);
+        c.exhaust_card(card("strike"));
+        assert_eq!(c.hand.len(), hand, "死亡拥抱的抽牌被卡住");
+
+        // 7) 药水抽:迅捷药水抽 3
+        let mut c = lock("jaw_worm_solo");
+        let hand = c.hand.len();
+        no_draw(&mut c);
+        let potion = crate::core::potions::by_id("swift_potion").unwrap();
+        c.use_potion(potion, None);
+        assert_eq!(c.hand.len(), hand, "迅捷药水抽被卡住");
+
+        // 8) 回合开始的基础抽牌:同一个闸门
+        let mut c = lock("jaw_worm_solo");
+        let hand = c.hand.len();
+        no_draw(&mut c);
+        c.start_turn(0);
+        assert_eq!(c.hand.len(), hand, "回合开始的抽牌也过 draw_cards");
+    }
+
+    /// NoDraw 只否决"抽牌",不否决"把牌加到手牌 / 放到抽牌堆顶"这类操作
+    /// (反编译的 NO_DRAW 只判在 drawCards 上,BattleContext.cpp:2439-2444).
+    #[test]
+    fn no_draw_does_not_veto_adding_cards_to_hand() {
+        // 磁力:回合开始随机塞一张无色牌进手牌(是加牌,不是抽牌)
+        let mut c = lock("jaw_worm_solo");
+        c.player.statuses.add(Status::NoDraw, 1);
+        c.player.statuses.add(Status::Magnetism, 1);
+        let hand = c.hand.len();
+        c.start_turn(0);
+        assert_eq!(c.hand.len(), hand + 1, "加牌不受 NoDraw 限制");
+
+        // 枯枝:消耗时把一张随机牌塞进手牌(不是抽牌)
+        let mut c = lock("jaw_worm_solo");
+        c.relics.push(relic_def_or_panic("dead_branch"));
+        c.hand = vec![card("defend")];
+        c.player.statuses.add(Status::NoDraw, 1);
+        let hand = c.hand.len();
+        c.exhaust_card(card("strike"));
+        assert_eq!(c.hand.len(), hand + 1, "枯枝塞牌不受 NoDraw 限制");
+
+        // Battle Trance 自己:先抽 3 再挂 NoDraw(顺序不能反,否则自己都抽不到)
+        let mut c = lock("jaw_worm_solo");
+        c.hand = vec![card("battle_trance")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert!(c.player.statuses.has(Status::NoDraw), "打完挂上 NoDraw");
+        assert_eq!(c.hand.len(), 3, "先抽的那 3 张照抽");
     }
 
     #[test]
@@ -8570,6 +8745,115 @@ mod power_tests {
             3,
             "下一次自己回合末才给力量"
         );
+    }
+
+    /// 半死暗灵照常在自己槽位行动,而且自己那一个回合恰好消耗一次 aiRng(rollMove).
+    /// 出处(反编译,不依赖参考实现):
+    ///  - refs/sts_lightspeed/src/combat/MonsterGroup.cpp:573-580 的 doMonsterTurn 守卫是
+    ///    `(!m.isDeadOrEscaped() || m.isHalfDead())`,半死那只照样 takeTurn;
+    ///  - MonsterSpecific.cpp:3014-3020 的 getMove:`if (halfDead) return DARKLING_REINCARNATE;`
+    ///    —— 半死时选招不走掷点分档;
+    ///  - MonsterSpecific.cpp:1459-1478:DARKLING_REGROW 与 DARKLING_REINCARNATE 收尾各自
+    ///    `rollMove(bc)`(rollMove 必消耗一次 aiRng.random(99),Monster.cpp:629-635),
+    ///    REINCARNATE 半血复活.
+    /// 本作把"回合末那一次 rollMove"落成 enemy_end_of_turn 里的 pick_next_move.下面把
+    /// 另外两只的后继写死(forced)让它们各只消耗一次,好把多出来的那次归给半死的那只.
+    #[test]
+    fn half_dead_darkling_acts_in_slot_and_burns_one_roll_per_turn() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 9999;
+        c.player.max_hp = 9999;
+        let ai = |c: &mut Combat| c.streams.floor(FloorStream::AiRng).counter();
+        let move0 = |c: &Combat| c.enemies[0].def.moves[c.enemies[0].next_move].name;
+        let pos = |c: &Combat, needle: &str| c.log.iter().position(|l| l.text.contains(needle));
+
+        // 开局三只各 roll_first_move 一次
+        assert_eq!(ai(&mut c), 3);
+        // 玩家回合把 0 号打到 0(还有同伴在)-> 半死,摆 Regrow,没掷点
+        c.enemies[0].hp = 1;
+        c.damage_enemy(0, 20);
+        c.settle_deaths();
+        assert!(c.enemies[0].state.half_dead);
+        assert_eq!(c.enemies[0].hp, 0);
+        assert_eq!(move0(&c), "Regrow");
+        assert_eq!(ai(&mut c), 3, "半死不掷点(反编译里 die() 是直接 setMove)");
+
+        // 1、2 号后继写死成 HARDEN:forced 分支固定只消耗一次 aiRng.random(99)
+        let force = |c: &mut Combat| {
+            c.enemies[1].state.forced = Some(2);
+            c.enemies[2].state.forced = Some(2);
+        };
+        force(&mut c);
+        c.log.clear();
+        let before = ai(&mut c);
+        c.end_turn();
+        assert_eq!(ai(&mut c) - before, 3, "forced 两只各 1 次 + 半死那只 1 次");
+        assert_eq!(move0(&c), "Reincarnate", "Regrow 回合末换成 Reincarnate");
+        assert!(c.enemies[0].state.half_dead, "这一轮还没站起来");
+        assert!(pos(&c, "Darkling #1 regrows").is_none(), "Revive 还没发生");
+
+        // 下一轮:Reincarnate,自己回合末以半血复活,且槽 0 先动
+        force(&mut c);
+        c.log.clear();
+        let hp0 = c.enemies[0].hp;
+        let before = ai(&mut c);
+        c.end_turn();
+        assert!(
+            ai(&mut c) - before >= 3,
+            "forced 两只各 1 次,复活那只照常 rollMove 至少 1 次"
+        );
+        assert!(!c.enemies[0].state.half_dead, "第二轮结束站起来");
+        assert!(c.enemies[0].hp > hp0, "以半血复活");
+        assert_ne!(move0(&c), "Regrow");
+        assert_ne!(move0(&c), "Reincarnate");
+        let regrow_at = pos(&c, "Darkling #1 regrows").expect("复活有日志");
+        let two_at = pos(&c, "Darkling #2 gains").expect("2 号有行动日志");
+        assert!(regrow_at < two_at, "槽 0 先动,之后才轮到 1/2 号");
+    }
+
+    /// 三只暗灵同一瞬全倒下:没有同伴可依,多出来的那两只半死尸体直接变真死,战斗结束,
+    /// 不会集体复活.出处:反编译 Monster::die 一进门 `--monstersAlive`,到 0 就判
+    /// PLAYER_VICTORY 并 return(Monster.cpp:284-295),胜负看 monstersAlive<=0
+    /// (MonsterGroup.cpp:14/37);本作对应 handle_death 里"同族都倒下了,半死的那些
+    /// 也一起彻底死掉"(combat.rs:3997-4000 附近).
+    #[test]
+    fn darklings_dying_together_do_not_revive() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 9999;
+        c.player.max_hp = 9999;
+        for i in 0..c.enemies.len() {
+            c.enemies[i].hp = 1;
+        }
+        // 顺劈:一次打全体 8
+        c.hand = vec![card("cleave")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.phase, Phase::Won, "全倒 -> 直接胜利");
+        for e in c.enemies.iter() {
+            assert!(!e.state.half_dead, "没有半死复活");
+            assert!(e.death_done);
+        }
+    }
+
+    /// 留一只活着时,先倒下的两只半死等复活;打死最后一只才结束,半死的两只一起作废.
+    #[test]
+    fn last_living_darkling_death_discards_the_corpses() {
+        let mut c = lock("three_darklings");
+        c.player.hp = 9999;
+        c.player.max_hp = 9999;
+        for i in 0..2 {
+            c.enemies[i].hp = 1;
+            c.damage_enemy(i, 20);
+            c.settle_deaths();
+            assert!(c.enemies[i].state.half_dead, "还有同伴时先半死");
+        }
+        c.enemies[2].hp = 1;
+        c.damage_enemy(2, 20);
+        c.check_win();
+        assert_eq!(c.phase, Phase::Won);
+        for e in c.enemies.iter() {
+            assert!(!e.state.half_dead, "最后一只倒下,半死的也真死");
+        }
     }
 }
 
