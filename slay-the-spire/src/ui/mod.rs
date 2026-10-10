@@ -164,7 +164,10 @@ pub fn card_cost_token(
 ) -> (String, ratatui::style::Color, ratatui::style::Color) {
     (
         cost_label(card),
-        theme::energy_color(crate::core::cards::color_key(card.def)),
+        theme::energy_color(
+            card.color_hint
+                .unwrap_or_else(|| crate::core::cards::color_key(card.def)),
+        ),
         cost_digit_color(card),
     )
 }

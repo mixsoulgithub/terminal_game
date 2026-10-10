@@ -358,6 +358,9 @@ pub struct CardInstance {
     pub bottled: bool,
     /// 本回合被"周密计划"选中保留(回合结束不清掉,回合过后恢复)
     pub retain_this_turn: bool,
+    /// 颜色记号:跨职业共用的基础牌(打击/防御)靠它显示本局角色的颜色.
+    /// 其它牌为空,按语料颜色即可.
+    pub color_hint: Option<&'static str>,
 }
 
 impl CardInstance {
@@ -376,6 +379,7 @@ impl CardInstance {
             master_idx: None,
             bottled: false,
             retain_this_turn: false,
+            color_hint: None,
         }
     }
 

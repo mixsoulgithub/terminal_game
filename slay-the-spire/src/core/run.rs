@@ -888,6 +888,19 @@ fn parse_cards(text: &str) -> Result<Vec<CardInstance>, String> {
 }
 
 impl Run {
+    /// 给牌组里跨职业共用的基础牌(打击/防御)打上本局角色的颜色记号:
+    /// 静默者的打击/防御与红职共用同一份 CardDef,只有费用括号的颜色不同。
+    /// 只处理这两张,别的牌按语料颜色就够了(棱彩抽来的红牌仍显示红)。
+    pub fn tag_deck_colors(deck: &mut [CardInstance], character: &str) {
+        let color = roster::color_of(character);
+        for c in deck.iter_mut() {
+            if matches!(c.def.id, "strike" | "defend") && crate::core::cards::color_key(c.def) != color
+            {
+                c.color_hint = Some(color);
+            }
+        }
+    }
+
     /// 默认角色(铁甲战士)开一局,测试和 :new 用
     pub fn new(seed: u64) -> Run {
         let ch = roster::find("ironclad").expect("ironclad 必须在语料里");
@@ -929,6 +942,7 @@ impl Run {
                 deck.push(cards::card(id));
             }
         }
+        Self::tag_deck_colors(&mut deck, ch.id);
         // 飞升 10:开局多一张"飞升者之灾"(不可移除的诅咒)
         if asc >= 10 {
             deck.push(cards::card("ascenders_bane"));
@@ -1484,6 +1498,7 @@ impl Run {
             if deck.is_empty() {
                 return Err("存档里的牌组是空的".to_string());
             }
+            Self::tag_deck_colors(&mut deck, char_id.as_str());
             run.player.deck = deck;
         }
         if let Some(v) = get("relics") {
@@ -6625,6 +6640,49 @@ mod tests {
 
     fn run(seed: u64) -> Run {
         Run::new(seed)
+    }
+
+    /// 静默者的打击/防御与红职共用同一份 CardDef,费用括号的颜色要靠实例上的
+    /// 颜色记号(看到的是绿职色);铁甲的照旧是红职色
+    #[test]
+    fn shared_basics_take_the_runs_character_color() {
+        let silent = Run::new_for(1, roster::find("silent").unwrap()).unwrap();
+        let strike = silent
+            .player
+            .deck
+            .iter()
+            .find(|c| c.def.id == "strike")
+            .unwrap();
+        assert_eq!(strike.color_hint, Some("green"));
+        assert_eq!(
+            crate::core::cards::color_key(strike.def),
+            "red",
+            "语料里这两张仍归红职"
+        );
+        // 费用括号真的按绿职色渲染(记号 -> 括号色)
+        assert_eq!(
+            crate::ui::card_cost_token(strike).1,
+            crate::ui::theme::energy_color("green")
+        );
+        let iron = Run::new(2);
+        let strike = iron
+            .player
+            .deck
+            .iter()
+            .find(|c| c.def.id == "strike")
+            .unwrap();
+        assert_eq!(strike.color_hint, None, "红职不需要记号");
+
+        // 读档回来也要带上记号(牌组是从 id 重建的)
+        let text = silent.save_text();
+        let back = Run::from_save(&text).unwrap();
+        let strike = back
+            .player
+            .deck
+            .iter()
+            .find(|c| c.def.id == "strike")
+            .unwrap();
+        assert_eq!(strike.color_hint, Some("green"));
     }
 
     // ---- 本批新实现的遗物:一局流程侧的断言 ----
