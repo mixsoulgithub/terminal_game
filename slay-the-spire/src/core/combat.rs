@@ -8541,6 +8541,31 @@ mod power_tests {
         assert_eq!(c.enemies[0].statuses.get(Status::Weak), 5, "神器用完就挡不住了");
     }
 
+    /// 招式分派的 `_ =>` 兜底(act2 三处):脚本里"最后一招/指定招之后"接哪一招.
+    /// 圆球者 Activate→Attack Debuff→Slam→Harden,之后 Slam/Harden 交替
+    /// (act2.rs 的 pick_spheric_guardian `_ => SLAM`;参考 sphericGuardian.ts:56-68);
+    /// 熊 Bear Hug→Lunge→Maul,之后 Lunge/Maul 交替(act2.rs 的 pick_bear `_ => LUNGE`);
+    /// 罗密欧 Mock→Agonizing→Cross,之后 Agonizing/Cross 交替(pick_romeo `_ => AGONIZING_SLASH`)
+    #[test]
+    fn act2_enemy_script_fallbacks_choose_the_next_move() {
+        // (遭遇, 敌人 id, 上一招下标, 期望的下一招下标)
+        let cases = [
+            ("spheric_guardian_solo", "spheric_guardian", 3, 2), // Harden -> Slam
+            ("event_bandits", "bear", 2, 1),                     // Maul -> Lunge
+            ("event_bandits", "romeo", 2, 1),                    // Cross Slash -> Agonizing Slash
+        ];
+        for (enc, enemy, last, want) in cases {
+            let mut c = lock(enc);
+            let i = idx_of(&c, enemy);
+            c.enemies[i].state.last = Some(last);
+            c.pick_next_move(i);
+            assert_eq!(
+                c.enemies[i].next_move, want,
+                "{enemy} 上一招 {last} 之后该接 {want}"
+            );
+        }
+    }
+
     #[test]
     fn nemesis_intangible_caps_damage_and_comes_back() {
         let mut c = lock("nemesis_solo");
@@ -9194,6 +9219,32 @@ mod power_tests {
         let ehp = c.enemies[0].hp;
         c.damage_enemy(0, 50);
         assert_eq!(c.enemies[0].hp, ehp - 50);
+    }
+
+    /// 心脏的 Buff 招式挂着 EnemyFx::Escalate(act34.rs:1588),每用一次 stage 递增,
+    /// 第 5 档起落到 heart_escalate 的 `_ =>`(combat.rs:2580):反编译
+    /// MonsterSpecific.cpp:1816-1835 的 default 分支给 50 Strength.前几档一并钉住.
+    #[test]
+    fn heart_escalation_grants_the_decompiled_stage_values() {
+        // Buff 招式确实挂着 Escalate,否则下面的档数永远不会递增
+        let heart = crate::core::enemies::enemy_def("corrupt_heart").unwrap();
+        let buff = heart.moves.iter().find(|m| m.name == "Buff").unwrap();
+        assert!(
+            buff.effects.iter().any(|fx| matches!(fx, EnemyFx::Escalate)),
+            "Buff 招式没有 Escalate"
+        );
+        let mut c = lock("the_heart");
+        let base = c.enemies[0].statuses.get(Status::Strength);
+        c.heart_escalate(0, 1, "Corrupt Heart");
+        assert_eq!(c.enemies[0].statuses.get(Status::Artifact), 2);
+        c.heart_escalate(0, 2, "Corrupt Heart");
+        assert_eq!(c.enemies[0].statuses.get(Status::BeatOfDeath), 2);
+        c.heart_escalate(0, 3, "Corrupt Heart");
+        assert_eq!(c.enemies[0].statuses.get(Status::PainfulStabs), 1);
+        c.heart_escalate(0, 4, "Corrupt Heart");
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), base + 10);
+        c.heart_escalate(0, 5, "Corrupt Heart");
+        assert_eq!(c.enemies[0].statuses.get(Status::Strength), base + 60);
     }
 
     #[test]

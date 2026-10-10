@@ -87,6 +87,28 @@ mod content_tests {
         }
     }
 
+    /// 只有铁甲能开局;另外三职各缺起始牌,且 fx 全零的起始遗物也算"没实现"
+    #[test]
+    fn roster_reports_exactly_which_characters_are_playable() {
+        let reason = |id: &str| roster::blocked_reason(roster::find(id).unwrap());
+        assert!(roster::playable(roster::find("ironclad").unwrap()));
+        assert_eq!(reason("ironclad"), None);
+        assert_eq!(reason("silent"), Some("cards: survivor neutralize".to_string()));
+        // cracked_core/pure_water 有定义但 fx 全零(充能球/Miracle 机制没实现),
+        // 不能当"已实现",否则补上起始牌后会误判为可开局
+        assert_eq!(
+            reason("defect"),
+            Some("cards: zap dualcast, relic: cracked_core".to_string())
+        );
+        assert_eq!(
+            reason("watcher"),
+            Some("cards: eruption vigilance, relic: pure_water".to_string())
+        );
+        for ch in roster::all() {
+            assert_eq!(roster::playable(ch), roster::blocked_reason(ch).is_none());
+        }
+    }
+
     #[test]
     fn event_outcomes_reference_existing_ids() {
         // 事件表 + 多屏事件的后半段都要查:牌、诅咒、遗物、遭遇都得认得出来

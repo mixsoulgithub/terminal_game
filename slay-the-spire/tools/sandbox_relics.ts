@@ -1,11 +1,11 @@
-// 遗物钩子审计:对 155 件已实现遗物逐件核对"触发时点 + 数值".
+// 遗物钩子审计:对 156 件已实现遗物逐件核对"触发时点 + 数值".
 //
 //   bun tools/sandbox_relics.ts
 //   bun tools/sandbox_relics.ts --seed 12345 --out tools/golden/relic_coverage.txt
 //
 // 战斗内钩子用 `spire --sandbox-batch` 实测;一局流程侧的钩子不能在战斗沙盒里测,
 // 表里 oracle 填 src/core/relics.rs(或 run.rs)里 Run 级的断言测试名。
-// 清单来源 = tools/golden/relic_fx_map.txt 的 155 件已实现遗物(工具会自校验全覆盖)。
+// 清单来源 = tools/golden/relic_fx_map.txt 的 156 件已实现遗物(工具会自校验全覆盖)。
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -497,6 +497,7 @@ R("prismatic_shard", "卡牌奖励(混色)", "奖励混入无色与其它颜色"
 R("sacred_bark", "药水(翻倍)", "药水数值翻倍(局外)", "sacred_bark_doubles_out_of_combat_potions");
 R("the_courier", "商店(补货)", "商店补货", "courier_restocks_cards_relics_and_potions");
 R("the_courier", "商店折扣(相乘)", "信使 -20% 与会员卡 -50% 相乘", "courier_and_membership_card_discounts_multiply");
+R("discerning_monocle", "商店折扣(-20%)", "单片镜商店价 -20%(参考实现 modifyPrice*0.8)", "courier_and_membership_card_discounts_multiply");
 
 // ================= 战斗沙盒测不到的(选牌/显示) =================
 R("gambling_chip", "战斗开始(弃牌重抽)", "开局可弃任意张再抽等量张(选牌窗口沙盒按不选收掉)", "gambling_chip_discards_then_draws");
@@ -506,7 +507,7 @@ R("toolbox", "战斗开始(无色三选一)", "开局亮 3 张无色牌挑一张
 
 U("frozen_eye", "抽牌堆显示(顺序)", "查看抽牌堆时按抽取顺序显示", "仅影响 UI 里抽牌堆的显示顺序,战斗状态与沙盒输出里不可观测");
 
-// ================= 自校验:155 件全覆盖 =================
+// ================= 自校验:156 件全覆盖 =================
 const mapPath = join(HERE, "golden", "relic_fx_map.txt");
 const implemented: string[] = readFileSync(mapPath, "utf8")
   .split("\n")
@@ -706,7 +707,7 @@ report.push("  [b] toy_ornithopter 在地图/事件上喝药是否回 5: 反编�
 report.push("      参考实现 common.ts:451-460 战斗内外都回 5;本作照语料 desc + 参考(heal_on_potion_use = 5)。");
 report.push("  [c] dingy_rug 是《杀戮尖塔 2》的遗物(refs/sts2-cli/localization_eng/relics.json:203: \"Card rewards can now contain"),
 report.push("      Colorless cards.\"),StS1 反编译/语料/本作都没有,不在范围。");
-report.push("  [c] 26 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。");
+report.push("  [c] 25 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。");
 const text = report.join("\n") + "\n";
 process.stdout.write(text);
 if (OUT) writeFileSync(OUT, text);

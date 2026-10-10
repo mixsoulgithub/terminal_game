@@ -27,8 +27,10 @@ pub fn missing_cards(c: &corpus::CharacterInfo) -> Vec<&'static str> {
 }
 
 /// 起始遗物实现了没
+/// fx 全零的起始遗物(cracked_core/pure_water)只是占位,机制(充能球/Miracle)
+/// 没实现,不能算"已实现";否则补上起始牌后角色会被误判为可开局
 pub fn has_starter_relic(c: &corpus::CharacterInfo) -> bool {
-    relics::relic_def(c.relic).is_some()
+    relics::relic_def(c.relic).is_some_and(|r| r.fx != relics::RelicFx::ZERO)
 }
 
 /// 这个角色现在能不能开局

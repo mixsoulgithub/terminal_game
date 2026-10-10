@@ -2685,6 +2685,30 @@ mod tests {
         assert_eq!(EVENTS.len(), crate::core::corpus::EVENTS.len());
     }
 
+    /// Neow 的每个祝福/代价都要有界面文案:表里漏一个 id 就会显示
+    /// "an unknown blessing"/"a drawback"(两个显示兜底的防回归).
+    /// 表:NEOW_BONUS_TABLE_0/1、NEOW_TIER2_ALL、NEOW_BONUS_BY_*;文案:neow_*_label
+    #[test]
+    fn every_neow_bonus_and_drawback_has_a_label() {
+        let mut bonuses: Vec<&str> = Vec::new();
+        bonuses.extend(NEOW_BONUS_TABLE_0);
+        bonuses.extend(NEOW_BONUS_TABLE_1);
+        bonuses.extend(NEOW_TIER2_ALL);
+        bonuses.extend(NEOW_BONUS_BY_HP_LOSS);
+        bonuses.extend(NEOW_BONUS_BY_NO_GOLD);
+        bonuses.extend(NEOW_BONUS_BY_CURSE);
+        bonuses.push("boss_relic");
+        bonuses.sort_unstable();
+        bonuses.dedup();
+        assert!(bonuses.len() > 10, "祝福表没抽到几条");
+        for b in bonuses {
+            assert_ne!(neow_bonus_label(b), "an unknown blessing", "{b} 没有文案");
+        }
+        for d in NEOW_DRAWBACKS {
+            assert_ne!(neow_drawback_label(d), "a drawback", "{d} 没有文案");
+        }
+    }
+
     #[test]
     fn at_least_seven_events() {
         assert!(EVENTS.len() >= 7, "事件数量不足 7");

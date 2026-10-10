@@ -1053,6 +1053,12 @@ impl Run {
         out.push_str(&format!("neow_lament={}\n", self.neow_lament));
         out.push_str(&format!("relic_lifts={}\n", self.relic_lifts));
         out.push_str(&format!("wing_boots={}\n", self.wing_boots_left));
+        // 跨场景的一次性状态:漏存续档就会白拿/失效(御守次数、银行之躯作废标记、
+        // 刚休息过、? 房计数)
+        out.push_str(&format!("omamori={}\n", self.omamori_charges));
+        out.push_str(&format!("maw_bank={}\n", self.maw_bank_spent));
+        out.push_str(&format!("rested={}\n", self.rested));
+        out.push_str(&format!("unknown_rooms={}\n", self.unknown_rooms_seen));
         // 跨战斗的遗物计数器.战斗现场存盘时以战斗里那份为准(Run 上的副本这时还没收回)
         let rc = self
             .combat
@@ -1258,6 +1264,11 @@ impl Run {
         run.neow_lament = int("neow_lament", 0).max(0) as u8;
         run.relic_lifts = int("relic_lifts", 0).max(0);
         run.wing_boots_left = int("wing_boots", 0).max(0);
+        // 缺行(老存档)时按 0/false 起,与改动前的行为一致
+        run.omamori_charges = int("omamori", 0).max(0);
+        run.maw_bank_spent = get("maw_bank").map(|v| v.trim() == "true").unwrap_or(false);
+        run.rested = get("rested").map(|v| v.trim() == "true").unwrap_or(false);
+        run.unknown_rooms_seen = int("unknown_rooms", 0).max(0) as u32;
         // 跨战斗的遗物计数器.老存档没有这一行,那时这些计数器本来是每场清零的,
         // 按 0 起就与旧行为一致(不会静默给出错的局面)
         if let Some(v) = get("relic_counters") {
@@ -6830,6 +6841,39 @@ mod tests {
         );
     }
 
+    /// 跨场景的一次性状态(御守剩余次数/银行之躯作废/刚休息过/? 房计数)要随存档往返:
+    /// 漏存的话续档后御守失效、银行之躯又多给钱、古代茶具少 2 能量
+    #[test]
+    fn one_shot_run_flags_survive_a_save_round_trip() {
+        let mut r = run(45);
+        r.omamori_charges = 2;
+        r.maw_bank_spent = true;
+        r.rested = true;
+        r.unknown_rooms_seen = 3;
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.omamori_charges, 2, "御守还剩 2 次");
+        assert!(back.maw_bank_spent, "银行之躯已作废");
+        assert!(back.rested, "刚在营火休息过");
+        assert_eq!(back.unknown_rooms_seen, 3, "? 房计数");
+        // 老存档缺这几行:按 0/false 起,与改动前行为一致
+        let stripped: String = r
+            .save_text()
+            .lines()
+            .filter(|l| {
+                !l.starts_with("omamori=")
+                    && !l.starts_with("maw_bank=")
+                    && !l.starts_with("rested=")
+                    && !l.starts_with("unknown_rooms=")
+            })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let old = Run::from_save(&stripped).expect("老存档仍可读");
+        assert_eq!(old.omamori_charges, 0);
+        assert!(!old.maw_bank_spent);
+        assert!(!old.rested);
+        assert_eq!(old.unknown_rooms_seen, 0);
+    }
+
     /// 存档要带着章号、本局 Boss 与全局层号走:读回来还得在同一章,
     /// 地图按这一章的种子重生成,遭遇名单/事件池/钥匙一个不少
     #[test]
@@ -7458,6 +7502,13 @@ mod tests {
         let mut courier = run(73);
         courier.debug_add_relic("the_courier").unwrap();
         assert_eq!(courier.discount(100), 80, "单信使打八折");
+        // 精明单片镜在参考实现里也是 modifyPrice*0.8(uncommon.ts:482),单件同样打八折
+        let mut monocle = run(73);
+        monocle.debug_add_relic("discerning_monocle").unwrap();
+        assert_eq!(monocle.discount(100), 80, "单片镜打八折");
+        // 两件 -20% 相乘(参考实现 foldHook 逐个串联修改价格)= 0.64
+        monocle.debug_add_relic("the_courier").unwrap();
+        assert_eq!(monocle.discount(100), 64, "0.8 × 0.8");
     }
 
     /// 魔法花把战后回血也抬 50%(原版:Burning Blood 6 -> 9,肉骨头 12 -> 18)

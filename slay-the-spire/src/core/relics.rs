@@ -806,7 +806,7 @@ pub static RELICS: &[RelicDef] = &[
         tier: RelicTier::Common,
         pool: "green",
         fx: RelicFx::ZERO,
-        note: "中毒机制本作没有(绿职专属)",
+        note: "绿职专属遗物,本作只有铁甲可玩(中毒机制本作已实现,红职无中毒来源)",
     },
     RelicDef {
         id: "strawberry",
@@ -959,7 +959,7 @@ pub static RELICS: &[RelicDef] = &[
         tier: RelicTier::Uncommon,
         pool: "purple",
         fx: RelicFx::ZERO,
-        note: "架势机制本作没有(紫职专属)",
+        note: "紫职专属遗物,本作只有铁甲可玩(临时敏捷机制本作已实现,但紫职不可获得)",
     },
     RelicDef {
         id: "gremlin_horn",
@@ -1316,8 +1316,15 @@ pub static RELICS: &[RelicDef] = &[
         desc: "Merchant prices are reduced by 20%",
         tier: RelicTier::Uncommon,
         pool: "shared",
-        fx: RelicFx::ZERO,
-        note: "语料标为不可获得(unobtainable),参考实现也不给效果",
+        // 语料把 DISCERNING_MONOCLE 标成 unobtainable,但参考实现的
+        // buildRelicPool 只看 tier/pool(不查 unobtainable),所以它照样进
+        // shared 池,而参考实现给了 modifyPrice 0.8 的折扣。本作 pool_for 同理,
+        // 若不实现,红职在商店买到它就是白占一件(与对拍基准不一致).
+        fx: RelicFx {
+            shop_discount_pct: 20,
+            ..RelicFx::ZERO
+        },
+        note: "",
     },
     RelicDef {
         id: "bird_faced_urn",
@@ -1608,7 +1615,7 @@ pub static RELICS: &[RelicDef] = &[
         tier: RelicTier::Rare,
         pool: "green",
         fx: RelicFx::ZERO,
-        note: "中毒机制本作没有(绿职专属)",
+        note: "绿职专属遗物,本作只有铁甲可玩(中毒机制本作已实现,红职无中毒来源)",
     },
     RelicDef {
         id: "thread_and_needle",
@@ -2246,7 +2253,7 @@ pub static RELICS: &[RelicDef] = &[
         tier: RelicTier::Shop,
         pool: "green",
         fx: RelicFx::ZERO,
-        note: "中毒机制本作没有(绿职专属)",
+        note: "绿职专属遗物,本作只有铁甲可玩(中毒机制本作已实现,红职无中毒来源)",
     },
     RelicDef {
         id: "cauldron",
@@ -2647,8 +2654,28 @@ mod tests {
         assert!(!pool_for(RelicTier::Common, "red").iter().any(|r| r.id == "snecko_skull"));
     }
 
+    /// 单片镜:语料标 unobtainable,但参考实现对拍基准的 buildRelicPool
+    /// (refs/slay-the-cli/src/engine/run/runFlow.ts:79-86)只按 tier/pool 过滤,
+    /// 它照样进共享池,并给了 modifyPrice*0.8(uncommon.ts:477-482).
+    /// 本作跟随对拍基准(pool_for 同款过滤):留在池里 + 实现 20% 折扣,
+    /// 而不是当成全零闸住的白板遗物.
+    #[test]
+    fn discerning_monocle_stays_in_the_shared_pool_with_a_discount() {
+        let has = |color: &str| {
+            pool_for(RelicTier::Uncommon, color)
+                .iter()
+                .any(|r| r.id == "discerning_monocle")
+        };
+        assert!(has("red"));
+        assert!(has("green"));
+        assert_eq!(
+            relic_def_or_panic("discerning_monocle").fx.shop_discount_pct,
+            20
+        );
+    }
+
     /// 还没实现的遗物:其它职业专属(充能球/集中/毒/Shiv/Mantra/观星/Scry)
-    /// 或纯风味、不可获得.48 件 fx 全零 = 本表 26 件 + 已实现的 22 件.
+    /// 或纯风味、不可获得.这些 fx 全零 = 本表 25 件 + 已实现的 23 件.
     const GATED_RELICS: &[&str] = &[
         "cracked_core",
         "pure_water",
@@ -2660,7 +2687,6 @@ mod tests {
         "ninja_scroll",
         "symbiotic_virus",
         "teardrop_locket",
-        "discerning_monocle",
         "emotion_chip",
         "golden_eye",
         "the_specimen",
@@ -2690,7 +2716,7 @@ mod tests {
         let mut want: Vec<&str> = GATED_RELICS.to_vec();
         want.sort_unstable();
         assert_eq!(zero, want, "fx 全零的集合必须与 GATED_RELICS 一致");
-        assert_eq!(zero.len(), 26);
+        assert_eq!(zero.len(), 25);
         // 每一件都写明了原因
         for id in GATED_RELICS {
             assert!(
@@ -2799,6 +2825,9 @@ mod tests {
         assert_eq!(scales.fx.thorns, 3);
 
         assert_eq!(relic_def_or_panic("membership_card").fx.shop_discount_pct, 50);
+        // 参考实现 uncommon.ts:482 的 modifyPrice 是 price*0.8,与信使同一档
+        assert_eq!(relic_def_or_panic("discerning_monocle").fx.shop_discount_pct, 20);
+        assert_eq!(relic_def_or_panic("the_courier").fx.shop_discount_pct, 20);
         assert_eq!(relic_def_or_panic("golden_idol").fx.gold_reward_pct, 25);
     }
 

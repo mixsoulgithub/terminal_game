@@ -1344,6 +1344,41 @@ mod tests {
         }
     }
 
+    /// 表外的 (id,status) 在 A20 必须原样返回 base(不能凭空改值).
+    /// 与 combat.rs:497/2683 的 innate 初始化配套:表里没有的敌人开局状态不随飞升变.
+    #[test]
+    fn innate_amount_passes_through_entries_outside_the_table() {
+        // 拉格瓦林的沉睡/金属化都不在表里,任何飞升都该原样
+        assert_eq!(innate_amount("lagavulin", Status::Asleep, 1, 20), 1);
+        assert_eq!(innate_amount("lagavulin", Status::Metallicize, 8, 20), 8);
+    }
+
+    /// 语料里 card 类的 power 名必须都能映射到本作真卡:
+    /// 映射不到会静默落进 new_fx 的 Block 兜底(把"塞牌"错成"给格挡")
+    #[test]
+    fn card_like_powers_map_to_real_cards() {
+        for (_, moves) in MOVE_ASC {
+            for (_, tiers) in *moves {
+                for t in *tiers {
+                    if let Some(fxs) = t.fx {
+                        for f in fxs {
+                            let (kind, _) = asc_key(f);
+                            if kind != "card" {
+                                continue;
+                            }
+                            let id = card_of_power(&f.power.to_ascii_uppercase())
+                                .unwrap_or_else(|| panic!("card 类 power 没映射: {}", f.power));
+                            assert!(
+                                crate::core::cards::card_def(id).is_some(),
+                                "{id} 不是本作的卡"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// 同一种效果出现多次时,多条覆盖要各认领一段(神秘客的治疗/鼓舞)
     #[test]
     fn duplicate_effects_are_all_patched() {

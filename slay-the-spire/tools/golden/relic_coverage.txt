@@ -3,9 +3,9 @@
 命令: bun tools/sandbox_relics.ts
 
 覆盖统计:
-  已实现遗物 155 件,表行 168 条
+  已实现遗物 156 件,表行 169 条
   - 沙盒实测(战斗内钩子):93 件(沙盒行 95 条,通过 95,不一致 0)
-  - 纯 run-level 断言测试(一局流程侧):61 件(再加上与沙盒互补的 8 件战斗内遗物的流程侧钩子)
+  - 纯 run-level 断言测试(一局流程侧):62 件(再加上与沙盒互补的 8 件战斗内遗物的流程侧钩子)
   - 不可测:1 件 [frozen_eye]
   沙盒行通过 95/95
 
@@ -499,6 +499,9 @@
   [run-test] the_courier              hook=商店折扣(相乘)
              期望 信使 -20% 与会员卡 -50% 相乘
              oracle courier_and_membership_card_discounts_multiply  -> courier_and_membership_card_discounts_multiply
+  [run-test] discerning_monocle       hook=商店折扣(-20%)
+             期望 单片镜商店价 -20%(参考实现 modifyPrice*0.8)
+             oracle courier_and_membership_card_discounts_multiply  -> courier_and_membership_card_discounts_multiply
   [run-test] gambling_chip            hook=战斗开始(弃牌重抽)
              期望 开局可弃任意张再抽等量张(选牌窗口沙盒按不选收掉)
              oracle gambling_chip_discards_then_draws  -> gambling_chip_discards_then_draws
@@ -577,4 +580,4 @@
       参考实现 common.ts:451-460 战斗内外都回 5;本作照语料 desc + 参考(heal_on_potion_use = 5)。
   [c] dingy_rug 是《杀戮尖塔 2》的遗物(refs/sts2-cli/localization_eng/relics.json:203: "Card rewards can now contain
       Colorless cards."),StS1 反编译/语料/本作都没有,不在范围。
-  [c] 26 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。
+  [c] 25 件 fx 全零的遗物(其它职业机制/不可获得)见 relics.rs 的 GATED_RELICS,不在本轮范围。

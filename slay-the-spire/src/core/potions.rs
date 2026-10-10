@@ -673,6 +673,16 @@ mod tests {
         assert_eq!(POTIONS.len(), 42, "语料里一共 42 瓶药水");
     }
 
+    /// 职业代号 -> 药水池颜色(参考实现 rewards.ts classColor);
+    /// 药水池按 class 过滤,这里错一位就会把别职业的药水塞进池子
+    #[test]
+    fn class_color_maps_every_character() {
+        assert_eq!(class_color("ironclad"), "red");
+        assert_eq!(class_color("silent"), "green");
+        assert_eq!(class_color("defect"), "blue");
+        assert_eq!(class_color("watcher"), "purple");
+    }
+
     #[test]
     fn table_order_matches_the_corpus() {
         // 抽签按下标走,池子顺序一旦和语料(参考的 bundle 顺序)不同,抽出来的身份就不对

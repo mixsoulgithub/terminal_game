@@ -1,4 +1,4 @@
-# 155 件已实现遗物的 fx 字段表(由 relics.rs 静态解析生成,只作审计参考)
+# 156 件已实现遗物的 fx 字段表(由 relics.rs 静态解析生成,只作审计参考)
 # 格式: id<TAB>tier<TAB>field=value ...
 burning_blood	Starter	post_combat_heal=6
 ring_of_the_snake	Starter	combat_start_draw=2
@@ -64,6 +64,7 @@ pear	Uncommon	max_hp=10
 question_card	Uncommon	card_reward_bonus=1
 singing_bowl	Uncommon	max_hp_on_card_skip=2
 the_courier	Uncommon	shop_discount_pct=20
+discerning_monocle	Uncommon	shop_discount_pct=20
 toxic_egg	Uncommon	egg_skill_upgrade=true
 white_beast_statue	Uncommon	potions_always=true
 bird_faced_urn	Rare	heal_on_power_card=2
@@ -167,7 +168,6 @@ gold_plated_cables	Uncommon	(gated)
 ninja_scroll	Uncommon	(gated)
 symbiotic_virus	Uncommon	(gated)
 teardrop_locket	Uncommon	(gated)
-discerning_monocle	Uncommon	(gated)
 emotion_chip	Rare	(gated)
 golden_eye	Rare	(gated)
 the_specimen	Rare	(gated)
