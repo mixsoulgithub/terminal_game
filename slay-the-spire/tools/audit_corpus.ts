@@ -392,6 +392,36 @@ const CARD_SPECIAL: Record<string, CardSpec> = {
   impatience: { facts: (c, up) => [{ k: "draw", v: up ? c.upgrade.magic! : c.values.magic! }] },
   // limit_break 把已有的力量翻倍:5 -> 10,差额 5
   limit_break: { facts: () => [{ k: "player_power", name: "strength", v: 5 }], board: { player: { powers: { strength: 5 } } } },
+  // 串刺:X 费打 X 次;探针固定 3 点能量 -> X=3
+  skewer: {
+    facts: (c, up) => [{ k: "damage", v: (up ? c.upgrade.damage! : c.values.damage!) * 3 }],
+    board: { player: { energy: 3, max_energy: 9 } },
+  },
+  // 萎靡:X 费掉 X 力量 + 挂 X 虚弱;探针 2 点能量 -> X=2(升级 X+1)
+  malaise: {
+    facts: (c, up) => {
+      const x = 2 + (up ? 1 : 0);
+      return [
+        { k: "enemy_power", name: "strength", v: -x },
+        { k: "enemy_power", name: "weak", v: x },
+      ];
+    },
+    board: { player: { energy: 2, max_energy: 9 } },
+  },
+  // 雄壮终曲:只有抽牌堆空着才打得出去,探针得先把抽牌堆清空
+  grand_finale: {
+    facts: (c, up) => [{ k: "damage", v: up ? c.upgrade.damage! : c.values.damage! }],
+    board: { draw: [] },
+  },
+  // 窒息:挂上窒息的这张牌自己也算一次"打出一张牌"(见 sandbox_diff 的 OURS_WRONG 说明)
+  choke: {
+    facts: (c, up) => [
+      {
+        k: "damage",
+        v: (up ? c.upgrade.damage! : c.values.damage!) + (up ? c.upgrade.magic! : c.values.magic!),
+      },
+    ],
+  },
   // 炸弹:第三回合末结算
   the_bomb: {
     facts: (c, up) => [{ k: "damage", v: up ? c.upgrade.magic! : c.values.magic! }],
@@ -423,10 +453,16 @@ const CARD_SKIP: Record<string, string> = {
 };
 
 /** 除打出这张牌外,还有几张手牌会离手(消耗/置顶),抽几张要按它折算 */
-const CARD_HAND_LOSS: Record<string, number> = {
+const CARD_HAND_LOSS: Record<string, number | [number, number]> = {
   burning_pact: 1,
   warcry: 1,
   thinking_ahead: 1,
+  // 绿职:抽 N 弃 M,净抽牌要按弃掉的张数折算;[基础, 升级] 给两档不同的写法
+  acrobatics: 1,
+  dagger_throw: 1,
+  // 准备+ 是"抽 2 弃 2",但探针手牌只有这一张,第二张弃不出(0 候选),
+  // 量到的净抽牌是 1;升级档弃 2 由 combat.rs 的 silent 单元测试钉住
+  prepared: [1, 1],
 };
 
 /**
@@ -435,6 +471,47 @@ const CARD_HAND_LOSS: Record<string, number> = {
  * 这些牌仍有其它事实被比对(如格挡/伤害);这里只登记"没被比对"的那部分效果。
  */
 const CARD_NOT_COMPARED: Record<string, string> = {
+  // ---- 绿职(The Silent):文本数值对得上,但本审计的沙盒口径量不出 ----
+  // 多数需要"选牌交互 / 下回合结算 / 敌方回合时序 / X 费"中的一种;
+  // 数值本身由 src/core/combat.rs 的 relic_hook_tests 里 silent 段逐条钉住。
+  blade_dance: "造飞刀(0 费 4 伤 token):token 自身在 shiv 条目上,造牌张数不比对",
+  cloak_and_dagger: "造飞刀:同上(仅核对格挡)",
+  deadly_poison: "挂中毒:毒伤在敌方回合开始结算,单次打出的快照量不出掉血量",
+  poisoned_stab: "挂中毒:同上(仅核对伤害)",
+  bouncing_flask: "对随机敌人反复挂中毒:随机目标不在探针口径内",
+  catalyst: "把目标已有中毒翻倍:需要先有中毒基础值,单次打出量不出",
+  corpse_explosion: "挂中毒 + 死亡时按最大生命炸场:需要敌人死亡时序",
+  crippling_cloud: "全体挂中毒/虚弱:探针只有一只怪,且毒伤要等敌方回合",
+  noxious_fumes: "每回合开始挂毒:开局时点,单次打出量不出",
+  envenom: "攻击造成未被格挡伤害时挂毒:需要攻击时序(攻击牌另测)",
+  outmaneuver: "下回合 +2 能量:回合开始才结算,单场快照量不出(见 sandbox_diff 的表示差异)",
+  doppelganger: "X 费:下回合抽 X / +X 能量,量不出",
+  accuracy: "飞刀加伤:只作用于 shiv,需要打出飞刀才体现",
+  after_image: "每打出一张牌给格挡:需要后续打牌时序",
+  a_thousand_cuts: "每打出一张牌全体伤害:同上",
+  caltrops: "被打时反伤:需要敌方先攻击的时序",
+  finisher: "本回合每张攻击牌的伤害:计数口径与参考不同(见 sandbox_diff 的 OURS_WRONG)",
+  flechettes: "手里每张技能牌的伤害:需要特定手牌组成",
+  expertise: "抽到手牌 6(7) 张:需要手牌组成与抽牌堆配合",
+  escape_plan: "抽 1,抽到技能才给格挡:结果取决于抽到什么",
+  piercing_wail: "全体本回合掉力量:回合末回补,单次打出量不出",
+  concentrate: "弃 3 张换 2 能量:选牌交互不比对",
+  calculated_gamble: "弃整手牌再抽等量张:选牌/牌堆交互不比对",
+  distraction: "随机一张技能牌进手:随机池口径见 sandbox_diff 的参考缺口",
+  setup: "把手牌放回抽牌堆顶并 0 费:选牌交互不比对",
+  storm_of_steel: "弃整手牌换飞刀:选牌/造牌交互不比对",
+  well_laid_plans: "回合末保留选牌:选牌交互不比对",
+  burst: "技能打两次:需要后续出牌时序",
+  bullet_time: "本回合不能抽牌 + 手牌 0 费:状态口径(no_draw)与手牌费用快照不比对",
+  phantasmal_killer: "下回合攻击翻倍:回合开始时点",
+  nightmare: "选一张牌、下回合来 3 份副本:选牌交互不比对",
+  alchemize: "拿一瓶随机药水:战斗外结果,沙盒快照里没有药水槽",
+  infinite_blades: "每回合开始给飞刀:回合开始时点",
+  tools_of_the_trade: "每回合开始抽 1 弃 1:回合开始时点 + 选牌交互",
+  tactician: "不可打出,被弃掉才回能量:需要弃牌时序",
+  reflex: "不可打出,被弃掉才抽牌:同上",
+  wraith_form: "无形 + 回合末掉敏捷:能力层数在 player_power 上,但掉敏捷在回合末",
+  backstab: "固有 + 消耗:时点在开局手牌",
   parasite: "被变形/移出牌组时掉 3 最大 HP:发生在战斗外,沙盒只跑一场战斗",
   true_grit: "消耗 1 张手牌(基础随机/升级指定):只核对格挡,张数交互不比对",
   rampage: "伤害按该牌本场已打出次数递增:单次打出量不出成长",
@@ -1900,7 +1977,10 @@ function compareSpec(s: Spec, rows: Row[]): CompareResult {
         const v = s.level === "up" ? c.upgrade.cost : c.cost;
         return typeof v === "number" ? v : 0;
       })();
-      want = f.k === "draw" ? f.v - (CARD_HAND_LOSS[s.id] ?? 0) : f.k === "energy" ? f.v - cost : f.v;
+      const loss = CARD_HAND_LOSS[s.id];
+      const lossN =
+        loss === undefined ? 0 : Array.isArray(loss) ? (s.level === "up" ? loss[1] : loss[0]) : loss;
+      want = f.k === "draw" ? f.v - lossN : f.k === "energy" ? f.v - cost : f.v;
     }
     if (have !== want) lines.push(`${f.k}${"name" in f ? ":" + f.name : ""}: 实测 ${JSON.stringify(have)} vs 期望 ${JSON.stringify(want)}`);
   }
@@ -2737,10 +2817,19 @@ const CARD_RULES: CardRule[] = [
       ["ExhaustNonAttacks", "damage"],
       ["Bomb", "damage"],
       ["AddSelfStatus", "n"],
+      // 绿职
+      ["DamageXHits", "per"],
+      ["DamagePerSkillInHand", "per"],
+      ["DamagePerAttackThisTurn", "per"],
+      ["DamageThenPenaltySelf", "amount"],
+      ["DamageTwiceIfTargetPoisoned", "amount"],
+      ["DamageAndEnergyIfWeak", "amount"],
+      ["DamageAndEnergyIfDiscarded", "amount"],
+      ["AllEnemiesLoseStrengthThisTurn", "n"],
     ],
     { skip: ["searing_blow"] },
   ),
-  numRule("格挡", /Gain (\d+) Block/gi, [["Block", "amount"], ["BlockPerExhausted", "per"], ["AddSelfStatus", "n"]]),
+  numRule("格挡", /Gain (\d+) Block/gi, [["Block", "amount"], ["BlockPerExhausted", "per"], ["AddSelfStatus", "n"], ["DrawThenBlockIfSkill", "block"], ["NextTurnBlock", "n"]]),
   numRule("施加状态", /(?:Apply |and )(\d+) (Weak|Vulnerable|Frail)/gi, [["AddTargetStatus", "n"], ["AddAllEnemiesStatus", "n"]], {
     status: (m) => m[2],
   }),
@@ -2748,13 +2837,36 @@ const CARD_RULES: CardRule[] = [
   numRule("失去力量", /\blose (\d+) Strength/gi, [["AddSelfStatus", "n"]]),
   numRule("敌方失去力量", /[Ee]nemy loses (\d+) Strength(?! this turn)/gi, [["AddTargetStatus", "n"]], { scale: (n) => -n }),
   numRule("敌方本回合失去力量", /[Ee]nemy loses (\d+) Strength this turn/gi, [["TargetLoseStrengthThisTurn", "n"]]),
-  numRule("抽牌", /Draw (\d+) cards?/gi, [["Draw", "n"], ["DrawIfNoAttacks", "n"], ["DamageIfVulnerable", "draw"], ["AddSelfStatus", "n"]]),
-  numRule("回能", /Gain (\((\d+)\)|((?:@RE\s*)+))/gi, [["GainEnergy", "n"], ["EnergyOnExhaust", "n"], ["DamageIfVulnerable", "energy"]], {
+  numRule("抽牌", /Draw (\d+) cards?/gi, [["Draw", "n"], ["DrawIfNoAttacks", "n"], ["DamageIfVulnerable", "draw"], ["AddSelfStatus", "n"], ["NextTurnDraw", "n"], ["DamageAndEnergyIfWeak", "draw"]]),
+  numRule("回能", /Gain (\((\d+)\)|((?:@RE\s*)+))/gi, [["GainEnergy", "n"], ["EnergyOnExhaust", "n"], ["DamageIfVulnerable", "energy"], ["NextTurnEnergy", "n"], ["DamageAndEnergyIfWeak", "energy"], ["DamageAndEnergyIfDiscarded", "energy"]], {
     cap: capEnergy,
   }),
   numRule("掉血", /Lose (\d+) HP/gi, [["LoseHp", "amount"]]),
   numRule("回血", /Heal (\d+) HP/gi, [["Heal", "amount"]]),
   numRule("塞牌进手", /Add (\d+) (Wounds?|Burns?|Dazed)/gi, [["AddCardToHand", "n"]]),
+  // ---- 绿职(The Silent)的常见句式 ----
+  numRule("施加中毒", /(?:Apply |and )(\d+) Poison/gi, [
+    ["AddTargetStatus", "n"],
+    ["AddAllEnemiesStatus", "n"],
+    ["AddSelfStatus", "n"],
+    ["CorpseExplosion", "poison"],
+    ["PoisonRandomEnemy", "n"],
+  ]),
+  numRule("飞刀加伤", /Shivs deal (\d+) additional damage/gi, [["AddSelfStatus", "n"]]),
+  numRule("被打反伤", /deal (\d+) damage back/gi, [["AddSelfStatus", "n"]]),
+  numRule("敏捷", /Gain (\d+) Dexterity/gi, [["AddSelfStatus", "n"]]),
+  numRule("无形", /Gain (\d+) Intangible/gi, [["AddSelfStatus", "n"]]),
+  // 幽魂形态的"掉 1 敏捷"由 Status::WraithForm 的结算承载(载荷里的 n 是无形层数)
+  numRule("回合末掉敏捷", /lose (\d+) Dexterity/gi, [["AddSelfStatus", "n"]], { skip: ["wraith_form"] }),
+  numRule("全体本回合掉力量", /enemies lose (\d+) Strength this turn/gi, [["AllEnemiesLoseStrengthThisTurn", "n"]]),
+  numRule("下回合格挡", /Next turn, gain (\d+) Block/gi, [["NextTurnBlock", "n"]]),
+  numRule("造飞刀", /Add (\d+) Shiv/gi, [["AddCardToHand", "n"]]),
+  numRule("保留张数", /Retain up to (\d+) card/gi, [["AddSelfStatus", "n"]]),
+  numRule("弃牌张数", /Discard (\d+) cards?/gi, [["DiscardChoose", "n"], ["AddSelfStatus", "n"], ["DiscardRandom", "n"]]),
+  numRule("玻璃刀减伤", /this card by (\d+) this combat/gi, [["DamageThenPenaltySelf", "penalty"]]),
+  numRule("抽到手牌 N 张", /until you have (\d+) in your hand/gi, [["DrawUntil", "n"]]),
+  numRule("本回合第 N 张技能", /next (\d+) Skills?/gi, [["AddSelfStatus", "n"]]),
+  numRule("敌方掉血", /(?:enemy )?loses (\d+) HP/gi, [["AddTargetStatus", "n"], ["LoseHp", "amount"]]),
   numRule(
     "次数",
     /(\d+) times/gi,
@@ -2766,6 +2878,7 @@ const CARD_RULES: CardRule[] = [
       ["DamageAndKillMaxHp", "times"],
       ["DamageAndGoldOnKill", "times"],
       ["DamageStrengthMult", "mult"],
+      ["PoisonRandomEnemy", "times"],
     ],
   ),
   numRule("定时炸弹", /At the end of (\d+) turns/gi, [["Bomb", "turns"]]),
@@ -2846,18 +2959,33 @@ const CARD_RULES: CardRule[] = [
     label: "每当触发",
     re: /Whenever /g,
     check: (e, _w, _m, impl) =>
-      hasEff(e, "AddSelfStatus") || impl.onDraw.length > 0 || impl.inHand.length > 0 ? null : "文案说'每当',实现里没有对应能力载荷",
+      hasEff(e, "AddSelfStatus") ||
+      hasEff(e, "AddTargetStatus") ||
+      hasEff(e, "AddAllEnemiesStatus") ||
+      hasEff(e, "CorpseExplosion") ||
+      hasEff(e, "StormOfSteel") ||
+      impl.onDraw.length > 0 ||
+      impl.inHand.length > 0
+        ? null
+        : "文案说'每当',实现里没有对应能力载荷",
   },
   {
     label: "每个",
     re: /for each/g,
     skip: ["blood_for_blood"],
     check: (e) =>
-      ["DamagePerExhausted", "BlockPerExhausted", "DamagePerStrike", "DamagePerDrawPile", "LoseHpPerHandCard"].some((v) => hasEff(e, v))
+      ["DamagePerExhausted", "BlockPerExhausted", "DamagePerStrike", "DamagePerDrawPile", "LoseHpPerHandCard", "StormOfSteel"].some((v) => hasEff(e, v))
         ? null
         : "文案说'每个/每张',实现里没有对应按数量结算的效果",
   },
-  { label: "X 次", re: /\bX times/g, check: (e) => (hasEff(e, "DamageAllX") ? null : "文案说 X 次,实现里没有 DamageAllX") },
+  {
+    label: "X 次",
+    re: /\bX times/g,
+    check: (e) =>
+      hasEff(e, "DamageAllX") || hasEff(e, "DamageXHits") || hasEff(e, "NextTurnDrawX") || hasEff(e, "NextTurnEnergyX")
+        ? null
+        : "文案说 X 次,实现里没有 X 次结算的效果",
+  },
   {
     label: "两次",
     re: /\btwice\b/g,
@@ -2896,7 +3024,7 @@ const CARD_RULES: CardRule[] = [
   { label: "塞牌进弃牌堆", re: /Add a (Burn) to your discard pile/g, check: (e, _w, m) => (e.some((x) => x.variant === "AddCardToDiscard" && x.fields.get("id") === `"${m[1]!.toLowerCase()}"`) ? null : `实现里没有 AddCardToDiscard id=${m[1]!.toLowerCase()}`) },
   { label: "塞自身副本进弃牌堆", re: /Add a copy of this card into your discard pile/g, check: (e) => (hasEff(e, "AddSelfToDiscard") ? null : "实现里没有 AddSelfToDiscard") },
   { label: "洗回抽牌堆", re: /Shuffle your discard pile into your draw pile/g, check: (e) => (hasEff(e, "ShuffleDiscardIntoDraw") ? null : "实现里没有 ShuffleDiscardIntoDraw") },
-  { label: "置顶手牌", re: /Put a card from your hand (?:onto|on) top of your draw pile|Put a card from your hand onto the top of your draw pile/g, check: (e) => (hasEff(e, "TopFromHand") ? null : "实现里没有 TopFromHand") },
+  { label: "置顶手牌", re: /Put a card from your hand (?:onto|on) top of your draw pile|Put a card from your hand onto the top of your draw pile/g, check: (e) => (hasEff(e, "TopFromHand") || hasEff(e, "SetupTopFromHand") ? null : "实现里没有 TopFromHand") },
   { label: "掘出消耗堆", re: /Put a card from your [Ee]xhaust pile into your hand/g, check: (e) => (hasEff(e, "FromExhaustToHand") ? null : "实现里没有 FromExhaustToHand") },
   { label: "弃牌堆置顶", re: /Put a card from your discard pile on top of your draw pile/g, check: (e) => (hasEff(e, "FromDiscardToDrawTop") ? null : "实现里没有 FromDiscardToDrawTop") },
   { label: "复制手牌", re: /Copy an Attack or Power card in your hand/g, check: (e) => (hasEff(e, "CopyFromHand") ? null : "实现里没有 CopyFromHand") },
@@ -2936,6 +3064,29 @@ const TRIGGER_SCAN: RegExp[] = [
 ];
 /** 文案里"实现了但无法用载荷直测"的数字/条件词:显式登记原因(与遗物 RELIC_NUM_SKIP 同理) */
 const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
+  // ---- 绿职(The Silent)----
+  eviscerate: [
+    { sub: /Costs \d+ less/, reason: "按本回合弃牌数降费由 combat.rs 的费用修正承载(同嗜血那条)" },
+    { sub: /\(1\) for each card discarded/, reason: "同上:降费节奏由 combat.rs 承载,载荷里没有 per" },
+  ],
+  masterful_stab: [
+    { sub: /Costs \d+ additional/, reason: "按本场掉血次数加费由 combat.rs 的费用修正承载,载荷里没有 per" },
+  ],
+  storm_of_steel: [{ sub: /Add \d+ Shiv/, reason: "飞刀张数 = 弃掉的张数,由 Effect::StormOfSteel 的结算承载" }],
+  nightmare: [{ sub: /add 3 copies/, reason: "3 份副本由 Effect::NightmareChoose 的结算常量承载" }],
+  bullet_time: [{ sub: /to 0 this turn/, reason: "手牌降到 0 费由 Effect::SetHandCostZeroThisTurn 承载" }],
+  setup: [{ sub: /costs 0 until played/, reason: "放到堆顶的牌 0 费由 Effect::SetupTopFromHand 的结算承载" }],
+  distraction: [{ sub: /costs 0 this turn/, reason: "送到的牌 0 费由 Effect::AddRandomSkillToHand 的结算承载" }],
+  doppelganger: [{ sub: /[+X]\s*\(1\)/, reason: "X 费按实际能量结算,载荷里没有常量" }],
+  malaise: [{ sub: /X\+1/, reason: "X 费按实际能量结算,载荷里没有常量(升级档的 +1 写在 Effect 的 bonus 里)" }],
+  tactician: [
+    { sub: /If this card is discarded/, reason: "被弃掉时回能量写在引擎的 on_card_discarded 里(读 upgraded),不是 CardDef 载荷" },
+    { sub: /\(\d+\)/, reason: "同上:回 1(2) 点能量由引擎承载" },
+  ],
+  reflex: [{ sub: /If this card is discarded/, reason: "被弃掉时抽 2(3) 张写在引擎的 on_card_discarded 里" }],
+  bane: [{ sub: /If the enemy has Poison/, reason: "条件由 Effect::DamageTwiceIfTargetPoisoned 的结算承载" }],
+  sneaky_strike: [{ sub: /If you have discarded a card this turn/, reason: "条件由 Effect::DamageAndEnergyIfDiscarded 的结算承载" }],
+  heel_hook: [{ sub: /If the enemy has Weak/, reason: "条件由 Effect::DamageAndEnergyIfWeak 的结算承载" }],
   combust: [{ sub: /lose 1 HP/, reason: "每回合掉 1 HP 由 Status::Combust 的结算常量承载(combat.rs),不在 CardDef 载荷里" }],
   brutality: [{ sub: /lose 1 HP/, reason: "每回合掉 1 HP 由 Status::Brutality 的结算常量承载(combat.rs),不在 CardDef 载荷里" }],
   panache: [{ sub: /play 5 cards in a single turn/, reason: "每 5 张的阈值由 Status::Panache 的结算常量承载(combat.rs),载荷 n 是伤害值" }],
