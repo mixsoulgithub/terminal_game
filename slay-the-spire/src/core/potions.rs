@@ -1142,4 +1142,377 @@ mod effect_tests {
         // 弃两张补抽两张:手牌张数回到弃之前
         assert_eq!(c.hand.len(), 5);
     }
+
+    // ---- 与"升级 / 费用 / 目标"的交互(对照反编译逐条核) ----
+
+    /// 测试用:带遗物开一场(combat_in 只给空遗物栏)
+    fn combat_relics(
+        encounter: &'static str,
+        deck: &[&str],
+        relics: &[&'static crate::core::relics::RelicDef],
+    ) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: deck.iter().map(|id| crate::core::cards::card(id)).collect(),
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc: 0,
+        };
+        Combat::new(enc(encounter), setup, RngRegistry::new(7))
+    }
+
+    fn relic(id: &str) -> &'static crate::core::relics::RelicDef {
+        crate::core::relics::relic_def_or_panic(id)
+    }
+
+    /// 发现类药水(攻/技/能/无色):亮 3 张互不相同的对应类型牌,候选与选中的牌
+    /// **都不升级**,选中的那张本回合 0 费.
+    /// 依据:药水 → DiscoveryAction(refs/sts_lightspeed/src/combat/BattleContext.cpp:2255-2256/2278-2279/2385-2395),
+    ///      generateDiscoveryCards(Actions.cpp:564-568 → Game.cpp:228-260),
+    ///      chooseDiscoveryCard 造的是 `CardInstance c(id)`(不带升级,只 setCostForTurn(0),BattleContext.cpp:2995-3008).
+    #[test]
+    fn discovery_potions_pick_the_right_type_unupgraded_and_free() {
+        use crate::core::card::CardType;
+        for (potion, want) in [
+            ("attack_potion", CardType::Attack),
+            ("skill_potion", CardType::Skill),
+            ("power_potion", CardType::Power),
+        ] {
+            let mut c = combat();
+            c.use_potion(def(potion), None);
+            let ch = c.choice.as_ref().unwrap_or_else(|| panic!("{potion} 要开屏"));
+            assert_eq!(ch.offered.len(), 3, "{potion} 亮 3 张");
+            for card in &ch.offered {
+                assert_eq!(card.kind(), want, "{potion} 候选类型不对: {}", card.def.id);
+                assert!(!card.upgraded, "{potion} 候选不该升级");
+            }
+            let pick = ch.offered[0].def.id;
+            c.choose(0).expect("选得中");
+            let got = c.hand.iter().find(|x| x.def.id == pick).expect("进手牌");
+            assert!(!got.upgraded, "{potion} 拿到的牌不该升级");
+            assert!(got.free_this_turn, "{potion} 拿到的牌本回合 0 费");
+        }
+        // 无色:池子取无色牌的非普通档
+        let mut c = combat();
+        c.use_potion(def("colorless_potion"), None);
+        let ch = c.choice.as_ref().expect("无色药剂要开屏");
+        assert_eq!(ch.offered.len(), 3);
+        for card in &ch.offered {
+            assert_eq!(
+                crate::core::cards::pool_of(card.def),
+                "colorless",
+                "无色药剂只能亮无色牌"
+            );
+            assert_ne!(card.rarity(), Rarity::Common, "无色池不含普通档");
+        }
+    }
+
+    /// 蛋类遗物(molten/toxic/frozen egg)只在"卡进牌组"的时点生效
+    /// (refs/sts_lightspeed/src/game/Deck.cpp:128-157、GameContext.cpp:1560-1576),
+    /// 战斗中药水新造的发现牌不吃;候选依旧不升级.
+    #[test]
+    fn discovery_potions_ignore_egg_relics() {
+        let mut c = combat_relics(
+            "cultist_solo",
+            DECK,
+            &[relic("molten_egg"), relic("toxic_egg"), relic("frozen_egg")],
+        );
+        c.use_potion(def("attack_potion"), None);
+        let ch = c.choice.as_ref().expect("攻击药剂要开屏");
+        assert!(
+            ch.offered.iter().all(|card| !card.upgraded),
+            "蛋不影响战斗中新造的牌"
+        );
+        let pick = ch.offered[0].def.id;
+        c.choose(0).unwrap();
+        assert!(!c.hand.iter().find(|x| x.def.id == pick).unwrap().upgraded);
+    }
+
+    /// 神圣树皮把发现类的"份数"翻倍:语料 ATTACK_POTION text "add[|two copies of it]",
+    /// DiscoveryAction 的 amount = hasBark ? 2 : 1(BattleContext.cpp:2255-2256),
+    /// chooseDiscoveryCard 按份数把手牌复制成多份.
+    #[test]
+    fn sacred_bark_adds_two_copies_of_the_discovered_card() {
+        let mut c = combat_relics("cultist_solo", DECK, &[relic("sacred_bark")]);
+        c.use_potion(def("attack_potion"), None);
+        assert_eq!(c.choice.as_ref().unwrap().copies, 2, "树皮翻成 2 份");
+        let pick = c.choice.as_ref().unwrap().offered[0].def.id;
+        c.choose(0).unwrap();
+        assert_eq!(
+            c.hand.iter().filter(|x| x.def.id == pick).count(),
+            2,
+            "挑中的那张给两份"
+        );
+    }
+
+    /// 塞牌类药水:反编译 BOTTLED_MIRACLE → MakeTempCardInHand(MIRACLE,false,2)、
+    /// CUNNING_POTION → MakeTempCardInHand(SHIV,true,3)(BattleContext.cpp:2274-2275/2286-2287).
+    /// 本作没有 Miracle/Shiv 这两张 special token(cards.rs 的牌池范围只到红职+无色+诅咒状态),
+    /// 于是 AddCardToHand 找不到定义就无事发生 —— 这是范围限制,不是这次要改的交互.
+    #[test]
+    fn add_card_to_hand_potions_are_inert_without_the_token_cards() {
+        assert!(crate::core::cards::card_def("miracle").is_none());
+        assert!(crate::core::cards::card_def("shiv").is_none());
+        let mut c = combat();
+        let before = c.hand.len();
+        c.use_potion(def("bottled_miracle"), None);
+        c.use_potion(def("cunning_potion"), None);
+        assert_eq!(c.hand.len(), before, "没有对应的 token 牌就不该有手牌变化");
+    }
+
+    /// 灵药(ExhaustMany):可选,能消耗任意张(含诅咒),也可以一张都不消耗.
+    /// 依据 Actions.cpp:973-978(无条件进 CARD_SELECT)、BattleContext.cpp:3067-3080(chooseExhaustCards 走 triggerAndMoveToExhaustPile).
+    #[test]
+    fn elixir_can_exhaust_curses_and_can_take_none() {
+        let mut c = combat_in("cultist_solo", &["strike", "regret", "defend", "defend", "defend"]);
+        // 可选:立刻收工,一张不消耗
+        c.use_potion(def("elixir_potion"), None);
+        assert!(c.choice.is_some(), "可选也要开屏");
+        c.finish_choice();
+        assert!(c.exhaust.is_empty(), "可以选择一张都不消耗");
+        // 消耗一张诅咒
+        c.use_potion(def("elixir_potion"), None);
+        let idx = c
+            .choice_candidates()
+            .into_iter()
+            .find(|(_, card)| card.def.id == "regret")
+            .map(|(i, _)| i)
+            .expect("悔恨在手上");
+        c.choose(idx).unwrap();
+        c.finish_choice();
+        assert!(c.exhaust.iter().any(|x| x.def.id == "regret"), "诅咒也能耗掉");
+    }
+
+    /// 锻造祝福(UpgradeAllCardsInHand):只升"可升级"的牌;诅咒/状态/已升级的牌跳过;
+    /// 灼热攻击这类多段升级一次只升一级.
+    /// 依据 Actions.cpp:901-905 与 CardInstance::upgrade(refs/sts_lightspeed/src/combat/CardInstance.cpp:135-172).
+    #[test]
+    fn blessing_of_the_forge_upgrades_only_upgradable_cards_once() {
+        let mut c = combat_in("cultist_solo", &["strike"; 5]);
+        let mut bash_plus = crate::core::cards::card("bash");
+        bash_plus.upgrade();
+        c.hand = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("wound"),
+            crate::core::cards::card("regret"),
+            bash_plus,
+            crate::core::cards::card("searing_blow"),
+        ];
+        c.use_potion(def("blessing_of_the_forge"), None);
+        let has = |id: &str| c.hand.iter().any(|x| x.def.id == id && x.upgraded);
+        assert!(has("strike"), "普通的可升级牌要升");
+        assert!(!has("wound"), "状态牌不可升级");
+        assert!(!has("regret"), "诅咒不可升级");
+        assert_eq!(
+            c.hand.iter().filter(|x| x.def.id == "bash" && x.upgraded).count(),
+            1,
+            "已升级的不重复升"
+        );
+        assert_eq!(
+            c.hand.iter().find(|x| x.def.id == "searing_blow").unwrap().plus,
+            1,
+            "多段升级一次只升一级"
+        );
+    }
+
+    /// 液态记忆:从弃牌堆拿回的牌保持原样(升级状态不丢),本回合 0 费;弃牌堆空则不开窗口.
+    /// 依据 BattleContext.cpp:2985-2991(setCostForTurn(0) 再 moveToHand)与 Actions.cpp:664-670(空堆直接 return).
+    #[test]
+    fn liquid_memories_keeps_the_card_intact_and_is_free_this_turn() {
+        // 牌组里不放 bash,免得手牌里本来就有一张没升级的 bash 干扰断言
+        let mut c = combat_in("cultist_solo", &["strike"; 5]);
+        let mut bash_plus = crate::core::cards::card("bash");
+        bash_plus.upgrade();
+        c.discard = vec![
+            bash_plus,
+            crate::core::cards::card("defend"),
+            crate::core::cards::card("strike"),
+        ];
+        c.use_potion(def("liquid_memories"), None);
+        c.choose(0).expect("拿得回来");
+        let got = c.hand.iter().find(|x| x.def.id == "bash").expect("bash 回来了");
+        assert!(got.upgraded, "升级状态保持");
+        assert!(got.free_this_turn, "本回合 0 费");
+        // 空弃牌堆不开窗口
+        let mut c = combat();
+        c.discard.clear();
+        c.use_potion(def("liquid_memories"), None);
+        assert!(c.choice.is_none(), "弃牌堆空不开窗口");
+    }
+
+    /// 蛇油(RandomizeHandCost):只重掷"能算出费用"的牌;X 费与不可打出的牌跳过.
+    /// 依据 Actions.cpp:423-433 的 `if (c.cost >= 0)`.
+    #[test]
+    fn snecko_oil_leaves_x_cost_and_unplayable_cards_alone() {
+        let mut c = combat();
+        c.hand = vec![
+            crate::core::cards::card("whirlwind"),
+            crate::core::cards::card("regret"),
+            crate::core::cards::card("strike"),
+        ];
+        c.use_potion(def("snecko_oil"), None);
+        let ww = c.hand.iter().find(|x| x.def.id == "whirlwind").unwrap();
+        assert!(
+            matches!(ww.cost(), crate::core::card::Cost::X),
+            "X 费牌不重掷"
+        );
+        assert_eq!(ww.fixed_cost(), None);
+        let rg = c.hand.iter().find(|x| x.def.id == "regret").unwrap();
+        assert!(
+            matches!(rg.cost(), crate::core::card::Cost::Unplayable),
+            "不可打出的牌不重掷"
+        );
+    }
+
+    /// 能量药水:0 能量照加;能量没有上限(可以超过 max_energy);冰激凌把没用完的能量留到下一回合;
+    /// 化学 X 让 X 费牌的 X 额外 +2.
+    /// 依据 BattleContext.cpp:2310-2312(GainEnergy)、CardManager 回合开始重置能量并保留冰激凌的余额、
+    /// 化学 X 的 x_cost_bonus(见 combat.rs play_card 的 is_x 段).
+    #[test]
+    fn energy_potion_has_no_cap_and_stacks_with_ice_cream_and_chemical_x() {
+        let mut c = combat();
+        c.energy = 0;
+        c.use_potion(def("energy_potion"), None);
+        assert_eq!(c.energy, 2, "0 能量时 +2");
+        c.energy = c.max_energy;
+        c.use_potion(def("energy_potion"), None);
+        assert_eq!(c.energy, c.max_energy + 2, "能量可以超过上限");
+
+        // 冰激凌:没用完的能量留到下一回合
+        let mut c = combat_relics("cultist_solo", DECK, &[relic("ice_cream")]);
+        c.energy = 5;
+        c.end_turn();
+        assert_eq!(c.energy, c.max_energy + 5, "冰激凌留住 5 点");
+
+        // 化学 X:能量药水打底,旋风的 X = 能量 + 2
+        let mut c = combat_relics("jaw_worm_solo", &["whirlwind"; 5], &[relic("chemical_x")]);
+        c.enemies[0].hp = 999;
+        c.energy = 0;
+        c.use_potion(def("energy_potion"), None);
+        let before = c.enemies[0].hp;
+        c.play_card(0, None).expect("旋风打得出去");
+        assert_eq!(before - c.enemies[0].hp, 5 * (2 + 2), "X = 2 能量 + 2 化学X");
+        assert_eq!(c.energy, 0, "X 费把能量全花掉");
+    }
+
+    /// 神器交互:神器药水给玩家 1 层(树皮 2 层);怪物身上的神器会顶掉恐惧/虚弱/中毒这类减益药水.
+    /// 依据 BattleContext.cpp:2251-2252 / DebuffEnemy 的 ApplyPower 路线.
+    #[test]
+    fn artifact_potion_and_enemy_artifact_interaction() {
+        let mut c = combat();
+        c.use_potion(def("ancient_potion"), None);
+        assert_eq!(c.player.statuses.get(Status::Artifact), 1);
+        let mut c = combat_relics("cultist_solo", DECK, &[relic("sacred_bark")]);
+        c.use_potion(def("ancient_potion"), None);
+        assert_eq!(c.player.statuses.get(Status::Artifact), 2, "树皮翻倍");
+
+        let mut c = combat_in("three_cultists", &["strike"]);
+        c.enemies[1].statuses.add(Status::Artifact, 1);
+        c.use_potion(def("fear_potion"), Some(1));
+        assert_eq!(c.enemies[1].statuses.get(Status::Vulnerable), 0, "神器顶掉易伤");
+        assert_eq!(c.enemies[1].statuses.get(Status::Artifact), 0, "顶掉一层");
+        assert_eq!(c.enemies[0].statuses.get(Status::Vulnerable), 0, "只打指定的那只");
+    }
+
+    /// 百分比回血与加最大生命:血药水按最大生命 20%(树皮 40%,本作按战斗外那条);
+    /// 花开彼岸把血药水的回血归零;果汁直接加最大生命、不走 heal,所以不被花开彼岸挡.
+    /// 依据 heal_player 的 no_heal 早退(refs/sts_lightspeed/src/combat/Player.cpp 的 Player::heal)
+    /// 与 BattleContext.cpp:2353-2355(increaseMaxHp).
+    #[test]
+    fn blood_and_fruit_potions_under_no_heal_and_bark() {
+        let mut c = combat();
+        c.player.hp = 40;
+        c.use_potion(def("blood_potion"), None);
+        assert_eq!(c.player.hp, 40 + 80 * 20 / 100);
+        let mut c = combat_relics("cultist_solo", DECK, &[relic("sacred_bark")]);
+        c.player.hp = 40;
+        c.use_potion(def("blood_potion"), None);
+        assert_eq!(c.player.hp, 40 + 80 * 40 / 100, "树皮 40%");
+
+        let mut c = combat_relics("cultist_solo", DECK, &[relic("mark_of_the_bloom")]);
+        c.player.hp = 40;
+        c.use_potion(def("blood_potion"), None);
+        assert_eq!(c.player.hp, 40, "花开彼岸挡掉回血");
+        c.use_potion(def("fruit_juice"), None);
+        assert_eq!(c.player.max_hp, 85, "果汁直接加最大生命");
+        assert_eq!(c.player.hp, 45, "果汁不加血而是直接改当前血");
+    }
+
+    /// 液态记忆对 X 费牌(cost=-1)的"本回合0费"是空操作:反编译 setCostForTurn 只在
+    /// costForTurn>=0 时生效,X 卡初值 -1(CardInstance.cpp:125-131);参考实现同样对
+    /// cost<0 放行(interpreter.ts:423-425).所以拿回的旋风照常按当前能量结算,不免费.
+    #[test]
+    fn liquid_memories_does_not_free_an_x_cost_card() {
+        let mut c = combat_in("jaw_worm_solo", &["strike"; 5]);
+        c.enemies[0].hp = 999;
+        c.discard = vec![
+            crate::core::cards::card("whirlwind"),
+            crate::core::cards::card("defend"),
+        ];
+        c.use_potion(def("liquid_memories"), None);
+        c.choose(0).expect("拿得回来");
+        let ww = c.hand.iter().find(|x| x.def.id == "whirlwind").expect("旋风回来了");
+        assert!(ww.free_this_turn, "标记还在,但对 X 费不生效");
+        assert_eq!(ww.fixed_cost(), None, "X 费牌不吃'本回合0费'");
+        c.energy = 3;
+        let before = c.enemies[0].hp;
+        let idx = c.hand.iter().position(|x| x.def.id == "whirlwind").unwrap();
+        c.play_card(idx, None).expect("旋风打得出去");
+        assert_eq!(before - c.enemies[0].hp, 15, "X = 3 能量 -> 5x3");
+        assert_eq!(c.energy, 0, "照常花光能量");
+    }
+
+    /// 神器顶掉"回合末收回"的 LoseX:反编译 flex/speed 先 BuffPlayer 再 DebuffPlayer,
+    /// 后者是减益,有神器就被顶掉(BattleContext.cpp:2344-2347 / Player.h:362-376),
+    /// 于是这 5 点力量永久留下.参考实现 LOSE_STRENGTH 也是 kind="debuff".
+    #[test]
+    fn flex_potion_strength_survives_when_artifact_blocks_the_loss() {
+        let mut c = combat();
+        c.use_potion(def("flex_potion"), None);
+        assert_eq!(c.player.statuses.get(Status::Strength), 5);
+        assert_eq!(c.player.statuses.get(Status::LoseStrength), 5);
+
+        // 先喝神器药水拿到 1 层神器,再喝屈伸:收回被顶掉,力量留下
+        let mut c = combat();
+        c.use_potion(def("ancient_potion"), None);
+        c.use_potion(def("flex_potion"), None);
+        assert_eq!(c.player.statuses.get(Status::Artifact), 0, "神器顶掉 Lose Strength");
+        assert_eq!(c.player.statuses.get(Status::LoseStrength), 0);
+        c.end_turn();
+        assert_eq!(c.player.statuses.get(Status::Strength), 5, "这 5 点力量不再收回");
+    }
+
+    /// 神化(Apotheosis)只升现有四个牌堆,不升"之后新造出来的牌";新造牌升级是
+    /// Master Reality(本作未实现).所以神化后喝发现类药水,候选与拿到的牌都不升级.
+    /// 依据:反编译 ApotheosisAction(Actions.cpp:1005-1032 只遍历四个牌堆);
+    /// 参考实现 colorless/effects.ts:214-225 apotheosisUpgradeAll 同口径,
+    /// 新造牌升级另挂在 mastersReality 的 modifyCreatedCardUpgrades(watcher.ts:185-196).
+    #[test]
+    fn discovery_potion_after_apotheosis_is_not_upgraded() {
+        let mut c = combat();
+        c.hand = vec![
+            crate::core::cards::card("apotheosis"),
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("defend"),
+        ];
+        c.energy = 9;
+        c.play_card(0, None).expect("神化打得出去");
+        c.use_potion(def("attack_potion"), None);
+        let ch = c.choice.as_ref().expect("攻击药剂要开屏");
+        assert!(
+            ch.offered.iter().all(|card| !card.upgraded),
+            "神化不该升级新造的候选牌"
+        );
+        let pick = ch.offered[0].def.id;
+        c.choose(0).unwrap();
+        assert!(
+            !c.hand.iter().find(|x| x.def.id == pick).unwrap().upgraded,
+            "神化之后拿到的牌不该升级"
+        );
+    }
 }

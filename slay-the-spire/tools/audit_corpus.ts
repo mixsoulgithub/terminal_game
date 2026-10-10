@@ -9,6 +9,11 @@
 //
 // 语料 text 里的数值与 values/upgrade 字段是同一份来源;本工具从 text 抽事实、
 // 用 values 做语料自洽核对,再用 `spire --sandbox-batch` 实测本作行为。
+//
+// 文本里条件/触发式/每张类效果进口径的方式:能直测的写进 cardFacts;需要额外触发的
+// 用探针(conditionalScenarios 等);测不了的登记进 CARD_NOT_COMPARED / POTION_NOT_COMPARED
+// 或按原因归类(遗物)。报告末尾"口径覆盖"一节会把"有数值效果却没进口径、又没登记"
+// 的文本列出来,避免哨卫"消耗回能"那类静默漏检。
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -134,6 +139,16 @@ function pick(tok: string, up: boolean): number | null {
   const m = chosen.match(/\d+/);
   return m ? Number(m[0]) : null;
 }
+/**
+ * 取 [@RE @RE|@RE @RE @RE] 里的能量图标个数。能量在语料里用 @RE 表示、不带数字,
+ * `pick` 取不到;两级值只需数对应一级里的 @RE 个数。
+ */
+function reCount(tok: string, up: boolean): number {
+  const inner = tok.startsWith("[") && tok.endsWith("]") ? tok.slice(1, -1) : tok;
+  const parts = inner.split("|");
+  const chosen = up && parts.length > 1 ? parts[1]! : parts[0]!;
+  return (chosen.match(/@RE/g) ?? []).length;
+}
 
 // ---- 事实模型 ----
 type Fact =
@@ -165,98 +180,113 @@ const POWER_KEY: Record<string, string> = {
 };
 
 /**
- * 从牌的语料文本抽数值事实。只认直白的 "Deal N damage" / "Gain N Block" /
- * "Apply N X" / "Gain N X" / "Draw N" / "Lose N HP" / "Gain @RE";
- * 带条件(If/Whenever/for each/equal to)或没数值的句子一律不认,
- * 牌会被标成"未覆盖"而不是误判成我们错。
+ * 解析单行文本得到数值事实。
+ * 返回 null 表示这一行不匹配任何已知模式(口径外:需登记或加探针,由报告
+ * "口径覆盖"一节暴露);返回 [] 表示匹配但属于"条件/每张"类,本行不直接产生
+ * 可比数值。
+ */
+function lineFacts(l: string, up: boolean): Fact[] | null {
+  // Deal N damage [to ALL enemies / to a random enemy] [N times | twice]
+  let m = l.match(/^Deal\s+(\[[^\]]*\]|\S+)\s+damage(.*)$/);
+  if (m) {
+    const rest = m[2]!;
+    const dmg = pick(m[1]!, up);
+    if (dmg === null || dmg <= 0 || /for each/.test(rest)) return [];
+    let hits = 1;
+    const times = rest.match(/(\[[^\]]*\]|\S+)\s+times\b/);
+    if (times) hits = pick(times[1]!, up) ?? 1;
+    else if (/\btwice\b/.test(rest)) hits = 2;
+    return [{ k: "damage", v: dmg * hits }];
+  }
+  // Gain N Block
+  m = l.match(/^Gain\s+(\[[^\]]*\]|\S+)\s+Block\b/);
+  if (m) {
+    if (/for each/.test(l)) return [];
+    const b = pick(m[1]!, up);
+    return b !== null ? [{ k: "block", v: b }] : [];
+  }
+  // Apply N Weak/Vulnerable/Frail(可带 "and ..." 一并处理)
+  m = l.match(/^Apply\s+(\[[^\]]*\]|\S+)\s+(Weak|Vulnerable|Frail)\b/);
+  if (m) {
+    const out: Fact[] = [];
+    const v = pick(m[1]!, up);
+    if (v !== null) out.push({ k: "enemy_power", name: POWER_KEY[m[2]!]!, v });
+    const and = l.match(/and\s+(?:N\s+)?(Weak|Vulnerable|Frail)\b/);
+    if (and && m[2] !== and[1] && v !== null) out.push({ k: "enemy_power", name: POWER_KEY[and[1]!]!, v });
+    return out;
+  }
+  // 句中 apply N Vulnerable(thunderclap)
+  m = l.match(/\bapply\s+(\[[^\]]*\]|\S+)\s+(Weak|Vulnerable|Frail)\b/);
+  if (m) {
+    const v = pick(m[1]!, up);
+    return v !== null ? [{ k: "enemy_power", name: POWER_KEY[m[2]!]!, v }] : [];
+  }
+  // Enemy loses N Strength(disarm)
+  m = l.match(/^Enemy loses\s+(\[[^\]]*\]|\S+)\s+Strength\b/);
+  if (m) {
+    const v = pick(m[1]!, up);
+    return v !== null ? [{ k: "enemy_power", name: "strength", v: -v }] : [];
+  }
+  // Gain N Strength/Dexterity/...
+  m = l.match(/^Gain\s+(\[[^\]]*\]|\S+)\s+(Strength|Dexterity|Artifact|Thorns|Metallicize|Plated Armor|Regeneration|Intangible|Ritual|Focus)\b/);
+  if (m) {
+    const v = pick(m[1]!, up);
+    return v !== null ? [{ k: "player_power", name: POWER_KEY[m[2]!]!, v }] : [];
+  }
+  // Gain @RE(@RE ...) / Gain [@RE@RE|@RE@RE@RE] -> 能量(两级值按 @RE 个数;句末可有标点)
+  m = l.match(/^Gain\s+(\[@RE[^\]]*\][^\n]*|@RE.*)$/);
+  if (m) {
+    const n = reCount(m[1]!, up);
+    return n > 0 ? [{ k: "energy", v: n }] : [];
+  }
+  // Draw N cards
+  m = l.match(/^Draw\s+(\[[^\]]*\]|\S+)/);
+  if (m) {
+    const v = pick(m[1]!, up);
+    return v !== null ? [{ k: "draw", v }] : [];
+  }
+  // Lose N HP
+  m = l.match(/^Lose\s+(\[[^\]]*\]|\S+)\s+HP\b/);
+  if (m) {
+    const v = pick(m[1]!, up);
+    return v !== null ? [{ k: "self_hp", v: -v }] : [];
+  }
+  // Heal N HP
+  m = l.match(/^Heal\s+(\[[^\]]*\]|\S+)\s+HP\b/);
+  if (m) {
+    const v = pick(m[1]!, up);
+    return v !== null ? [{ k: "self_hp", v }] : [];
+  }
+  return null;
+}
+
+/**
+ * 从牌的语料文本抽数值事实。只认行首直白的 "Deal N damage" / "Gain N Block" /
+ * "Apply N X" / "Gain N X" / "Draw N" / "Lose N HP" / "Gain @RE"(含 [@RE|@RE])。
+ * 句中条件句(If/Whenever/At the ...)、每张/等于类、没数值的句子不产生事实:
+ * 这些交给 CARD_SPECIAL / POWER_STACK / 探针,或登记进 CARD_NOT_COMPARED,
+ * 由报告"口径覆盖"一节显式暴露,不静默跳过。
  */
 function cardFacts(card: CorpusCard, up: boolean): Fact[] {
   const facts: Fact[] = [];
   for (const line of norm(card.text).split("\n")) {
-    const l = line.trim();
-    // Deal N damage [to ALL enemies / to a random enemy] [N times | twice]
-    let m = l.match(/^Deal\s+(\[[^\]]*\]|\S+)\s+damage(.*)$/);
-    if (m) {
-      const rest = m[2]!;
-      const dmg = pick(m[1]!, up);
-      if (dmg !== null && dmg > 0 && !/for each/.test(rest)) {
-        let hits = 1;
-        const times = rest.match(/(\[[^\]]*\]|\S+)\s+times\b/);
-        if (times) hits = pick(times[1]!, up) ?? 1;
-        else if (/\btwice\b/.test(rest)) hits = 2;
-        facts.push({ k: "damage", v: dmg * hits });
-      }
-      continue;
-    }
-    // Gain N Block
-    m = l.match(/^Gain\s+(\[[^\]]*\]|\S+)\s+Block\b/);
-    if (m) {
-      if (!/for each/.test(l)) {
-        const b = pick(m[1]!, up);
-        if (b !== null) facts.push({ k: "block", v: b });
-      }
-      continue;
-    }
-    // Apply N Weak/Vulnerable/Frail(可带 "and ..." 一并处理)
-    m = l.match(/^Apply\s+(\[[^\]]*\]|\S+)\s+(Weak|Vulnerable|Frail)\b/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "enemy_power", name: POWER_KEY[m[2]!]!, v });
-      const and = l.match(/and\s+(?:N\s+)?(Weak|Vulnerable|Frail)\b/);
-      if (and && m[2] !== and[1] && v !== null) facts.push({ k: "enemy_power", name: POWER_KEY[and[1]!]!, v });
-      continue;
-    }
-    // 句中 apply N Vulnerable(thunderclap)
-    m = l.match(/\bapply\s+(\[[^\]]*\]|\S+)\s+(Weak|Vulnerable|Frail)\b/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "enemy_power", name: POWER_KEY[m[2]!]!, v });
-      continue;
-    }
-    // Enemy loses N Strength(disarm)
-    m = l.match(/^Enemy loses\s+(\[[^\]]*\]|\S+)\s+Strength\b/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "enemy_power", name: "strength", v: -v });
-      continue;
-    }
-    // Gain N Strength/Dexterity/...
-    m = l.match(/^Gain\s+(\[[^\]]*\]|\S+)\s+(Strength|Dexterity|Artifact|Thorns|Metallicize|Plated Armor|Regeneration|Intangible|Ritual|Focus)\b/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "player_power", name: POWER_KEY[m[2]!]!, v });
-      continue;
-    }
-    // Gain @RE(@RE ...) -> 能量
-    m = l.match(/^Gain\s+(@RE.*)$/);
-    if (m) {
-      const base = m[1]!.split("|")[0]!;
-      const n = (base.match(/@RE/g) ?? []).length;
-      if (n > 0) facts.push({ k: "energy", v: n });
-      continue;
-    }
-    // Draw N cards
-    m = l.match(/^Draw\s+(\[[^\]]*\]|\S+)/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "draw", v });
-      continue;
-    }
-    // Lose N HP
-    m = l.match(/^Lose\s+(\[[^\]]*\]|\S+)\s+HP\b/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "self_hp", v: -v });
-      continue;
-    }
-    // Heal N HP
-    m = l.match(/^Heal\s+(\[[^\]]*\]|\S+)\s+HP\b/);
-    if (m) {
-      const v = pick(m[1]!, up);
-      if (v !== null) facts.push({ k: "self_hp", v });
-    }
+    const f = lineFacts(line.trim(), up);
+    if (f) facts.push(...f);
   }
   return facts;
+}
+
+/** 效果句判据:含效果动词 + 数字/@RE,用来找"有数值效果但没进口径"的文本 */
+const EFFECT_VERB = /(deal|deals|gain|draw|apply|lose|heal|exhaust|add|shuffle|put|increase|double|costs|reduce|play)/i;
+/** 该牌文本里"有数值效果但 lineFacts 认不出"的行(口径盲区候选) */
+function unparsedEffectLines(card: CorpusCard): string[] {
+  const out: string[] = [];
+  for (const raw of norm(card.text).split("\n")) {
+    const l = raw.trim();
+    if (!l || !EFFECT_VERB.test(l) || !/\d|@RE/.test(l)) continue;
+    if (lineFacts(l, false) === null) out.push(l);
+  }
+  return out;
 }
 
 /** 抽出来的数值事实与 values/upgrade 字段对不对得上(语料自洽检查) */
@@ -375,6 +405,34 @@ const CARD_HAND_LOSS: Record<string, number> = {
   burning_pact: 1,
   warcry: 1,
   thinking_ahead: 1,
+};
+
+/**
+ * 不参与自动比对的牌:文本里确有数值效果,但当前沙盒/审计口径量不出(战斗外结算、
+ * 随机交互、需要重复打出或敌方时序等)。显式登记原因,避免静默跳过。
+ * 这些牌仍有其它事实被比对(如格挡/伤害);这里只登记"没被比对"的那部分效果。
+ */
+const CARD_NOT_COMPARED: Record<string, string> = {
+  parasite: "被变形/移出牌组时掉 3 最大 HP:发生在战斗外,沙盒只跑一场战斗",
+  true_grit: "消耗 1 张手牌(基础随机/升级指定):只核对格挡,张数交互不比对",
+  rampage: "伤害按该牌本场已打出次数递增:单次打出量不出成长",
+  feed: "若致命则 +3/4 最大 HP:需致命一击,普通局面量不出",
+  hand_of_greed: "若致命则 +20/25 金币:需致命一击,且金币不在战斗快照里",
+  flame_barrier: "被攻击时反伤 4/6:需要同一回合内敌方先攻击,当前探针未建模敌方攻击时序",
+  berserk: "每回合开始 +@RE:回合开始会重置能量,单场快照量不出增量",
+  burning_pact: "消耗 1 张手牌:张数交互不比对",
+  blood_for_blood: "费用按本场掉血次数递减:需要打出前的费用探针,未建模",
+  // 以下为无数字的造牌/洗牌/置顶/升级/抽牌限制类效果,数值审计无法直测
+  armaments: "升级手牌[a card|all cards]:升级交互不比对(仅核对格挡)",
+  headbutt: "把弃牌堆一张放回抽牌堆顶:选牌交互不比对(仅核对伤害)",
+  warcry: "把手牌一张放回抽牌堆顶:选牌交互不比对(仅核对抽牌)",
+  sever_soul: "消耗全部非攻击手牌:手牌交互不比对(仅核对伤害)",
+  anger: "把本牌副本塞进弃牌堆:造牌不比对(仅核对伤害)",
+  wild_strike: "洗一张伤口进抽牌堆:造牌不比对(仅核对伤害)",
+  immolate: "塞一张燃烧进弃牌堆:造牌不比对(仅核对伤害)",
+  reckless_charge: "洗一张眩晕进抽牌堆:造牌不比对(仅核对伤害)",
+  reaper: "回复量等于未被格挡的伤害:按战况变,不比对(仅核对伤害)",
+  battle_trance: "本回合不能再抽牌:限制类不比对(仅核对抽牌数)",
 };
 
 function cardScenarios(): void {
@@ -1158,6 +1216,85 @@ function choiceScenarios(): void {
   }
 }
 
+/**
+ * 条件/触发式效果的探针:数值要靠额外触发(被消耗/敌人带易伤/回合末/造牌)才量得出,
+ * "打一下"的口径测不到,单独摆局面实测。期望值仍从语料文本抽。
+ */
+function conditionalScenarios(): void {
+  // 哨卫:被消耗时回能 [@RE@RE|@RE@RE@RE]。用净化(0 费、指定消耗)把它消耗掉,读能量净增。
+  for (const level of ["base", "up"] as const) {
+    const c = cardByGame.get("sentinel")!;
+    const up = level === "up";
+    const tok = up ? "sentinel+" : "sentinel";
+    const line = norm(c.text).split("\n").find((l) => /@RE/.test(l))!;
+    const gain = reCount(line.match(/(\[@RE[^\]]*\]|@RE\S*)/)![1]!, up);
+    pushProbe(
+      "sentinel",
+      level,
+      `${level}_exhaust_energy`,
+      [{ k: "probe", key: "energy_gain", v: gain }],
+      (rows) => ({ energy_gain: lastSt(rows).energy - firstSt(rows).energy }),
+      playBoard({
+        hand: ["purity", tok],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0, choose: [0] }],
+      }),
+    );
+  }
+  // 冲刺踢:敌人带易伤时回 1 能并抽 1 张。摆好易伤,读能量净增(1-费用)与抽牌数。
+  for (const level of ["base", "up"] as const) {
+    const c = cardByGame.get("dropkick")!;
+    const up = level === "up";
+    const tok = up ? "dropkick+" : "dropkick";
+    const cost = (up ? c.upgrade.cost : c.cost) ?? 0;
+    pushProbe(
+      "dropkick",
+      level,
+      `${level}_vulnerable_bonus`,
+      [{ k: "probe", key: "energy_gain", v: 1 - cost }, { k: "probe", key: "drawn", v: 1 }],
+      (rows) => ({
+        energy_gain: lastSt(rows).energy - firstSt(rows).energy,
+        drawn: lastSt(rows).hand.length - (firstSt(rows).hand.length - 1),
+      }),
+      playBoard({
+        hand: [tok, "defend"],
+        enemies: [{ id: "cultist", hp: 999, max_hp: 999, move: "Incantation", powers: { vulnerable: 2 } }],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+  // 屈伸:本回合 +N 力量,回合末收回。打完后过一回合,力量应回到 0。
+  for (const level of ["base", "up"] as const) {
+    const tok = level === "up" ? "flex+" : "flex";
+    pushProbe(
+      "flex",
+      level,
+      `${level}_temporary_strength`,
+      [{ k: "probe", key: "strength_after_end_turn", v: 0 }],
+      (rows) => ({ strength_after_end_turn: lastSt(rows).player.powers.strength ?? 0 }),
+      playBoard({
+        hand: [tok, "defend", "strike"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }, { op: "end_turn" }],
+      }),
+    );
+  }
+  // 力劈华山:往手里塞 2 张伤口。打完手牌 = 原手牌 -1 + 伤口数。
+  {
+    const c = cardByGame.get("power_through")!;
+    const wounds = Number(norm(c.text).match(/Add (\d+)/)![1]);
+    pushProbe(
+      "power_through",
+      "base",
+      "add_wounds",
+      [{ k: "probe", key: "hand", v: wounds + 1 }],
+      (rows) => ({ hand: lastSt(rows).hand.length }),
+      playBoard({
+        hand: ["power_through", "defend"],
+        actions: [{ op: "noop" }, { op: "play", hand: 0, target: 0 }],
+      }),
+    );
+  }
+}
+
 function potionFacts(p: CorpusPotion, mul: number): Fact[] {
   const facts: Fact[] = [];
   const t = norm(p.text);
@@ -1176,6 +1313,36 @@ function potionFacts(p: CorpusPotion, mul: number): Fact[] {
   return facts;
 }
 
+/**
+ * 不参与自动比对的药水:文本里没有可当次用药直测的数值效果(随机池、选牌、姿态、
+ * 战斗外结算等)。显式登记原因,避免静默跳过。
+ */
+const POTION_NOT_COMPARED: Record<string, string> = {
+  ambrosia: "进入神性(姿态):姿态系统不在本口径",
+  attack_potion: "三选一随机攻击牌并加入手牌:随机池/选牌交互",
+  blessing_of_the_forge: "升级整手牌:无当次用药的稳定数值",
+  bottled_miracle: "加入 2/4 张奇迹牌:手牌构成交互",
+  colorless_potion: "三选一随机无色牌:随机池/选牌交互",
+  cunning_potion: "加入 3/6 张 Shivs+:手牌构成交互",
+  distilled_chaos: "打出抽牌堆顶 3/6 张:随机/连锁结算",
+  duplication_potion: "下 1/2 张牌打两次:触发式,非当次数值",
+  elixir_potion: "消耗任意张手牌:交互式(无固定张数)",
+  entropic_brew: "填满空药水槽为随机药水:随机池/战斗外",
+  essence_of_darkness: "按球槽数引导黑暗:充能球机制",
+  fairy_potion: "致死时回血 30%/60%:需致死局面",
+  fruit_juice: "增加 5/10 最大 HP:战斗外结算",
+  gamblers_brew: "弃任意张再抽等量:交互式(无固定张数)",
+  liquid_memories: "从弃牌堆取回牌:选牌交互",
+  potion_of_capacity: "增加 2/4 球槽:充能球机制",
+  power_potion: "三选一随机能力牌:随机池/选牌交互",
+  skill_potion: "三选一随机技能牌:随机池/选牌交互",
+  smoke_bomb: "逃离战斗:战斗外结算",
+  stance_potion: "进入平静/愤怒(姿态):姿态系统不在本口径",
+};
+
+/** 没有抽出任何数值事实的药水 id(potionScenarios 里记录,供"口径覆盖"检查) */
+const potionNoFacts = new Set<string>();
+
 function potionScenarios(): void {
   for (const id of ourPotions) {
     if (gated.has(`potion/${id}`)) continue;
@@ -1186,7 +1353,10 @@ function potionScenarios(): void {
     if (p.potency?.sacredBarkDoubles) variants.push([`${id}/bark`, 2, ["sacred_bark"]]);
     for (const [name, mul, relics] of variants) {
       const facts = potionFacts(p, mul);
-      if (facts.length === 0) continue;
+      if (facts.length === 0) {
+        potionNoFacts.add(id);
+        continue;
+      }
       list.push({
         name: `potions/${name}`,
         kind: "potions",
@@ -1216,10 +1386,34 @@ const RELIC_RULES: RelicRule[] = [
   { re: /Start each combat with (\d+) (Strength|Dexterity|Focus)/, fact: (m) => ({ k: "player_power", name: POWER_KEY[m[2]!] ?? m[2]!.toLowerCase(), v: Number(m[1]) }) },
   { re: /At the start of each combat, gain (\d+) (Strength|Dexterity|Plated Armor|Focus)/, fact: (m) => ({ k: "player_power", name: POWER_KEY[m[2]!] ?? m[2]!.toLowerCase(), v: Number(m[1]) }) },
   { re: /At the start of each combat, apply (\d+) (Vulnerable|Weak|Poison) to ALL enemies/, fact: (m) => ({ k: "enemy_power", name: POWER_KEY[m[2]!]!, v: Number(m[1]) }) },
+  { re: /Start each combat with (\d+) (Weak|Vulnerable)/, fact: (m) => ({ k: "player_power", name: POWER_KEY[m[2]!]!, v: Number(m[1]) }) },
   { re: /At the start of each combat, draw (\d+) additional cards?/, fact: (m) => ({ k: "draw", v: Number(m[1]) }), deck: true },
   { re: /Gain (\d+) Energy on the first turn of each combat/, fact: (m) => ({ k: "energy", v: Number(m[1]) }) },
   { re: /At the start of each combat, heal (\d+) HP/, fact: (m) => ({ k: "self_hp", v: Number(m[1]) }) },
 ];
+
+/**
+ * 遗物的"不参与自动比对"归类:RELIC_RULES 只覆盖"开局就在场"的固定数值效果,
+ * 其余按文本归入下列类别(显式登记,不静默跳过)。仅对未被 RELIC_RULES 匹配的
+ * 遗物调用。
+ */
+function relicSkipReason(t: string): string {
+  if (/Orb|Channel|Focus/i.test(t)) return "充能球机制(未建模)";
+  if (/Scry/i.test(t)) return "预见(未建模)";
+  if (/Divinity|Calm|Wrath|Stance/i.test(t)) return "姿态(未建模)";
+  if (/At the start of each combat|Start each combat|first turn of each combat/i.test(t))
+    return "开局触发但含选择/随机/交互(未建模)";
+  if (/Whenever|Every time|Every \d+|At the (start|end) of|When you|If you|While/i.test(t))
+    return "战斗内触发式(需时序探针,未建模)";
+  if (/Gold|shop|Merchant|Card Reward|pick ?up|obtain|add a card to your deck|Chest|\broom\b|Map/i.test(t))
+    return "战斗外(金币/地图/奖励/牌组)";
+  if (/Rest|heal|Max HP|die/i.test(t)) return "战斗外(营火/治疗/最大生命/致死)";
+  if (/Double the effectiveness|% more|% less|rather than/i.test(t)) return "数值修正(替换基准百分比)";
+  return "其它(未分类)";
+}
+
+/** RELIC_RULES 未覆盖的遗物 id(记录,供"口径覆盖"检查) */
+const relicNoMatch = new Set<string>();
 
 function relicScenarios(): void {
   for (const id of ourRelics) {
@@ -1227,6 +1421,7 @@ function relicScenarios(): void {
     const r = relicByGame.get(id);
     if (!r) continue;
     const t = norm(r.text);
+    let matched = false;
     for (const rule of RELIC_RULES) {
       const m = t.match(rule.re);
       if (!m) continue;
@@ -1242,8 +1437,10 @@ function relicScenarios(): void {
         scenario: initBoard({ relics: [id], ...extra }),
         mode: "init",
       });
+      matched = true;
       break;
     }
+    if (!matched) relicNoMatch.add(id);
   }
 }
 
@@ -1252,6 +1449,7 @@ if (want("cards")) {
   curseStatusScenarios();
   powerScenarios();
   choiceScenarios();
+  conditionalScenarios();
 }
 if (want("potions")) potionScenarios();
 if (want("relics")) relicScenarios();
@@ -1429,6 +1627,30 @@ for (const s of list) {
 const coveredCardIds = new Set(list.filter((s) => s.kind === "cards").map((s) => s.id));
 const unaudited = ourCards.filter((id) => !coveredCardIds.has(id));
 
+// 口径覆盖检查:已实现牌的文本里"有数值效果但 lineFacts 认不出"的行,必须被
+// hand-written 场景(CARD_SPECIAL/POWER_STACK/探针)覆盖,或登记进 CARD_NOT_COMPARED;
+// 否则列进 blind —— 这正是哨卫"消耗回能"漏检的那类盲区。
+const handWritten = new Set<string>([
+  ...Object.keys(CARD_SPECIAL),
+  ...Object.keys(POWER_STACK),
+  ...Object.keys(CARD_SKIP),
+  ...list.filter((s) => s.probe).map((s) => s.id),
+]);
+const blind: string[] = [];
+for (const id of ourCards) {
+  const c = cardByGame.get(id);
+  if (!c || handWritten.has(id) || CARD_NOT_COMPARED[id]) continue;
+  const lines = unparsedEffectLines(c);
+  if (lines.length > 0) blind.push(`${id}: ${lines.join(" | ")}`);
+}
+const potionBlind = ourPotions.filter((id) => potionNoFacts.has(id) && !POTION_NOT_COMPARED[id]);
+const relicReasons: Record<string, string[]> = {};
+for (const id of relicNoMatch) {
+  const r = relicByGame.get(id);
+  const reason = r ? relicSkipReason(norm(r.text)) : "语料里没有";
+  (relicReasons[reason] ??= []).push(id);
+}
+
 const selfIssues: string[] = [];
 for (const id of ourCards) {
   const c = cardByGame.get(id);
@@ -1501,6 +1723,30 @@ for (const m of mismatches) {
 }
 report.push("");
 report.push(`未覆盖的牌(${unaudited.length}): ${unaudited.join(", ")}`);
+
+report.push("");
+report.push("口径覆盖(防未来盲区):");
+if (want("cards")) {
+  report.push(`  卡片侧未登记盲区: ${blind.length === 0 ? "无" : `${blind.length} 张`}`);
+  for (const b of blind) report.push(`    ${b}`);
+  report.push(`  卡片不参与自动比对(CARD_NOT_COMPARED): ${Object.keys(CARD_NOT_COMPARED).length} 张`);
+  for (const [k, v] of Object.entries(CARD_NOT_COMPARED)) report.push(`    ${k}: ${v}`);
+}
+if (want("potions")) {
+  report.push(`  药水侧未登记盲区: ${potionBlind.length === 0 ? "无" : `${potionBlind.length} 瓶`}`);
+  for (const b of potionBlind) report.push(`    ${b}`);
+  report.push(`  药水不参与自动比对(POTION_NOT_COMPARED): ${Object.keys(POTION_NOT_COMPARED).length} 瓶`);
+  for (const [k, v] of Object.entries(POTION_NOT_COMPARED)) report.push(`    ${k}: ${v}`);
+}
+if (want("relics")) {
+  report.push(
+    `  遗物不参与自动比对: ${relicNoMatch.size} 件(RELIC_RULES 覆盖 ${totals.relics} 件;gated 已单独排除),按原因分组:`,
+  );
+  for (const [reason, ids] of Object.entries(relicReasons)) {
+    const suffix = reason.startsWith("其它") || reason.startsWith("语料") ? ` -> ${ids.join(", ")}` : "";
+    report.push(`    ${reason}: ${ids.length} 件${suffix}`);
+  }
+}
 
 const text = report.join("\n") + "\n";
 process.stdout.write(text);

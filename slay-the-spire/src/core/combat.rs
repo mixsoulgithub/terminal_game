@@ -489,8 +489,6 @@ pub struct Combat {
     pub carry_energy: i32,
     /// 开打前休息过(古代茶具)
     pub rested: bool,
-    /// 本场战斗的牌都算已升级(神化);之后新加进来的牌也直接升级
-    all_upgraded: bool,
     /// 本回合已经打出几张牌(浮夸每 5 张结算一次)
     cards_played: i32,
     /// 定时炸弹:(剩余回合, 伤害)
@@ -714,7 +712,6 @@ impl Combat {
             rs: RelicState::default(),
             carry_energy: 0,
             rested: setup.rested,
-            all_upgraded: false,
             cards_played: 0,
             bombs: Vec::new(),
             relic_thorns: 0,
@@ -3162,9 +3159,6 @@ impl Combat {
             };
             card.cost_delta = -(self.hp_losses.min(base));
         }
-        if self.all_upgraded {
-            card.upgrade();
-        }
     }
 
     /// 调试用:开一个"从手牌里删牌"的选择(调试键要能看到窗口,按可选处理)
@@ -3777,31 +3771,57 @@ impl Combat {
     /// 玩家攻击一次的计算:力量、虚弱、目标易伤.原版把加伤与乘伤放在同一条
     /// float 链上,末尾(连同目标侧的飞行/慢速)只向下取整一次,所以这里不取整,
     /// 把 float 交给 damage_enemy_f32(卡牌路径).
+    ///
+    /// 玩家 -> 敌人的攻击伤害折叠全序,照反编译 BattleContext::calculateCardDamage
+    /// (refs/sts_lightspeed/src/combat/BattleContext.cpp:2671-2755).每行 =
+    /// 来源(钩子) | give/receive | 加/乘 | 本作实现位置:
+    ///   1  base(牌面/效果值)                       base        resolve_effects
+    ///   2  Strike Dummy 打击假人 +3(遗物 atDamageModify)| give  | 加 | resolve_effects 的 relic_add
+    ///   3  Wrist Blade 腕刃 +4(遗物 atDamageModify,本回合费用 0)| give | 加 | resolve_effects 的 relic_add
+    ///   4  +Strength 力量(power AtDamageGive)        | give    | 加 | 本函数(按 powers 挂载顺序折 statuses)
+    ///   5  +Vigor 活力,赤牛(power AtDamageGive)      | give    | 加 | 本函数(rs.vigor)
+    ///   6  DoubleDamage 幻影 x2(power AtDamageGive)  | give    | 乘 | 未实现(青职 Silent,超出本作范围)
+    ///   7  PenNib 笔尖 x2(power AtDamageGive,第 10 张攻击)| give | 乘 | 本函数(rs.pen_nib == 9)
+    ///   8  Weak 自身虚弱 x0.75(power AtDamageGive)   | give    | 乘 | 本函数(statuses 折叠)
+    ///   9  Wrath x2 / Divinity x3(stance AtDamageGive)| give   | 乘 | 未实现(观者 Watcher,超出范围)
+    ///  10  Slow 慢速 x(1+0.1n)(enemy AtDamageReceive) | receive | 乘 | reduce_incoming
+    ///  11  Vulnerable 易伤 x1.5 / 纸蛙 Paper Phrog x1.75(enemy AtDamageReceive)| receive | 乘 | 本函数
+    ///  12  Flight 飞行 x0.5(enemy AtDamageReceiveFinal)| receive | 乘 | reduce_incoming
+    ///  13  Intangible 无形 -> 1(enemy AtDamageReceiveFinal)| receive | 取值 | reduce_incoming
+    ///      floor 一次                    |         |    | reduce_incoming
+    ///      clamp >= 0                    |         |    | reduce_incoming
+    /// 之后才是应用侧(反编译 Monster::attacked / attackedUnblockedHelper,
+    /// Monster.cpp:339-440):扣格挡 -> The Boot 靴子(未格挡 1..4 抬到 5)->
+    /// Hand Drill 手钻破格挡上易伤 -> 无敌上限 -> 掉血/挨打钩子,见 hit_enemy_final.
+    /// 注意:力量/活力的"加法"必须全部排在笔尖/虚弱这类"乘法"之前
+    /// (反编译里 4/5 在 7/8 之前),否则 (base+力量)x2 会被算成 basex2+力量.
+    /// 两处口径说明:力量/虚弱按 powers 挂载顺序折(不写死"先力量后虚弱",见
+    /// status.rs 的 entries 注释);慢速在 reduce_incoming、易伤在本函数,实际乘序是
+    /// 易伤 -> 慢速(与反编译的慢速 -> 易伤相反),两者都是乘,整数结果不变.
     fn player_attack_damage(&self, raw: i32, target: usize, is_attack: bool) -> f32 {
-        // 笔尖:每第 10 张攻击牌的伤害翻倍.原版把它挂在 relics 的 atDamageGive 上,
-        // 排在玩家侧的力量/虚弱**之前**(参考 damageCalc.ts:base → relic atDamageGive →
-        // power atDamageGive),所以这里在加活力/力量之前就把基数翻倍.
-        // 集中在这一处,所有走本函数的攻击伤害效果(含狂暴 DamageWithBonus、回旋镖
-        // DamageRandom、重击 DamageEqualBlock、完美打击 DamagePerStrike 等)才会一致.
-        let raw = if is_attack && self.rs.pen_nib == 9 && self.relic_any(|fx| fx.double_damage_per_10_attacks) {
-            raw * 2
-        } else {
-            raw
-        };
         // 活力(Akabeko 的 8 点):只加在攻击牌的伤害上,和原版的 atDamageGive 一致
         let vigor = if is_attack { self.rs.vigor } else { 0 };
-        // 原版把加伤与乘伤一起按 float 连乘,末尾只向下取整一次,所以中间不能各自 floor
-        let mut d = (raw + vigor) as f32;
-        // 身上这些加成在原版都是 atDamageGive,按挂载顺序依次折叠:
-        // 力量加一次、虚弱乘一次,谁先挂谁先算(先虚弱后力量会比反过来少 1 点).
+        // 原版把加伤与乘伤一起按 float 连乘,末尾只向下取整一次,所以中间不能各自 floor.
+        // 力量/虚弱都是 powers 的 atDamageGive,按 powers 挂载顺序依次折叠
+        // (原版就是按 powers List 的顺序走;先虚弱后力量会比反过来少 1 点).
         // 玩家自己的虚弱固定 -25%(原版 calculateCardDamage 写死 .75);纸鹤只作用于
         // 怪物侧的虚弱,见 enemy_attack_damage.
+        let mut d = (raw + vigor) as f32;
         for (s, n) in self.player.statuses.entries() {
             match s {
                 Status::Strength => d += *n as f32,
                 Status::Weak => d *= 0.75,
                 _ => {}
             }
+        }
+        // 笔尖:每第 10 张攻击牌的伤害翻倍.反编译把它当 powers 的 AtDamageGive,
+        // 排在力量/活力**之后**(BattleContext.cpp:2698-2700,在 2689 的 +STRENGTH 与
+        // 2691 的 +VIGOR 之后),所以这里乘的是加完力量/活力以后的值,不能再拿基数翻倍.
+        // (笔尖与虚弱同为乘法,谁先谁后不影响结果.)
+        // 集中在这一处,所有走本函数的攻击伤害效果(含狂暴 DamageWithBonus、回旋镖
+        // DamageRandom、重击 DamageEqualBlock、完美打击 DamagePerStrike 等)才会一致.
+        if is_attack && self.rs.pen_nib == 9 && self.relic_any(|fx| fx.double_damage_per_10_attacks) {
+            d *= 2.0;
         }
         if self.enemies[target].statuses.has(Status::Vulnerable) {
             // 纸蛙:易伤多受 75% 伤害(默认 50%)
@@ -3811,7 +3831,24 @@ impl Combat {
         d.max(0.0)
     }
 
-    /// 敌人攻击一次的计算
+    /// 敌人攻击一次的计算.
+    ///
+    /// 敌人 -> 玩家的攻击伤害折叠全序,照反编译 Monster::calculateDamageToPlayer
+    /// (refs/sts_lightspeed/src/combat/Monster.cpp:561-597):
+    ///   1  base + 怪物自身 STRENGTH(加法,最前)         | give    | 加 | 本函数(statuses)
+    ///   2  Surrounded 被夹击(背对)x1.5                 | give    | 乘 | 本函数
+    ///   3  怪物自身 WEAK x0.75 / 纸鹤 Paper Krane x0.6   | give    | 乘 | 本函数(weak_pct)
+    ///   4  玩家 VULNERABLE x1.5 / 奇异蘑菇 Odd Mushroom x1.25 | receive | 乘 | 本函数
+    ///   5  玩家 Wrath x2(stance receive)                | receive | 乘 | 未实现(观者,超范围)
+    ///   6  玩家 INTANGIBLE -> min(d,1)                   | receive | 取值 | hit_player_kind(开头)
+    ///      floor 一次 + clamp >= 0                       |         |    | 本函数
+    /// 之后的应用侧(反编译 Player::attacked 210-257 / Player::damage 174-208):
+    ///   扣格挡 -> Buffer(化石螺壳)免掉 -> 鸟居 Torii(1..5 -> 1)->
+    ///   钨钢棒 Tungsten Rod(-1)-> 镀甲/掉血,见 hit_player_kind.
+    /// 力量是唯一的加法,排在乘法之前;本作按 powers 挂载顺序折(status.rs 的 entries
+    /// 注释即此意,等同原版 powers List 的顺序),反编译这里写死"力量先、虚弱后",两种口径
+    /// 只在"虚弱先挂、力量后挂"时差 1 点.另:Weak 与 Surrounded 的乘序在本作对调了
+    /// (Weak 在 statuses 折叠里、Surrounded 在后),两者都是乘,整数结果不变.
     fn enemy_attack_damage(&self, idx: usize, raw: i32) -> i32 {
         // 同样按 float 连乘,末尾只 floor 一次
         let mut d = raw as f32;
@@ -3939,7 +3976,9 @@ impl Combat {
         m.intent.attacks()
     }
 
-    /// 打敌人(整数入口:测试与少数按整数算好的地方).转发到 float 版.
+    /// 打敌人(整数入口).牌面/效果伤害一律走 float 的 damage_enemy_f32(免得提前
+    /// floor),重击改走 player_attack_damage 之后这里就没有生产调用者了,只剩测试用.
+    #[cfg(test)]
     fn damage_enemy(&mut self, idx: usize, damage: i32) -> i32 {
         self.damage_enemy_f32(idx, damage as f32)
     }
@@ -4730,16 +4769,15 @@ impl Combat {
                 }
                 Effect::DamageStrengthMult { amount, mult } => {
                     if let Some(t) = target {
-                        let vigor = if is_attack { self.rs.vigor } else { 0 };
-                        let raw = amount + self.player.statuses.get(Status::Strength) * mult + vigor;
-                        let mut d = raw;
-                        if self.player.statuses.has(Status::Weak) {
-                            d = (d as f32 * 0.75).floor() as i32;
-                        }
-                        if self.enemies[t].statuses.has(Status::Vulnerable) {
-                            d = (d as f32 * 1.5).floor() as i32;
-                        }
-                        ctx.unblocked += self.damage_enemy(t, d.max(0));
+                        // 力量影响这张牌 mult 次:把 (mult-1) 次的力量折进基数,剩下 1 次
+                        // 由 player_attack_damage 的 powers 折叠补上,再走同一套笔尖/假人/
+                        // 易伤/弱体链.反编译 BattleContext.cpp:1054-1058 的 HEAVY_BLADE 就是
+                        // `dmg1 = 14 + (升?4:2)*STRENGTH` 之后交给 calculateCardDamage;
+                        // 参考实现(ironclad/common.ts 的 HEAVY_BLADE)同口径.
+                        // 此前这里自算 0.75/1.5 并各自 floor,还漏掉笔尖与腕刃,与全序不符.
+                        let extra = self.player.statuses.get(Status::Strength) * (mult - 1);
+                        let d = self.player_attack_damage(amount + extra + relic_add, t, is_attack);
+                        ctx.unblocked += self.damage_enemy_f32(t, d);
                     }
                 }
                 Effect::Reaper { amount } => {
@@ -5176,7 +5214,10 @@ impl Combat {
                     }
                 }
                 Effect::UpgradeAllForCombat => {
-                    self.all_upgraded = true;
+                    // 反编译 ApotheosisAction 只升现有四个牌堆(Actions.cpp:1005-1032);
+                    // "新造出来的牌也升级"是 Master Reality 的能力
+                    // (refs/slay-the-cli/src/content/powers/watcher.ts:185-196 的
+                    // modifyCreatedCardUpgrades),本作没有该能力,所以不留全局标记.
                     for pile in [
                         &mut self.hand,
                         &mut self.draw,
@@ -5409,7 +5450,13 @@ impl Combat {
         if n > 0 && status == Status::Frail && self.relic_any(|fx| fx.immune_frail) {
             return;
         }
-        if n > 0 && status.is_debuff() && self.player.statuses.has(Status::Artifact) {
+        // LoseStrength/LoseDexterity 在原版是 DEBUFF 类型,神器一样顶掉
+        // (refs/sts_lightspeed/include/combat/Player.h:362-376 的 debuff<> 首查 ARTIFACT;
+        // 参考实现 refs/slay-the-cli/src/content/powers/ironclad.ts:280-282 LOSE_STRENGTH
+        // 也是 kind="debuff").本作 is_debuff() 没列它们,这里显式补上.
+        let debuff_application =
+            status.is_debuff() || matches!(status, Status::LoseStrength | Status::LoseDexterity);
+        if n > 0 && debuff_application && self.player.statuses.has(Status::Artifact) {
             self.player.statuses.add(Status::Artifact, -1);
             self.push_log(
                 LogKind::Player,
@@ -5496,8 +5543,11 @@ impl Combat {
                 self.player.statuses.add(status, n);
             }
             PotionFx::TempStatus { status, lose, n } => {
+                // 反编译:先 BuffPlayer<STRENGTH/DEXTERITY> 再 DebuffPlayer<LOSE_*>
+                // (BattleContext.cpp:2344-2347 / 2407-2410),后者是减益,有神器就被顶掉
+                // (Player.h:362-376).所以 lose 要走 add_self_status 而不是直接挂.
                 self.player.statuses.add(status, n);
-                self.player.statuses.add(lose, n);
+                self.add_self_status(lose, n);
             }
             PotionFx::Discovery { pool, n } => {
                 let cards = self.discovery_pool(pool);
@@ -6364,10 +6414,10 @@ mod tests {
     }
 
     /// 笔尖的第 10 张攻击翻倍要覆盖**所有**攻击伤害效果,不只普通打击.
-    /// 原版/参考把翻倍挂在 relics 的 atDamageGive 上(参考 damageCalc.ts:
-    /// base → relic atDamageGive → power atDamageGive),任何攻击牌的伤害都吃得到;
-    /// 本作曾只在 Effect::Damage / DamageAll 里翻倍,狂暴(Effect::DamageWithBonus)
-    /// 这类就漏了 —— seed16 里浩劫打出抽牌堆顶那张狂暴,伤害只有一半(8 vs 16).
+    /// 反编译把它当 powers 的 AtDamageGive(BattleContext.cpp:2698-2700),排在
+    /// 力量/活力之后,任何攻击牌的伤害都吃得到;本作曾只在 Effect::Damage / DamageAll
+    /// 里翻倍,狂暴(Effect::DamageWithBonus)这类就漏了 —— seed16 里浩劫打出抽牌堆顶
+    /// 那张狂暴,伤害只有一半(8 vs 16).
     /// 断言里两种效果各打一张第 10 次攻击:打击(Damage)与狂暴(DamageWithBonus).
     #[test]
     fn pen_nib_doubles_every_attack_damage_effect() {
@@ -6386,7 +6436,7 @@ mod tests {
             assert_eq!(
                 c.enemies[0].hp,
                 before - base * 2,
-                "{card_id} 的第 10 张攻击应翻倍(笔尖挂在 relics 的 atDamageGive 上)"
+                "{card_id} 的第 10 张攻击应翻倍(笔尖是 powers AtDamageGive)"
             );
         }
     }
@@ -6551,7 +6601,7 @@ mod tests {
     }
 
     #[test]
-    fn apotheosis_upgrades_every_pile_and_later_cards() {
+    fn apotheosis_upgrades_every_pile_but_not_later_cards() {
         let mut c = staged(&["apotheosis", "strike", "defend", "bash"], &["apotheosis"]);
         // 弃牌堆里也放一张,四个牌堆都要覆盖到(正在打出的这张自己不算)
         c.discard.push(cards::card("defend"));
@@ -6570,10 +6620,12 @@ mod tests {
             }],
             "升级后的打击是 9 伤"
         );
-        // 之后新拿到的牌也直接是升级版
+        // 神化只覆盖"打出的那一刻"的四个牌堆(反编译 ApotheosisAction,Actions.cpp:1005-1032);
+        // "之后新造出来的牌也升级"是 Master Reality 的能力(watcher.ts:185-196),本作没实现,
+        // 所以神化之后新造出来的牌不自动升级.
         let mut fresh = cards::card("strike");
         c.fix_new_card(&mut fresh);
-        assert!(fresh.upgraded, "神化之后新拿到的牌应直接升级");
+        assert!(!fresh.upgraded, "神化之后新造的牌不该自动升级(那是 Master Reality)");
     }
 
     /// 哨卫+ 被消耗时回 3 能量(基础 2);反编译 CardInstance.cpp:203 triggerOnExhaust
@@ -11814,6 +11866,215 @@ mod branch_assertions {
         assert!(c.choice.is_none(), "只剩一张可复制:自动结算");
         let strikes = c.hand.iter().filter(|x| x.def.id == "strike").count();
         assert_eq!(strikes, 3, "原来的 1 张 + 自动复制的 2 张");
+    }
+
+    /// 笔尖翻倍排在力量/活力**之后**:反编译把 PenNib 当 powers 的 AtDamageGive
+    /// (BattleContext.cpp:2689 +STRENGTH -> 2691 +VIGOR -> 2698 PEN_NIB x2 ->
+    /// 2702 WEAK x0.75),所以第 10 张攻击是 (base+力量+活力)x2,而不是 basex2+力量.
+    /// 本作此前把翻倍放在加力量/活力之前(照参考实现的 relic-hook 口径),差一截.
+    #[test]
+    fn pen_nib_doubles_after_strength_and_vigor() {
+        let pen = relic_def_or_panic("pen_nib");
+        let mut c = board(&["strike"], &[pen], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("strike")];
+        c.player.statuses.add(Status::Strength, 2);
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - (6 + 2) * 2, "力量先加再翻倍:(6+2)x2=16");
+
+        // 活力(赤牛 8 点)也是加法,同样排在翻倍之前:(6+8)x2=28
+        let mut c = board(&["strike"], &[pen, relic_def_or_panic("akabeko")], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("strike")];
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(
+            c.enemies[0].hp,
+            500 - (6 + 8) * 2,
+            "活力先加再翻倍:(6+8)x2=28"
+        );
+
+        // 多段攻击:一张牌只折一次这份值,每段共用(反编译 attackPlayerHelper 先算
+        // 一次 damage 再逐段 AttackPlayer).连击(5x2)吃笔尖是 (5x2) 每段 10,合计 20,
+        // 不是每段各自翻倍 20+20.
+        let mut c = board(&["twin_strike"], &[pen], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("twin_strike")];
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 20, "连击每段 5 先翻倍成 10,两段共 20");
+    }
+
+    /// 遗物 atDamageModify(打击假人 +3 / 腕刃 +4)排在 powers 与笔尖之前,所以会被
+    /// 笔尖一起翻倍:反编译 BattleContext.cpp:2677-2683 的 STRIKE_DUMMY/WRIST_BLADE 在
+    /// 2689 的 +STRENGTH 之前,笔尖在 2698.本作由 resolve_effects 先把 relic_add 并进
+    /// base(player_attack_damage 的入参),再走 powers/笔尖/易伤.
+    #[test]
+    fn strike_dummy_and_wrist_blade_add_before_the_powers() {
+        // 打击假人 +3 与力量 2 同为加法:(6+3+2)=11
+        let mut c = board(&["strike"], &[relic_def_or_panic("strike_dummy")], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("strike")];
+        c.player.statuses.add(Status::Strength, 2);
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 11, "假人 +3 与力量同为加法:(6+3+2)");
+
+        // 打击假人 +3 在笔尖之前:(6+3)x2=18
+        let mut c = board(
+            &["strike"],
+            &[relic_def_or_panic("strike_dummy"), relic_def_or_panic("pen_nib")],
+            0,
+        );
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("strike")];
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 18, "假人的 +3 也吃笔尖翻倍:(6+3)x2");
+
+        // 腕刃 +4(本回合费用降到 0)也在笔尖之前:(6+4)x2=20
+        let mut c = board(
+            &["strike"],
+            &[relic_def_or_panic("wrist_blade"), relic_def_or_panic("pen_nib")],
+            0,
+        );
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        let mut s = card("strike");
+        s.cost_delta = -1; // 本回合实际费用压到 0
+        c.hand = vec![s];
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(
+            c.enemies[0].hp,
+            500 - (6 + 4) * 2,
+            "腕刃 +4 也吃笔尖翻倍:(6+4)x2"
+        );
+    }
+
+    /// 纸蛙把"敌人易伤"的乘数从 1.5 提到 1.75:反编译 calculateCardDamage 里
+    /// PAPER_PHROG -> x1.75(BattleContext.cpp:2721-2727).
+    #[test]
+    fn paper_phrog_raises_the_vulnerable_multiplier() {
+        let mut c = board(&["strike"], &[relic_def_or_panic("paper_phrog")], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("strike")];
+        c.add_enemy_status(0, Status::Vulnerable, 2);
+        c.play_card(0, Some(0)).unwrap();
+        // 6 * 1.75 = 10.5 -> floor 10
+        assert_eq!(c.enemies[0].hp, 500 - 10, "纸蛙:6*1.75=10.5 -> 10");
+
+        // 对照:没有纸蛙是 1.5 -> 9
+        let mut c2 = board(&["strike"], &[], 0);
+        c2.enemies[0].hp = 500;
+        c2.enemies[0].block = 0;
+        c2.hand = vec![card("strike")];
+        c2.add_enemy_status(0, Status::Vulnerable, 2);
+        c2.play_card(0, Some(0)).unwrap();
+        assert_eq!(c2.enemies[0].hp, 500 - 9, "默认易伤:6*1.5=9");
+    }
+
+    /// 奇异蘑菇把"玩家自己易伤"的乘数从 1.5 降到 1.25:反编译
+    /// Monster::calculateDamageToPlayer 里 ODD_MUSHROOM -> x1.25(Monster.cpp:578-584).
+    #[test]
+    fn odd_mushroom_lowers_the_vulnerable_multiplier_on_the_player() {
+        let relics = [relic_def_or_panic("odd_mushroom")];
+        let mut c = board(&["defend"], &relics, 0);
+        c.player.statuses.add(Status::Vulnerable, 2);
+        assert_eq!(c.enemy_attack_damage(0, 12), 15, "奇异蘑菇:12*1.25=15");
+
+        let mut c2 = board(&["defend"], &[], 0);
+        c2.player.statuses.add(Status::Vulnerable, 2);
+        assert_eq!(c2.enemy_attack_damage(0, 12), 18, "默认:12*1.5=18");
+    }
+
+    /// 纸鹤把"怪物自身虚弱"的乘数从 0.75 降到 0.6:反编译
+    /// Monster::calculateDamageToPlayer 里 PAPER_KRANE -> x0.6(Monster.cpp:570-576).
+    #[test]
+    fn paper_krane_weakens_the_monsters_attack_more() {
+        let relics = [relic_def_or_panic("paper_krane")];
+        let mut c = board(&["defend"], &relics, 0);
+        c.enemies[0].statuses.add(Status::Weak, 2);
+        assert_eq!(c.enemy_attack_damage(0, 12), 7, "纸鹤:12*0.6=7.2 -> 7");
+
+        let mut c2 = board(&["defend"], &[], 0);
+        c2.enemies[0].statuses.add(Status::Weak, 2);
+        assert_eq!(c2.enemy_attack_damage(0, 12), 9, "默认:12*0.75=9");
+    }
+
+    /// 怪物侧加伤链:base + 怪物力量(加法,最前)-> 被夹击 x1.5 -> 虚弱 x0.75/0.6 ->
+    /// 玩家易伤 x1.5/1.25 -> 无形 -> floor.反编译 Monster::calculateDamageToPlayer
+    /// (Monster.cpp:561-597);力量之外全是乘法,所以力量必须最先加进去.
+    #[test]
+    fn monster_strength_is_added_before_the_multipliers() {
+        let mut c = board(&["defend"], &[], 0);
+        c.enemies[0].statuses.add(Status::Strength, 3);
+        assert_eq!(c.enemy_attack_damage(0, 12), 15, "力量 +3:12+3=15");
+
+        // 力量先加、再吃玩家易伤:(12+3)*1.5=22.5 -> 22
+        c.player.statuses.add(Status::Vulnerable, 2);
+        assert_eq!(
+            c.enemy_attack_damage(0, 12),
+            22,
+            "力量先加,再乘易伤:(12+3)*1.5 -> 22"
+        );
+    }
+
+    /// 重击(Heavy Blade)把力量按 3 倍(升级 5 倍)计入,但必须走和别的攻击一样的全序:
+    /// 笔尖翻倍、遗物加伤、易伤/弱体只取整一次.反编译 BattleContext.cpp:1054-1058 先算
+    /// `14 + (升?4:2)*STRENGTH` 再交 calculateCardDamage;参考实现 ironclad/common.ts 同口径.
+    /// 此前这里自算 0.75/1.5 并各自 floor,还漏掉笔尖与腕刃.
+    #[test]
+    fn heavy_blade_runs_the_standard_damage_pipeline() {
+        // 力量 5:14 + 5*3 = 29
+        let mut c = board(&["heavy_blade"], &[], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("heavy_blade")];
+        c.player.statuses.add(Status::Strength, 5);
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 29, "力量 5:14+5*3=29");
+
+        // 力量 5 + 自身弱体 + 敌人易伤:只取整一次 (14+15)*0.75*1.5=32.625 -> 32
+        let mut c = board(&["heavy_blade"], &[], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("heavy_blade")];
+        c.player.statuses.add(Status::Strength, 5);
+        c.player.statuses.add(Status::Weak, 2);
+        c.add_enemy_status(0, Status::Vulnerable, 2);
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 32, "(14+15)*0.75*1.5=32.625 -> 32");
+
+        // 笔尖把重击也翻倍:14*2=28
+        let mut c = board(&["heavy_blade"], &[relic_def_or_panic("pen_nib")], 0);
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        c.hand = vec![card("heavy_blade")];
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 28, "笔尖把重击也翻倍:14*2=28");
+
+        // 腕刃(+4,本回合费用压到 0)再被笔尖翻倍:(14+4)*2=36
+        let mut c = board(
+            &["heavy_blade"],
+            &[relic_def_or_panic("wrist_blade"), relic_def_or_panic("pen_nib")],
+            0,
+        );
+        c.enemies[0].hp = 500;
+        c.enemies[0].block = 0;
+        let mut hb = card("heavy_blade");
+        hb.cost_delta = -2; // 本回合压到 0 费
+        c.hand = vec![hb];
+        c.rs.pen_nib = 9;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, 500 - 36, "腕刃 +4 也翻倍:(14+4)*2=36");
     }
 }
 

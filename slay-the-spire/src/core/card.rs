@@ -352,7 +352,17 @@ impl CardInstance {
         if matches!(self.cost(), Cost::Unplayable) {
             return None;
         }
-        if self.free_this_turn || self.free_combat {
+        // "本回合0费"(free_this_turn)走反编译 CardInstance::setCostForTurn:只在
+        // costForTurn >= 0 时生效,X 卡初值 -1 是空操作
+        // (refs/sts_lightspeed/src/combat/CardInstance.cpp:125-131);参考实现对 cost<0
+        // 也直接放行(refs/slay-the-cli/src/engine/combat/interpreter.ts:423-425).
+        // "本场0费"(free_combat)是直接改基础费为 0(化茧/变形/疯狂/预谋+那条),
+        // 于是 X 费牌也一并变成 0 费(反编译 PutRandomCardsInDrawPile 直接
+        // `card.cost = 0; card.costForTurn = 0`),所以这一支不排除 X 费.
+        if self.free_this_turn && matches!(self.cost(), Cost::Fixed(_)) {
+            return Some(0);
+        }
+        if self.free_combat {
             return Some(0);
         }
         match self.cost() {
