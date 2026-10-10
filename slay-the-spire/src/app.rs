@@ -991,7 +991,7 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('k') | KeyCode::Up => {
                 self.potion_sel = Some((cur + n - 1) % n);
             }
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 self.potion_sel = None;
                 if self.run.player.potions[cur].is_some() {
                     self.drink(cur);
