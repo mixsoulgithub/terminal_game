@@ -2005,7 +2005,9 @@ for (const s of list) {
 }
 
 const coveredCardIds = new Set(list.filter((s) => s.kind === "cards").map((s) => s.id));
-const unaudited = ourCards.filter((id) => !coveredCardIds.has(id));
+// "有场景"或"明确登记过量不出的理由"都算覆盖:登记过就不再要求探针,
+// 否则两条守卫会互相打架(登记解决 blind,却让这张牌变成"没有任何场景")
+const unaudited = ourCards.filter((id) => !coveredCardIds.has(id) && !CARD_NOT_COMPARED[id]);
 
 // 口径覆盖检查:已实现牌的文本里"有数值效果但 lineFacts 认不出"的行,必须被
 // hand-written 场景(CARD_SPECIAL/POWER_STACK/探针)覆盖,或登记进 CARD_NOT_COMPARED;
@@ -2979,9 +2981,20 @@ const CARD_RULES: CardRule[] = [
   {
     label: "每个",
     re: /for each/g,
-    skip: ["blood_for_blood"],
+    // 摧残/精湛刺击的"每 X"落在 combat.rs 的费用修正上(同嗜血),不在 CardDef 载荷里
+    skip: ["blood_for_blood", "eviscerate", "masterful_stab"],
     check: (e) =>
-      ["DamagePerExhausted", "BlockPerExhausted", "DamagePerStrike", "DamagePerDrawPile", "LoseHpPerHandCard", "StormOfSteel"].some((v) => hasEff(e, v))
+      [
+        "DamagePerExhausted",
+        "BlockPerExhausted",
+        "DamagePerStrike",
+        "DamagePerDrawPile",
+        "LoseHpPerHandCard",
+        "StormOfSteel",
+        // 绿职:终结技按本回合攻击数、飞镖按手牌技能数,各段独立结算
+        "DamagePerAttackThisTurn",
+        "DamagePerSkillInHand",
+      ].some((v) => hasEff(e, v))
         ? null
         : "文案说'每个/每张',实现里没有对应按数量结算的效果",
   },
@@ -2997,7 +3010,10 @@ const CARD_RULES: CardRule[] = [
     label: "两次",
     re: /\btwice\b/g,
     check: (e) =>
-      e.some((x) => x.fields.get("times") === "2") || hasEff(e, "CopyFromHand") || hasEff(e, "AddSelfStatus", "DoubleTap")
+      e.some((x) => x.fields.get("times") === "2") ||
+      hasEff(e, "CopyFromHand") ||
+      hasEff(e, "AddSelfStatus", "DoubleTap") ||
+      hasEff(e, "AddSelfStatus", "Burst")
         ? null
         : "文案说'两次',实现里没有对应语义",
   },
@@ -3009,6 +3025,10 @@ const CARD_RULES: CardRule[] = [
       hasEff(e, "AddSelfStatus", "FireBreathing") ||
       hasEff(e, "AddSelfStatus", "Combust") ||
       hasEff(e, "AddSelfStatus", "Panache") ||
+      // 绿职:毒雾/千刀万剐/尸爆的"全体"写在引擎结算里(每回合作用全体 / 死亡时炸全体)
+      hasEff(e, "AddSelfStatus", "NoxiousFumes") ||
+      hasEff(e, "AddSelfStatus", "ThousandCuts") ||
+      hasEff(e, "CorpseExplosion") ||
       impl.target === "All" ||
       impl.upFlags.target === "All"
         ? null
@@ -3072,13 +3092,6 @@ const TRIGGER_SCAN: RegExp[] = [
 /** 文案里"实现了但无法用载荷直测"的数字/条件词:显式登记原因(与遗物 RELIC_NUM_SKIP 同理) */
 const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
   // ---- 绿职(The Silent)----
-  eviscerate: [
-    { sub: /Costs \d+ less/, reason: "按本回合弃牌数降费由 combat.rs 的费用修正承载(同嗜血那条)" },
-    { sub: /\(1\) for each card discarded/, reason: "同上:降费节奏由 combat.rs 承载,载荷里没有 per" },
-  ],
-  masterful_stab: [
-    { sub: /Costs \d+ additional/, reason: "按本场掉血次数加费由 combat.rs 的费用修正承载,载荷里没有 per" },
-  ],
   storm_of_steel: [{ sub: /Add \d+ Shiv/, reason: "飞刀张数 = 弃掉的张数,由 Effect::StormOfSteel 的结算承载" }],
   nightmare: [{ sub: /add 3 copies/, reason: "3 份副本由 Effect::NightmareChoose 的结算常量承载" }],
   bane: [
@@ -3088,13 +3101,15 @@ const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
     { sub: /Next turn, gain \d+ Block/, reason: "下回合格挡由 Effect::NextTurnBlock 的结算承载(回合开始才给)" },
   ],
   eviscerate: [
-    { sub: /Costs \d+ less @GE for each card discarded this turn/, reason: "降费与 @GE 都由 combat.rs 的费用修正承载" },
+    { sub: /Costs \d+ less( @GE)? for each card discarded this turn/, reason: "降费由 combat.rs 的费用修正承载(语料侧写 @GE,实现侧不写)" },
+    { sub: /\(1\) for each card discarded/, reason: "同上:升级档的 per 不在 CardDef 载荷里" },
   ],
   heel_hook: [
-    { sub: /gain @GE and draw 1 card/, reason: "回能与抽牌都由 Effect::DamageAndEnergyIfWeak 的结算承载" },
+    { sub: /gain @GE and draw 1 card/, reason: "回能与抽牌由 Effect::DamageAndEnergyIfWeak 的结算承载(语料侧 @GE)" },
+    { sub: /If the enemy has Weak, gain \(1\) and draw 1 card/, reason: "同上:实现侧写 gain (1)" },
   ],
   masterful_stab: [
-    { sub: /Costs \d+ additional @GE for each time you lose HP this combat/, reason: "加费由 combat.rs 的费用修正承载" },
+    { sub: /Costs \d+ additional( @GE)? for each time you lose HP this combat/, reason: "加费由 combat.rs 的费用修正承载(语料侧写 @GE,实现侧不写)" },
   ],
   predator: [
     { sub: /Next turn, draw 2 additional cards/, reason: "下回合多抽由 Effect::NextTurnDraw 的结算承载" },
