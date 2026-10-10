@@ -4,13 +4,16 @@
 //   bun tools/e2e_diff.ts 54 39 12345            # 打印差异报告
 //   bun tools/e2e_diff.ts 54 --write             # 顺手把参考侧的 JSONL 落成 fixture
 //   bun tools/e2e_diff.ts --all                  # 用 fixture 里登记的全部 seed
+//   bun tools/e2e_diff.ts --tables --jobs 6      # 九张表一次跑完(种子并发),给 check_all 用
+//                                                #   --only-tables a20,act4 只跑其中几张
+//   bun tools/e2e_diff.ts --tables --json        # 上者再加机器可读的 E2E_SUMMARY(每表一行)
 //
 // 归一化:参考实现的 id 是大写,本作是小写;这里统一小写,并补一张别名表
 // (史莱姆的 S/M/L 与铁甲战士的两张基础牌).归一化只改"名字",不改数值.
 
 import { readFileSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { seedToString } from "/home/mix/projects/terminal_game/refs/slay-the-cli/src/engine/core/rng.ts";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -109,11 +112,25 @@ function show(v: unknown): string {
 
 type Line = Record<string, any>;
 
-function runOurs(seed: string, script: string): { ok: boolean; lines: Line[]; err: string } {
+/** 跑一个子进程并收全 stdout/stderr(逐颗串行与 --tables 并发都走这里) */
+function spawnCollect(cmd: string[]): Promise<{ status: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd[0]!, cmd.slice(1), { env: { ...process.env, NO_COLOR: "1" } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => { stdout += d; });
+    child.stderr.on("data", (d: string) => { stderr += d; });
+    child.on("error", (e) => resolve({ status: -1, stdout, stderr: `${stderr}${e.message}` }));
+    child.on("close", (code) => resolve({ status: code ?? -1, stdout, stderr }));
+  });
+}
+
+async function runOurs(seed: string, script: string): Promise<{ ok: boolean; lines: Line[]; err: string }> {
   const bin = join(ROOT, "target", "debug", "spire");
-  const args = ["--replay", seed, "--script", script];
-  const r = spawnSync(bin, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  if (r.status !== 0) return { ok: false, lines: [], err: (r.stderr || "").trim() };
+  const r = await spawnCollect([bin, "--replay", seed, "--script", script]);
+  if (r.status !== 0) return { ok: false, lines: [], err: r.stderr.trim() };
   return { ok: true, lines: parseJsonl(r.stdout), err: "" };
 }
 
@@ -124,26 +141,31 @@ function parseJsonl(text: string): Line[] {
     .map((l) => JSON.parse(l));
 }
 
-function runReference(seed: string, script: string): { ok: boolean; lines: Line[]; err: string } {
+async function runReference(seed: string, script: string): Promise<{ ok: boolean; lines: Line[]; err: string }> {
   // 默认让参考侧按原版补掷;--raw-ref 直接比原样的参考实现(不补偿)
   const args = [join(HERE, "replay_ref.ts"), seed, script];
   if (RAW_REF) args.push("--raw-ref");
-  const r = spawnSync("bun", args, {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (r.status !== 0) return { ok: false, lines: [], err: (r.stderr || "").trim().split("\n").slice(0, 6).join("\n") };
+  const r = await spawnCollect(["bun", ...args]);
+  if (r.status !== 0) return { ok: false, lines: [], err: r.stderr.trim().split("\n").slice(0, 6).join("\n") };
   return { ok: true, lines: parseJsonl(r.stdout), err: "" };
 }
 
 /** 一整个 seed 的对拍:返回可打印的报告行与是否有差异 */
 type Pin = { seed: string; lines: number; refLines: number; aligned: number; diffSteps: number[]; digest: bigint };
 
-function compareSeed(seed: string): { lines: string[]; diffs: number; aligned: number; pin: Pin | null } {
+/** 本作与参考实现的这一次对拍结果;failed = 有一边没跑起来(此时 diffs 无意义) */
+type SeedResult = { lines: string[]; diffs: number; aligned: number; pin: Pin | null; failed: boolean };
+
+/** 打印行组装:tag 非空时给每行加上来源标签(--tables 并发跑时用) */
+function tagLines(lines: string[], tag: string): string[] {
+  return tag === "" ? lines : lines.map((l) => `[${tag}] ${l}`);
+}
+
+async function compareSeed(seed: string, scriptPath: string = SCRIPT, tag = ""): Promise<SeedResult> {
   const out: string[] = [];
-  const script = readFileSync(SCRIPT, "utf8");
-  const ours = runOurs(seed, SCRIPT);
-  const ref = runReference(seed, SCRIPT);
+  const script = readFileSync(scriptPath, "utf8");
+  // 两边互不依赖:同一个 seed 的本作与参考实现同时跑,少一半等待
+  const [ours, ref] = await Promise.all([runOurs(seed, scriptPath), runReference(seed, scriptPath)]);
   const policy = script
     .split("\n")
     .map((l) => l.split("#")[0]!.trim())
@@ -152,11 +174,11 @@ function compareSeed(seed: string): { lines: string[]; diffs: number; aligned: n
     .join(" ");
   if (!ours.ok) {
     out.push(`seed ${seed}: 本作跑不通: ${ours.err}`);
-    return { lines: out, diffs: -1, aligned: 0, pin: null };
+    return { lines: tagLines(out, tag), diffs: -1, aligned: 0, pin: null, failed: true };
   }
   if (!ref.ok) {
     out.push(`seed ${seed}: 参考实现跑不通: ${ref.err}`);
-    return { lines: out, diffs: -1, aligned: 0, pin: null };
+    return { lines: tagLines(out, tag), diffs: -1, aligned: 0, pin: null, failed: true };
   }
   const a = ours.lines.map((l) => normalize(l) as Line);
   const b = ref.lines.map((l) => normalize(l) as Line);
@@ -229,15 +251,16 @@ function compareSeed(seed: string): { lines: string[]; diffs: number; aligned: n
     bump(`${i}\t${JSON.stringify(a[i] ?? null)}\t${JSON.stringify(b[i] ?? null)}\n`);
   }
   return {
-    lines: out,
+    lines: tagLines(out, tag),
     diffs: total,
     aligned,
     pin: { seed, lines: a.length, refLines: b.length, aligned: prefix, diffSteps, digest },
+    failed: false,
   };
 }
 
-function writeFixture(seed: string): void {
-  const ref = runReference(seed, SCRIPT);
+async function writeFixture(seed: string): Promise<void> {
+  const ref = await runReference(seed, SCRIPT);
   if (!ref.ok) throw new Error(`参考实现跑不通: ${ref.err}`);
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const path = fixturePath(seed);
@@ -250,8 +273,8 @@ function writeFixture(seed: string): void {
   console.log(`wrote ${path.slice(ROOT.length + 1)}`);
 }
 
-function fixtureSeeds(): string[] {
-  const stem = SCRIPT.split("/").pop()!.replace(/\.script$/, "");
+function fixtureSeeds(scriptPath: string = SCRIPT): string[] {
+  const stem = scriptPath.split("/").pop()!.replace(/\.script$/, "");
   const re = stem === "act1" ? /^seed(\d+)\.ref\.jsonl$/ : new RegExp(`^seed(\\d+)\\.${stem}\\.ref\\.jsonl$`);
   try {
     return readdirSync(FIXTURE_DIR)
@@ -263,12 +286,64 @@ function fixtureSeeds(): string[] {
   }
 }
 
+/** 每张表的汇总(--json 下打成一行 E2E_SUMMARY,给 check_all 解析) */
+interface TableSummary {
+  table: string;
+  seeds: number;
+  /** 全表"总差异 N 处"之和,与逐颗串行跑出来的口径一致 */
+  diffs: number;
+  /** 一边没跑起来的 seed(非空即该表失败) */
+  failed: string[];
+  /** 该表全部 seed 的耗时之和(并发下不是墙钟) */
+  ms: number;
+}
+
+/** 九张表一次跑完:把各表登记的 seed 全丢进 jobs 条并发的池子,逐表汇总后打印 */
+async function runTables(tables: string[], jobs: number, json: boolean): Promise<number> {
+  interface Item { table: string; seed: string; script: string }
+  const items: Item[] = [];
+  for (const t of tables) {
+    const script = join(FIXTURE_DIR, `${t}.script`);
+    for (const s of fixtureSeeds(script)) items.push({ table: t, seed: s, script });
+  }
+  const acc = new Map<string, TableSummary>(
+    tables.map((t) => [t, { table: t, seeds: 0, diffs: 0, failed: [], ms: 0 }]),
+  );
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const it = items[next++]!;
+      const t0 = performance.now();
+      const r = await compareSeed(it.seed, it.script, it.table);
+      const a = acc.get(it.table)!;
+      a.seeds++;
+      a.ms += performance.now() - t0;
+      for (const l of r.lines) (json ? console.error : console.log)(l);
+      if (r.failed) a.failed.push(it.seed);
+      else a.diffs += Math.max(0, r.diffs);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(jobs, items.length)) }, () => worker()));
+  let failures = 0;
+  for (const t of tables) {
+    const a = acc.get(t)!;
+    failures += a.failed.length;
+    console.log(`E2E_SUMMARY ${JSON.stringify(a)}`);
+  }
+  console.log(`\n共 ${tables.length} 张表 / ${items.length} 颗种子,跑不通 ${failures} 颗`);
+  return failures;
+}
+
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   const write = argv.includes("--write");
   RAW_REF = argv.includes("--raw-ref");
   const pin = argv.includes("--pin");
   const all = argv.includes("--all");
+  const tablesMode = argv.includes("--tables");
+  const json = argv.includes("--json");
+  const ji = argv.indexOf("--jobs");
+  const jobs = ji !== -1 ? Number(argv[ji + 1]) : 6;
   // --script <file> 选路径脚本(默认 act1.script);fixture 的名字跟着脚本走
   const si = argv.indexOf("--script");
   if (si !== -1) {
@@ -279,33 +354,50 @@ if (import.meta.main) {
     }
     SCRIPT = p.startsWith("/") ? p : join(ROOT, p);
   }
-  const seeds = all
-    ? fixtureSeeds()
-    : argv.filter((a) => /^\d+$/.test(a));
-  if (seeds.length === 0) {
-    console.error("usage: bun tools/e2e_diff.ts <seed...> [--write] [--all] [--script <file>] [--raw-ref]");
-    process.exit(2);
-  }
-  let diffTotal = 0;
-  const pins: Pin[] = [];
-  for (const seed of seeds) {
-    if (write) writeFixture(seed);
-    const r = compareSeed(seed);
-    if (!pin) for (const l of r.lines) console.log(l);
-    if (r.pin) pins.push(r.pin);
-    diffTotal += Math.max(0, r.diffs);
-  }
-  if (pin) {
-    // 给 src/core/replay.rs 的端到端测试用的常量表
-    console.log("const CASES: &[Expected] = &[");
-    for (const p of pins) {
-      console.log(
-        `    Expected { seed: ${p.seed}, lines: ${p.lines}, ref_lines: ${p.refLines}, aligned: ${p.aligned}, ` +
-          `diff_steps: &[${p.diffSteps.join(", ")}], diff_digest: 0x${p.digest.toString(16)} },`,
-      );
+  if (tablesMode) {
+    // 九张表 = fixture 目录下的全部 *.script(表名就是脚本干名);--only-tables a,b 只跑其中几张
+    const oi = argv.indexOf("--only-tables");
+    const only = oi !== -1 ? (argv[oi + 1] ?? "").split(",").filter((s) => s !== "") : null;
+    const tables = readdirSync(FIXTURE_DIR)
+      .filter((f) => f.endsWith(".script"))
+      .map((f) => f.replace(/\.script$/, ""))
+      .filter((t) => only === null || only.includes(t))
+      .sort();
+    if (tables.length === 0) {
+      console.error("--tables 里一张表都没选中");
+      process.exit(2);
     }
-    console.log("];");
+    const failures = await runTables(tables, Number.isFinite(jobs) && jobs > 0 ? jobs : 6, json);
+    if (failures > 0) process.exit(1);
   } else {
-    console.log(`\n总差异 ${diffTotal} 处`);
+    const seeds = all
+      ? fixtureSeeds()
+      : argv.filter((a) => /^\d+$/.test(a));
+    if (seeds.length === 0) {
+      console.error("usage: bun tools/e2e_diff.ts <seed...> [--write] [--all] [--script <file>] [--raw-ref]");
+      process.exit(2);
+    }
+    let diffTotal = 0;
+    const pins: Pin[] = [];
+    for (const seed of seeds) {
+      if (write) await writeFixture(seed);
+      const r = await compareSeed(seed);
+      if (!pin) for (const l of r.lines) console.log(l);
+      if (r.pin) pins.push(r.pin);
+      diffTotal += Math.max(0, r.diffs);
+    }
+    if (pin) {
+      // 给 src/core/replay.rs 的端到端测试用的常量表
+      console.log("const CASES: &[Expected] = &[");
+      for (const p of pins) {
+        console.log(
+          `    Expected { seed: ${p.seed}, lines: ${p.lines}, ref_lines: ${p.refLines}, aligned: ${p.aligned}, ` +
+            `diff_steps: &[${p.diffSteps.join(", ")}], diff_digest: 0x${p.digest.toString(16)} },`,
+        );
+      }
+      console.log("];");
+    } else {
+      console.log(`\n总差异 ${diffTotal} 处`);
+    }
   }
 }
