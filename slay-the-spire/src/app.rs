@@ -1498,6 +1498,13 @@ impl App {
             .filter(|(_, s)| matches!(s, RewardSlot::Card(_)))
             .map(|(i, _)| i)
             .collect();
+        // 还在挑 Boss 遗物(第一阶段)时,这三个槽位自成一组:只用 h/l 挑,j/k 不动
+        let boss_slots: Vec<usize> = slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| matches!(s, RewardSlot::RelicChoice(_)))
+            .map(|(i, _)| i)
+            .collect();
         let group_of = |i: usize| -> u8 {
             match slots.get(i) {
                 Some(RewardSlot::Gold) => 0,
@@ -1515,9 +1522,15 @@ impl App {
             }
         }
         let cur = self.run.reward.as_ref().map(|r| r.index).unwrap_or(0).min(n.saturating_sub(1));
+        // 第一阶段(还在挑 Boss 遗物):光标吸附到遗物那三格上,
+        // 否则它会停在金币/卡牌上,一按空格就把金币拿了
+        if !boss_slots.is_empty() && !boss_slots.contains(&cur) {
+            self.set_reward_index(boss_slots[0]);
+        }
+        let cur = self.run.reward.as_ref().map(|r| r.index).unwrap_or(0).min(n.saturating_sub(1));
         let cur_g = group_of(cur);
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('j') | KeyCode::Down if boss_slots.is_empty() => {
                 if let Some(pos) = groups.iter().position(|g| *g == cur_g) {
                     if let Some(&ng) = groups.get(pos + 1) {
                         if let Some(idx) = (0..n).find(|i| group_of(*i) == ng) {
@@ -1526,7 +1539,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Char('k') | KeyCode::Up if boss_slots.is_empty() => {
                 if let Some(pos) = groups.iter().position(|g| *g == cur_g) {
                     if pos > 0 {
                         let pg = groups[pos - 1];
@@ -1537,13 +1550,19 @@ impl App {
                 }
             }
             KeyCode::Char('h') | KeyCode::Left => {
-                if cur_g == 1 && card_slots.len() > 1 {
+                if !boss_slots.is_empty() {
+                    let pos = boss_slots.iter().position(|i| *i == cur).unwrap_or(0);
+                    self.set_reward_index(boss_slots[(pos + boss_slots.len() - 1) % boss_slots.len()]);
+                } else if cur_g == 1 && card_slots.len() > 1 {
                     let pos = card_slots.iter().position(|i| *i == cur).unwrap_or(0);
                     self.set_reward_index(card_slots[(pos + card_slots.len() - 1) % card_slots.len()]);
                 }
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                if cur_g == 1 && card_slots.len() > 1 {
+                if !boss_slots.is_empty() {
+                    let pos = boss_slots.iter().position(|i| *i == cur).unwrap_or(0);
+                    self.set_reward_index(boss_slots[(pos + 1) % boss_slots.len()]);
+                } else if cur_g == 1 && card_slots.len() > 1 {
                     let pos = card_slots.iter().position(|i| *i == cur).unwrap_or(0);
                     self.set_reward_index(card_slots[(pos + 1) % card_slots.len()]);
                 }
@@ -2262,6 +2281,12 @@ impl App {
                 ("U D E", "undrawn/discarded/exhausted"),
                 ("?", "help"),
                 (":", "cmd"),
+            ],
+            // 还在挑 Boss 遗物(第一阶段):提示只说这一阶段能用的键
+            Screen::Reward if self.run.boss_relic_pending() => vec![
+                ("h/l", "pick a boss relic"),
+                ("space/enter", "take"),
+                ("esc", "leave"),
             ],
             Screen::Reward => vec![
                 ("j/k", "gold/cards/relic/potion"),

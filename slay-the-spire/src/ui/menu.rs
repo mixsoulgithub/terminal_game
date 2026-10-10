@@ -35,6 +35,65 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
     }
     let slots = app.run.reward_slots();
     // 按 reward_slots 的顺序把每类槽位挑出来,选择下标才能对上
+    // 第一阶段:先挑 Boss 遗物。三件横排(像卡牌那样),h/l 选、space/enter 拿;
+    // 这一阶段只显示遗物,挑完(relic_taken)才轮到下面的金币/卡牌/药水。
+    let boss: Vec<usize> = slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| matches!(s, RewardSlot::RelicChoice(_)))
+        .map(|(i, _)| i)
+        .collect();
+    if !boss.is_empty() {
+        let cur = r.index;
+        let pieces: Vec<(String, usize)> = boss
+            .iter()
+            .map(|i| {
+                let name = match slots.get(*i) {
+                    Some(RewardSlot::RelicChoice(k)) => {
+                        r.relic_choices.get(*k).map(|d| d.name.to_string()).unwrap_or_default()
+                    }
+                    _ => String::new(),
+                };
+                (name, *i)
+            })
+            .collect();
+        let gap = 6usize;
+        let total: usize = pieces
+            .iter()
+            .map(|(n, _)| crate::ui::display_width(n))
+            .sum::<usize>()
+            + gap * (pieces.len().saturating_sub(1));
+        let y = area.y + area.height / 2;
+        let mut x = area.x + (area.width as usize).saturating_sub(total) as u16 / 2;
+        for (name, idx) in &pieces {
+            let w = crate::ui::display_width(name);
+            let style = if *idx == cur {
+                theme::selected()
+            } else {
+                theme::fg(theme::BAD)
+            };
+            put_padded(buf, x, y, name, w, style);
+            x += (w + gap) as u16;
+        }
+        crate::ui::put_centered_line(
+            buf,
+            area.x,
+            y.saturating_sub(2),
+            area.width as usize,
+            "choose a boss relic",
+            theme::fg(theme::FG),
+        );
+        crate::ui::put_centered_line(
+            buf,
+            area.x,
+            y + 2,
+            area.width as usize,
+            "h/l pick   space/enter take",
+            theme::dim(),
+        );
+        return;
+    }
+
     let gold = slots.iter().position(|s| matches!(s, RewardSlot::Gold));
     let cards: Vec<usize> = slots
         .iter()

@@ -2368,6 +2368,14 @@ impl Run {
 
     // ---- 奖励 ----
 
+    /// 还在挑 Boss 遗物(奖励第一阶段)吗:三选一还没拿走
+    pub fn boss_relic_pending(&self) -> bool {
+        self.reward
+            .as_ref()
+            .map(|r| !r.relic_choices.is_empty() && !r.relic_taken)
+            .unwrap_or(false)
+    }
+
     pub fn reward_slots(&self) -> Vec<RewardSlot> {
         let Some(r) = &self.reward else {
             return Vec::new();
