@@ -2071,7 +2071,7 @@ impl Run {
             c.player_gold = self.player.gold;
         }
         match phase {
-            // 赢了先留在战场上看 2 秒(死亡/结算动画),由 tick_win_hold 收尾
+            // 赢了先留在战场上看 1 秒(死亡/结算动画),由 tick_win_hold 收尾
             Phase::Won => {
                 if self.win_hold == 0 {
                     self.win_hold = Self::VICTORY_HOLD;
@@ -2084,8 +2084,8 @@ impl Run {
         let _ = damage;
     }
 
-    /// 战斗胜利后在原地停留的帧数(60ms 一帧,34 帧约 2 秒)
-    pub const VICTORY_HOLD: u8 = 34;
+    /// 战斗胜利后在原地停留的帧数(60ms 一帧,17 帧约 1 秒)
+    pub const VICTORY_HOLD: u8 = 17;
 
     /// 赢了但还没进奖励(这段时间不吃战斗操作)
     pub fn holding_victory(&self) -> bool {
