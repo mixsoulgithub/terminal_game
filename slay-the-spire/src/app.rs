@@ -1550,7 +1550,7 @@ impl App {
                 self.info(m);
                 self.run.reward_clamp();
             }
-            KeyCode::Enter => self.take_reward(),
+            KeyCode::Enter | KeyCode::Char(' ') => self.take_reward(),
             KeyCode::Esc | KeyCode::Char('q') => {
                 let next = self.run.leave_reward();
                 self.info(format!("moving on ({})", next.name()));
@@ -1614,7 +1614,7 @@ impl App {
                     s.index = n.saturating_sub(1);
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 let r = self.run.buy_selected();
                 // 灰行(卖光了 / 钱不够):抖一下提示买不了
                 if let Err(e) = &r {
@@ -1769,7 +1769,7 @@ impl App {
                     p.index = n.saturating_sub(1);
                 }
             }
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 let r = self.run.picker_confirm();
                 self.ok(r);
                 self.clamp();
