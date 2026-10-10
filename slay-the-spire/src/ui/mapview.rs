@@ -9,7 +9,7 @@ use crate::app::App;
 use crate::core::map::{NodeKind, COLS};
 use crate::core::run::Run;
 use crate::ui::theme;
-use crate::ui::{put, truncate};
+use crate::ui::{draw_box, put, put_padded, truncate, BOX_H, BOX_V};
 
 /// 每层占的列数:1 列画节点,3 列画连线
 pub const CELL_W: u16 = 4;
@@ -20,7 +20,22 @@ pub const ROW_H: u16 = 2;
 /// 右边放图例需要多少列
 const LEGEND_W: u16 = 22;
 
+/// 地图有几种画法(:ui map 1..5)
+pub const UI_COUNT: u8 = 5;
+
+/// 按 app.map_ui 挑一种画法;默认是 1 号(符号)
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
+    match app.map_ui {
+        2 => render_grid(buf, area, app),
+        3 => render_rails(buf, area, app),
+        4 => render_slide(buf, area, app),
+        5 => render_icons(buf, area, app),
+        _ => render_sigils(buf, area, app),
+    }
+}
+
+/// 画法 1:符号
+pub fn render_sigils(buf: &mut Buffer, area: Rect, app: &App) {
     if area.width < 12 || area.height < 4 {
         return;
     }
@@ -319,4 +334,443 @@ fn render_edges(
             }
         }
     }
+}
+
+// ---- 后面几种画法共用的状态与贴图 ----
+
+/// 一屏地图共用的状态:可达 / 选中 / 未来 一次算好
+struct MapView<'a> {
+    run: &'a Run,
+    total: usize,
+    scroll: usize,
+    reach: Vec<usize>,
+    sel: usize,
+    future: Option<Vec<bool>>,
+}
+
+impl<'a> MapView<'a> {
+    fn new(app: &'a App) -> MapView<'a> {
+        let reach = app.run.travel_options();
+        let sel = app.map_sel.min(reach.len().saturating_sub(1));
+        MapView {
+            run: &app.run,
+            total: app.run.map.total_floors(),
+            scroll: app.map_scroll,
+            reach,
+            sel,
+            future: chosen_future(app),
+        }
+    }
+
+    fn is_sel(&self, i: usize) -> bool {
+        !self.reach.is_empty() && self.reach[self.sel] == i
+    }
+
+    fn is_reach(&self, i: usize) -> bool {
+        self.reach.contains(&i)
+    }
+
+    fn on_future(&self, i: usize) -> bool {
+        self.future.as_ref().map(|f| f[i]).unwrap_or(false)
+    }
+
+    fn visited(&self, i: usize) -> bool {
+        self.run.path.contains(&i)
+    }
+
+    /// 房间在几种画法里的统一配色:走过 > 选中 > 未来 > 候选 > 走不到
+    fn style(&self, i: usize) -> Style {
+        let n = self.run.map.node(i);
+        let base = if n.burning {
+            theme::burning_style()
+        } else {
+            theme::kind_style(n.kind)
+        };
+        if self.visited(i) {
+            Style::default()
+                .fg(theme::BG)
+                .bg(theme::GOOD)
+                .add_modifier(Modifier::BOLD)
+        } else if self.is_sel(i) {
+            base.bg(theme::SEL_BG)
+                .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK)
+        } else if self.on_future(i) {
+            base.add_modifier(Modifier::BOLD)
+        } else if self.is_reach(i) {
+            base.add_modifier(Modifier::SLOW_BLINK)
+        } else {
+            theme::dim()
+        }
+    }
+
+    /// 一屏放几层、从哪层开始(和 1 号画法同一套视野规则)
+    fn window(&self, area: Rect, cell_w: u16) -> (usize, usize) {
+        let visible = ((area.width as usize / cell_w.max(1) as usize).max(1)).min(self.total);
+        let start = self.scroll.min(self.total.saturating_sub(visible));
+        (start, visible)
+    }
+
+    /// 这一层这个岔路上的房间(没有就是 None)
+    fn node_at(&self, floor: usize, col: usize) -> Option<usize> {
+        self.run
+            .map
+            .row(floor)
+            .iter()
+            .copied()
+            .find(|i| self.run.map.node(*i).col == col)
+    }
+
+    /// 一条边亮不亮:两头的房间都要在"选中那条路的未来"里
+    fn edge_lit_here(&self, parent: usize, child: usize) -> bool {
+        match self.future.as_deref() {
+            Some(f) => edge_lit(f, self.run.pos, parent, child),
+            None => false,
+        }
+    }
+}
+
+/// 边的样式:亮的用选中色加粗,其余压暗
+fn edge_style(lit: bool) -> Style {
+    if lit {
+        Style::default()
+            .fg(theme::SEL_FG)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme::dim()
+    }
+}
+
+/// 画法 5 用的宽图标(固定 3 列)
+fn icon3(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Monster => "<e>",
+        NodeKind::Elite => "<E>",
+        NodeKind::Event => "{?}",
+        NodeKind::Rest => "(R)",
+        NodeKind::Shop => "[$]",
+        NodeKind::Treasure => "<T>",
+        NodeKind::Boss => "/B\\",
+    }
+}
+
+/// 画法 2:格子表.每层一列、每个岔路一行,房间摆在格子里,连线画在两层之间的格线列上.
+pub fn render_grid(buf: &mut Buffer, area: Rect, app: &App) {
+    let v = MapView::new(app);
+    let rows = COLS as u16;
+    let cell_w: u16 = 4; // 三列内容 + 一列当连线/格线
+    let need = rows * 2 + 2; // 层号一行 + 每个岔路"一格 + 一条格线"
+    if area.width < cell_w * 3 + 2 || area.height < need {
+        render_sigils(buf, area, app);
+        return;
+    }
+    let (start, visible) = v.window(area, cell_w);
+    let w = visible as u16 * cell_w;
+    let left = area.x + area.width.saturating_sub(w + 1) / 2;
+    let top = area.y + area.height.saturating_sub(need) / 2;
+    let div = Style::default().fg(theme::BORDER);
+    // 层号
+    for i in 0..visible {
+        let x = left + 1 + i as u16 * cell_w;
+        put(buf, x, top, &truncate(&format!("{}", start + i), 2), theme::dim());
+    }
+    for r in 0..rows {
+        let y = top + 1 + r * 2;
+        put(buf, left, y, &BOX_V.to_string(), div);
+        for i in 0..visible {
+            let x = left + 1 + i as u16 * cell_w;
+            let here = v.node_at(start + i, r as usize);
+            let text = match here {
+                Some(i2) if v.is_sel(i2) => {
+                    format!("[{}]", v.run.map.node(i2).kind.sigil())
+                }
+                Some(i2) => format!(" {} ", v.run.map.node(i2).kind.sigil()),
+                None => "   ".to_string(),
+            };
+            let style = here.map(|i2| v.style(i2)).unwrap_or_else(theme::dim);
+            put(buf, x, y, &text, style);
+            // 格子右边那一列:连到下一层就画连线,否则当格线
+            let sx = x + 3;
+            let link = if i + 1 < visible {
+                match (here, v.node_at(start + i + 1, r as usize)) {
+                    (Some(p), Some(c)) if v.run.map.node(p).next.contains(&c) => Some((p, c)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            match link {
+                Some((p, c)) => {
+                    let child_col = v.run.map.node(c).col;
+                    let ch = if child_col == r as usize {
+                        BOX_H
+                    } else if child_col > r as usize {
+                        '╲'
+                    } else {
+                        '╱'
+                    };
+                    put(buf, sx, y, &ch.to_string(), edge_style(v.edge_lit_here(p, c)));
+                }
+                None => put(buf, sx, y, &BOX_V.to_string(), div),
+            }
+        }
+        put(buf, left + w, y, &BOX_V.to_string(), div);
+        // 岔路之间的格线:最后一行当下边框
+        let y_div = y + 1;
+        let last = r + 1 == rows;
+        let (l, mid, rr) = if last {
+            ('└', '┴', '┘')
+        } else {
+            ('├', '┼', '┤')
+        };
+        put(buf, left, y_div, &l.to_string(), div);
+        for i in 0..visible {
+            let x = left + 1 + i as u16 * cell_w;
+            put(buf, x, y_div, &BOX_H.to_string().repeat(3), div);
+            put(
+                buf,
+                x + 3,
+                y_div,
+                &(if i + 1 == visible { rr } else { mid }).to_string(),
+                div,
+            );
+        }
+    }
+}
+
+/// 画法 3:轨道.每个岔路一行,横着串起每层的房间,像一张列车时刻表.
+pub fn render_rails(buf: &mut Buffer, area: Rect, app: &App) {
+    let v = MapView::new(app);
+    let rows = COLS as u16;
+    let slot: u16 = 4; // 三列内容 + 一列连线
+    let need = rows + 2;
+    if area.width < slot * 4 + 8 || area.height < need {
+        render_sigils(buf, area, app);
+        return;
+    }
+    let (start, visible) = v.window(area, slot);
+    let gx = area.x + 6;
+    let top = area.y + area.height.saturating_sub(need) / 2;
+    put(buf, area.x, top, "br", theme::dim());
+    for i in 0..visible {
+        let x = gx + i as u16 * slot;
+        put(buf, x, top, &truncate(&format!("{}", start + i), 2), theme::dim());
+    }
+    for r in 0..rows {
+        let y = top + 1 + r;
+        put(buf, area.x, y, &format!("{r}"), theme::dim());
+        put(buf, area.x + 2, y, &BOX_V.to_string(), theme::dim());
+        for i in 0..visible {
+            let x = gx + i as u16 * slot;
+            match v.node_at(start + i, r as usize) {
+                Some(i2) => {
+                    let n = v.run.map.node(i2);
+                    let text = if v.is_sel(i2) {
+                        format!("[{}]", n.kind.sigil())
+                    } else {
+                        format!(" {} ", n.kind.sigil())
+                    };
+                    put(buf, x, y, &text, v.style(i2));
+                    // 同一轨道上连着下一层就画一段横杠
+                    if i + 1 < visible {
+                        if let Some(next) = v.node_at(start + i + 1, r as usize) {
+                            if n.next.contains(&next) {
+                                put(
+                                    buf,
+                                    x + 3,
+                                    y,
+                                    &BOX_H.to_string(),
+                                    edge_style(v.edge_lit_here(i2, next)),
+                                );
+                            }
+                        }
+                    }
+                }
+                None => put(buf, x, y, " · ", theme::dim()),
+            }
+        }
+    }
+}
+
+/// 画法 4:一页幻灯片.不铺整张图,只讲"你在哪、下一步能去哪"和一条路线摘要.
+pub fn render_slide(buf: &mut Buffer, area: Rect, app: &App) {
+    let v = MapView::new(app);
+    if area.width < 28 || area.height < 9 {
+        render_sigils(buf, area, app);
+        return;
+    }
+    let w = area.width.min(74);
+    let h = area.height.min(13);
+    let rect = Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    );
+    let bg = Style::default().fg(theme::FG).bg(theme::BG);
+    for y in rect.y..rect.y + h {
+        put_padded(buf, rect.x, y, "", w as usize, bg);
+    }
+    let title = format!(" act {} - map ", v.run.act);
+    draw_box(
+        buf,
+        rect,
+        &title,
+        Style::default().fg(theme::BORDER).bg(theme::BG),
+        Style::default().fg(theme::GOLD).bg(theme::BG),
+    );
+    let inner = (w - 4) as usize;
+    // 第一行:层数与你在哪
+    let floor_now = v.run.pos.map(|i| v.run.map.node(i).floor).unwrap_or(0);
+    put_padded(
+        buf,
+        rect.x + 2,
+        rect.y + 1,
+        &format!("floor {floor_now} / {}", v.total),
+        inner,
+        bg,
+    );
+    let here = match v.run.pos {
+        Some(i) => {
+            let n = v.run.map.node(i);
+            format!("you: {} {}", icon3(n.kind), n.kind.name())
+        }
+        None => "you: not on the path yet".to_string(),
+    };
+    put_padded(
+        buf,
+        rect.x + 2 + 22,
+        rect.y + 1,
+        &here,
+        inner.saturating_sub(22),
+        Style::default().fg(theme::GOOD).bg(theme::BG),
+    );
+    // 路线摘要:走过的 + 之后能到的
+    put(buf, rect.x + 2, rect.y + 3, "route", theme::dim());
+    let mut x = rect.x + 10;
+    for f in 0..v.total {
+        let hit = v
+            .run
+            .map
+            .row(f)
+            .iter()
+            .copied()
+            .find(|i| v.visited(*i) || v.on_future(*i));
+        let Some(i) = hit else { continue };
+        let n = v.run.map.node(i);
+        let text = if v.run.pos == Some(i) {
+            format!("[{}]", n.kind.sigil())
+        } else {
+            format!(" {} ", n.kind.sigil())
+        };
+        if x + 3 > rect.x + rect.width {
+            break;
+        }
+        put(buf, x, rect.y + 3, &text, v.style(i));
+        x += 3;
+        if f + 1 < v.total {
+            x += 1;
+        }
+    }
+    // 下一步能去哪
+    put(buf, rect.x + 2, rect.y + 5, "next", theme::dim());
+    for (k, i) in v.reach.iter().enumerate().take(4) {
+        let y = rect.y + 6 + k as u16;
+        if y >= rect.y + h - 2 {
+            break;
+        }
+        let n = v.run.map.node(*i);
+        let mark = if k == v.sel { ">" } else { " " };
+        let line = format!(
+            "{mark} {} {:<8} floor {}  branch {}",
+            icon3(n.kind),
+            n.kind.name(),
+            n.floor,
+            n.col
+        );
+        put_padded(
+            buf,
+            rect.x + 2,
+            y,
+            &line,
+            inner,
+            if k == v.sel {
+                Style::default()
+                    .fg(theme::FG)
+                    .bg(theme::SEL_BG)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                v.style(*i)
+            },
+        );
+    }
+    put_padded(
+        buf,
+        rect.x + 2,
+        rect.y + h - 2,
+        "j/k pick   enter go   h/l look   esc close",
+        inner,
+        theme::dim().bg(theme::BG),
+    );
+}
+
+/// 画法 5:宽图标.房间画成 3 列的图标,每个岔路占两行(图标行 + 连线行).
+pub fn render_icons(buf: &mut Buffer, area: Rect, app: &App) {
+    let v = MapView::new(app);
+    let rows = COLS as u16;
+    let slot: u16 = 5; // 三列图标 + 一列连线 + 一列空隙
+    let need = rows * 2 + 3; // 标尺 + 每个岔路两行 + 图例一行
+    if area.width < slot * 3 || area.height < need {
+        render_sigils(buf, area, app);
+        return;
+    }
+    let (start, visible) = v.window(area, slot);
+    let w = visible as u16 * slot;
+    let left = area.x + area.width.saturating_sub(w) / 2;
+    let top = area.y + area.height.saturating_sub(need) / 2 + 1;
+    for i in 0..visible {
+        let x = left + i as u16 * slot;
+        put(buf, x, top, &truncate(&format!("{}", start + i), 2), theme::dim());
+    }
+    for r in 0..rows {
+        let y = top + 1 + r * 2;
+        for i in 0..visible {
+            let x = left + i as u16 * slot;
+            match v.node_at(start + i, r as usize) {
+                Some(i2) => {
+                    let n = v.run.map.node(i2);
+                    put(buf, x, y, icon3(n.kind), v.style(i2));
+                    if i + 1 < visible {
+                        if let Some(c) = v.node_at(start + i + 1, r as usize) {
+                            if n.next.contains(&c) {
+                                put(buf, x + 3, y, &BOX_H.to_string(), edge_style(v.edge_lit_here(i2, c)));
+                            }
+                        }
+                    }
+                    // 选中/当前这间在下一行指一个箭头
+                    if v.is_sel(i2) || v.run.pos == Some(i2) {
+                        put(buf, x + 1, y + 1, "^", theme::fg(theme::GOLD));
+                    } else if i + 1 < visible {
+                        // 斜着连到下一层的另一条岔路
+                        if let Some(c) = (0..rows)
+                            .filter_map(|rr| v.node_at(start + i + 1, rr as usize))
+                            .find(|c| n.next.contains(c))
+                        {
+                            let cc = v.run.map.node(c).col;
+                            let ch = if cc > r as usize { '╲' } else { '╱' };
+                            put(buf, x + 2, y + 1, &ch.to_string(), edge_style(v.edge_lit_here(i2, c)));
+                        }
+                    }
+                }
+                None => put(buf, x, y, "   ", theme::dim()),
+            }
+        }
+    }
+    let legend = "<e> enemy  <E> elite  {?} event  (R) rest  [$] shop  <T> treasure  /B\\ boss";
+    put(
+        buf,
+        left,
+        top + need - 1,
+        &truncate(legend, area.width.saturating_sub(left - area.x) as usize),
+        theme::dim(),
+    );
 }
