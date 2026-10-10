@@ -553,6 +553,16 @@ impl RngRegistry {
             .chain([MAP_STREAM, MATH_UTIL_STREAM])
             .any(|name| text.lines().any(|l| l.starts_with(&format!("{name}="))))
     }
+
+    /// 缺哪条流:都在就 None,少了就返回第一条缺的名字(文件被截断)
+    pub fn missing_stream(text: &str) -> Option<&'static str> {
+        RUN_STREAMS
+            .iter()
+            .map(|s| s.name())
+            .chain(FLOOR_STREAMS.iter().map(|s| s.name()))
+            .chain([MAP_STREAM, MATH_UTIL_STREAM])
+            .find(|name| !text.lines().any(|l| l.starts_with(&format!("{name}="))))
+    }
 }
 
 /// 存档里的这个键是不是一条具名流

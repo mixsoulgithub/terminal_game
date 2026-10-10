@@ -811,6 +811,16 @@ fn card_token(c: &CardInstance) -> String {
     }
 }
 
+/// 战斗现场里的卡:再带上战斗内累积的修正值(血祭匕首的成长,`id~15`)
+fn combat_card_token(c: &CardInstance) -> String {
+    let t = card_token(c);
+    if c.bonus > 0 {
+        format!("{t}~{}", c.bonus)
+    } else {
+        t
+    }
+}
+
 /// 按 id 找卡牌:先认事件专用牌,再认卡池
 fn card_def_any(id: &str) -> &'static CardDef {
     crate::core::events::event_card(id)
@@ -841,6 +851,11 @@ fn parse_cards(text: &str) -> Result<Vec<CardInstance>, String> {
     let mut out = Vec::new();
     for item in text.split(',').filter(|s| !s.is_empty()) {
         let item = item.trim();
+        // 末尾的 "~N" 是战斗内累积的修正值(血祭匕首的成长)
+        let (item, bonus) = match item.split_once('~') {
+            Some((left, right)) => (left, right.trim().parse::<i32>().unwrap_or(0)),
+            None => (item, 0),
+        };
         let (id, plus) = match item.split_once('+') {
             Some((id, rest)) => (
                 id,
@@ -859,6 +874,7 @@ fn parse_cards(text: &str) -> Result<Vec<CardInstance>, String> {
         for _ in 0..plus {
             inst.upgrade();
         }
+        inst.bonus = bonus;
         out.push(inst);
     }
     Ok(out)
@@ -1069,6 +1085,38 @@ impl Run {
             "relic_counters={},{},{},{},{},{}\n",
             rc.pen_nib, rc.happy_flower, rc.incense, rc.sundial, rc.attacks_total, rc.cards_total
         ));
+        // 整局累计的一场场统计(菜单/结算里展示),不存的话续档后归零
+        out.push_str(&format!(
+            "stats={},{},{},{},{},{}\n",
+            self.stats.fights,
+            self.stats.elites,
+            self.stats.bosses,
+            self.stats.turns,
+            self.stats.damage_dealt,
+            self.stats.potions_used
+        ));
+        // 五档遗物池:抽走即删.读档只按种子重洗会把"抽过但没拿的"放回池子
+        // (Boss 三选一里没选的两件、N'loth 换掉的那件),所以按档次原样存
+        for tier in RelicPools::TIERS {
+            let ids: Vec<&str> = self
+                .relic_pools
+                .slot(tier)
+                .map(|p| p.iter().map(|r| r.id).collect())
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "pool_{}={}\n",
+                tier.name().to_ascii_lowercase(),
+                ids.join(",")
+            ));
+        }
+        // 燃烧精英标在地图的哪个节点:地图不存,读档按种子重建;但"标没标"取决于
+        // 拿绿钥匙的时机(见 from_save 里的重建规则),重建时算不出来,单独存一条
+        let burning = self
+            .map
+            .burning_node()
+            .map(|i| format!("{i}:{}", self.map.burning_buff))
+            .unwrap_or_else(|| "-1:-1".to_string());
+        out.push_str(&format!("map_burning={burning}\n"));
         if let Some(chest) = self.chest {
             let size = match chest.size {
                 ChestSize::Small => "small",
@@ -1076,11 +1124,12 @@ impl Run {
                 ChestSize::Large => "large",
             };
             out.push_str(&format!(
-                "chest={}:{}:{}:{}\n",
+                "chest={}:{}:{}:{}:{}\n",
                 size,
                 chest.gold_present,
                 chest.tier.name(),
-                chest.empty
+                chest.empty,
+                chest.opened
             ));
         }
         // 宝箱相关的一次性次数(俄罗斯套娃 / 饥肠辘辘之脸):不存读档就白拿了
@@ -1098,16 +1147,19 @@ impl Run {
         let path: Vec<String> = self.path.iter().map(|n| n.to_string()).collect();
         out.push_str(&format!("path={}\n", path.join(",")));
         out.push_str(&format!("floor={}\n", self.floor_reached));
-        // 每张牌记成 id:升级:是否被封进瓶子
+        // 每张牌记成 id:升级:升级次数:修正值:是否被封进瓶子.
+        // 后两项是牌组原件上的持久状态:灼热攻击的多次升级(plus)与仪式匕首的成长(bonus)
         let deck: Vec<String> = self
             .player
             .deck
             .iter()
             .map(|c| {
                 format!(
-                    "{}:{}:{}",
+                    "{}:{}:{}:{}:{}",
                     c.def.id,
                     if c.upgraded { 1 } else { 0 },
+                    c.plus,
+                    c.bonus,
                     if c.bottled { 1 } else { 0 }
                 )
             })
@@ -1115,6 +1167,8 @@ impl Run {
         out.push_str(&format!("deck={}\n", deck.join(",")));
         let relics: Vec<&str> = self.player.relics.iter().map(|r| r.id).collect();
         out.push_str(&format!("relics={}\n", relics.join(",")));
+        // 药水槽数:药水腰带这类遗物会把槽数顶上去,读档时不能按初始槽数截断
+        out.push_str(&format!("potion_slots={}\n", self.player.potions.len()));
         let potions: Vec<&str> = self
             .player
             .potions
@@ -1138,7 +1192,7 @@ impl Run {
                 ("discard", &c.discard),
                 ("exhaust", &c.exhaust),
             ] {
-                let list: Vec<String> = pile.iter().map(card_token).collect();
+                let list: Vec<String> = pile.iter().map(combat_card_token).collect();
                 out.push_str(&format!("combat_{k}={}\n", list.join(",")));
             }
             let foes: Vec<String> = c
@@ -1180,6 +1234,24 @@ impl Run {
         }
         let get = |k: &str| -> Option<&str> { num.iter().find(|(a, _)| *a == k).map(|(_, b)| *b) };
         let int = |k: &str, d: i32| -> i32 { get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d) };
+        // 截断(或整体损坏)的存档:该带的字段少一个就报错,别静默按默认值接出一局错的.
+        // 只认"从最早的存档格式就有的"那几个;act/keys 这些是后来加的,缺了按默认起
+        for key in ["seed", "char", "hp", "max_hp", "gold", "deck", "relics", "potions"] {
+            if get(key).is_none() {
+                return Err(format!("存档缺少 {key} 字段,文件可能被截断"));
+            }
+        }
+        // 旧存档的随机状态是单条 xoshiro 流,和现在的具名流对不上:
+        // 直接报错,别静默接着跑出一局错的游戏
+        if get("rng").is_some() && !RngRegistry::has_any_stream_line(text) {
+            return Err(
+                "这份存档记的是旧版随机状态(单条 xoshiro 流),与现在的具名流对不上:请重新开一局".to_string(),
+            );
+        }
+        // 具名流必须 15 条一条不缺:少一条就说明文件被截断,不能拿种子重种的状态接着跑
+        if let Some(name) = RngRegistry::missing_stream(text) {
+            return Err(format!("存档缺少随机流 {name},文件可能被截断"));
+        }
         let ch = roster::find(&char_id).ok_or_else(|| format!("存档里的角色 {char_id} 不认识"))?;
         let mut run = Run::new_for_asc(seed, ch, ascension)?;
         run.player.hp = int("hp", run.player.hp);
@@ -1187,13 +1259,14 @@ impl Run {
         run.player.gold = int("gold", run.player.gold);
         if let Some(v) = get("keys") {
             let b: Vec<char> = v.trim().chars().collect();
-            if b.len() == 3 {
-                run.keys = Keys {
-                    emerald: b[0] == '1',
-                    ruby: b[1] == '1',
-                    sapphire: b[2] == '1',
-                };
+            if b.len() != 3 {
+                return Err("存档里的 keys 字段坏了".to_string());
             }
+            run.keys = Keys {
+                emerald: b[0] == '1',
+                ruby: b[1] == '1',
+                sapphire: b[2] == '1',
+            };
         }
         run.floor_reached = int("floor", 0).max(0) as usize;
         run.act = int("act", 1).clamp(1, 4) as u32;
@@ -1214,12 +1287,29 @@ impl Run {
             run.map =
                 ActMap::generate(run.streams.map_rng(), run.act == 1 || !run.keys.emerald, run.ascension);
         }
-        // 旧存档的随机状态是单条 xoshiro 流,和现在的具名流对不上:
-        // 直接报错,别静默接着跑出一局错的游戏
-        if get("rng").is_some() && !RngRegistry::has_any_stream_line(text) {
-            return Err(
-                "这份存档记的是旧版随机状态(单条 xoshiro 流),与现在的具名流对不上:请重新开一局".to_string(),
-            );
+        // 燃烧精英标在哪个节点按存档还原:本幕地图生成之后才拿到绿钥匙时,
+        // 重建规则(`!keys.emerald`)会把标记抹掉,和真实地图对不上
+        if let Some(v) = get("map_burning") {
+            let idx: i64 = v
+                .split(':')
+                .next()
+                .and_then(|x| x.trim().parse().ok())
+                .unwrap_or(-1);
+            let buff: i32 = v
+                .split(':')
+                .nth(1)
+                .and_then(|x| x.trim().parse().ok())
+                .unwrap_or(-1);
+            for n in run.map.nodes.iter_mut() {
+                n.burning = false;
+            }
+            run.map.burning_buff = buff;
+            if idx >= 0 {
+                let Some(n) = run.map.nodes.get_mut(idx as usize) else {
+                    return Err("存档里的 map_burning 节点下标越界".to_string());
+                };
+                n.burning = true;
+            }
         }
         for (k, v) in &num {
             if crate::rng::is_stream_key(k) {
@@ -1242,22 +1332,30 @@ impl Run {
                 .map(|s| enemies::resolve(s).id)
                 .collect();
         }
+        // 事件池:认不出的 id 直接报错.静默丢掉会让池子无声缩水(抽签序列跟着变)
+        let event_pool = |v: &str| -> Result<Vec<&'static str>, String> {
+            v.split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| event_id_static(s).ok_or_else(|| format!("存档里的事件 {s} 不认识")))
+                .collect()
+        };
         if let Some(v) = get("events") {
-            run.event_pool = v.split(',').filter_map(event_id_static).collect();
+            run.event_pool = event_pool(v)?;
         }
         if let Some(v) = get("shrines") {
-            run.shrine_pool = v.split(',').filter_map(event_id_static).collect();
+            run.shrine_pool = event_pool(v)?;
         }
         if let Some(v) = get("one_time") {
-            run.one_time_pool = v.split(',').filter_map(event_id_static).collect();
+            run.one_time_pool = event_pool(v)?;
         }
         if let Some(v) = get("blizzard") {
             let parts: Vec<&str> = v.split(',').collect();
-            if parts.len() == 3 {
-                run.monster_chance = parts[0].trim().parse().unwrap_or(UNKNOWN_BASE.0);
-                run.shop_chance = parts[1].trim().parse().unwrap_or(UNKNOWN_BASE.1);
-                run.treasure_chance = parts[2].trim().parse().unwrap_or(UNKNOWN_BASE.2);
+            if parts.len() != 3 {
+                return Err("存档里的 blizzard 字段坏了".to_string());
             }
+            run.monster_chance = parts[0].trim().parse().unwrap_or(UNKNOWN_BASE.0);
+            run.shop_chance = parts[1].trim().parse().unwrap_or(UNKNOWN_BASE.1);
+            run.treasure_chance = parts[2].trim().parse().unwrap_or(UNKNOWN_BASE.2);
         }
         run.removes_purchased = int("removes", 0).max(0) as u32;
         run.last_room_was_shop = get("last_shop").map(|v| v.trim() == "true").unwrap_or(false);
@@ -1285,28 +1383,59 @@ impl Run {
                 cards_total: parts[5].max(0),
             };
         }
+        // 整局累计统计.老存档没有这一行,按 0 起(与改动前的行为一致)
+        if let Some(v) = get("stats") {
+            let parts: Vec<i64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            if parts.len() != 6 {
+                return Err("存档里的 stats 字段坏了".to_string());
+            }
+            run.stats = Stats {
+                fights: parts[0].max(0) as u32,
+                elites: parts[1].max(0) as u32,
+                bosses: parts[2].max(0) as u32,
+                turns: parts[3].max(0) as u32,
+                damage_dealt: parts[4].max(0) as i32,
+                potions_used: parts[5].max(0) as u32,
+            };
+        }
+        // 五档遗物池.老存档没有这几行,后面会按种子重洗再排掉已持有的(与改动前一致)
+        for tier in RelicPools::TIERS {
+            let key = format!("pool_{}", tier.name().to_ascii_lowercase());
+            let Some(v) = get(&key) else { continue };
+            let mut pool: Vec<&'static RelicDef> = Vec::new();
+            for id in v.split(',').filter(|s| !s.is_empty()) {
+                let Some(def) = relics::relic_def(id) else {
+                    return Err(format!("存档里的遗物 {id} 不认识"));
+                };
+                pool.push(def);
+            }
+            run.relic_pools.set(tier, pool);
+        }
         if let Some(v) = get("chest") {
             let parts: Vec<&str> = v.split(':').collect();
-            if parts.len() >= 3 {
-                run.chest = Some(Chest {
-                    empty: parts.get(3).map(|s| s.trim() == "true").unwrap_or(false),
-                    size: match parts[0] {
-                        "small" => ChestSize::Small,
-                        "medium" => ChestSize::Medium,
-                        _ => ChestSize::Large,
-                    },
-                    gold_present: parts[1] == "true",
-                    tier: relic_tier_from_name(parts[2]),
-                    opened: false,
-                });
+            if parts.len() < 4 || parts.len() > 5 {
+                return Err("存档里的 chest 字段坏了".to_string());
             }
+            run.chest = Some(Chest {
+                empty: parts.get(3).map(|s| s.trim() == "true").unwrap_or(false),
+                size: match parts[0] {
+                    "small" => ChestSize::Small,
+                    "medium" => ChestSize::Medium,
+                    _ => ChestSize::Large,
+                },
+                gold_present: parts[1] == "true",
+                tier: relic_tier_from_name(parts[2]),
+                // 第五段是"已开箱"(老存档只有四段)
+                opened: parts.get(4).map(|s| s.trim() == "true").unwrap_or(false),
+            });
         }
         if let Some(v) = get("chest_extras") {
             let parts: Vec<i32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            if parts.len() == 2 {
-                run.chest_extra_left = parts[0].max(0);
-                run.chest_empty_left = parts[1].max(0);
+            if parts.len() != 2 {
+                return Err("存档里的 chest_extras 字段坏了".to_string());
             }
+            run.chest_extra_left = parts[0].max(0);
+            run.chest_empty_left = parts[1].max(0);
         }
         if let Some(v) = get("treasure") {
             run.treasure = relic_def_any_opt(v);
@@ -1314,25 +1443,32 @@ impl Run {
         if let Some(v) = get("deck") {
             let mut deck: Vec<CardInstance> = Vec::new();
             for item in v.split(',').filter(|s| !s.is_empty()) {
-                // id:升级[:封装];老存档只有前两段
-                let mut bits = item.split(':');
-                let id = bits.next().unwrap_or(item);
-                let up = bits.next().unwrap_or("0");
-                let bottled = bits.next().unwrap_or("0") == "1";
+                // 五段 = 现格式 id:升级:升级次数:修正值:封装;
+                // 三段/两段 = 老存档(只有 id:升级[:封装]),按老行为升一次级
+                let bits: Vec<&str> = item.split(':').collect();
+                let id = bits.first().copied().unwrap_or(item).trim();
                 let Some(def) = crate::core::events::event_card(id).or_else(|| cards::card_def(id))
                 else {
                     return Err(format!("存档里的卡 {id} 不认识"));
                 };
-                let mut inst = cards::card(def.id);
-                if up.trim() == "1" {
-                    inst.upgrade();
+                let mut inst = CardInstance::new(def);
+                if bits.len() >= 5 {
+                    inst.upgraded = bits[1].trim() == "1";
+                    inst.plus = bits[2].trim().parse().unwrap_or(0);
+                    inst.bonus = bits[3].trim().parse().unwrap_or(0);
+                    inst.bottled = bits[4].trim() == "1";
+                } else {
+                    if bits.get(1).map(|s| s.trim() == "1").unwrap_or(false) {
+                        inst.upgrade();
+                    }
+                    inst.bottled = bits.get(2).map(|s| s.trim() == "1").unwrap_or(false);
                 }
-                inst.bottled = bottled;
                 deck.push(inst);
             }
-            if !deck.is_empty() {
-                run.player.deck = deck;
+            if deck.is_empty() {
+                return Err("存档里的牌组是空的".to_string());
             }
+            run.player.deck = deck;
         }
         if let Some(v) = get("relics") {
             let mut relics_out: Vec<&'static RelicDef> = Vec::new();
@@ -1342,13 +1478,33 @@ impl Run {
                 };
                 relics_out.push(def);
             }
-            if !relics_out.is_empty() {
-                run.player.relics = relics_out;
+            if relics_out.is_empty() {
+                return Err("存档里的遗物列表是空的".to_string());
             }
+            run.player.relics = relics_out;
         }
         if let Some(v) = get("potions") {
-            let n = run.player.potions.len();
+            // 槽数以存档里写的为准(药水腰带之类的遗物给过的槽);老存档没有这一行,
+            // 就按初始槽数 + 遗物加成重建,与改动前的行为一致
+            let n = match get("potion_slots").and_then(|x| x.trim().parse::<usize>().ok()) {
+                Some(n) => n,
+                None => {
+                    let base = if run.ascension >= 11 { 2 } else { POTION_SLOTS };
+                    base + run
+                        .player
+                        .relics
+                        .iter()
+                        .map(|r| r.fx.potion_slots.max(0) as usize)
+                        .sum::<usize>()
+                }
+            };
             let mut slots: Vec<Option<&'static PotionDef>> = vec![None; n];
+            let listed = v.split(',').filter(|s| !s.is_empty()).count();
+            if listed > n {
+                return Err(format!(
+                    "存档里的药水条数({listed})比槽数({n})多,文件坏了"
+                ));
+            }
             for (i, id) in v.split(',').enumerate().take(n) {
                 if id == "-" || id.is_empty() {
                     continue;
@@ -1467,7 +1623,7 @@ impl Run {
         run.reward = None;
         run.shop = None;
         run.picker = None;
-        run.treasure = None;
+        // treasure 不在这里清:它随存档往返(宝箱房另存的那份要能接着开)
         run.say(format!("continued run, seed {seed}"));
         Ok(run)
     }
@@ -6905,6 +7061,617 @@ mod tests {
             assert_eq!(back.keys, r.keys);
             assert_eq!(back.floor_reached, r.floor_reached);
         }
+    }
+
+    /// 把能填的状态都填上(A20 + 三钥匙 + 各类计数器 + 战斗现场 + 牌组/遗物/药水/房间状态)
+    fn rich_run() -> Run {
+        let ch = roster::find("ironclad").unwrap();
+        let mut r = Run::new_for_asc(7, ch, 20).unwrap();
+        r.keys = Keys {
+            emerald: true,
+            ruby: true,
+            sapphire: true,
+        };
+        r.a20_second_boss = true;
+        r.omamori_charges = 2;
+        r.maw_bank_spent = true;
+        r.rested = true;
+        r.unknown_rooms_seen = 3;
+        r.relic_counters = RunRelicCounters {
+            pen_nib: 3,
+            happy_flower: 2,
+            incense: 4,
+            sundial: 5,
+            attacks_total: 7,
+            cards_total: 9,
+        };
+        r.stats = Stats {
+            fights: 5,
+            elites: 2,
+            bosses: 1,
+            turns: 31,
+            damage_dealt: 411,
+            potions_used: 3,
+        };
+        r.potion_chance = 20;
+        r.card_rarity_factor = -10;
+        r.removes_purchased = 2;
+        r.last_room_was_shop = true;
+        r.neow_lament = 1;
+        r.relic_lifts = 2;
+        r.wing_boots_left = 1;
+        r.chest_extra_left = 1;
+        r.chest_empty_left = 1;
+        r.player.hp = 42;
+        r.player.max_hp = 77;
+        r.player.gold = 321;
+        for rel in ["omamori", "potion_belt", "sundial", "pen_nib", "maw_bank"] {
+            r.debug_add_relic(rel).unwrap();
+        }
+        for p in ["fruit_juice", "smoke_bomb", "fairy_potion", "blood_potion"] {
+            assert!(r.add_potion(potions::by_id(p).unwrap()), "药水槽够: {p}");
+        }
+        let mut sb = CardInstance::new(cards::card_def("searing_blow").unwrap());
+        for _ in 0..5 {
+            assert!(sb.upgrade());
+        }
+        r.player.deck.push(sb);
+        let mut rd = CardInstance::new(crate::core::events::event_card("ritual_dagger").unwrap());
+        rd.bonus = 15;
+        r.player.deck.push(rd);
+        r.player.deck[0].bottled = true;
+        r.begin_act();
+        // 抽走一件 Boss 遗物但没选它(池子里不再有这件)
+        let drawn = r.take_relic_of_tier(RelicTier::Boss);
+        assert!(!r.player.relics.iter().any(|x| x.id == drawn.id));
+        r.chest = Some(Chest {
+            size: ChestSize::Medium,
+            gold_present: true,
+            tier: RelicTier::Uncommon,
+            empty: false,
+            opened: true,
+        });
+        r.treasure = relic_def_any_opt("anchor");
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").unwrap();
+        r.debug_start_combat(enc);
+        r.combat.as_mut().unwrap().end_turn();
+        r.sync_combat();
+        r
+    }
+
+    /// 存档往返:存-读-再存必须逐字节相同,且关键状态逐个相等
+    #[test]
+    fn save_load_save_is_byte_identical_for_a_rich_run() {
+        let r = rich_run();
+        let t1 = r.save_text();
+        let back = Run::from_save(&t1).expect("读回存档");
+        assert_eq!(back.save_text(), t1, "存-读-再存必须逐字节相同");
+
+        assert_eq!(back.seed, r.seed);
+        assert_eq!(back.character, r.character);
+        assert_eq!(back.ascension, r.ascension);
+        assert_eq!(back.act, r.act);
+        assert_eq!(back.a20_second_boss, r.a20_second_boss);
+        assert_eq!(back.keys, r.keys);
+        assert_eq!(back.player.hp, r.player.hp);
+        assert_eq!(back.player.max_hp, r.player.max_hp);
+        assert_eq!(back.player.gold, r.player.gold);
+        assert_eq!(back.pos, r.pos);
+        assert_eq!(back.path, r.path);
+        assert_eq!(back.floor_reached, r.floor_reached);
+        assert_eq!(back.floor_num, r.floor_num);
+        assert_eq!(back.boss_enc.id, r.boss_enc.id);
+        assert_eq!(back.boss2_enc.id, r.boss2_enc.id);
+        assert_eq!(back.monster_list, r.monster_list);
+        assert_eq!(back.elite_list, r.elite_list);
+        assert_eq!(back.event_pool, r.event_pool);
+        assert_eq!(back.shrine_pool, r.shrine_pool);
+        assert_eq!(back.one_time_pool, r.one_time_pool);
+        assert_eq!(back.removes_purchased, r.removes_purchased);
+        assert_eq!(back.last_room_was_shop, r.last_room_was_shop);
+        assert_eq!(back.neow_lament, r.neow_lament);
+        assert_eq!(back.relic_lifts, r.relic_lifts);
+        assert_eq!(back.wing_boots_left, r.wing_boots_left);
+        assert_eq!(back.omamori_charges, r.omamori_charges);
+        assert_eq!(back.maw_bank_spent, r.maw_bank_spent);
+        assert_eq!(back.rested, r.rested);
+        assert_eq!(back.unknown_rooms_seen, r.unknown_rooms_seen);
+        assert_eq!(back.relic_counters, r.relic_counters);
+        assert_eq!(back.chest_extra_left, r.chest_extra_left);
+        assert_eq!(back.chest_empty_left, r.chest_empty_left);
+        assert_eq!(back.potion_chance, r.potion_chance);
+        assert_eq!(back.card_rarity_factor, r.card_rarity_factor);
+        assert_eq!(back.stats.fights, r.stats.fights);
+        assert_eq!(back.stats.elites, r.stats.elites);
+        assert_eq!(back.stats.bosses, r.stats.bosses);
+        assert_eq!(back.stats.turns, r.stats.turns);
+        assert_eq!(back.stats.damage_dealt, r.stats.damage_dealt);
+        assert_eq!(back.stats.potions_used, r.stats.potions_used);
+
+        // 牌组逐张相等(升级、多次升级次数、修正值、封装)
+        let deck = |x: &Run| -> Vec<(String, bool, u8, i32, bool)> {
+            x.player
+                .deck
+                .iter()
+                .map(|c| {
+                    (
+                        c.def.id.to_string(),
+                        c.upgraded,
+                        c.plus,
+                        c.bonus,
+                        c.bottled,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(deck(&back), deck(&r), "牌组逐张相等");
+        // 遗物/药水(含腰带给的槽)
+        let relics = |x: &Run| -> Vec<&'static str> { x.player.relics.iter().map(|y| y.id).collect() };
+        assert_eq!(relics(&back), relics(&r));
+        let potions = |x: &Run| -> Vec<Option<&'static str>> {
+            x.player.potions.iter().map(|p| p.map(|d| d.id)).collect()
+        };
+        assert_eq!(potions(&back), potions(&r), "药水连槽位一起回来");
+        // 五档遗物池
+        for tier in RelicPools::TIERS {
+            let ids = |p: &RelicPools| -> Vec<&'static str> {
+                p.slot(tier).unwrap().iter().map(|r| r.id).collect()
+            };
+            assert_eq!(ids(&back.relic_pools), ids(&r.relic_pools), "{tier:?} 档池子");
+        }
+        // 宝箱与宝箱屏那件遗物
+        let (c1, c2) = (r.chest.unwrap(), back.chest.expect("宝箱要回来"));
+        assert_eq!(c1.opened, c2.opened);
+        assert_eq!(c1.gold_present, c2.gold_present);
+        assert_eq!(c1.tier, c2.tier);
+        assert_eq!(c1.size, c2.size);
+        assert_eq!(
+            back.treasure.map(|t| t.id),
+            r.treasure.map(|t| t.id),
+            "宝箱屏那件遗物"
+        );
+        // 战斗现场
+        let (k1, k2) = (
+            r.combat.as_ref().unwrap(),
+            back.combat.as_ref().expect("战斗现场要回来"),
+        );
+        assert_eq!(k2.turn, k1.turn);
+        assert_eq!(k2.energy, k1.energy);
+        assert_eq!(k2.max_energy, k1.max_energy);
+        assert_eq!(k2.player.hp, k1.player.hp);
+        assert_eq!(k2.player.block, k1.player.block);
+        let pile = |p: &[CardInstance]| -> Vec<(String, bool, u8, i32)> {
+            p.iter()
+                .map(|c| (c.def.id.to_string(), c.upgraded, c.plus, c.bonus))
+                .collect()
+        };
+        assert_eq!(pile(&k2.hand), pile(&k1.hand));
+        assert_eq!(pile(&k2.draw), pile(&k1.draw));
+        assert_eq!(pile(&k2.discard), pile(&k1.discard));
+        assert_eq!(pile(&k2.exhaust), pile(&k1.exhaust));
+        let foes = |c: &Combat| -> Vec<(i32, i32, usize, bool)> {
+            c.enemies
+                .iter()
+                .map(|e| (e.hp, e.block, e.next_move, e.alive()))
+                .collect()
+        };
+        assert_eq!(foes(k2), foes(k1));
+    }
+
+    /// 牌组的多次升级(灼热攻击)与成长值(血祭匕首)要随存档往返;
+    /// 事件牌(apparition/bite/jax/ritual_dagger)在牌组里读档不能崩
+    #[test]
+    fn deck_multi_upgrade_and_growth_survive_a_save_round_trip() {
+        let mut r = run(21);
+        let mut sb = CardInstance::new(cards::card_def("searing_blow").unwrap());
+        for _ in 0..5 {
+            assert!(sb.upgrade());
+        }
+        assert_eq!((sb.plus, sb.bonus), (5, 30), "五级灼热:4+5+6+7+8");
+        r.player.deck.push(sb);
+        let mut rd = CardInstance::new(crate::core::events::event_card("ritual_dagger").unwrap());
+        rd.bonus = 21;
+        r.player.deck.push(rd);
+
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        let sb2 = back
+            .player
+            .deck
+            .iter()
+            .find(|c| c.def.id == "searing_blow")
+            .expect("灼热攻击还在");
+        assert_eq!((sb2.plus, sb2.bonus), (5, 30), "多次升级的等级与修正值都要回来");
+        let rd2 = back
+            .player
+            .deck
+            .iter()
+            .find(|c| c.def.id == "ritual_dagger")
+            .expect("血祭匕首还在");
+        assert_eq!(rd2.bonus, 21, "跨战斗的成长值要回来");
+
+        // 事件牌在牌组里:以前 from_save 会 panic(拿 cards::card 认事件牌)
+        for id in ["apparition", "bite", "jax"] {
+            let mut t = run(22);
+            t.player.deck
+                .push(CardInstance::new(crate::core::events::event_card(id).unwrap()));
+            let b = Run::from_save(&t.save_text()).unwrap_or_else(|e| panic!("{id} 读档失败: {e}"));
+            assert!(
+                b.player.deck.iter().any(|c| c.def.id == id),
+                "事件牌 {id} 要读回来"
+            );
+        }
+
+        // 老格式(三段 id:升级:封装)仍可读:升级按老行为走一次,封装保留
+        let mut old = run(23);
+        old.player.deck[0].bottled = true;
+        let text: String = old
+            .save_text()
+            .lines()
+            .map(|l| {
+                if let Some(v) = l.strip_prefix("deck=") {
+                    let items: Vec<String> = v
+                        .split(',')
+                        .map(|x| {
+                            let b: Vec<&str> = x.split(':').collect();
+                            format!("{}:{}:{}", b[0], b[1], b[4])
+                        })
+                        .collect();
+                    format!("deck={}\n", items.join(","))
+                } else {
+                    format!("{l}\n")
+                }
+            })
+            .collect();
+        let back = Run::from_save(&text).expect("老格式的牌组仍可读");
+        assert_eq!(back.player.deck.len(), old.player.deck.len());
+        assert!(back.player.deck[0].bottled, "老格式的封装保留");
+    }
+
+    /// 药水腰带给的槽位要随存档走:读档不能按初始槽数把药水截掉
+    #[test]
+    fn potion_belt_slots_survive_a_save_round_trip() {
+        let mut r = run(24);
+        r.debug_add_relic("potion_belt").unwrap();
+        assert_eq!(r.player.potions.len(), POTION_SLOTS + 2, "腰带 +2 槽");
+        for p in ["fruit_juice", "smoke_bomb", "fairy_potion", "blood_potion"] {
+            assert!(r.add_potion(potions::by_id(p).unwrap()));
+        }
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.player.potions.len(), POTION_SLOTS + 2, "槽数照旧");
+        assert_eq!(
+            back.player.potions.iter().filter(|p| p.is_some()).count(),
+            4,
+            "四瓶都要在"
+        );
+
+        // 老存档没有 potion_slots 行:按初始槽数 + 遗物加成重建(与改动前一致)
+        let stripped: String = r
+            .save_text()
+            .lines()
+            .filter(|l| !l.starts_with("potion_slots="))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let old = Run::from_save(&stripped).expect("老存档仍可读");
+        assert_eq!(old.player.potions.len(), POTION_SLOTS + 2, "按遗物重建槽数");
+    }
+
+    /// 本幕拿到绿钥匙之后,地图上的燃烧精英标记仍要跟着存档走
+    /// (重建规则是 `!keys.emerald`,重建时算不出"当时标没标")
+    #[test]
+    fn burning_elite_marker_survives_a_save_round_trip() {
+        let mut r = run(25);
+        assert!(!r.keys.emerald);
+        r.begin_act(); // 第二章:还没有绿钥匙,地图会标燃烧精英
+        assert!(r.map.burning_node().is_some(), "第二章要标燃烧精英");
+        r.keys.emerald = true; // 打完燃烧精英,绿钥匙到手
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.map.burning_node(), r.map.burning_node(), "标记要还原");
+        assert_eq!(back.map.burning_buff, r.map.burning_buff);
+
+        // 反过来:进幕时就有绿钥匙 -> 地图本来不标,读档也不能凭空补一个
+        let mut s = run(26);
+        s.keys.emerald = true;
+        s.begin_act();
+        assert!(s.map.burning_node().is_none());
+        let back = Run::from_save(&s.save_text()).expect("读回存档");
+        assert!(back.map.burning_node().is_none(), "没标的不能被补上");
+    }
+
+    /// 遗物池是"本局已洗好、抽走即删"的状态:抽过但没拿的那件不能因为读档又回池里
+    #[test]
+    fn relic_pools_survive_a_save_round_trip() {
+        let mut r = run(27);
+        // 打完 Boss 的那次三选一:三件都从池里抽走,选中的进遗物栏,另两件不回池
+        // (参考实现 returnRandomRelic 抽即 erase,GameContext.cpp:1521-1523)
+        let row = r.debug_relic_boss_choices(1).remove(0);
+        let picked = row[0].clone();
+        let skipped: Vec<String> = row[1..].to_vec();
+        r.gain_relic(relics::relic_def(&picked).expect("Boss 遗物认得"));
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        for id in &skipped {
+            assert!(
+                !back.relic_pools.boss.iter().any(|x| x.id == id),
+                "没选的 {id} 不能回到池里"
+            );
+        }
+        assert!(
+            back.player.relics.iter().any(|x| x.id == picked),
+            "选中的那件还在遗物栏"
+        );
+        for tier in RelicPools::TIERS {
+            let ids = |p: &RelicPools| -> Vec<&'static str> {
+                p.slot(tier).unwrap().iter().map(|r| r.id).collect()
+            };
+            assert_eq!(ids(&back.relic_pools), ids(&r.relic_pools), "{tier:?} 档池子");
+        }
+    }
+
+    /// 宝箱的"已开"标记、整局统计与宝箱屏那件遗物都要往返
+    #[test]
+    fn chest_stats_and_treasure_survive_a_save_round_trip() {
+        let mut r = run(28);
+        r.stats = Stats {
+            fights: 4,
+            elites: 1,
+            bosses: 1,
+            turns: 22,
+            damage_dealt: 345,
+            potions_used: 2,
+        };
+        r.chest = Some(Chest {
+            size: ChestSize::Large,
+            gold_present: true,
+            tier: RelicTier::Rare,
+            empty: false,
+            opened: true,
+        });
+        r.treasure = relic_def_any_opt("anchor");
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.stats.fights, 4);
+        assert_eq!(back.stats.turns, 22);
+        assert_eq!(back.stats.damage_dealt, 345);
+        assert_eq!(back.stats.potions_used, 2);
+        let c = back.chest.expect("宝箱要回来");
+        assert!(c.opened, "已开箱的状态要回来");
+        assert_eq!(c.tier, RelicTier::Rare);
+        assert_eq!(back.treasure.map(|t| t.id), Some("anchor"));
+    }
+
+    /// 截断/损坏的存档必须明确拒绝,不能拿默认值静默接出一局错的
+    #[test]
+    fn broken_saves_are_rejected_not_silently_defaulted() {
+        let base = run(11).save_text();
+        let without = |k: &str| -> String {
+            base.lines()
+                .filter(|l| !l.starts_with(&format!("{k}=")))
+                .map(|l| format!("{l}\n"))
+                .collect()
+        };
+        let err = |text: String| -> String {
+            match Run::from_save(&text) {
+                Ok(_) => panic!("这份存档应该被拒绝:\n{text}"),
+                Err(e) => e,
+            }
+        };
+
+        // 旧版随机状态(单条 xoshiro 流)
+        let no_streams: String = base
+            .lines()
+            .filter(|l| {
+                !l.split_once('=')
+                    .map(|(k, _)| crate::rng::is_stream_key(k))
+                    .unwrap_or(false)
+            })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let old = format!("{no_streams}rng=1,2,3\n");
+        assert!(err(old).contains("旧版随机状态"), "老版本要报旧随机状态");
+
+        // 少一条具名流 = 文件被截断
+        assert!(err(without("cardRng")).contains("缺少随机流"));
+        // 少一个必带字段
+        assert!(err(without("deck")).contains("缺少 deck"));
+        assert!(err(without("potions")).contains("缺少 potions"));
+        assert!(err(without("hp")).contains("缺少 hp"));
+        // act/keys 这类后加的字段缺了仍按默认起(老存档还能读)
+        let no_act = without("act");
+        assert!(Run::from_save(&no_act).is_ok(), "缺 act 按 1 起");
+        let no_keys = without("keys");
+        assert!(Run::from_save(&no_keys).is_ok(), "缺 keys 按三把都没有起");
+        // 断在牌组中间
+        assert!(err(format!("{}deck=strike:0:0:0:0,stri\n", without("deck"))).contains("不认识"));
+        // 认不出的牌 / 遗物 / 药水 / 事件
+        assert!(err(format!("{}deck=nosuchcard:0:0:0:0\n", without("deck"))).contains("不认识"));
+        assert!(err(format!("{}relics=nosuchrelic\n", without("relics"))).contains("不认识"));
+        assert!(err(format!("{}potions=nosuchpotion,-,-\n", without("potions"))).contains("不认识"));
+        assert!(err(format!("{}events=nosuchevent\n", without("events"))).contains("不认识"));
+        // 空牌组 / 空遗物表
+        assert!(err(format!("{}deck=\n", without("deck"))).contains("牌组是空的"));
+        assert!(err(format!("{}relics=\n", without("relics"))).contains("空的"));
+        // 组合字段段数不对
+        assert!(err(format!("{}keys=11\n", without("keys"))).contains("keys"));
+        assert!(err(format!("{}chest=x:true:Common\n", base)).contains("chest"));
+        assert!(err(format!("{}stats=1,2,3\n", without("stats"))).contains("stats"));
+        assert!(err(format!("{}relic_counters=1,2\n", without("relic_counters"))).contains("relic_counters"));
+        assert!(err(format!("{}chest_extras=1\n", without("chest_extras"))).contains("chest_extras"));
+        assert!(err(format!("{}blizzard=1,2\n", without("blizzard"))).contains("blizzard"));
+        assert!(err(format!("{}map_burning=99999:0\n", without("map_burning"))).contains("越界"));
+        // 药水条数比槽数多(前后对不上)
+        assert!(err(format!("{}potions=a,b,c,d\n", without("potions"))).contains("药水"));
+        // 多余字段(将来版本加的)必须被忽略,不能炸
+        let extra = format!("{base}future_field=hello\n");
+        assert!(Run::from_save(&extra).is_ok(), "多余的字段要忽略");
+    }
+
+    /// 跨幕:该留的留住、该重置的换掉.依据是参考实现的 transitionToAct
+    /// (refs/sts_lightspeed/src/game/GameContext.cpp:729-750):只换 act/地图/遭遇名单/事件池,
+    /// 三把钥匙(obtainKey 只置三布尔,GameContext.cpp:1201-1221)、一次性事件池
+    /// (specialOneTimeEventList 不被清)、商店删牌次数(shopRemoveCount)、遗物计数器都不动.
+    #[test]
+    fn cross_act_state_is_kept_where_the_reference_keeps_it() {
+        let mut r = run(51);
+        r.keys = Keys {
+            emerald: true,
+            ruby: true,
+            sapphire: false,
+        };
+        r.omamori_charges = 2;
+        r.maw_bank_spent = true;
+        r.removes_purchased = 2;
+        r.neow_lament = 1;
+        r.relic_lifts = 2;
+        r.wing_boots_left = 1;
+        r.relic_counters.pen_nib = 7;
+        r.potion_chance = 30;
+        // 抽走一个事件(抽走即移除);抽中的必须从池里删掉
+        let drawn = r.generate_event_id().expect("第一章能抽到事件");
+        assert!(
+            !r.event_pool.contains(&drawn)
+                && !r.shrine_pool.contains(&drawn)
+                && !r.one_time_pool.contains(&drawn),
+            "抽中的 {drawn} 要从池里删掉"
+        );
+        let one_time_before = r.one_time_pool.clone();
+
+        r.begin_act();
+        assert_eq!(
+            r.keys,
+            Keys {
+                emerald: true,
+                ruby: true,
+                sapphire: false
+            },
+            "三把钥匙跨幕"
+        );
+        assert_eq!(r.omamori_charges, 2, "御守剩余次数跨幕");
+        assert!(r.maw_bank_spent, "马乌银行的已花标记跨幕");
+        assert_eq!(r.removes_purchased, 2, "删牌次数按本局累加,不每幕重置");
+        assert_eq!(r.neow_lament, 1, "尼奥之哀悼的剩余场数接着算");
+        assert_eq!(r.relic_lifts, 2);
+        assert_eq!(r.wing_boots_left, 1);
+        assert_eq!(r.relic_counters.pen_nib, 7, "笔尖计数跨幕");
+        assert_eq!(r.one_time_pool, one_time_before, "一次性事件池跨幕保留");
+        assert_eq!(r.event_pool, ACT2_EVENTS.to_vec(), "本章事件池换成新章的");
+        assert_eq!(r.shrine_pool, ACT23_SHRINES.to_vec(), "神龛池换成新章的");
+        assert_eq!(r.potion_chance, 0, "药水保底切幕复位");
+        assert_eq!(r.monster_chance, UNKNOWN_BASE.0, "未知房概率切幕复位");
+
+        // 会员卡/快递员的折扣是每店按当前遗物重算的,没有跨店缓存
+        // (refs/sts_lightspeed/src/game/Shop.cpp:10-25 的 setup 每次都重新 applyDiscount)
+        r.debug_add_relic("membership_card").unwrap();
+        r.debug_add_relic("the_courier").unwrap();
+        assert_eq!(r.discount(100), 40, "0.8 × 0.5 = 四折");
+
+        // 这一套状态存-读一趟后逐个还在
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.keys, r.keys);
+        assert_eq!(back.omamori_charges, r.omamori_charges);
+        assert_eq!(back.maw_bank_spent, r.maw_bank_spent);
+        assert_eq!(back.removes_purchased, r.removes_purchased);
+        assert_eq!(back.neow_lament, r.neow_lament);
+        assert_eq!(back.relic_lifts, r.relic_lifts);
+        assert_eq!(back.wing_boots_left, r.wing_boots_left);
+        assert_eq!(back.relic_counters, r.relic_counters);
+        assert_eq!(back.one_time_pool, r.one_time_pool);
+        assert_eq!(back.event_pool, r.event_pool);
+        assert_eq!(back.shrine_pool, r.shrine_pool);
+        assert_eq!(back.discount(100), 40, "读档后折扣照旧");
+    }
+
+    /// 事件留下的牌组痕迹就是牌组本身(坠落删三张 / 变形换牌 / 升级),
+    /// 没有额外的"已发生"标记:存-读要把删/换/升级之后的牌组逐张带回来
+    #[test]
+    fn deck_edits_survive_a_save_round_trip() {
+        let mut r = run(53);
+        let before = r.player.deck.len();
+        // 移除一张(事件/商店的删牌屏)
+        r.debug_open_remove_picker();
+        assert!(!r.picker_candidates().is_empty());
+        r.picker_confirm().expect("确认移除");
+        assert_eq!(r.player.deck.len(), before - 1, "删掉一张");
+        // 升级一张
+        r.debug_upgrade_card("strike", 1).expect("升级一张打击");
+        // 变形一张(事件的变形屏)
+        r.open_picker(PickPurpose::Transform, Screen::Event, 0, None);
+        assert!(!r.picker_candidates().is_empty());
+        r.picker_confirm().expect("确认变形");
+
+        let deck = |x: &Run| -> Vec<(String, bool, u8, i32, bool)> {
+            x.player
+                .deck
+                .iter()
+                .map(|c| {
+                    (
+                        c.def.id.to_string(),
+                        c.upgraded,
+                        c.plus,
+                        c.bonus,
+                        c.bottled,
+                    )
+                })
+                .collect()
+        };
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(deck(&back), deck(&r), "删/换/升级后的牌组逐张回来");
+    }
+
+    /// 商店的删牌价 = 75 + 25×本局买过的次数(微笑面具固定 50),每店按计数重算:
+    /// 换幕、读档都不会回落到 75.依据 refs/sts_lightspeed/src/game/Shop.cpp:214-236
+    /// (getRemoveCost 用 shopRemoveCount;原版把 purgeCost 写进存档但不还原,本仓用计数重算).
+    #[test]
+    fn shop_remove_price_uses_the_saved_purchase_count() {
+        let price = |r: &Run| -> i32 {
+            r.shop
+                .as_ref()
+                .expect("要在商店里")
+                .items
+                .iter()
+                .find_map(|i| match i {
+                    ShopItem::Remove(p) => Some(*p),
+                    _ => None,
+                })
+                .expect("商店有删牌格")
+        };
+        let mut r = run(54);
+        r.debug_room("shop").unwrap();
+        assert_eq!(price(&r), SHOP_REMOVAL_BASE, "第一次进店 75");
+        r.removes_purchased = 3;
+        r.debug_room("shop").unwrap();
+        assert_eq!(
+            price(&r),
+            SHOP_REMOVAL_BASE + SHOP_REMOVAL_STEP * 3,
+            "按本局次数涨"
+        );
+        let mut back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.removes_purchased, 3);
+        back.debug_room("shop").unwrap();
+        assert_eq!(
+            price(&back),
+            SHOP_REMOVAL_BASE + SHOP_REMOVAL_STEP * 3,
+            "读档后仍按计数算"
+        );
+
+        // 微笑面具:固定 50
+        let mut m = run(55);
+        m.debug_add_relic("smiling_mask").unwrap();
+        m.debug_room("shop").unwrap();
+        assert_eq!(price(&m), 50);
+    }
+
+    /// 战斗里被偷的金币以 player.gold 为准收回一局(参考实现 exitBattle 把 player.gold
+    /// 搬回 gc.gold,BattleContext.cpp:483-484),存档记的就是扣完赃款的真值;
+    /// 打死退赃/逃跑不退这两条在 combat.rs 里各有断言.
+    #[test]
+    fn combat_gold_is_folded_back_into_the_saved_gold() {
+        let mut r = run(56);
+        r.player.gold = 100;
+        let enc = crate::core::enemies::encounter_def("looter_solo").unwrap();
+        r.debug_start_combat(enc);
+        r.combat.as_mut().unwrap().player_gold = 64; // 被偷 36
+        r.sync_combat();
+        assert_eq!(r.player.gold, 64, "战斗里的金币要收回一局");
+        let back = Run::from_save(&r.save_text()).expect("读回存档");
+        assert_eq!(back.player.gold, 64, "存档记的是扣完赃款的真值");
     }
 
     /// 战斗现场的存档要带"顶牌在下标 0"的标记;旧格式(没有这行)必须明确拒绝
