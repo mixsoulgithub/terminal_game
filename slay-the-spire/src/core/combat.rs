@@ -3430,7 +3430,15 @@ impl Combat {
         }
         // 化石螺壳(Buffer)只拦"伤害",不拦卡牌/能力的直接掉血:
         // 反编译里 Buffer 判在 Player::damage / Player::attacked,而 loseHp() 这条
-        // 直接掉血的路径(放血、献祭、蓝蜡烛、燃烧契约、缠绕、灼烧?)没有它
+        // 直接掉血的路径(放血、献祭、蓝蜡烛、燃烧契约、缠绕、灼烧?)没有它.
+        // 无形则相反:Player::loseHp 第一句就是 INTANGIBLE 把 amount 压到 1
+        // (refs/sts_lightspeed/src/combat/Player.cpp:261-275),原版无形的能力
+        // 文本也写明"受到的伤害与生命流失都降为 1".顺序与反编译一致:先无形,后钨钢棒.
+        let amount = if amount > 1 && self.player.statuses.has(Status::Intangible) {
+            1
+        } else {
+            amount
+        };
         let amount = (amount - self.relic_sum(|fx| fx.hp_loss_reduction)).max(0);
         if amount <= 0 {
             return;
@@ -3497,6 +3505,72 @@ impl Combat {
         self.phase = Phase::Lost;
         self.push_log(LogKind::Info, "you have been defeated".to_string());
     }
+
+    // ===================== 受击链 / 格挡链 顺序表 =====================
+    //
+    // 行号均指 refs/sts_lightspeed 内的相对路径.
+    //
+    // [玩家受击链 A] 敌人"攻击"打过来(AttackPlayer -> Player::attacked, Player.cpp:210-259):
+    //   0. 无形:攻击者侧已压到 1(Monster::calculateDamageToPlayer, Monster.cpp:561-599)
+    //   1. 格挡吸收 block(min(block, damage))
+    //   2. Buffer(化石螺壳):damage>0 时减一层并把这一击清零(在鸟居/钨钢棒之前)
+    //   3. 玩家荆棘 THORNS -> DamageEnemy(enemyIdx, thorns)   [不看是否被格挡, 排队到顶]
+    //   4. 火焰屏障 FLAME_BARRIER -> DamageEnemy                [同上, 与 3 同拍]
+    //   5. 鸟居 TORII:扣完格挡后剩 1..5 的攻击伤害降为 1
+    //   6. 钨钢棒 TUNGSTEN_ROD:每次掉血再 -1
+    //   7. damage>0 才做的三件:镀甲 PLATED_ARMOR 减一层 -> 目标怪带痛苦刺击时塞伤口
+    //      -> hpWasLost(见链 C).damage==0 时 lastAttackUnblockedDamage 归零
+    //   本作:第 1/2 步在 hit_player_kind(helix), 第 3/4 步在 enemy_attack(荆棘+火焰
+    //   屏障合成 thorns, 每段各反一次), 5/6 在 hit_player_kind, 7 在 hit_player_kind.
+    //
+    // [玩家受击链 B] 非攻击"伤害"(死亡律动/缠绕/灼伤这类 DamagePlayer -> Player::damage,
+    //                Player.cpp:174-208):
+    //   无形 -> 格挡吸收 -> Buffer -> 钨钢棒 -> hpWasLost.没有鸟居/镀甲/荆棘.
+    //
+    // [玩家掉血链 B'] 直接掉血(Player::loseHp, Player.cpp:261-274;卡牌/能力自伤):
+    //   无形(-1 到 1) -> 钨钢棒(-1) -> hpWasLost.不吃格挡, 也不吃 Buffer.
+    //
+    // [链 C] hpWasLost(Player.cpp:276-321), 上面两条最终都汇到这里:
+    //   扣血 -> Rupture(仅 selfDamage) -> 百年拼图(移除遗物并抽 3)
+    //        -> 情绪芯片(反编译为 todo) -> 自成型黏土(下回合格挡 +3)
+    //        -> 符文方块(抽 1) -> 红骷髅(首次跌破半血补 3 力)
+    //        -> cards.onTookDamage(血债降费) -> timesDamagedThisCombat++ -> wouldDie
+    //   本作:on_hp_lost 做拼图/方块/黏土/红骷髅, 血债在 note_hp_loss, wouldDie 在
+    //   resolve_player_death.
+    //
+    // [怪物受击链 A] 玩家"攻击"打过去(Monster::attacked, Monster.cpp:407-441):
+    //   0. 目标无形:damage>0 时压到 1
+    //   1. ANGRY(狂怒):在格挡之前就涨力量(onAttacked, 挡不挡都算)
+    //   2. 格挡吸收;这一击把格挡打碎(且玩家有手钻)时补 2 易伤
+    //   3. damage>0 -> attackedUnblockedHelper(Monster.cpp:339-405):
+    //        a. 靴子 THE_BOOT:未被格挡的攻击伤害 1..4 提到 5
+    //        b. 淬毒 Envenom:玩家有就给怪上毒
+    //        c. else-if 独占链(只走第一条命中的):
+    //           无敌(扣额度) / 镀甲(减一层, 甲碎的壳裂怪换成眩晕招)
+    //           / 卷曲(一次性给格挡) / 飞行(减一层, 减到 0 落地眩晕)
+    //           / 延展|反应(延展先给格挡再 +1;反应重掷意图) / 荆棘(反打玩家)
+    //           / 睡眠(醒来并把金属化清 0) / 移形换影(等量扣力量, 回合末回补)
+    //        d. 扣血;hp<=0 走 die, 否则 onHpLost(阈值:分裂/形态切换)
+    //   本作:hit_enemy_final 做 0/2/3a/无敌/扣血;on_enemy_hp_lost 做睡眠/卷曲/延展/
+    //   镀甲/飞行/移形换影/阈值;on_enemy_attacked 做 1(狂怒)与荆棘、反应.
+    //   (淬毒 Envenom 本作未实现该卡, 见 card corpus 缺项.)
+    //
+    // [怪物受击链 B] 非攻击"伤害"(毒/燃烧/荆棘这类 Monster::damage, Monster.cpp:466-497):
+    //   无形 -> 格挡吸收 -> damageUnblockedHelper(Monster.cpp:442-464):
+    //   无敌 / 睡眠 / 移形换影(顺序同上) -> 扣血 -> onHpLost.
+    //   与链 A 的差别:没有靴子/淬毒/镀甲/卷曲/飞行/延展/反应/荆棘/ANGRY.
+    //   本作:on_enemy_hp_lost 里"睡眠/移形换影"在 is_attack 之外(两条链都走),
+    //   其余在 is_attack 之内(只有链 A 走).
+    //
+    // [玩家格挡获得链] 卡牌格挡 = calculateCardBlock(BattleContext.cpp:2744-2758):
+    //   有 NoBlock(紧急按钮)直接 0 -> 加敏捷 -> 虚弱 x3/4(向下取整);
+    //   遗物/能力给的格挡不过这一层(直接 Actions::GainBlock(amount)).
+    //   然后 Player::gainBlock(Player.cpp:68-80):block += amount;Juggernaut 触发
+    //   (随机一个活怪吃伤害).
+    //   本作:gain_block(amount, doubled, from_card) 里 from_card 才走敏捷/虚弱/NoBlock,
+    //   Juggernaut 对所有来源的格挡都触发.
+    // [回合开始的格挡清理] BattleContext.cpp:2181-2188:Barricade(全留) > Blur(递减)
+    //   > Calipers(-15) > 清空.本作在 start_turn,顺序一致(未实现 Blur 卡).
 
     /// 敌人打玩家一次(非攻击伤害:死亡律动、荆棘、缠绕、灼伤这些一并走这里);
     /// 返回(实际掉血, 被格挡量).会掉镀甲的只有真正的攻击,见 hit_player_attack
@@ -3898,12 +3972,16 @@ impl Combat {
                     self.enemies[idx].statuses.add(Status::Flight, -1);
                 }
             }
-            // 移形换影:掉多少血就等量少力量,自己回合结束再补回来
-            // (和黑暗镣铐走同一条路:当下真扣,回合末按 temp_strength 回补)
-            if self.enemies[idx].statuses.holds(Status::Shifting) {
-                self.enemies[idx].statuses.add(Status::Strength, -taken);
-                self.enemies[idx].temp_strength += taken;
-            }
+        }
+        // 移形换影:掉多少血就等量少力量,自己回合结束再补回来
+        // (和黑暗镣铐走同一条路:当下真扣,回合末按 temp_strength 回补).
+        // 反编译把它同时挂在 Monster::attackedUnblockedHelper 与
+        // damageUnblockedHelper(refs/sts_lightspeed/src/combat/Monster.cpp:339-500)
+        // 两条路上,所以"非攻击伤害"(燃烧/荆棘/废液这类 damage 路径)照样触发;
+        // 参考实现的 SHIFTING 也挂在 wasHPLost 上,不限攻击.
+        if self.enemies[idx].statuses.holds(Status::Shifting) {
+            self.enemies[idx].statuses.add(Status::Strength, -taken);
+            self.enemies[idx].temp_strength += taken;
         }
         self.check_hp_thresholds(idx, taken);
     }
@@ -11200,5 +11278,508 @@ mod branch_assertions {
         let second = hp1 - c.enemies[0].hp;
         assert_eq!(first, 6 + 8, "第一张打击吃到活力 8");
         assert_eq!(second, 6, "第二张打击不再吃活力");
+    }
+}
+
+/// 怪物选招的飞升档位分支(A17 / A18 / A19)逐条断言,外加一张全怪物选招表.
+///
+/// 做法:直接驱动 `EnemyDef.pick` —— 造一个只含这只怪(以及可选配角)的最小战场,
+/// 把引擎每回合必掷的那次 `aiRng.random(99)` 当 `first_roll` 传进去.这样能把
+/// "掷点落在哪一档"钉死,精确核对边界(`asc >= 18` 与 `asc > 18` 一字之差都会翻车),
+/// 比跑真实战斗观察出招可靠得多.
+///
+/// 全怪物飞升档位选招表(怪物 -> 档位 -> 分支 -> 断言名).依据是
+/// refs/sts_lightspeed/src/combat/MonsterSpecific.cpp 的 `getMoveForRoll`(该函数从
+/// 1882 行起;下面括号里是分支所在行):
+///
+/// | 怪物                | 档位 | 分支(与 A0 的差别)                                    | 断言 |
+/// |---------------------|------|-------------------------------------------------------|------|
+/// | 酸液史莱姆(小)      | 17   | 首招固定舔一口(不再 50/50)                            | acid_slime_small_a17_first_move_is_always_lick |
+/// | 酸液史莱姆(中/大)   | 17   | 档位 30/70 -> 中 40/80、大 40/70;"舔"只看前一招        | acid_slime_thresholds_move_at_17 |
+/// | 尖刺史莱姆(中/大)   | 17   | "舔"只需不看前一招即可再出                            | spike_slime_lick_gate_moves_at_17 |
+/// | 蓝奴隶主            | 17   | 耙只看前一招(不再看最近两招)                          | blue_slaver_rake_gate_moves_at_17 |
+/// | 红奴隶主            | 17   | 耙只看前一招                                          | red_slaver_scrape_gate_moves_at_17 |
+/// | 红/绿虱子           | 17   | 特殊招只看前一招                                      | louse_special_gate_moves_at_17 |
+/// | 被选中者            | 17   | 首招直接上咒;第二回合不再强制上咒                     | chosen_a17_opener_and_second_turn |
+/// | 甲壳寄生体          | 17   | 首招固定重击(不再 50/50)                              | shelled_parasite_a17_first_move_is_fell |
+/// | 蛇草                | 17   | 孢子只看前一招                                        | snake_plant_spores_gate_moves_at_17 |
+/// | 神秘客              | 17   | 治疗门槛 16->21;削弱打击只看前一招                    | mystic_a17_heal_threshold_and_debuff_gate |
+/// | 小鬼头目            | 18   | 固定节奏:最近两招无头槌就头槌,否则冲锋                | gremlin_nob_a18_locks_the_skull_bash_rush_rush_pattern |
+/// | 刺击之书            | 18   | 单刺也自增刺击数                                      | book_of_stabbing_a18_single_stab_also_grows_the_count |
+/// | 铜制机械人          | 19   | 光束之后接增幅(不再眩晕)                              | bronze_automaton_a19_hyper_beam_then_boost |
+/// | 勇士                | 19   | 防守姿态掷点门槛 15->30                               | the_champ_a19_stance_threshold |
+/// | 小鬼巫师            | 17   | 首次大招之后每回合都放大招(不再重新充能)              | gremlin_wizard_a17_blasts_every_turn |
+/// | 尖塔增生            | 17   | 缠绕不再看掷点门槛                                    | spire_growth_a17_constricts_without_roll_gate |
+/// | 巨大头颅            | 18   | "时候到了"提前一回合(行动 3 回合即定)                 | giant_head_uses_it_is_time_one_turn_earlier_at_a18 |
+///
+/// 另外几条 A17/A18/A19 分支落在"招式执行"(takeTurn)而不是选招上, 由
+/// core::ascension 的数据层覆盖并已有 e2e:任务达人鞭打(A18 加 1 力 + 3 伤口)、
+/// 尖塔盾猛击(A18 挡 99)、尖塔枪燃击(A18 燃烧入抽牌堆)、收集者/时间吞噬者/
+/// 德卡(19 的各段数值)、雷普托曼瑟(A18 召唤 2 只匕首).这些的边界由
+/// ascension.rs 的 every_move_tier_takes_effect_exactly_at_its_level 逐个钉住.
+#[cfg(test)]
+mod ascension_move_branches {
+    use super::*;
+
+    fn mk(def: &'static EnemyDef, hp: i32, max_hp: i32, slot: usize) -> Enemy {
+        Enemy {
+            def,
+            name: def.name.to_string(),
+            hp,
+            max_hp,
+            block: 0,
+            statuses: Statuses::default(),
+            next_move: 0,
+            death_done: false,
+            temp_strength: 0,
+            fresh_powers: Vec::new(),
+            escaped: false,
+            slot,
+            uid: slot as u64 + 1,
+            asc: 0,
+            state: EnemyState::default(),
+        }
+    }
+
+    /// 开局那一掷(首招还没掷)
+    fn opening() -> EnemyState {
+        EnemyState::default()
+    }
+
+    /// 已经掷过首招, 招式历史 = (last, prev);prev 给 None 表示只行动过一回合
+    fn hist(last: Option<usize>, prev: Option<usize>) -> EnemyState {
+        EnemyState {
+            move_rolled: true,
+            last,
+            prev,
+            ..Default::default()
+        }
+    }
+
+    /// 跑一次选招,返回 (选中的招下标, 选招函数记完账的状态).
+    /// board 是整条槽位表 (def, hp, max_hp);me_idx 是被测怪所在槽位.
+    fn pick_in(
+        board: &[(&'static EnemyDef, i32, i32)],
+        me_idx: usize,
+        asc: u32,
+        first_roll: i32,
+        state: EnemyState,
+        seed: u64,
+    ) -> (usize, EnemyState) {
+        let def = board[me_idx].0;
+        let mut enemies: Vec<Enemy> = board
+            .iter()
+            .enumerate()
+            .map(|(i, (d, hp, mx))| mk(d, *hp, *mx, i))
+            .collect();
+        enemies[me_idx].state = state.clone();
+        let player = PlayerBattle {
+            hp: 80,
+            max_hp: 80,
+            block: 0,
+            statuses: Statuses::default(),
+            fresh_debuffs: Vec::new(),
+        };
+        let mut rng = RngRegistry::new(seed);
+        let mut live = state;
+        let mut ctx = crate::core::enemy::PickCtx {
+            rng: &mut rng,
+            idx: me_idx,
+            all: &enemies,
+            player: &player,
+            state: &mut live,
+            asc,
+            first_roll,
+            roll_consumed: false,
+        };
+        let ret = (def.pick)(&mut ctx);
+        (ret, live)
+    }
+
+    /// 单怪表格:一条 = 说明 + 敌人 id + 招式历史 + 掷点 + 两档 asc 与期望招名
+    struct Case {
+        what: &'static str,
+        id: &'static str,
+        state: fn(&'static EnemyDef) -> EnemyState,
+        first_roll: i32,
+        lo: (u32, &'static str),
+        hi: (u32, &'static str),
+    }
+
+    fn name_of(def: &'static EnemyDef, idx: usize) -> &'static str {
+        def.moves[idx].name
+    }
+
+    #[test]
+    fn ascension_move_selection_boundaries() {
+        use crate::core::enemies::enemy_def;
+        let cases: &[Case] = &[
+            // 酸液中史:A0 掷点 30/70,A17 改成 40/80(中).roll=35 在 A16 是撞、A17 变吐口水
+            Case {
+                what: "酸液中史 档位 30->40",
+                id: "acid_slime_medium",
+                state: |_| hist(None, None),
+                first_roll: 35,
+                lo: (16, "Tackle"),
+                hi: (17, "Corrosive Spit"),
+            },
+            // 酸液大史:A0 30/70,A17 40/70
+            Case {
+                what: "酸液大史 档位 30->40",
+                id: "acid_slime_large",
+                state: |_| hist(None, None),
+                first_roll: 35,
+                lo: (16, "Tackle"),
+                hi: (17, "Corrosive Spit"),
+            },
+            // 尖刺史莱姆(大):上招是舔,A0 再舔,A17 出冲撞
+            Case {
+                what: "尖刺大史 舔只看前一招",
+                id: "spike_slime_large",
+                state: |d| hist(Some(d.move_index("Lick").unwrap()), None),
+                first_roll: 50,
+                lo: (16, "Lick"),
+                hi: (17, "Flame Tackle"),
+            },
+            // 蓝奴隶主:上招耙一次,A0 允许再耙(最近两招才挡),A17 直接改捅
+            Case {
+                what: "蓝奴隶主 耙只看前一招",
+                id: "blue_slaver",
+                state: |d| hist(Some(d.move_index("Rake").unwrap()), None),
+                first_roll: 10,
+                lo: (16, "Rake"),
+                hi: (17, "Stab"),
+            },
+            // 红奴隶主:同理,上招耙,A17 直接改捅
+            Case {
+                what: "红奴隶主 耙只看前一招",
+                id: "red_slaver",
+                state: |d| hist(Some(d.move_index("Scrape").unwrap()), None),
+                first_roll: 10,
+                lo: (16, "Scrape"),
+                hi: (17, "Stab"),
+            },
+            // 红虱子:上招特殊,A0 允许再特殊,A17 改咬
+            Case {
+                what: "红虱子 特殊只看前一招",
+                id: "red_louse",
+                state: |d| hist(Some(d.move_index("Grow").unwrap()), None),
+                first_roll: 10,
+                lo: (16, "Grow"),
+                hi: (17, "Bite"),
+            },
+            // 被选中者:只行动过一回合时,A0 必上咒,A17 直接掷(掷到削弱打击)
+            Case {
+                what: "被选中者 第二回合不再强制上咒",
+                id: "chosen",
+                state: |d| hist(Some(d.move_index("Poke").unwrap()), None),
+                first_roll: 10,
+                lo: (16, "Hex"),
+                hi: (17, "Debilitate"),
+            },
+            // 蛇草:上招孢子,A0 转啃咬,A17 允许连续孢子
+            Case {
+                what: "蛇草 孢子只看前一招",
+                id: "snake_plant",
+                state: |d| hist(Some(d.move_index("Enfeebling Spores").unwrap()), None),
+                first_roll: 70,
+                lo: (16, "Chomp"),
+                hi: (17, "Enfeebling Spores"),
+            },
+            // 小鬼头目:只吼过一嗓子,A0 掷到大点出冲锋,A18 走固定节奏出头槌
+            Case {
+                what: "小鬼头目 A18 固定节奏",
+                id: "gremlin_nob",
+                state: |d| hist(Some(d.move_index("Bellow").unwrap()), None),
+                first_roll: 50,
+                lo: (17, "Rush"),
+                hi: (18, "Skull Bash"),
+            },
+            // 铜制机械人:光束之后,A18 眩晕,A19 改增幅
+            Case {
+                what: "铜制机械人 A19 光束接增幅",
+                id: "bronze_automaton",
+                state: |d| hist(Some(d.move_index("Hyper Beam").unwrap()), None),
+                first_roll: 0,
+                lo: (18, "Stunned"),
+                hi: (19, "Boost"),
+            },
+            // 勇士:防守姿态门槛 15->30,roll=20 在 A18 是嘲弄、A19 变防守姿态
+            Case {
+                what: "勇士 A19 防守姿态门槛",
+                id: "the_champ",
+                state: |d| {
+                    let mut s = hist(Some(d.move_index("Heavy Slash").unwrap()), None);
+                    s.turns = 1; // (turns+1) % 4 != 0,避开嘲讽回合
+                    s
+                },
+                first_roll: 20,
+                lo: (18, "Gloat"),
+                hi: (19, "Defensive Stance"),
+            },
+            // 小鬼巫师:首爆之后,A16 重新充能,A17 每回合放大招
+            Case {
+                what: "小鬼巫师 A17 连续大招",
+                id: "gremlin_wizard",
+                state: |d| hist(Some(d.move_index("Ultimate Blast").unwrap()), None),
+                first_roll: 0,
+                lo: (16, "Charging"),
+                hi: (17, "Ultimate Blast"),
+            },
+            // 尖塔增生:掷点小,A16 走快速撞击,A17 去掉门槛直接缠绕
+            Case {
+                what: "尖塔增生 A17 去掉缠绕门槛",
+                id: "spire_growth",
+                state: |_| hist(None, None),
+                first_roll: 10,
+                lo: (16, "Quick Tackle"),
+                hi: (17, "Constrict"),
+            },
+            // 巨大头颅:只行动过 3 回合,A17 还在数数,A18 已经"时候到了"
+            Case {
+                what: "巨大头颅 A18 提前一回合",
+                id: "giant_head",
+                state: |_| {
+                    let mut s = hist(Some(0), Some(0));
+                    s.turns = 3;
+                    s
+                },
+                first_roll: 0,
+                lo: (17, "Glare"),
+                hi: (18, "It Is Time"),
+            },
+        ];
+
+        for c in cases {
+            let def = enemy_def(c.id).unwrap_or_else(|| panic!("no enemy {}", c.id));
+            let board = [(def, 80, 80)];
+            for (asc, want) in [c.lo, c.hi] {
+                let st = (c.state)(def);
+                let (idx, _) = pick_in(&board, 0, asc, c.first_roll, st, 7);
+                assert_eq!(
+                    name_of(def, idx),
+                    want,
+                    "{} @A{} (first_roll={})",
+                    c.what,
+                    asc,
+                    c.first_roll
+                );
+            }
+        }
+    }
+
+    /// 神秘客:治疗门槛 16->21;削弱打击只看前一招.
+    /// 依据 MonsterSpecific.cpp 的 MYSTIC 分支(healNeedAmt = asc17 ? 21 : 16).
+    #[test]
+    fn mystic_a17_heal_threshold_and_debuff_gate() {
+        let def = crate::core::enemies::enemy_def("mystic").unwrap();
+        let knight = crate::core::enemies::enemy_def("centurion").unwrap();
+        let board = [(knight, 80, 80), (def, 40, 58)];
+        let debuff = def.move_index("Attack Debuff").unwrap();
+
+        // 缺血 18:16 档就治,A17 的 21 档还不治(掷点 0 -> 增益)
+        let st = hist(Some(0), Some(0));
+        let (lo, _) = pick_in(&board, 1, 16, 0, st.clone(), 7);
+        assert_eq!(name_of(def, lo), "Heal");
+        let (hi, _) = pick_in(&board, 1, 17, 0, st, 7);
+        assert_eq!(name_of(def, hi), "Buff");
+
+        // 上招削弱打击:掷点 50,A16 允许再来一发(只看最近两招),A17 转增益.
+        // 这一组满血(自己与骑士都不缺血),排除治疗的干扰
+        let full = [(knight, 80, 80), (def, 58, 58)];
+        let st = hist(Some(debuff), None);
+        let (lo, _) = pick_in(&full, 1, 16, 50, st.clone(), 7);
+        assert_eq!(name_of(def, lo), "Attack Debuff");
+        let (hi, _) = pick_in(&full, 1, 17, 50, st, 7);
+        assert_eq!(name_of(def, hi), "Buff");
+    }
+
+    /// 刺击之书:A18 起"单刺"也要给刺击数 +1(反编译把两处 `if (asc18) ++stabCount`
+    /// 写在 return 之后成了死代码,这里按它的意图钉住;出处 MonsterSpecific.cpp
+    /// 的 BOOK_OF_STABBING 分支).
+    #[test]
+    fn book_of_stabbing_a18_single_stab_grows_the_count() {
+        let def = crate::core::enemies::enemy_def("book_of_stabbing").unwrap();
+        let multi = def.move_index("Multi Stab").unwrap();
+        let board = [(def, 160, 160)];
+        let st = hist(Some(multi), None);
+
+        let (lo, lo_state) = pick_in(&board, 0, 16, 0, st.clone(), 7);
+        assert_eq!(name_of(def, lo), "Single Stab");
+        assert_eq!(lo_state.stab, 0, "A16 单刺不自增");
+        let (hi, hi_state) = pick_in(&board, 0, 18, 0, st, 7);
+        assert_eq!(name_of(def, hi), "Single Stab");
+        assert_eq!(hi_state.stab, 1, "A18 单刺自增一层");
+    }
+
+    /// 酸液中史:上招是舔时,A0 允许再舔(它只看最近两招),A17 改看前一招 ——
+    /// roll>=80 那一支必转出攻击.出处 MonsterSpecific.cpp 的中史莱姆分支
+    /// (A17 段用 `lastMove(LICK)`,A0 段用 `lastTwoMoves(LICK)`,两者回退概率不同).
+    #[test]
+    fn acid_slime_medium_lick_gate_moves_at_17() {
+        let def = crate::core::enemies::enemy_def("acid_slime_medium").unwrap();
+        let lick = def.move_index("Lick").unwrap();
+        let board = [(def, 30, 30)];
+        let st = hist(Some(lick), None);
+        let (lo, _) = pick_in(&board, 0, 16, 90, st.clone(), 7);
+        assert_eq!(name_of(def, lo), "Lick", "A16 上招是舔还会再舔");
+        let (hi, _) = pick_in(&board, 0, 17, 90, st, 7);
+        assert!(
+            matches!(name_of(def, hi), "Corrosive Spit" | "Tackle"),
+            "A17 上招是舔就必转攻击,实得 {}",
+            name_of(def, hi)
+        );
+    }
+
+    /// 酸液史莱姆(小):首招 A17 固定舔一口,不再 50/50(反编译 ACID_SLIME_S 的
+    /// `if (asc17) return LICK`).
+    #[test]
+    fn acid_slime_small_a17_first_move_is_always_lick() {
+        let def = crate::core::enemies::enemy_def("acid_slime_small").unwrap();
+        let board = [(def, 10, 10)];
+        let mut a16 = std::collections::BTreeSet::new();
+        let mut a17 = std::collections::BTreeSet::new();
+        for seed in 0..64u64 {
+            let (lo, _) = pick_in(&board, 0, 16, 0, opening(), seed);
+            a16.insert(name_of(def, lo));
+            let (hi, _) = pick_in(&board, 0, 17, 0, opening(), seed);
+            a17.insert(name_of(def, hi));
+        }
+        assert_eq!(a17.into_iter().collect::<Vec<_>>(), vec!["Lick"], "A17 必舔");
+        assert!(a16.contains("Lick"), "A16 掷得出舔: {a16:?}");
+        assert!(a16.contains("Tackle"), "A16 掷得出撞: {a16:?}");
+    }
+
+    /// 甲壳寄生体:首招 A17 固定重击,不再 50/50(反编译 SHELLED_PARASITE 的
+    /// `if (asc17) return FELL`).
+    #[test]
+    fn shelled_parasite_a17_first_move_is_fell() {
+        let def = crate::core::enemies::enemy_def("shelled_parasite").unwrap();
+        let board = [(def, 70, 70)];
+        let mut a16 = std::collections::BTreeSet::new();
+        let mut a17 = std::collections::BTreeSet::new();
+        for seed in 0..64u64 {
+            let (lo, _) = pick_in(&board, 0, 16, 0, opening(), seed);
+            a16.insert(name_of(def, lo));
+            let (hi, _) = pick_in(&board, 0, 17, 0, opening(), seed);
+            a17.insert(name_of(def, hi));
+        }
+        assert_eq!(a17.into_iter().collect::<Vec<_>>(), vec!["Fell"], "A17 必重击");
+        assert!(!a16.contains("Fell"), "A16 首招不该是重击: {a16:?}");
+        assert_eq!(
+            a16.into_iter().collect::<Vec<_>>(),
+            vec!["Double Strike", "Suck"],
+            "A16 首招是双击/吸血 50/50"
+        );
+    }
+
+    /// 造一场最简单的战斗(牌组几张防御,不动手,只看机制)
+    fn combat(enc: &'static str, asc: u32) -> Combat {
+        combat_r(enc, asc, &[])
+    }
+
+    fn combat_r(enc: &'static str, asc: u32, relics: &[&'static RelicDef]) -> Combat {
+        let setup = CombatSetup {
+            rested: false,
+            hp: 80,
+            max_hp: 80,
+            deck: vec![crate::core::cards::card("defend"); 3],
+            relics: relics.to_vec(),
+            gold: 0,
+            lift_strength: 0,
+            relic_counters: RunRelicCounters::default(),
+            curse_negate: 0,
+            asc,
+        };
+        Combat::new(
+            crate::core::enemies::encounter_def(enc).unwrap(),
+            setup,
+            RngRegistry::new(1),
+        )
+    }
+
+    /// 无形把"直接掉血"(卡牌/能力自伤,走 Player::loseHp)也压到 1.
+    /// 依据:反编译 Player::loseHp 第一句就是 INTANGIBLE(Player.cpp:261-275);
+    /// 原版无形的能力文本也写明"受到的伤害与生命流失都降为 1".
+    /// 之前这条路径只做钨钢棒,漏了无形.
+    #[test]
+    fn intangible_clamps_direct_hp_loss() {
+        let mut c = combat("cultist_solo", 0);
+        let hp0 = c.player.hp;
+        c.lose_hp_player(6, true);
+        assert_eq!(hp0 - c.player.hp, 6, "没有无形时照掉 6");
+
+        let mut c = combat("cultist_solo", 0);
+        c.player.statuses.add(Status::Intangible, 1);
+        let hp0 = c.player.hp;
+        c.lose_hp_player(6, true);
+        assert_eq!(hp0 - c.player.hp, 1, "无形把直接掉血压到 1");
+
+        // 无形 + 钨钢棒:先无形压到 1,再钨钢棒 -1 -> 完全不掉
+        // (反编译 Player::loseHp 的顺序就是 无形 -> 钨钢棒)
+        let rod = [crate::core::relics::relic_def_or_panic("tungsten_rod")];
+        let mut c = combat_r("cultist_solo", 0, &rod);
+        c.player.statuses.add(Status::Intangible, 1);
+        let hp0 = c.player.hp;
+        c.lose_hp_player(6, true);
+        assert_eq!(hp0, c.player.hp, "无形 1 点再被钨钢棒减到 0,不掉血");
+
+        // 只有钨钢棒(没无形):每次掉血少 1
+        let mut c = combat_r("cultist_solo", 0, &rod);
+        let hp0 = c.player.hp;
+        c.lose_hp_player(6, true);
+        assert_eq!(hp0 - c.player.hp, 5, "钨钢棒对直接掉血也有效");
+    }
+
+    /// 移形换影在"非攻击伤害"上也触发.依据:反编译把它同时挂在
+    /// Monster::attackedUnblockedHelper 与 damageUnblockedHelper(Monster.cpp:339-500)
+    /// 两条路上,参考实现的 SHIFTING 也挂在 wasHPLost 上,不限攻击.
+    /// 之前只在 is_attack 分支里扣力,非攻击伤害(燃烧/荆棘反伤之类)漏了.
+    #[test]
+    fn shifting_also_triggers_on_non_attack_damage() {
+        let mut c = combat("transient_solo", 0);
+        assert!(c.enemies[0].statuses.holds(Status::Shifting), "瞬变体自带移形换影");
+        let str0 = c.enemies[0].statuses.get(Status::Strength);
+
+        c.damage_enemy_plain(0, 7); // 非攻击伤害
+        assert_eq!(
+            c.enemies[0].statuses.get(Status::Strength),
+            str0 - 7,
+            "非攻击伤害也等量扣力"
+        );
+        assert_eq!(c.enemies[0].temp_strength, 7, "扣掉的力量记着回合末回补");
+    }
+
+    /// 卡钳:回合开始时只掉 15 点格挡,不清空(反编译 BattleContext.cpp:2181-2188 的
+    /// Barricade > Blur > Calipers > 清空 那条链).本作没有 Blur 卡,所以只钉卡钳.
+    #[test]
+    fn calipers_keeps_all_but_fifteen_block() {
+        let cal = [crate::core::relics::relic_def_or_panic("calipers")];
+        let mut c = combat_r("cultist_solo", 0, &cal);
+        c.player.block = 40;
+        c.start_turn(0);
+        assert_eq!(c.player.block, 25, "40 - 15 = 25,不是清空");
+
+        // 没有卡钳就整块清掉
+        let mut c = combat("cultist_solo", 0);
+        c.player.block = 40;
+        c.start_turn(0);
+        assert_eq!(c.player.block, 0, "没有卡钳照常清空");
+    }
+
+    /// 主宰:获得格挡就让一个随机活怪吃伤害;"非卡牌"来源的格挡也触发
+    /// (反编译 Juggernaut 判在 Player::gainBlock 里,遗物/能力给的格挡同样走 gainBlock).
+    #[test]
+    fn juggernaut_triggers_on_every_block_gain() {
+        let mut c = combat("cultist_solo", 0);
+        c.player.statuses.add(Status::Juggernaut, 5);
+
+        let hp0 = c.enemies[0].hp;
+        c.gain_block(3, false, true); // 卡牌格挡
+        assert_eq!(hp0 - c.enemies[0].hp, 5, "卡牌格挡触发主宰");
+
+        let hp1 = c.enemies[0].hp;
+        c.gain_block(3, false, false); // 遗物/能力格挡
+        assert_eq!(hp1 - c.enemies[0].hp, 5, "非卡牌格挡也触发主宰");
     }
 }
