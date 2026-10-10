@@ -252,12 +252,11 @@ fn render_floor(
                 _ => buf.area.width.saturating_sub(x),
             };
             let name = run.boss_name();
-            // 选中时名字左右各留一格,好让色块铺满;没选中就只有字色
+            // Boss 不铺底色:在路线上/选中都是现在那支红字,选中再叠闪烁
             let (style, label) = if is_sel {
                 (
-                    theme::kind_chip(NodeKind::Boss)
-                        .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
-                    format!(" {name} "),
+                    theme::kind_style(NodeKind::Boss).add_modifier(Modifier::SLOW_BLINK),
+                    name.to_string(),
                 )
             } else if on_path {
                 (theme::kind_style(NodeKind::Boss), name.to_string())
@@ -272,38 +271,33 @@ fn render_floor(
             }
             continue;
         }
-        // 只有选中的房间有色块,而且左右各铺一格(map_glyph 的宽字形);
-        // 其余一律只有字色:走过的是绿字,选中的未来加粗,其它岔路闪,走不到压暗
+        // 只有"已到达 / 选中 / 在选中那条路线上"这三种状态才铺底色,
+        // 底色左右各铺一格(所以用宽字形);其余只有字色
         let burning = node.burning;
         let k = if burning { NodeKind::Elite } else { node.kind };
         let visited = run.path.contains(i);
+        let lit = visited || is_sel || on_path;
         let plain = map_glyph(k, burning, false).to_string();
-        let (px, text, style) = if is_sel && x > 0 {
-            (
-                x - 1,
-                map_glyph(k, burning, true).to_string(),
-                theme::kind_chip(k).add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
-            )
-        } else if is_sel {
-            // 最左那一列借不到左边的格子:不铺色块,只把字色提亮
+        let (px, text, style) = if lit && x > 0 {
+            let style = if visited {
+                theme::arrived_chip()
+            } else {
+                theme::kind_chip(k)
+            };
+            let style = if is_sel {
+                style.add_modifier(Modifier::SLOW_BLINK)
+            } else {
+                style
+            };
+            (x - 1, map_glyph(k, burning, true).to_string(), style)
+        } else if lit {
+            // 最左那一列借不到左边的格子:不铺底,只把字色提亮
             (
                 x,
                 plain.clone(),
                 theme::kind_style(k)
                     .fg(theme::SEL_FG)
-                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
-            )
-        } else if visited {
-            (
-                x,
-                plain.clone(),
-                theme::fg(theme::GOOD).add_modifier(Modifier::BOLD),
-            )
-        } else if on_path {
-            (
-                x,
-                plain.clone(),
-                theme::kind_style(k).add_modifier(Modifier::BOLD),
+                    .add_modifier(Modifier::BOLD),
             )
         } else if is_candidate {
             (

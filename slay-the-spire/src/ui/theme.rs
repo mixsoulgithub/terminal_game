@@ -21,10 +21,6 @@ pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
 pub const WARN: Color = Color::Rgb(240, 170, 90);
 /// 选中色块用到的几个底色
-pub const MONSTER_BG: Color = Color::Rgb(58, 66, 88);
-pub const ELITE_BG: Color = Color::Rgb(150, 30, 42);
-pub const REST_BG: Color = Color::Rgb(236, 96, 108);
-pub const BOSS_BG: Color = Color::Rgb(255, 86, 104);
 /// 精英与 Boss 的字色(比休息那只血红更亮一点)
 pub const ELITE_FG: Color = Color::Rgb(255, 86, 104);
 
@@ -55,24 +51,40 @@ pub fn kind_style(kind: NodeKind) -> Style {
     }
 }
 
-/// 选中时的色块:按类型给底色,前景换成和它对比得开的那个;
-/// 底色要左右各多铺一格,所以地图上选中时用三分宽的字形
+/// 色块(在路线上/选中/已到达的房间才有底色):
+/// 到达=绿,怪物=白,精英与燃烧精英=现在的精英红,休息=现在的休息血红,
+/// 商店=金,未知=灰,宝箱=紫,Boss 不铺底(保持现在的红字)
+pub const CHIP_ARRIVED: Color = Color::Rgb(46, 140, 74);
+pub const CHIP_ENEMY: Color = Color::Rgb(245, 246, 250);
+pub const CHIP_ELITE: Color = Color::Rgb(150, 30, 42);
+pub const CHIP_REST: Color = Color::Rgb(236, 96, 108);
+pub const CHIP_MERCHANT: Color = Color::Rgb(250, 186, 66);
+pub const CHIP_EVENT: Color = Color::Rgb(128, 134, 150);
+pub const CHIP_TREASURE: Color = Color::Rgb(146, 92, 214);
+/// 色块上的字:一律白字 + 加粗,只有怪物是黑字
+pub const CHIP_FG: Color = Color::Rgb(255, 255, 255);
+
+/// 房间色块(选中/在路线上共用;调用方自己再叠闪烁之类的修饰)
 pub fn kind_chip(kind: NodeKind) -> Style {
-    match kind {
-        NodeKind::Monster => Style::default().fg(FG).bg(MONSTER_BG),
-        NodeKind::Elite => Style::default()
-            .fg(SEL_FG)
-            .bg(ELITE_BG)
-            .add_modifier(Modifier::BOLD),
-        NodeKind::Event => Style::default().fg(BG).bg(YELLOW).add_modifier(Modifier::BOLD),
-        NodeKind::Rest => Style::default().fg(BG).bg(REST_BG).add_modifier(Modifier::BOLD),
-        NodeKind::Shop => Style::default().fg(BG).bg(GOLD).add_modifier(Modifier::BOLD),
-        NodeKind::Treasure => Style::default()
-            .fg(BG)
-            .bg(Color::Rgb(246, 226, 120))
-            .add_modifier(Modifier::BOLD),
-        NodeKind::Boss => Style::default().fg(BG).bg(BOSS_BG).add_modifier(Modifier::BOLD),
-    }
+    let (fg, bg) = match kind {
+        NodeKind::Monster => (BG, CHIP_ENEMY),
+        NodeKind::Elite => (CHIP_FG, CHIP_ELITE),
+        NodeKind::Event => (CHIP_FG, CHIP_EVENT),
+        NodeKind::Rest => (CHIP_FG, CHIP_REST),
+        NodeKind::Shop => (CHIP_FG, CHIP_MERCHANT),
+        NodeKind::Treasure => (CHIP_FG, CHIP_TREASURE),
+        // Boss 不铺底:就用现在的红字
+        NodeKind::Boss => (ELITE_FG, BG),
+    };
+    Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
+}
+
+/// 已经走过(含当前站的那间)的房间:绿底白字
+pub fn arrived_chip() -> Style {
+    Style::default()
+        .fg(CHIP_FG)
+        .bg(CHIP_ARRIVED)
+        .add_modifier(Modifier::BOLD)
 }
 
 
