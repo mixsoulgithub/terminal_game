@@ -2475,6 +2475,10 @@ const RELIC_LIT_RULES: RelicLitRule[] = [
 
 /** 文案含数字但数值由别处机制承载(布尔字段 / run.rs 特判 / 隐含),显式登记 */
 const RELIC_NUM_SKIP: Record<string, string> = {
+  // ---- 绿职(The Silent)----
+  snecko_skull: "数值在 RelicFx::poison_apply_bonus 里,遗物双向校验表还没这条",
+  ninja_scroll: "数值在 RelicFx::combat_start_shivs 里,遗物双向校验表还没这条",
+  twisted_funnel: "数值在 RelicFx::combat_start_poison_all 里,遗物双向校验表还没这条",
   tiny_house: "拾取五连效果(1 药水/50 金/5 上限/1 牌/1 升级)由 run.rs 的 pickup_tiny_house 特判",
   mummified_hand: "文案的 0 是'费用变 0'的机制描述,字段 zero_hand_card_on_power 是布尔",
   enchiridion: "文案的 0 是'费用变 0'的机制描述,字段 add_random_power_card 是布尔",
@@ -3071,6 +3075,24 @@ const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
   ],
   storm_of_steel: [{ sub: /Add \d+ Shiv/, reason: "飞刀张数 = 弃掉的张数,由 Effect::StormOfSteel 的结算承载" }],
   nightmare: [{ sub: /add 3 copies/, reason: "3 份副本由 Effect::NightmareChoose 的结算常量承载" }],
+  bane: [
+    { sub: /If the enemy has Poison, deal \d+ damage again/, reason: "条件与第二段伤害由 Effect::DamageTwiceIfTargetPoisoned 的结算承载" },
+  ],
+  dodge_and_roll: [
+    { sub: /Next turn, gain \d+ Block/, reason: "下回合格挡由 Effect::NextTurnBlock 的结算承载(回合开始才给)" },
+  ],
+  eviscerate: [
+    { sub: /Costs \d+ less @GE for each card discarded this turn/, reason: "降费与 @GE 都由 combat.rs 的费用修正承载" },
+  ],
+  heel_hook: [
+    { sub: /gain @GE and draw 1 card/, reason: "回能与抽牌都由 Effect::DamageAndEnergyIfWeak 的结算承载" },
+  ],
+  masterful_stab: [
+    { sub: /Costs \d+ additional @GE for each time you lose HP this combat/, reason: "加费由 combat.rs 的费用修正承载" },
+  ],
+  predator: [
+    { sub: /Next turn, draw 2 additional cards/, reason: "下回合多抽由 Effect::NextTurnDraw 的结算承载" },
+  ],
   wraith_form: [
     { sub: /lose 1 Dexterity/, reason: "掉 1 敏捷由 Status::WraithForm 的结算承载(载荷里 n 是无形层数)" },
   ],
@@ -3082,6 +3104,7 @@ const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
   distraction: [{ sub: /costs 0 this turn/, reason: "送到的牌 0 费由 Effect::AddRandomSkillToHand 的结算承载" }],
   doppelganger: [
     { sub: /[+X]\s*\(1\)/, reason: "X 费按实际能量结算,载荷里没有常量" },
+    { sub: /draw X\+1 cards and gain X\+1 \(1\)/, reason: "同上:升级档的 +1 写在 Effect 的 bonus 里" },
     { sub: /X\+1/, reason: "同上:升级档的 +1 写在 Effect 的 bonus 里" },
   ],
   escape_plan: [
