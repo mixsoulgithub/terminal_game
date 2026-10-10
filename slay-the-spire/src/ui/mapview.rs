@@ -249,7 +249,10 @@ fn render_floor(
                     x - 1 - indent
                 },
                 sel_text,
-                kind_style.add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
+                // 选中保留自己的色底,只把前景提亮 + 加粗闪烁
+                kind_style
+                    .fg(theme::SEL_FG)
+                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
             )
         } else if visited {
             // 走过的房间(含现在这间)统一绿底
@@ -262,11 +265,13 @@ fn render_floor(
                     .add_modifier(Modifier::BOLD),
             )
         } else if is_sel {
-            // 最左那一列没法往左借格子,退回底色
+            // 最左那一列没法往左借格子,只提亮前景
             (
                 x.saturating_sub(indent),
                 glyph.to_string(),
-                kind_style.bg(theme::SEL_BG).add_modifier(Modifier::BOLD),
+                kind_style
+                    .fg(theme::SEL_FG)
+                    .add_modifier(Modifier::BOLD | Modifier::SLOW_BLINK),
             )
         } else if on_path {
             // 选了它之后能走到的房间
@@ -283,11 +288,11 @@ fn render_floor(
                 kind_style.add_modifier(Modifier::SLOW_BLINK),
             )
         } else {
-            // 现在走不到的一律灰掉
+            // 现在走不到的压成暗色块:形状与其他房间一致,只是暗
             (
                 x.saturating_sub(indent),
                 glyph.to_string(),
-                theme::dim(),
+                Style::default().fg(theme::DIM).bg(theme::CHIP_OFF),
             )
         };
         put(buf, px, y, &text, style);

@@ -20,6 +20,10 @@ pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
 pub const WARN: Color = Color::Rgb(240, 170, 90);
+/// 普通怪的色底:低饱和的蓝灰,和精英/休息的红底区分
+pub const MONSTER_BG: Color = Color::Rgb(58, 66, 88);
+/// 现在走不到的房间:同样是色块,只是压成暗底
+pub const CHIP_OFF: Color = Color::Rgb(30, 34, 46);
 
 pub fn fg(c: Color) -> Style {
     Style::default().fg(c)
@@ -35,19 +39,25 @@ pub fn selected() -> Style {
 
 /// 地图上各类房间的颜色与底色:
 /// E 红字 = 普通怪,E 红底 = 精英,R 红底(更亮)= 休息,? 黄 = 未知
+/// 地图记号与图例共用的配色:每个类型都给一个色底,前景取和它拉得开对比的那个,
+/// 这样地图上的记号与右边图例是同一套色块,选中时也保留自己的色底(只换前景)
 pub fn kind_style(kind: NodeKind) -> Style {
     match kind {
-        NodeKind::Monster => Style::default().fg(FG),
+        NodeKind::Monster => Style::default().fg(FG).bg(MONSTER_BG),
         NodeKind::Elite => Style::default()
             .fg(SEL_FG)
             .bg(Color::Rgb(150, 30, 42))
             .add_modifier(Modifier::BOLD),
-        NodeKind::Event => Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
+        NodeKind::Event => Style::default().fg(BG).bg(YELLOW).add_modifier(Modifier::BOLD),
         NodeKind::Rest => Style::default().fg(BG).bg(BLOOD).add_modifier(Modifier::BOLD),
-        NodeKind::Shop => Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
-        NodeKind::Treasure => Style::default().fg(Color::Rgb(246, 226, 120)).add_modifier(Modifier::BOLD),
+        NodeKind::Shop => Style::default().fg(BG).bg(GOLD).add_modifier(Modifier::BOLD),
+        NodeKind::Treasure => Style::default()
+            .fg(BG)
+            .bg(Color::Rgb(246, 226, 120))
+            .add_modifier(Modifier::BOLD),
         NodeKind::Boss => Style::default()
-            .fg(Color::Rgb(255, 86, 104))
+            .fg(BG)
+            .bg(Color::Rgb(255, 86, 104))
             .add_modifier(Modifier::BOLD),
     }
 }
