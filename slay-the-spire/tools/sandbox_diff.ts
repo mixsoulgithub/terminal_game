@@ -98,9 +98,11 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
   "cards/corpse_explosion": ["corpse_explosion", "corpse_explosion_power"],
   "cards/burst": ["burst"],
   "cards/blur": ["blur"],
+  // 同样一条能力两边名字不同:参考给怪挂的是 CHOKED(快照键 choked),我们用 choke
+  "cards/choke": ["choke", "choked"],
   // 炼金:战斗里拿到的药水本作记在 Combat::potions_gained 里、收尾时交给 run,
   // 沙盒快照只反映战斗内的状态,参考则直接写进 potions 槽
-  "cards/alchemize": ["potions["],
+  "cards/alchemize": ["st.potions["],
 };
 
 /**
@@ -158,12 +160,8 @@ const RANDOM_CARD_NOTES: Record<string, string> = {
  * (a) 我们错:已经定位到根因、但要动引擎核心才修得干净的,先记在这里。
  * key 是场景前缀(类别/内容 id)。
  */
-const OURS_WRONG: Record<string, string> = {
-  "cards/choke":
-    "本作的「打出一张牌」钩子(浮夸/残影/千刀万剐/窒息)排在卡牌效果结算之后,参考实现排在结算之前(cards/silent/uncommon.ts 的 onUseCard 注释写的是 during resolution),所以挂上窒息的这张牌自己也被算了一次:ref 12 / 我们 15(基础 3 层).要改就得动 play_card 里 note_card_played 的位置,牵扯浮夸/墨水瓶/苦无这些已经对过账的铁甲场景,留作单独一轮按反编译 BattleContext 的 onUseCard 时点核对",
-  "cards/finisher":
-    "(同一处根因)参考把终结技自己算进「本回合已打出的攻击数」,我们不算,差一张攻击牌的量",
-};
+const OURS_WRONG: Record<string, string> = {};
+
 
 /**
  * (b) 参考缺口:参考实现自己坏掉/没实现的地方(不是我们的锅)。

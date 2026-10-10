@@ -500,6 +500,13 @@ pub struct Combat {
     pub potions_gained: Vec<&'static PotionDef>,
     /// 本回合弃掉的牌数(摧残按它降费,偷袭看它是否非零)
     pub discarded_this_turn: i32,
+    /// 打出一张牌时的钩子快照:反编译 useCard() 先把卡牌效果入队,再排 onUseCard 钩子,
+    /// 钩子读的是**入队时**的状态(所以"挂上这个能力的那张牌自己"不算一次)。
+    /// 本作在 play_card 开头把值抄在这里,效果跑完(或选牌收完)再结算。
+    hook_after_image: i32,
+    hook_thousand_cuts: i32,
+    hook_panache: i32,
+    hook_choke: Vec<(usize, i32)>,
     /// 下回合开局的额外能量/格挡/抽牌(算计/飞膝/翻滚/二重身/捕食)
     pending_next_energy: i32,
     pending_next_block: i32,
@@ -742,6 +749,10 @@ impl Combat {
             gold_gained: 0,
             potions_gained: Vec::new(),
             discarded_this_turn: 0,
+            hook_after_image: 0,
+            hook_thousand_cuts: 0,
+            hook_panache: 0,
+            hook_choke: Vec::new(),
             pending_next_energy: 0,
             pending_next_block: 0,
             pending_next_draw: 0,
@@ -1441,6 +1452,7 @@ impl Combat {
         self.havoc_chain.push((depth, card.label()));
         self.snapshot_sharp_hide();
         let mut top_ctx = PlayCtx::default();
+        self.begin_card_play(&card);
         self.resolve(&mut card, target, &mut top_ctx);
         self.havoc_depth = saved_depth;
         card.free_this_turn = false;
@@ -1500,8 +1512,34 @@ impl Combat {
     }
 
     /// 记一张打出的牌;浮夸每打满 5 张就对所有敌人来一下;痛苦手里有就掉血
-    fn note_card_played(&mut self, kind: crate::core::card::CardType) {
+    /// 打出一张牌的开头:反编译 BattleContext::useCard() 把 ++cardsPlayedThisTurn
+    /// 与攻击/技能计数放在卡牌效果入队**之前**;而 onUseCard 钩子(残影/千刀万剐/窒息/
+    /// 浮夸)虽然排在效果之后结算,读的却是入队那一刻的状态 —— 所以先把值抄下来,
+    /// 免得"挂上这个能力的那张牌自己"也被算一次(参考:窒息 12 / 我们原来 15;终结技
+    /// 则相反:参考把自己算进本回合攻击数,所以计数必须现在就加).
+    fn begin_card_play(&mut self, card: &CardInstance) {
         self.cards_played += 1;
+        if card.kind() == crate::core::card::CardType::Attack {
+            self.rs.attacks_this_turn += 1;
+            self.rs.types_played |= 1;
+        }
+        self.hook_after_image = self.player.statuses.get(Status::AfterImage);
+        self.hook_thousand_cuts = self.player.statuses.get(Status::ThousandCuts);
+        self.hook_panache = self.player.statuses.get(Status::Panache);
+        self.hook_choke = (0..self.enemies.len())
+            .filter_map(|i| {
+                let n = self.enemies[i].statuses.get(Status::Choke);
+                if n > 0 && self.enemies[i].up() {
+                    Some((i, n))
+                } else {
+                    None
+                }
+            })
+            .collect();
+    }
+
+    /// 打出一张牌的钩子(效果跑完之后结算;计数与钩子数值在 play_card 开头就定下来了)
+    fn note_card_played(&mut self, kind: crate::core::card::CardType) {
         // 痛苦:在自己手里时,别人被打出就掉 1 血(本张牌已经从手牌/抽牌堆拿走)
         let pain: i32 = self
             .hand
@@ -1519,13 +1557,13 @@ impl Combat {
         self.on_enemy_card_hooks(kind);
         self.on_relic_card_played(kind);
         // 残影:每打出一张牌获得等量格挡(普通获得,不吃敏捷)
-        let after_image = self.player.statuses.get(Status::AfterImage);
-        if after_image > 0 {
-            self.gain_block(after_image, false, false);
+        if self.hook_after_image > 0 {
+            let n = self.hook_after_image;
+            self.gain_block(n, false, false);
         }
         // 千刀万剐:每打出一张牌对所有敌人造成等量伤害(荆棘型:不吃力量/易伤,吃格挡)
-        let cuts = self.player.statuses.get(Status::ThousandCuts);
-        if cuts > 0 {
+        if self.hook_thousand_cuts > 0 {
+            let cuts = self.hook_thousand_cuts;
             for i in self.alive_enemies() {
                 self.damage_enemy_plain(i, cuts);
             }
@@ -1536,16 +1574,16 @@ impl Combat {
             self.settle_deaths();
         }
         // 窒息:被标记的敌人每看到一张牌就掉等量生命
-        for i in 0..self.enemies.len() {
-            let choke = self.enemies[i].statuses.get(Status::Choke);
-            if choke > 0 && self.enemies[i].up() {
+        let choke_list = std::mem::take(&mut self.hook_choke);
+        for (i, choke) in choke_list {
+            if self.enemies.get(i).map(|e| e.up()).unwrap_or(false) {
                 let name = self.enemies[i].name.clone();
                 self.enemy_lose_hp(i, choke);
                 self.push_log(LogKind::Player, format!("{name} chokes for {choke}"));
                 self.settle_deaths();
             }
         }
-        let pan = self.player.statuses.get(Status::Panache);
+        let pan = self.hook_panache;
         if pan <= 0 || self.cards_played % 5 != 0 {
             return;
         }
@@ -1569,8 +1607,8 @@ impl Combat {
         }
         match kind {
             CardType::Attack => {
-                self.rs.attacks_this_turn += 1;
-                self.rs.types_played |= 1;
+                // attacks_this_turn / types_played 已经在 begin_card_play 里加过(反编译
+                // 的计数在效果之前),这里只留遗物自己的计数
                 // 双节棍:数满 10 张攻击回 1 点能量(没有这件遗物时不数)
                 if self.relic_sum(|fx| fx.energy_per_10_attacks) > 0 {
                     self.rs.attacks_total += 1;
@@ -4927,6 +4965,7 @@ impl Combat {
         self.push_log(LogKind::Player, format!("you play {label}"));
         let blocked_before = self.player.block;
         self.snapshot_sharp_hide();
+        self.begin_card_play(&card);
         self.resolve(&mut card, chosen, &mut ctx);
         // 双发:这一击再打一次(原牌挂起了选牌就排队,等选完再跑)
         if card.kind() == crate::core::card::CardType::Attack {
@@ -5961,24 +6000,32 @@ impl Combat {
                     self.push_log(LogKind::Player, format!("{label} appears"));
                 }
                 Effect::DamagePerSkillInHand { per } => {
+                    // 飞镖:每一张手牌技能各来一段(不是"总伤害打一次"),所以力量/易伤
+                    // 与取整都逐段算 —— 参考实现同样是每张给一个 DamageAction
                     if let Some(t) = target {
                         let n = self
                             .hand
                             .iter()
                             .filter(|c| c.kind() == crate::core::card::CardType::Skill)
                             .count() as i32;
-                        let raw = per * n + relic_add;
-                        if raw > 0 {
-                            let d = self.player_attack_damage(raw, t, is_attack);
+                        for _ in 0..n {
+                            if self.enemies[t].dead() {
+                                break;
+                            }
+                            let d = self.player_attack_damage(per + relic_add, t, is_attack);
                             ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                     }
                 }
                 Effect::DamagePerAttackThisTurn { per } => {
+                    // 终结技:本回合每张攻击牌各一段,同上
                     if let Some(t) = target {
-                        let raw = per * self.rs.attacks_this_turn + relic_add;
-                        if raw > 0 {
-                            let d = self.player_attack_damage(raw, t, is_attack);
+                        let n = self.rs.attacks_this_turn;
+                        for _ in 0..n {
+                            if self.enemies[t].dead() {
+                                break;
+                            }
+                            let d = self.player_attack_damage(per + relic_add, t, is_attack);
                             ctx.unblocked += self.damage_enemy_f32(t, d);
                         }
                     }
@@ -13119,14 +13166,17 @@ mod relic_hook_tests {
             &["after_image", "a_thousand_cuts", "strike"],
             &[],
         );
+        // 打"残影"这张牌时它还没上身,所以这一次不给格挡(反编译 useCard 先入队效果、
+        // 再排 onUseCard 钩子,钩子读的是入队那一刻的状态);打"千刀万剐"时残影已经在身上
         c.play_card(sidx(&c, "after_image"), None).unwrap();
+        assert_eq!(c.player.block, 0, "挂残影的那张牌自己不算一次");
         c.play_card(sidx(&c, "a_thousand_cuts"), None).unwrap();
         let block0 = c.player.block;
+        assert_eq!(block0, 1, "打千刀万剐这一次残影已经在身上,给 1 格挡");
         let hp0 = c.enemies[0].hp;
         c.play_card(sidx(&c, "strike"), Some(0)).unwrap();
         assert_eq!(c.player.block, block0 + 1, "残影每张牌 1 格挡");
         assert_eq!(hp0 - c.enemies[0].hp, 6 + 1, "打击 6 + 千刀 1");
-        assert_eq!(block0, 2, "两张能力牌自己也算打出去的牌,各给 1 格挡");
     }
 
     /// 涂毒:攻击造成未被格挡的伤害就给目标挂中毒
@@ -13154,6 +13204,23 @@ mod relic_hook_tests {
             c.hand.iter().any(|k| k.def.id == "shiv"),
             "无尽苦痛之刃给飞刀"
         );
+    }
+
+    /// 窒息:挂上窒息的那张牌自己不算一次(与残影/千刀万剐同一条时点规则)
+    #[test]
+    fn choke_does_not_count_the_card_that_applied_it() {
+        let mut c = staged(
+            &["choke", "strike", "strike", "strike"],
+            &["choke", "strike", "strike"],
+            &[],
+        );
+        let hp0 = c.enemies[0].hp;
+        c.play_card(sidx(&c, "choke"), Some(0)).unwrap();
+        assert_eq!(hp0 - c.enemies[0].hp, 12, "只有这一刀的 12 点,窒息自己不算");
+        assert_eq!(c.enemies[0].statuses.get(Status::Choke), 3);
+        let hp1 = c.enemies[0].hp;
+        c.play_card(sidx(&c, "strike"), Some(0)).unwrap();
+        assert_eq!(hp1 - c.enemies[0].hp, 6 + 3, "下一张牌:打击 6 + 窒息 3");
     }
 
     /// 幽魂形态:给无形,并在每个回合末掉 1 敏捷
