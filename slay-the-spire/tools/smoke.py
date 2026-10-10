@@ -59,12 +59,16 @@ SAMPLE = 0.03
 # 默认关(不设 --smart / SMOKE_SMART 就是原来的"乱按"行为,不能被破坏).
 SMART = os.environ.get("SMOKE_SMART", "") not in ("", "0", "no", "false")
 
+# tmux 一律走独立 socket 的 server(-L sls):绝不碰使用者默认 server 上的会话.
+# 需要换名字用 SMOKE_TMUX_SOCKET 覆盖.
+SOCKET = os.environ.get("SMOKE_TMUX_SOCKET", "sls")
+
 # 飞升等级(0-20):非 0 时二进制多带一个 --ascension.默认 0,与原来完全一致.
 ASC = int(os.environ.get("SMOKE_ASC", "0") or "0")
 
 
 def tmux(*args: str) -> str:
-    out = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    out = subprocess.run(["tmux", "-L", SOCKET, *args], capture_output=True, text=True)
     return out.stdout
 
 
@@ -74,14 +78,14 @@ def start(binary: str, seed: int) -> None:
     # XDG_DATA_HOME 指到本进程专属目录:并行跑时各写各的 run.save / note.card,不互相污染.
     cmd = f"env XDG_DATA_HOME={DATA_DIR} {binary} --seed {seed}" + (f" --ascension {ASC}" if ASC else "")
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", SESSION, "-x", w, "-y", h, cmd],
+        ["tmux", "-L", SOCKET, "new-session", "-d", "-s", SESSION, "-x", w, "-y", h, cmd],
         check=True,
     )
     time.sleep(0.9)
 
 
 def stop() -> None:
-    subprocess.run(["tmux", "kill-session", "-t", SESSION], capture_output=True)
+    subprocess.run(["tmux", "-L", SOCKET, "kill-session", "-t", SESSION], capture_output=True)
 
 
 # 进程退出时收掉本进程的 tmux 会话:随机会话名不能被留成僵尸会话。
@@ -111,7 +115,7 @@ def send(*keys: str) -> None:
     """
     global KEYS_SENT
     KEYS_SENT += len(keys)
-    subprocess.run(["tmux", "send-keys", "-t", SESSION, *keys], check=True)
+    subprocess.run(["tmux", "-L", SOCKET, "send-keys", "-t", SESSION, *keys], check=True)
     # 至少给游戏一帧的时间,然后等画面稳定(不再无脑 0.28s)
     time.sleep(0.03)
     deadline = time.time() + 2.0
