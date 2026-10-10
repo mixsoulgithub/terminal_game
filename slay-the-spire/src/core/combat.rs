@@ -5803,6 +5803,32 @@ mod tests {
         Combat::new(enc(encounter), setup(80, ids, &[]), RngRegistry::new(1))
     }
 
+    /// 开战抽牌堆的来历:shuffleRng = Random(seed + 层号),取第一个 long 给 java.Random 定种,
+    /// 再整堆 Collections.shuffle(反编译 GameContext.cpp:756-762 的按层重开、
+    /// BattleContext.cpp:28-34 的战斗初始化、CardManager.cpp:17-27 的洗牌)。
+    /// 钉住具体顺序:模型若被更正,只有这里会红,改动点也只在 combat.rs 里那一处。
+    #[test]
+    fn opening_piles_come_from_one_shuffle_rng_long() {
+        let deck = [
+            "strike", "strike", "strike", "strike", "strike", "defend", "defend", "defend", "defend",
+            "bash",
+        ];
+        let mut streams = RngRegistry::new(42);
+        streams.reseed_floor_streams(1);
+        let c = Combat::new(enc("cultist_solo"), setup(80, &deck, &[]), streams);
+        // 开战时就把第一回合的 5 张抽进手里:手牌 = 洗出来的前 5,抽牌堆 = 后 5
+        assert_eq!(
+            c.hand.iter().map(|x| x.def.id).collect::<Vec<_>>(),
+            vec!["strike", "defend", "defend", "strike", "bash"],
+            "seed 42 第 1 层开战手牌"
+        );
+        assert_eq!(
+            c.draw.iter().map(|x| x.def.id).collect::<Vec<_>>(),
+            vec!["strike", "strike", "defend", "strike", "defend"],
+            "seed 42 第 1 层开战剩下的抽牌堆"
+        );
+    }
+
     /// 新补的红卡:几个关键钩子各验一条
     #[test]
     fn new_ironclad_cards_hook_into_the_engine() {
