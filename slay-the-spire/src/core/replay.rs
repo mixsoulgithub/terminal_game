@@ -1374,7 +1374,9 @@ mod e2e {
     ///     活过两只真菌兽那一场(46 步),参考的 LIZARD_TAIL 是 hooks:{} 空实现
     ///     (refs/slay-the-cli/src/content/relics/rare.ts:226-231),没有这条保命钩子当场阵亡
     ///     (30 步) | (b) 参考缺口(与上面仙女瓶同一条"参考侧没有 wouldDie 钩子")|
-    ///     combat.rs lizard_tail_saves_you_once_per_combat
+    ///     combat.rs lizard_tail_saves_you_once_and_is_consumed_for_the_run
+    ///     (+ run.rs lizard_tail_stays_consumed_across_combats_and_saves:整局一次,
+    ///     用掉状态入档)
     /// 全表合计差异 50 处(193 的 23 + 286 的 27)。SWEEP(seed 1..40)不变,仍是 0 处。
     const CASES: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },

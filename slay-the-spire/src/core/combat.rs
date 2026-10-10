@@ -355,11 +355,15 @@ pub struct RunRelicCounters {
     pub attacks_total: i32,
     /// 墨水瓶累计打出的牌数:每 10 张抽 1 张
     pub cards_total: i32,
+    /// 蜥蜴尾巴这一局是否已经用掉:反编译把"用掉"写在遗物实例的 relicValue 上
+    /// (BattleContext.cpp:177-178 读入、:563-565 战斗结束时写回 0),随存档
+    /// (SaveFile.h 的 relic_counters)一起走 —— 整局只有一次,不是每场一次.
+    pub lizard_used: bool,
 }
 
 /// 战斗中遗物需要的计时器与一次性标记(与参考实现的 relicCounter 对应).
-/// 其中"跨战斗累计"的那几个(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)在进出战斗时
-/// 与 Run::relic_counters 同步;其余都是本场战斗内的状态,每场重建.
+/// 其中"跨战斗累计"的那几个(笔尖/快乐花/薰香/日晷/双节棍/墨水瓶)与"蜥蜴尾巴已用掉"
+/// 在进出战斗时与 Run::relic_counters 同步;其余都是本场战斗内的状态,每场重建.
 #[derive(Clone, Debug, Default)]
 pub struct RelicState {
     /// 本回合打出的攻击/技能数(苦无/手里剑/折扇/拆信刀)
@@ -400,7 +404,8 @@ pub struct RelicState {
     pub necro_used: bool,
     /// 红骷髅是否生效中
     pub bloodied: bool,
-    /// 这一场已经靠蜥蜴尾巴保过一次命
+    /// 这一局已经靠蜥蜴尾巴保过命(整局一次;战斗结束后经 run_counters 写回一局,
+    /// 不随战斗重建归零)
     pub lizard_used: bool,
     /// 这个回合结束已经问过尼尔瑞的抄本
     pub nilrys_used: bool,
@@ -416,6 +421,7 @@ impl RelicState {
             sundial: self.sundial,
             attacks_total: self.attacks_total,
             cards_total: self.cards_total,
+            lizard_used: self.lizard_used,
         }
     }
 
@@ -427,6 +433,7 @@ impl RelicState {
         self.sundial = c.sundial;
         self.attacks_total = c.attacks_total;
         self.cards_total = c.cards_total;
+        self.lizard_used = c.lizard_used;
     }
 }
 
@@ -9247,6 +9254,144 @@ mod power_tests {
         assert_eq!(c.enemies[0].hp, hp - 5);
     }
 
+    /// 靴子是共享的普通档遗物:战斗奖励的遗物、宝箱、商店的普通格、事件的
+    /// "随机普通遗物"与 Neow 的普通档祝福都从这一档取(反编译的 commonRelicPool,
+    /// include/constants/RelicPools.h:8-25;首领档 relicPools 里没有 THE_BOOT).
+    /// 本作开局的五个池子由 relics::pool_for 按 tier + pool 组出来,这里钉住
+    /// 靴子只出现在普通档、且四职业的普通池都有它.
+    #[test]
+    fn boot_is_a_shared_common_relic_so_every_common_draw_can_grant_it() {
+        use crate::core::relics::{pool_for, RelicTier};
+        let boot = relic_def_or_panic("the_boot");
+        assert_eq!(boot.tier, RelicTier::Common, "普通档");
+        assert_eq!(boot.pool, "shared", "四职业共享");
+        assert_eq!(boot.fx.small_attack_boost_to, 5, "抬到 5");
+        for color in ["red", "green", "blue", "purple"] {
+            assert!(
+                pool_for(RelicTier::Common, color)
+                    .iter()
+                    .any(|r| r.id == "the_boot"),
+                "{color} 的普通池里有靴子"
+            );
+            assert!(
+                !pool_for(RelicTier::Boss, color)
+                    .iter()
+                    .any(|r| r.id == "the_boot"),
+                "{color} 的首领池里没有靴子(它不能当首领遗物选出来)"
+            );
+        }
+    }
+
+    /// 靴子是"伤害结算时现读遗物",不是"开战时锁一份":反编译每一段攻击都在
+    /// Monster::attackedUnblockedHelper 里现查 `bc.player.hasRelic<THE_BOOT>()`
+    /// (Monster.cpp:339-341).战斗中途拿到,同一场下一次攻击立刻生效;中途摘掉,
+    /// 下一次攻击立刻不再生效.
+    #[test]
+    fn boot_is_read_live_at_damage_time_not_locked_at_combat_start() {
+        let mut c = lock("jaw_worm_solo");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 4, "开战时没有,4 还是 4");
+        assert_eq!(c.enemies[0].hp, hp - 4);
+        // 战斗进行中才拿到
+        c.relics.push(relic_def_or_panic("the_boot"));
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 5, "同一场下一次攻击立刻抬到 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+        // 又摘掉
+        c.relics.retain(|r| r.id != "the_boot");
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 4, "摘掉之后立刻不再抬");
+        assert_eq!(c.enemies[0].hp, hp - 4);
+    }
+
+    /// 靴子对"每一段攻击 × 每一只敌人"各判一次,互相独立.10 个组合场景盖住
+    /// 无格挡/半格挡/满格挡、单段/多段、1..4 与 >=5 两侧,最后再在同一场里让
+    /// 三只怪各走不同分支.反编译里每一段都各走一遍 Monster::attacked ->
+    /// attackedUnblockedHelper(Monster.cpp:407-440),所以 4x3 是 15 而不是 5.
+    #[test]
+    fn boot_decides_each_segment_of_each_enemy_independently() {
+        // (描述, 该怪格挡, 每段伤害, 段数, 期望合计掉血)
+        let cases: &[(&str, i32, i32, i32, i32)] = &[
+            ("无格挡 1 点 -> 5", 0, 1, 1, 5),
+            ("无格挡 4 点 -> 5", 0, 4, 1, 5),
+            ("无格挡 5 点:正好在下限上,不抬", 0, 5, 1, 5),
+            ("无格挡 6 点不抬", 0, 6, 1, 6),
+            ("2 格挡挡后剩 2 -> 5", 2, 4, 1, 5),
+            ("4 格挡全挡 -> 0", 4, 4, 1, 0),
+            ("1 格挡挡后剩 5 不抬", 1, 6, 1, 5),
+            ("无格挡 4x3:三段各 5", 0, 4, 3, 15),
+            ("3 格挡 4x2:第一段挡后剩 1 -> 5,第二段 4 -> 5", 3, 4, 2, 10),
+            ("10 格挡 4x2:两段都被挡光", 10, 4, 2, 0),
+        ];
+        for (what, block, dmg, times, expect) in cases.iter().copied() {
+            let mut c = lock("three_cultists");
+            c.relics.push(relic_def_or_panic("the_boot"));
+            c.enemies[0].block = block;
+            let hp = c.enemies[0].hp;
+            assert_eq!(
+                c.damage_enemy_times(0, dmg, true, times),
+                expect,
+                "{what}:合计掉血"
+            );
+            assert_eq!(c.enemies[0].hp, hp - expect, "{what}:血量");
+            assert_eq!(
+                c.enemies[0].block,
+                (block - dmg * times).max(0),
+                "{what}:格挡照扣"
+            );
+        }
+
+        // 同一场里三只怪各自独立:0 号全抬、1 号两段都被挡光、2 号只挨一段
+        let mut c = lock("three_cultists");
+        c.relics.push(relic_def_or_panic("the_boot"));
+        c.enemies[1].block = 8;
+        let (h0, h1, h2) = (c.enemies[0].hp, c.enemies[1].hp, c.enemies[2].hp);
+        assert_eq!(c.damage_enemy(0, 4), 5, "0 号:4 -> 5");
+        assert_eq!(c.damage_enemy_times(1, 4, true, 2), 0, "1 号:两段都被 8 格挡吃掉");
+        assert_eq!(c.damage_enemy(2, 3), 5, "2 号:3 -> 5");
+        assert_eq!(c.enemies[0].hp, h0 - 5);
+        assert_eq!(c.enemies[1].hp, h1, "1 号没掉血");
+        assert_eq!(c.enemies[2].hp, h2 - 5);
+    }
+
+    /// 靴子的先后:先扣格挡 -> 抬到 5 -> 才轮到目标侧挨打串里的"数值类"(无敌封顶)
+    /// 与"副作用类"(镀甲掉层).玩家侧的鸟居/钨钢棒是反方向(怪打玩家)的减免,
+    /// 靴子碰不到它们.出处:Monster.cpp:339-341 的靴子在 attackedUnblockedHelper
+    /// 最开头,348-396 才是无敌/镀甲/卷曲/飞行那串 else-if;鸟居/钨钢棒在
+    /// Player::attacked(Player.cpp:210-259).飞行/无形/卷曲那几支的数值见上一条
+    /// boot_floor_holds_on_real_monsters_with_their_own_mechanics.
+    #[test]
+    fn boot_sits_after_block_and_before_invincible_and_plated_armor() {
+        // 无敌每回合封顶 3:4 -> 靴子 5 -> 无敌压回 3(证明靴子改的是数值,在无敌之前)
+        let mut c = lock("three_cultists");
+        c.relics.push(relic_def_or_panic("the_boot"));
+        c.add_enemy_status(0, Status::Invincible, 3);
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 4), 3, "靴子先抬成 5,无敌再封到 3");
+        assert_eq!(c.enemies[0].hp, hp - 3);
+
+        // 镀甲:甲壳寄生虫开局自带 14 格挡,18 点打进来挡后剩 4,抬成 5 之后再掉一层甲
+        let mut c = lock("shelled_parasite_solo");
+        c.relics.push(relic_def_or_panic("the_boot"));
+        let hp = c.enemies[0].hp;
+        assert_eq!(c.damage_enemy(0, 18), 5, "甲壳寄生虫:18 扣 14 格挡剩 4 -> 5");
+        assert_eq!(c.enemies[0].hp, hp - 5);
+        assert_eq!(c.enemies[0].block, 0, "14 点格挡照扣");
+        assert_eq!(c.enemies[0].statuses.get(Status::PlatedArmor), 13, "掉一层甲");
+
+        // 玩家侧的鸟居/钨钢棒走另一条链:4 点打玩家,鸟居降到 1、钨钢棒再减 1 -> 0,
+        // 靴子(玩家打出去才生效)不参与玩家受击
+        let mut c = lock("jaw_worm_solo");
+        for id in ["the_boot", "torii", "tungsten_rod"] {
+            c.relics.push(relic_def_or_panic(id));
+        }
+        c.player.hp = 50;
+        c.player.block = 0;
+        let (taken, _) = c.hit_player_attack(4);
+        assert_eq!(taken, 0, "4 -> 鸟居 1 -> 钨钢棒 0;靴子不碰玩家受击链");
+        assert_eq!(c.player.hp, 50);
+    }
+
     /// Battle Trance 的"本回合不能再抽牌":反编译把闸门放在**唯一**的抽牌入口上
     /// —— refs/sts_lightspeed/src/combat/BattleContext.cpp:2439-2444 的
     /// `BattleContext::drawCards` 开头就是
@@ -11068,12 +11213,24 @@ mod summon_tests {
     /// 花开彼岸:两种保命符都不生效(反编译 wouldDie 整段被跳过)
     #[test]
     fn mark_of_the_bloom_blocks_fairy_and_lizard_tail() {
+        // 仙女在瓶中先判,一样救不了
         let relics = vec![relic_def_or_panic("mark_of_the_bloom")];
         let mut c = staged(&["strike"; 5], &[], &relics);
         c.fairy_save = true;
         c.player.hp = 3;
         c.hit_player(999);
         assert_eq!(c.phase, Phase::Lost, "仙女救不了");
+
+        // 蜥蜴尾巴也救不了,而且整段分支没进,不算用掉
+        let relics = vec![
+            relic_def_or_panic("mark_of_the_bloom"),
+            relic_def_or_panic("lizard_tail"),
+        ];
+        let mut c = staged(&["strike"; 5], &[], &relics);
+        c.player.hp = 3;
+        c.hit_player(999);
+        assert_eq!(c.phase, Phase::Lost, "蜥蜴尾巴也救不了");
+        assert!(!c.rs.lizard_used, "没生效就不消耗");
     }
 
     /// 花开彼岸:战斗内的一切治疗归零(反编译 Player::heal 第一句就 return)
@@ -11431,18 +11588,70 @@ mod relic_hook_tests {
         assert_eq!(c.enemies[0].statuses.get(Status::Weak), 1, "附带虚弱");
     }
 
-    /// 蜥蜴尾巴:每场一次,致命伤改成回一半最大生命
+    /// 蜥蜴尾巴:整局一次,致命伤改成回一半最大生命;用掉就没了.反编译把"用掉"
+    /// 写在遗物实例的 relicValue 上,战斗结束写回 0 并随存档走
+    /// (BattleContext.cpp:563-565 / SaveFile.h 的 relic_counters),所以是整局一次、
+    /// 不是每场一次;跨战斗那一半见 run.rs 的
+    /// lizard_tail_stays_consumed_across_combats_and_saves.
     #[test]
-    fn lizard_tail_saves_you_once_per_combat() {
+    fn lizard_tail_saves_you_once_and_is_consumed_for_the_run() {
         let relics = vec![relic_def_or_panic("lizard_tail")];
         let mut c = staged(&["strike"; 10], &[], &relics);
         c.player.hp = 4;
         c.hit_player(999);
         assert_eq!(c.player.hp, 40, "回到最大生命的一半");
         assert_ne!(c.phase, Phase::Lost, "没死");
+        assert!(c.rs.lizard_used, "这一局用掉了");
         c.player.hp = 4;
         c.hit_player(999);
-        assert_eq!(c.phase, Phase::Lost, "同一场只有一次");
+        assert_eq!(c.phase, Phase::Lost, "用掉之后同一场再死就没得救");
+    }
+
+    /// 蜥蜴尾巴只在"这一击会要命"时触发:没打死的伤害既不回血也不消耗
+    #[test]
+    fn lizard_tail_only_fires_when_the_hit_would_kill() {
+        let relics = vec![relic_def_or_panic("lizard_tail")];
+        let mut c = staged(&["strike"; 10], &[], &relics);
+        c.player.hp = 4;
+        let (taken, _) = c.hit_player(3);
+        assert_eq!(taken, 3, "3 点打不死");
+        assert_eq!(c.player.hp, 1, "不回血");
+        assert!(!c.rs.lizard_used, "没触发就不消耗");
+        // 正好打到 0 才算"会死":这一下把玩家送进 wouldDie
+        c.hit_player(1);
+        assert_eq!(c.player.hp, 40, "会死的那一下才回一半");
+        assert!(c.rs.lizard_used);
+    }
+
+    /// 直接掉血致死(自伤卡/事件扣血,反编译 Player::loseHp -> hpWasLost -> wouldDie,
+    /// Player.cpp:261-274 / 320-345)走的是同一条保命钩子,和"伤害致死"没有差别
+    #[test]
+    fn lizard_tail_also_saves_from_direct_hp_loss() {
+        let relics = vec![relic_def_or_panic("lizard_tail")];
+        let mut c = staged(&["strike"; 10], &[], &relics);
+        c.player.hp = 5;
+        c.lose_hp_player(5, false);
+        assert_eq!(c.player.hp, 40, "直接掉血扣到 0 也回到一半");
+        assert_ne!(c.phase, Phase::Lost);
+        assert!(c.rs.lizard_used);
+    }
+
+    /// 神圣树皮只翻倍药水,不翻倍蜥蜴尾巴:树皮在手上时尾巴照旧只回 50%
+    /// (反编译 wouldDie 里树皮的 0.6 只写在仙女药水那一支;尾巴那一支是
+    /// heal(maxHp/2),Player.cpp:330-345).仙女那一支的 30%->60% 见
+    /// fairy_potion_is_doubled_by_sacred_bark_and_wins_over_lizard_tail.
+    #[test]
+    fn sacred_bark_does_not_boost_lizard_tail() {
+        let relics = vec![
+            relic_def_or_panic("sacred_bark"),
+            relic_def_or_panic("lizard_tail"),
+        ];
+        let mut c = staged(&["strike"; 10], &[], &relics);
+        c.player.hp = 3;
+        c.hit_player(999);
+        assert_eq!(c.player.hp, 40, "还是 50%(80 的一半),不是树皮下那种 60%");
+        assert!(!c.fairy_used, "没带仙女药水");
+        assert!(c.rs.lizard_used);
     }
 
     /// 蓝蜡烛:不可打出的诅咒可以打出,打出掉 1 血并消耗

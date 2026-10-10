@@ -1089,8 +1089,14 @@ impl Run {
             .map(|c| c.rs.run_counters())
             .unwrap_or(self.relic_counters);
         out.push_str(&format!(
-            "relic_counters={},{},{},{},{},{}\n",
-            rc.pen_nib, rc.happy_flower, rc.incense, rc.sundial, rc.attacks_total, rc.cards_total
+            "relic_counters={},{},{},{},{},{},{}\n",
+            rc.pen_nib,
+            rc.happy_flower,
+            rc.incense,
+            rc.sundial,
+            rc.attacks_total,
+            rc.cards_total,
+            rc.lizard_used as u8
         ));
         // 整局累计的一场场统计(菜单/结算里展示),不存的话续档后归零
         out.push_str(&format!(
@@ -1378,7 +1384,9 @@ impl Run {
         // 按 0 起就与旧行为一致(不会静默给出错的局面)
         if let Some(v) = get("relic_counters") {
             let parts: Vec<i32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            if parts.len() != 6 {
+            // 7 个数:前 6 个是跨战斗计数器,第 7 个是蜥蜴尾巴"已用掉".老存档只有
+            // 前 6 个(那时蜥蜴尾巴的用掉标志还没入档),按 0 起
+            if parts.len() != 6 && parts.len() != 7 {
                 return Err("存档里的 relic_counters 字段坏了".to_string());
             }
             run.relic_counters = RunRelicCounters {
@@ -1388,6 +1396,7 @@ impl Run {
                 sundial: parts[3].max(0),
                 attacks_total: parts[4].max(0),
                 cards_total: parts[5].max(0),
+                lizard_used: parts.get(6).copied().unwrap_or(0) != 0,
             };
         }
         // 整局累计统计.老存档没有这一行,按 0 起(与改动前的行为一致)
@@ -6783,7 +6792,7 @@ mod tests {
         );
         // 读档重建时会走一遍开局的第 1 回合与洗牌,不能把存档里的数再带高一格
         assert!(
-            r2.save_text().contains("relic_counters=0,0,3,0,0,0"),
+            r2.save_text().contains("relic_counters=0,0,3,0,0,0,0"),
             "存-读-再存,计数器照旧:\n{}",
             r2.save_text()
         );
@@ -6850,6 +6859,104 @@ mod tests {
         assert_eq!(r.relic_counters.pen_nib, 0, "刚拿到手是 0");
         play_a_strike(&mut r);
         assert_eq!(r.relic_counters.pen_nib, 1, "拿到手后从 0 数起");
+    }
+
+    /// 蜥蜴尾巴整局只有一次:第一场靠它活下来,"用掉"写回一局计数并随存档走;
+    /// 第二场再被致命伤打死就没得救.反编译把用掉写在遗物实例的 relicValue 上
+    /// (BattleContext.cpp:177-178 读入,563-565 战斗结束写回 0),存档的
+    /// relic_counters 是一遗物一格的数组(SaveFile.h:135 / SaveFileMappings.h:100),
+    /// 所以用掉状态入档、不随每场重置.单场那半见 combat.rs 的
+    /// lizard_tail_saves_you_once_and_is_consumed_for_the_run.
+    #[test]
+    fn lizard_tail_stays_consumed_across_combats_and_saves() {
+        let mut r = run(286);
+        r.debug_add_relic("lizard_tail").unwrap();
+        let enc = crate::core::enemies::encounter_def("jaw_worm_solo").unwrap();
+        assert!(!r.relic_counters.lizard_used, "开局还没用掉");
+
+        // 第一场:1 血挨一发致命伤,尾巴救回来
+        r.debug_start_combat(enc);
+        r.sync_combat();
+        r.player.hp = 1;
+        r.combat.as_mut().unwrap().player.hp = 1;
+        r.combat.as_mut().unwrap().end_turn();
+        r.sync_combat();
+        assert!(r.player.hp > 0, "被尾巴救下来了");
+        assert_eq!(r.player.hp, r.player.max_hp / 2, "回到最大生命的一半");
+        assert!(r.relic_counters.lizard_used, "用掉并写回一局计数");
+        assert!(
+            r.save_text()
+                .lines()
+                .any(|l| l.starts_with("relic_counters=") && l.ends_with(",1")),
+            "用掉状态进了存档那一行"
+        );
+
+        // 存-读之后还是用掉状态
+        let mut r = Run::from_save(&r.save_text()).expect("读回存档");
+        assert!(r.relic_counters.lizard_used, "用掉状态随存档走");
+        assert!(
+            r.combat.as_ref().unwrap().rs.lizard_used,
+            "战斗现场里也是用掉状态"
+        );
+
+        // 第二场:同样 1 血挨致命伤,这次没人救
+        r.debug_start_combat(enc);
+        r.sync_combat();
+        assert!(
+            r.combat.as_ref().unwrap().rs.lizard_used,
+            "新一场开局就带着用掉状态"
+        );
+        r.player.hp = 1;
+        r.combat.as_mut().unwrap().player.hp = 1;
+        r.combat.as_mut().unwrap().end_turn();
+        r.sync_combat();
+        assert_eq!(r.screen, Screen::Death, "第二场就救不了了");
+        assert_eq!(r.player.hp, 0);
+    }
+
+    /// 老存档只有 6 个跨战斗计数器(蜥蜴尾巴的用掉标志是后加的):照旧读得出来,
+    /// 用掉标志按 false 起
+    #[test]
+    fn old_six_field_relic_counters_save_still_loads() {
+        let r = run(11);
+        let text = r
+            .save_text()
+            .lines()
+            .map(|l| {
+                if l.starts_with("relic_counters=") {
+                    "relic_counters=0,0,0,0,0,0".to_string()
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let back = Run::from_save(&text).expect("老存档要能读");
+        assert_eq!(back.relic_counters.pen_nib, 0);
+        assert!(!back.relic_counters.lizard_used, "老存档按没用过处理");
+    }
+
+    /// 靴子只从普通档的遗物池里来:开局洗好的五个池子里,普通池有它、首领池没有.
+    /// 战斗奖励的遗物、宝箱、商店的普通格、事件的"随机普通遗物"与 Neow 的普通档
+    /// 祝福都从普通池取(反编译 commonRelicPool,include/constants/RelicPools.h:8-25),
+    /// 所以这四条路都能拿到它;Boss 奖励与 Neow 的"随机首领遗物"取首领池,拿不到.
+    /// 拿到之后什么时候生效见 combat.rs
+    /// boot_is_read_live_at_damage_time_not_locked_at_combat_start(伤害结算时现读).
+    #[test]
+    fn boot_is_seeded_into_the_common_pool_and_absent_from_the_boss_pool() {
+        let r = run(193);
+        let has = |p: &[&'static relics::RelicDef], id: &str| p.iter().any(|x| x.id == id);
+        assert!(has(&r.relic_pools.common, "the_boot"), "普通池里洗进了靴子");
+        assert!(!has(&r.relic_pools.boss, "the_boot"), "首领池里没有靴子");
+        // 四个职业的普通池都由 tier + pool 统一组出来,所以上面那份普通池里必有它
+        for color in ["red", "green", "blue", "purple"] {
+            assert!(
+                relics::pool_for(RelicTier::Common, color)
+                    .iter()
+                    .any(|x| x.id == "the_boot"),
+                "{color} 的普通池有靴子"
+            );
+        }
     }
 
     /// 羽翼靴:可以无视路径飞三次,飞完只剩正常可达
@@ -7160,6 +7267,7 @@ mod tests {
             sundial: 5,
             attacks_total: 7,
             cards_total: 9,
+            lizard_used: true,
         };
         r.stats = Stats {
             fights: 5,
