@@ -24,7 +24,7 @@ options:
                   base-35 seed string (same form `:seed` prints)
   --ascension <n> ascension level 0-20 for a new game (default 0 = off)
   --dump <what>   print data and exit
-                  (cards|enemies|monsters|relics|potions|events|gated)
+                  (cards|enemies|monsters|relics|potions|events|events-json|gated)
   --replay <seed> headless scripted run: walk act 1 to the boss, one JSON
                   line per step on stdout (no terminal needed)
   --script <file> path script for --replay (neow/reward/card/event/rest/shop)
@@ -345,6 +345,11 @@ fn dump(what: &str) -> Result<(), String> {
             for e in core::events::EVENTS {
                 println!("{:<20} {} choices", e.id, e.choices.len());
             }
+            Ok(())
+        }
+        // 事件选项/条件/效果的完整 JSON(含多屏后半段),给 tools/audit_events_impl.ts
+        "events-json" => {
+            print!("{}", core::events::dump_json());
             Ok(())
         }
         other => Err(format!("unknown dump target: {other}")),

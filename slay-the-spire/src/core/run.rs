@@ -4015,6 +4015,10 @@ impl Run {
                 self.spend_gold(g);
             }
         }
+        // 变化之轮的金币格:按当前章给(反编译 obtainGold(act * 100))
+        if o.gold_per_act != 0 {
+            self.gain_gold(self.act as i32 * o.gold_per_act);
+        }
         if let Some((lo, hi)) = o.gold_range {
             let g = self.streams.floor(FloorStream::MiscRng).range_inclusive(lo, hi);
             self.gain_gold(g);
@@ -6586,6 +6590,19 @@ mod tests {
         r.debug_set_floor(7);
         assert!(r.event_can_spawn("dead_adventurer"), "第 7 层才出");
         assert!(r.event_can_spawn("hypnotizing_colored_mushrooms"));
+    }
+
+    /// 变化之轮的金币格按"当前章 × 100"给(反编译 GameContext.cpp:3522
+    /// obtainGold(act * 100))。曾经硬编码 100,二、三章给少了。
+    #[test]
+    fn wheel_gold_scales_with_the_act() {
+        for (act, want) in [(1u32, 100), (2, 200), (3, 300)] {
+            let mut r = run(3);
+            r.debug_jump_act(act);
+            let before = r.player.gold;
+            r.apply_outcome(&crate::outcome!(gold_per_act: 100, text: ""));
+            assert_eq!(r.player.gold - before, want, "第 {act} 章变化之轮金币");
+        }
     }
 
     /// 梦中情网:休息之后多一次卡牌三选一

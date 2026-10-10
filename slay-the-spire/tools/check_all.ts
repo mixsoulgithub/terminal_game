@@ -13,7 +13,9 @@
 //   selftest      tools/audit_corpus.ts --selftest 历史盲区回归
 //   monsters      tools/audit_monsters.ts 怪物对账(65 怪 × 招式/飞升档/血量档/AI 规则)
 //   monself       tools/audit_monsters.ts --selftest 怪物对账的改坏/恢复回归
-//   events        tools/audit_events.ts 事件审计
+//   events        tools/audit_events.ts 事件效果沙盒审计(逐选项实测)
+//   evimpl        tools/audit_events_impl.ts 事件面双向对账(选项/条件/效果/进入条件 ↔ 语料/反编译)
+//   evself        tools/audit_events_impl.ts --selftest 事件对账的改坏/恢复回归
 //   axes          tools/sandbox_axes.ts 边界轴
 //   relics        tools/sandbox_relics.ts 遗物沙盒
 //   potions       sandbox_diff --only potions 药水沙盒
@@ -172,6 +174,32 @@ function stepEvents(): Step {
   };
 }
 
+/** 事件面双向对账(语料/反编译 ↔ 实现声明) */
+function stepEventsImpl(): Step {
+  const { status, out } = sh(["bun", join(HERE, "audit_events_impl.ts")], ROOT);
+  const d = out.match(/不一致 (\d+):/);
+  const g = out.match(/覆盖守卫 FAIL\((\d+)\)/);
+  const cov = out.match(/效果对上的选项: (\d+)\/(\d+)/);
+  return {
+    name: "evimpl",
+    ok: status === 0 && (d?.[1] ?? "0") === "0" && !g,
+    detail: `覆盖 ${cov ? `${cov[1]}/${cov[2]}` : "?"},不一致 ${d?.[1] ?? "0"},守卫 ${g ? `FAIL(${g[1]})` : "PASS"}`,
+    fail: interesting(out, ["[DIFF]", "[GUARD]"], 12),
+  };
+}
+
+/** 事件面双向对账的改坏/恢复回归 */
+function stepEventsImplSelftest(): Step {
+  const { status, out } = sh(["bun", join(HERE, "audit_events_impl.ts"), "--selftest"], ROOT);
+  const m = out.match(/抓到 (\d+),漏检 (\d+)/);
+  return {
+    name: "evself",
+    ok: status === 0 && m?.[2] === "0",
+    detail: `改坏/恢复抓到 ${m?.[1] ?? "?"},漏检 ${m?.[2] ?? "?"}`,
+    fail: interesting(out, ["[FAIL]"], 12),
+  };
+}
+
 function stepAxes(): Step {
   const { status, out } = sh(["bun", join(HERE, "sandbox_axes.ts")], ROOT);
   const m = out.match(/场景 (\d+) 个,通过 (\d+),失败 (\d+)/);
@@ -239,6 +267,8 @@ run(stepSelftest(), "selftest");
 run(stepMonsters(), "monsters");
 run(stepMonsterSelftest(), "monself");
 run(stepEvents(), "events");
+run(stepEventsImpl(), "evimpl");
+run(stepEventsImplSelftest(), "evself");
 run(stepAxes(), "axes");
 run(stepRelics(), "relics");
 run(stepPotions(), "potions");

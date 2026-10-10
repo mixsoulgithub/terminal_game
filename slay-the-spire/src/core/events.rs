@@ -111,6 +111,9 @@ pub struct Outcome {
     pub max_hp_pct: i32,
     /// 金币变化(可负)
     pub gold: i32,
+    /// 按"当前章 × n"给金币(变化之轮的金币格:反编译 obtainGold(act * 100));
+    /// n = 0 表示不用
+    pub gold_per_act: i32,
     /// 先金币后扣血(脸商人:原作先给金再挨打,满血时配"得金回血"遗物能看出来)
     pub gold_first: bool,
     /// 随机给的金币区间
@@ -240,6 +243,7 @@ impl Outcome {
         max_hp: 0,
         max_hp_pct: 0,
         gold: 0,
+        gold_per_act: 0,
         gold_first: false,
         gold_range: None,
         gold_lose_range: None,
@@ -703,7 +707,7 @@ static REWARD_PHANTOM_A15: CombatReward = CombatReward {
 /// 变化之轮:六个结果等概率(参考实现 miscRng.random(5))
 /// 飞升 15+ 的变化之轮:受伤那一格从 10% 提到 15%(其余同 WHEEL)
 static WHEEL_A15: [Outcome; 6] = [
-    outcome!(gold: 100, text: "The wheel stops on a pile of gold."),
+    outcome!(gold_per_act: 100, text: "The wheel stops on a pile of gold."),
     outcome!(relic_reward: true, text: "The wheel grants a relic."),
     outcome!(full_heal: true, text: "The wheel pours warm light over you."),
     outcome!(add_curse: Some("decay"), text: "The wheel leaves a curse in your deck."),
@@ -712,8 +716,8 @@ static WHEEL_A15: [Outcome; 6] = [
 ];
 
 static WHEEL: [Outcome; 6] = [
-    // 金币那一格是"本章 100 金币",本作只有第一幕,所以就是 100
-    outcome!(gold: 100, text: "The wheel stops on a pile of gold."),
+    // 金币那一格是"本章 × 100"(反编译 obtainGold(act * 100))
+    outcome!(gold_per_act: 100, text: "The wheel stops on a pile of gold."),
     outcome!(relic_reward: true, text: "The wheel grants a relic."),
     outcome!(full_heal: true, text: "The wheel pours warm light over you."),
     outcome!(add_curse: Some("decay"), text: "The wheel leaves a curse in your deck."),
@@ -2488,6 +2492,406 @@ pub static EVENT_CARDS: &[CardDef] = &[
 /// 按 id 找事件专用卡牌
 pub fn event_card(id: &str) -> Option<&'static CardDef> {
     EVENT_CARDS.iter().find(|c| c.id == id)
+}
+
+// ---- 导出给审计工具(tools/audit_events_impl.ts;不进游戏运行时) ----
+
+/// JSON 字符串转义(和 replay.rs::esc 同口径)
+fn jesc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+fn jstr(s: &str) -> String {
+    format!("\"{}\"", jesc(s))
+}
+fn jopt(s: Option<&str>) -> String {
+    s.map(jstr).unwrap_or_else(|| "null".into())
+}
+fn jpair_i(a: i32, b: i32) -> String {
+    format!("[{a},{b}]")
+}
+
+fn roll_json(r: &RollKind) -> String {
+    match r {
+        RollKind::Uniform => "{\"kind\":\"Uniform\"}".into(),
+        RollKind::Coin { num, den, true_idx } => {
+            format!("{{\"kind\":\"Coin\",\"num\":{num},\"den\":{den},\"true_idx\":{true_idx}}}")
+        }
+        RollKind::HalfBit => "{\"kind\":\"HalfBit\"}".into(),
+        RollKind::Always { idx } => format!("{{\"kind\":\"Always\",\"idx\":{idx}}}"),
+    }
+}
+
+fn reward_json(r: &CombatReward) -> String {
+    format!(
+        "{{\"nothing\":{},\"gold\":{},\"relic_id\":{},\"relic_rarity\":{},\"relic_rarity2\":{},\"no_relic\":{},\"no_cards\":{},\"potion_pct\":{}}}",
+        r.nothing,
+        r.gold.map(|(a, b)| jpair_i(a, b)).unwrap_or_else(|| "null".into()),
+        jopt(r.relic_id),
+        r.relic_rarity.map(|x| jstr(x.name())).unwrap_or_else(|| "null".into()),
+        r.relic_rarity2.map(|x| jstr(x.name())).unwrap_or_else(|| "null".into()),
+        r.no_relic,
+        r.no_cards,
+        r.potion_pct
+    )
+}
+
+/// 选项结算只导出"非默认"的字段;没出现的字段就是 Outcome::NONE 的默认值.
+fn outcome_json(o: &Outcome, order: &[&'static EventDef]) -> String {
+    let mut f: Vec<String> = Vec::new();
+    macro_rules! kv {
+        ($k:literal, $v:expr) => {
+            f.push(format!(concat!("\"", $k, "\":{}"), $v))
+        };
+    }
+    if !o.text.is_empty() {
+        kv!("text", jstr(o.text));
+    }
+    if o.hp != 0 {
+        kv!("hp", o.hp);
+    }
+    if o.hp_pct != 0 {
+        kv!("hp_pct", o.hp_pct);
+    }
+    if o.hp_pct_min != 0 {
+        kv!("hp_pct_min", o.hp_pct_min);
+    }
+    if o.heal_pct != 0 {
+        kv!("heal_pct", o.heal_pct);
+    }
+    if o.hp_frac != 0.0 {
+        kv!("hp_frac", o.hp_frac);
+    }
+    if o.hp_frac_ceil != 0.0 {
+        kv!("hp_frac_ceil", o.hp_frac_ceil);
+    }
+    if o.heal_frac != 0.0 {
+        kv!("heal_frac", o.heal_frac);
+    }
+    if o.max_hp_frac != 0.0 {
+        kv!("max_hp_frac", o.max_hp_frac);
+    }
+    if o.max_hp_frac_ceil != 0.0 {
+        kv!("max_hp_frac_ceil", o.max_hp_frac_ceil);
+    }
+    if o.max_hp != 0 {
+        kv!("max_hp", o.max_hp);
+    }
+    if o.max_hp_pct != 0 {
+        kv!("max_hp_pct", o.max_hp_pct);
+    }
+    if o.gold != 0 {
+        kv!("gold", o.gold);
+    }
+    if o.gold_per_act != 0 {
+        kv!("gold_per_act", o.gold_per_act);
+    }
+    if o.gold_first {
+        kv!("gold_first", o.gold_first);
+    }
+    if let Some((a, b)) = o.gold_range {
+        kv!("gold_range", jpair_i(a, b));
+    }
+    if let Some((a, b)) = o.gold_lose_range {
+        kv!("gold_lose_range", jpair_i(a, b));
+    }
+    if o.gold_lose_all {
+        kv!("gold_lose_all", o.gold_lose_all);
+    }
+    if o.full_heal {
+        kv!("full_heal", o.full_heal);
+    }
+    if o.relic_id.is_some() {
+        kv!("relic_id", jopt(o.relic_id));
+    }
+    if let Some(r) = o.random_relic_rarity {
+        kv!("random_relic_rarity", jstr(r.name()));
+    }
+    if o.random_relic_any {
+        kv!("random_relic_any", o.random_relic_any);
+    }
+    if o.remove_relic.is_some() {
+        kv!("remove_relic", jopt(o.remove_relic));
+    }
+    if o.add_card.is_some() {
+        kv!("add_card", jopt(o.add_card));
+    }
+    if let Some((id, n)) = o.add_cards {
+        kv!("add_cards", format!("[{},{}]", jstr(id), n));
+    }
+    if o.add_curse.is_some() {
+        kv!("add_curse", jopt(o.add_curse));
+    }
+    if o.add_random_curse {
+        kv!("add_random_curse", o.add_random_curse);
+    }
+    if let Some((r, n)) = o.add_random_class {
+        kv!("add_random_class", format!("[{},{}]", jstr(r.name()), n));
+    }
+    if o.library_read {
+        kv!("library_read", o.library_read);
+    }
+    if let Some((r, n)) = o.add_random_colorless {
+        let rj = r.map(|x| jstr(x.name())).unwrap_or_else(|| "null".into());
+        kv!("add_random_colorless", format!("[{rj},{n}]"));
+    }
+    if o.colorless_card_rewards != 0 {
+        kv!("colorless_card_rewards", o.colorless_card_rewards);
+    }
+    if o.upgrade_card {
+        kv!("upgrade_card", o.upgrade_card);
+    }
+    if o.upgrade_random_n != 0 {
+        kv!("upgrade_random_n", o.upgrade_random_n);
+    }
+    if o.upgrade_random_shuffle != 0 {
+        kv!("upgrade_random_shuffle", o.upgrade_random_shuffle);
+    }
+    if o.upgrade_all {
+        kv!("upgrade_all", o.upgrade_all);
+    }
+    if o.upgrade_starters {
+        kv!("upgrade_starters", o.upgrade_starters);
+    }
+    if o.remove_card {
+        kv!("remove_card", o.remove_card);
+    }
+    if o.note_swap {
+        kv!("note_swap", o.note_swap);
+    }
+    if o.remove_base_strikes {
+        kv!("remove_base_strikes", o.remove_base_strikes);
+    }
+    if o.remove_curses {
+        kv!("remove_curses", o.remove_curses);
+    }
+    if let Some(rule) = o.remove_random {
+        let v = match rule {
+            RemoveRule::OfType(t) => format!("{{\"of_type\":{}}}", jstr(t.name())),
+        };
+        kv!("remove_random", v);
+    }
+    if o.transform_card {
+        kv!("transform_card", o.transform_card);
+    }
+    if o.transform_random_n != 0 {
+        kv!("transform_random_n", o.transform_random_n);
+    }
+    if o.transform_choose_n != 0 {
+        kv!("transform_choose_n", o.transform_choose_n);
+    }
+    if o.duplicate_card {
+        kv!("duplicate_card", o.duplicate_card);
+    }
+    if o.lose_random_potion {
+        kv!("lose_random_potion", o.lose_random_potion);
+    }
+    if o.random_potion_n != 0 {
+        kv!("random_potion_n", o.random_potion_n);
+    }
+    if o.potion_reward_n != 0 {
+        kv!("potion_reward_n", o.potion_reward_n);
+    }
+    if o.relic_reward {
+        kv!("relic_reward", o.relic_reward);
+    }
+    if o.relic_reward_id.is_some() {
+        kv!("relic_reward_id", jopt(o.relic_reward_id));
+    }
+    if let Some(list) = o.pick_relic_from {
+        let items: Vec<String> = list.iter().map(|x| jstr(x)).collect();
+        kv!("pick_relic_from", format!("[{}]", items.join(",")));
+    }
+    if o.offer_card {
+        kv!("offer_card", o.offer_card);
+    }
+    if o.fight.is_some() {
+        kv!("fight", jopt(o.fight));
+    }
+    if let Some(pool) = o.fight_pool {
+        let items: Vec<String> = pool.iter().map(|x| jstr(x)).collect();
+        kv!("fight_pool", format!("[{}]", items.join(",")));
+    }
+    if let Some(r) = o.fight_reward {
+        kv!("fight_reward", reward_json(r));
+    }
+    if let Some(d) = o.fight_next {
+        kv!("fight_next", def_index(order, d));
+    }
+    if let Some((list, kind)) = o.roll {
+        let items: Vec<String> = list.iter().map(|x| outcome_json(x, order)).collect();
+        kv!("roll", format!("{{\"kind\":{},\"outcomes\":[{}]}}", roll_json(&kind), items.join(",")));
+    }
+    if o.ooze {
+        kv!("ooze", o.ooze);
+    }
+    if let Some(d) = o.next {
+        kv!("next", def_index(order, d));
+    }
+    if o.set_screen.is_some() {
+        kv!("set_screen", jopt(o.set_screen));
+    }
+    if o.adv_search {
+        kv!("adv_search", o.adv_search);
+    }
+    if o.wma != 0 {
+        kv!("wma", o.wma);
+    }
+    if o.nloth_offer != 0 {
+        kv!("nloth_offer", o.nloth_offer);
+    }
+    if o.designer_service != 0 {
+        kv!("designer_service", o.designer_service);
+    }
+    if o.skull_buy != 0 {
+        kv!("skull_buy", o.skull_buy);
+    }
+    if o.jump_to_boss {
+        kv!("jump_to_boss", o.jump_to_boss);
+    }
+    if o.dead {
+        kv!("dead", o.dead);
+    }
+    format!("{{{}}}", f.join(","))
+}
+
+fn choice_json(c: &EventChoice, order: &[&'static EventDef]) -> String {
+    let mut f: Vec<String> = Vec::new();
+    macro_rules! kv {
+        ($k:literal, $v:expr) => {
+            f.push(format!(concat!("\"", $k, "\":{}"), $v))
+        };
+    }
+    kv!("label", jstr(c.label));
+    if c.cost_gold != 0 {
+        kv!("cost_gold", c.cost_gold);
+    }
+    if c.cost_hp != 0 {
+        kv!("cost_hp", c.cost_hp);
+    }
+    if c.req_gold != 0 {
+        kv!("req_gold", c.req_gold);
+    }
+    if c.req_relic.is_some() {
+        kv!("req_relic", jopt(c.req_relic));
+    }
+    if c.req_no_relic.is_some() {
+        kv!("req_no_relic", jopt(c.req_no_relic));
+    }
+    if c.req_potion {
+        kv!("req_potion", c.req_potion);
+    }
+    if c.req_big_attack {
+        kv!("req_big_attack", c.req_big_attack);
+    }
+    if c.req_non_basic {
+        kv!("req_non_basic", c.req_non_basic);
+    }
+    if c.only_screen.is_some() {
+        kv!("only_screen", jopt(c.only_screen));
+    }
+    if c.max_uses != 0 {
+        kv!("max_uses", c.max_uses);
+    }
+    if c.req_removable {
+        kv!("req_removable", c.req_removable);
+    }
+    if c.req_removable_min != 0 {
+        kv!("req_removable_min", c.req_removable_min);
+    }
+    if c.req_upgradeable {
+        kv!("req_upgradeable", c.req_upgradeable);
+    }
+    if let Some(t) = c.req_card_type {
+        kv!("req_card_type", jstr(t.name()));
+    }
+    if c.req_no_card_type {
+        kv!("req_no_card_type", c.req_no_card_type);
+    }
+    if c.req_floor_max != 0 {
+        kv!("req_floor_max", c.req_floor_max);
+    }
+    if c.req_floor_min != 0 {
+        kv!("req_floor_min", c.req_floor_min);
+    }
+    if c.cost_gold_a15 != 0 {
+        kv!("cost_gold_a15", c.cost_gold_a15);
+    }
+    kv!("outcome", outcome_json(&c.outcome, order));
+    match &c.outcome_a15 {
+        Some(o) => kv!("outcome_a15", outcome_json(o, order)),
+        None => kv!("outcome_a15", "null"),
+    }
+    format!("{{{}}}", f.join(","))
+}
+
+fn def_index(order: &[&'static EventDef], d: &'static EventDef) -> usize {
+    order.iter().position(|x| std::ptr::eq(*x, d)).expect("def 不在导出表里")
+}
+
+fn collect_refs(o: &Outcome, out: &mut Vec<&'static EventDef>) {
+    if let Some(d) = o.next {
+        out.push(d);
+    }
+    if let Some(d) = o.fight_next {
+        out.push(d);
+    }
+    if let Some((list, _)) = o.roll {
+        for x in list {
+            collect_refs(x, out);
+        }
+    }
+}
+
+/// 把 EVENTS 和从它出发 next/fight_next 可达的全部多屏 EventDef 导出成 JSON,
+/// 供 tools/audit_events_impl.ts 做语料↔实现的双向对账(避免退化成解析 Rust 源码).
+pub fn dump_json() -> String {
+    let mut order: Vec<(&'static EventDef, bool)> = Vec::new();
+    let mut queue: Vec<(&'static EventDef, bool)> = EVENTS.iter().map(|d| (d, true)).collect();
+    while let Some((d, root)) = queue.pop() {
+        if order.iter().any(|(e, _)| std::ptr::eq(*e, d)) {
+            continue;
+        }
+        order.push((d, root));
+        let mut refs: Vec<&'static EventDef> = Vec::new();
+        for c in d.choices {
+            collect_refs(&c.outcome, &mut refs);
+            if let Some(a) = &c.outcome_a15 {
+                collect_refs(a, &mut refs);
+            }
+        }
+        for r in refs {
+            queue.push((r, false));
+        }
+    }
+    let flat: Vec<&'static EventDef> = order.iter().map(|(d, _)| *d).collect();
+    let defs: Vec<String> = order
+        .iter()
+        .enumerate()
+        .map(|(i, (d, root))| {
+            let choices: Vec<String> = d.choices.iter().map(|c| choice_json(c, &flat)).collect();
+            format!(
+                "{{\"i\":{},\"id\":{},\"name\":{},\"root\":{},\"choices\":[{}]}}",
+                i,
+                jstr(d.id),
+                jstr(d.name),
+                root,
+                choices.join(",")
+            )
+        })
+        .collect();
+    format!("{{\"events\":[{}]}}\n", defs.join(","))
 }
 
 // ---- Neow 的祝福(参考实现 neow.ts / Neow.cpp) ----
@@ -4509,6 +4913,14 @@ mod event_audit_fix_tests {
             r.tick_win_hold();
             guard += 1;
         }
+    }
+
+    #[test]
+    fn wheel_gold_is_act_scaled() {
+        // 金币格按"本章 × 100"给,不能写死 100(反编译 obtainGold(act * 100))
+        assert_eq!(WHEEL[0].gold_per_act, 100);
+        assert_eq!(WHEEL[0].gold, 0, "金币格不能再走固定金额");
+        assert_eq!(WHEEL_A15[0].gold_per_act, 100);
     }
 
     #[test]
