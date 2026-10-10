@@ -111,6 +111,8 @@ pub struct App {
     pub lib_sel: usize,
     /// 新游戏的飞升等级(0..=20),建 run 时传给 Run
     pub ascension: u32,
+    /// 待用种子的持久化文件(None = 默认数据目录;测试指到临时文件)
+    seed_file: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -155,6 +157,7 @@ impl App {
             lib_tab: 0,
             lib_sel: 0,
             ascension: 0,
+            seed_file: None,
         }
     }
 
@@ -427,6 +430,24 @@ impl App {
         self.potion_pending = None;
         self.toss_pending = false;
         self.info(format!("new run, seed {seed}"));
+    }
+
+    /// 待用种子写到哪个文件(None = 默认数据目录)
+    fn seed_path(&self) -> std::path::PathBuf {
+        self.seed_file
+            .clone()
+            .unwrap_or_else(crate::core::save::seed_path)
+    }
+
+    /// 记下"待用种子":用户明确设过的种子一直留到被覆盖
+    fn remember_seed(&mut self, seed: u64) {
+        let _ = crate::core::save::write_seed_at(&self.seed_path(), seed);
+    }
+
+    /// 测试用:把待用种子文件指到临时文件,免得写到真实数据目录
+    #[cfg(test)]
+    pub fn set_seed_file(&mut self, path: std::path::PathBuf) {
+        self.seed_file = Some(path);
     }
 
     /// 命令行的补全候选:只算当前这一层。
@@ -1746,7 +1767,9 @@ impl App {
                 self.restart(seed);
             }
             KeyCode::Char('n') => {
-                let seed = self.run.seed.wrapping_add(0x9E37_79B9);
+                // 明确换种子(new seed)= 覆盖待用种子
+                let seed = crate::rng::random_seed();
+                self.remember_seed(seed);
                 self.restart(seed);
             }
             KeyCode::Char('q') => self.quit = true,
@@ -1858,12 +1881,26 @@ impl App {
         match head {
             "q" | "quit" => self.quit = true,
             "help" => self.open_overlay(Overlay::Help),
-            // 种子按参考实现的形式(base-35)显示,和 --seed 收的字符串同一种写法
-            "seed" => self.info(format!(
-                "seed {} ({})",
-                crate::rng::seed_to_string(self.run.seed),
-                self.run.seed
-            )),
+            // 种子按参考实现的形式(base-35)显示,和 --seed 收的字符串同一种写法.
+            // 给参数就是设"待用种子":留到被覆盖,新局与下次启动(--seed 缺省)都用它.
+            "seed" => match rest {
+                "" => self.info(format!(
+                    "seed {} ({})  |  :seed <n|b35:STR> sets the seed new runs use",
+                    crate::rng::seed_to_string(self.run.seed),
+                    self.run.seed
+                )),
+                arg => match crate::rng::seed_from_arg(arg) {
+                    Some(n) => {
+                        self.remember_seed(n);
+                        self.info(format!(
+                            "seed {} ({}) set; new runs use it until overwritten",
+                            crate::rng::seed_to_string(n),
+                            n
+                        ));
+                    }
+                    None => self.warn(format!("bad seed: {arg}")),
+                },
+            },
             // :relic add <名字|all> / :relic remove <名字>
             "relic" => {
                 let (sub, args) = split_sub(rest);
@@ -1960,7 +1997,7 @@ impl App {
                 self.ok(r);
                 self.clamp();
             }
-            // :run 用当前种子重来;:run seed [n] 换种子(不给就随机);:run save <名字> 读存档
+            // :run 用当前种子重来;:run seed [n] 换种子(不给就随机,并覆盖待用种子);:run save <名字> 读存档
             "run" => {
                 let (sub, args) = split_sub(rest);
                 let r: Result<String, String> = match sub {
@@ -1970,11 +2007,17 @@ impl App {
                         Ok(format!("rerun seed {seed}"))
                     }
                     "seed" => {
+                        // 明确换种子 = 覆盖:不管随机还是给串,都记成待用种子
                         let seed = if args.is_empty() {
-                            crate::rng::random_seed()
+                            let s = crate::rng::random_seed();
+                            self.remember_seed(s);
+                            s
                         } else {
                             match crate::rng::seed_from_arg(args) {
-                                Some(n) => n,
+                                Some(n) => {
+                                    self.remember_seed(n);
+                                    n
+                                }
                                 None => {
                                     self.warn(format!("bad seed: {args}"));
                                     return;
@@ -2183,6 +2226,10 @@ impl App {
             (":q", "quit"),
             (":help", "this help"),
             (":seed", "show the run seed"),
+            (
+                ":seed <n|b35:STR>",
+                "set the seed new runs use (kept until overwritten; b35: forces base-35)",
+            ),
             (":room shop|battle|event", "jump straight into that room (debug)"),
             (":relic add|all|remove <name>", "add or drop relics by name (debug)"),
             (
@@ -2192,7 +2239,7 @@ impl App {
             (":win", "win the current battle (skip to the reward)"),
             (":restart [run|fight|turn]", "roll back to the run/fight/turn start (turn)"),
             (":run", "run the current seed from the beginning"),
-            (":run seed [n]", "start a new run (random seed if omitted)"),
+            (":run seed [n]", "start a new run (random seed if omitted; also saves it)"),
             (":run save <name>", "load a save from the save directory"),
             (":save [name]", "save the current run (auto-named if omitted)"),
 
@@ -2302,6 +2349,26 @@ mod tests {
 
     fn esc() -> KeyEvent {
         KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    }
+
+    /// 敲一行命令行(: 开头的内容,最后回车)
+    fn cmd(app: &mut App, text: &str) {
+        app.handle_key(key(':'));
+        for c in text.chars() {
+            app.handle_key(key(c));
+        }
+        app.handle_key(enter());
+    }
+
+    /// 独立的临时种子文件(测试不碰真实数据目录)
+    fn temp_seed_path(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "spire_app_seed_{}_{}.txt",
+            std::process::id(),
+            tag
+        ));
+        let _ = std::fs::remove_file(&p);
+        p
     }
 
     #[test]
@@ -2805,6 +2872,9 @@ mod tests {
     #[test]
     fn new_run_resets_state() {
         let mut app = App::new(10);
+        // :run seed 会写待用种子,指到临时文件免得碰真实数据目录
+        let seed_file = temp_seed_path("reset");
+        app.set_seed_file(seed_file.clone());
         app.handle_key(enter());
         assert_eq!(app.run.screen, Screen::Combat);
         app.handle_key(key(':'));
@@ -2821,6 +2891,73 @@ mod tests {
         }
         app.handle_key(enter());
         assert_ne!(app.run.seed, 77, "不给种子应该换一个随机种子");
+        let _ = std::fs::remove_file(&seed_file);
+    }
+
+    #[test]
+    fn seed_command_sets_and_persists_until_overwritten() {
+        let path = temp_seed_path("persist");
+        let mut app = App::new(4242);
+        app.set_seed_file(path.clone());
+
+        // :seed <串> 设待用种子并落盘,但不动当前 run
+        cmd(&mut app, "seed b35:17");
+        assert!(!app.warn, "合法种子不该报错");
+        assert_eq!(save::read_seed_at(&path), Some(42), "b35:17 按 base-35 = 42");
+        assert_eq!(app.run.seed, 4242, "设种子不该改当前 run");
+
+        // 重新启动时(main.rs 的 --seed 缺省)读到同一 u64
+        assert_eq!(save::read_seed_at(&path), Some(42));
+
+        // 无参 :seed 只显示,不改待用种子
+        cmd(&mut app, "seed");
+        assert_eq!(save::read_seed_at(&path), Some(42));
+
+        // 重来(用当前种子)不覆盖
+        cmd(&mut app, "run");
+        assert_eq!(save::read_seed_at(&path), Some(42));
+        // 回滚到本局开头也不覆盖
+        cmd(&mut app, "restart run");
+        assert_eq!(save::read_seed_at(&path), Some(42));
+
+        // :run seed <n> 明确换 -> 覆盖,且与当前 run 一致
+        cmd(&mut app, "run seed 7");
+        assert_eq!(app.run.seed, 7);
+        assert_eq!(save::read_seed_at(&path), Some(7));
+
+        // :run seed 不给参数 -> 随机并覆盖
+        cmd(&mut app, "run seed");
+        assert_ne!(app.run.seed, 7);
+        assert_eq!(save::read_seed_at(&path), Some(app.run.seed));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn explicit_new_seed_overwrites_others_do_not() {
+        let path = temp_seed_path("overwrite");
+        let mut app = App::new(5);
+        app.set_seed_file(path.clone());
+
+        // 结算界面按 n(new seed)= 随机并覆盖
+        app.run.screen = Screen::Death;
+        app.handle_key(key('n'));
+        assert_ne!(app.run.seed, 5);
+        assert_eq!(save::read_seed_at(&path), Some(app.run.seed));
+        let picked = app.run.seed;
+
+        // 结算界面按 R(same seed)不覆盖
+        app.run.screen = Screen::Death;
+        app.handle_key(key('R'));
+        assert_eq!(app.run.seed, picked);
+        assert_eq!(save::read_seed_at(&path), Some(picked));
+
+        // 非法种子:报错且不覆盖
+        cmd(&mut app, "seed oops!");
+        assert!(app.warn);
+        assert_eq!(save::read_seed_at(&path), Some(picked));
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

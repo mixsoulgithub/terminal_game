@@ -81,6 +81,35 @@ pub fn exists() -> bool {
     read_at(&path()).is_some()
 }
 
+/// 待用种子(跨进程留存)的文件名:用户设过的种子一直留到被覆盖.
+/// 跟 run.save 分开,内容是单行 base-35 种子串(如 "SPIRE").
+pub const SEED_FILE: &str = "default_seed";
+
+/// 待用种子文件路径:~/.local/share/slay-the-spire/default_seed
+pub fn seed_path() -> PathBuf {
+    dir().join(SEED_FILE)
+}
+
+/// 读待用种子:文件不在、空或内容不是字母数字就返回 None
+pub fn read_seed_at(path: &PathBuf) -> Option<u64> {
+    let text = read_at(path)?;
+    let s = text.trim();
+    if s.is_empty() || !s.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(crate::rng::seed_from_string(s))
+}
+
+/// 写待用种子:base-35 串加换行
+pub fn write_seed_at(path: &PathBuf, seed: u64) -> io::Result<()> {
+    write_at(path, &format!("{}\n", crate::rng::seed_to_string(seed)))
+}
+
+/// 读默认目录里的待用种子
+pub fn read_seed() -> Option<u64> {
+    read_seed_at(&seed_path())
+}
+
 pub fn read() -> Option<String> {
     read_at(&path())
 }
@@ -147,4 +176,33 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 独立的临时文件(测试不碰真实数据目录)
+    fn temp_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("spire_seed_{}_{}.txt", std::process::id(), tag))
+    }
+
+    #[test]
+    fn seed_file_round_trips_base35() {
+        let p = temp_path("round");
+        let _ = fs::remove_file(&p);
+        assert_eq!(read_seed_at(&p), None, "文件不在时返回 None");
+        write_seed_at(&p, 41_568_849).unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "SPIRE\n");
+        assert_eq!(read_seed_at(&p), Some(41_568_849));
+        // 覆盖写:同一个文件读回来是新值
+        write_seed_at(&p, 42).unwrap();
+        assert_eq!(read_seed_at(&p), Some(42));
+        // 空文件 / 垃圾内容当作没有
+        fs::write(&p, "\n").unwrap();
+        assert_eq!(read_seed_at(&p), None);
+        fs::write(&p, "no seed!").unwrap();
+        assert_eq!(read_seed_at(&p), None);
+        let _ = fs::remove_file(&p);
+    }
 }

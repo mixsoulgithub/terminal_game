@@ -203,7 +203,20 @@ fn main() -> ExitCode {
         eprintln!("spire: needs a terminal (stdout is not a tty)");
         return ExitCode::from(1);
     }
-    let seed = args.seed.unwrap_or_else(crate::rng::random_seed);
+    // --seed 缺省时:优先用用户设过的"待用种子"(一直留到被覆盖),没有才随机
+    let seed = match args.seed {
+        Some(s) => s,
+        None => match crate::core::save::read_seed() {
+            Some(s) => {
+                eprintln!(
+                    "spire: using saved seed {} ({s})",
+                    crate::rng::seed_to_string(s)
+                );
+                s
+            }
+            None => crate::rng::random_seed(),
+        },
+    };
     match run(seed, args.ascension) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

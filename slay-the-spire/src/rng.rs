@@ -306,11 +306,22 @@ pub fn seed_from_string(seed: &str) -> u64 {
     ret
 }
 
-/// 命令行给的种子串:纯十进制就按数字用,否则按 base-35 种子串解释
+/// 命令行给的种子串:
+/// - `b35:<串>` 永远按 base-35 种子串解释(纯数字也按 base-35,用来跟参考实现 1:1 对照);
+/// - 纯十进制按数字用(保住所有现有工具/测试);
+/// - 其余按 base-35 种子串解释。
 pub fn seed_from_arg(arg: &str) -> Option<u64> {
     let t = arg.trim();
     if t.is_empty() {
         return None;
+    }
+    // 前缀大小写不敏感;前 4 个字节都是 ascii,切片安全
+    if t.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("b35:")) {
+        let rest = t[4..].trim();
+        if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        return Some(seed_from_string(rest));
     }
     if t.chars().all(|c| c.is_ascii_digit()) {
         return t.parse::<u64>().ok();
@@ -629,6 +640,25 @@ mod tests {
         assert_eq!(seed_from_arg("SPIRE"), Some(41568849));
         assert_eq!(seed_from_arg(""), None);
         assert_eq!(seed_from_arg("oops!"), None);
+    }
+
+    #[test]
+    fn b35_prefix_forces_base35_even_for_digits() {
+        // 参考实现里纯数字串按 base-35 算:17 -> 1*35+7 = 42
+        assert_eq!(seed_from_arg("b35:17"), Some(42));
+        assert_eq!(seed_from_arg("B35:17"), Some(42));
+        // 没有前缀的纯数字还是十进制,现有工具/测试全靠这个
+        assert_eq!(seed_from_arg("17"), Some(17));
+        assert_eq!(seed_from_arg("42"), Some(42));
+        // 带前缀的字母串和不带前缀时同值
+        assert_eq!(seed_from_arg("b35:A2Q"), Some(12345));
+        assert_eq!(seed_from_arg("b35:SPIRE"), Some(41568849));
+        // 前缀后面必须有字母数字
+        assert_eq!(seed_from_arg("b35:"), None);
+        assert_eq!(seed_from_arg("b35:  "), None);
+        assert_eq!(seed_from_arg("b35:!!"), None);
+        // 纯数字串 round-trip:值 42 的 base-35 串是 "17"
+        assert_eq!(seed_to_string(seed_from_arg("b35:17").unwrap()), "17");
     }
 
     #[test]
