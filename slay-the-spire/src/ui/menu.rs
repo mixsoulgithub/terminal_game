@@ -507,7 +507,37 @@ fn event(buf: &mut Buffer, area: Rect, app: &App) {
         theme::fg(theme::INFO),
     );
     let inner_w = (area.width as usize).saturating_sub(4);
-    let mut y = area.y + 2;
+    // 先数内容一共几行,好把整块在高度上居中(和营火那屏一样)
+    let mut need: usize = st
+        .def
+        .body
+        .iter()
+        .map(|l| wrap_text(l, inner_w, 2).len())
+        .sum();
+    need += 1; // body 之后空一行
+    match &st.result {
+        Some(text) => {
+            need += wrap_text(text.as_str(), inner_w, 3).len() + 1; // + 那一行继续提示
+        }
+        None => {
+            for i in 0..app.run.event_choice_count() {
+                if let Some((label, cost_gold, cost_hp)) = app.run.event_choice_row(i) {
+                    let mut cost = String::new();
+                    if cost_gold > 0 {
+                        cost.push_str(&format!(" [${cost_gold}]"));
+                    }
+                    if cost_hp > 0 {
+                        cost.push_str(&format!(" [{cost_hp}HP]"));
+                    }
+                    need += wrap_text(&format!("{label}{cost}"), inner_w, 3).len();
+                }
+            }
+            if let Some(note) = app.run.event_note() {
+                need += wrap_text(note, inner_w, 2).len();
+            }
+        }
+    }
+    let mut y = area.y + (area.height.saturating_sub(need as u16) / 2).max(1);
     // 提示语多行,每行居中;太长按词折行
     for line in st.def.body {
         for part in wrap_text(line, inner_w, 2) {
