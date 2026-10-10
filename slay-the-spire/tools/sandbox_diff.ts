@@ -77,8 +77,33 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
 };
 
 /**
- * 从池子里随机抽牌的牌:参考实现自己注明它把池子按 id 排序、与原作的牌库顺序
- * 不同(见 IMPL 里的 ENGINE-NOTE),所以"抽到哪张"这一层两边无法对拍 —— 属参考缺口.
+ * 从池子里随机抽牌的牌。这里的"抽到哪张"分三层,本轮逐条核对后的结论:
+ *
+ *  1) 牌面规则(张数/费用/消耗/时点/剔重)以反编译 refs/sts_lightspeed/ 为准,
+ *     已在不依赖参考的自证里固化(见 src/core/combat.rs 的
+ *     "colorless_random_pool_is_the_decompiled_35" 一段,共 8 条断言);
+ *  2) 池子顺序:原版真正用的是反编译里打散的 Java HashMap 序
+ *     (CardPools.h:189-196 CombatColorlessCardPool / 150-156 CombatTypeCardPool),
+ *     那两张表本身还漏牌(漏 BANDAGE_UP / FEED / REAPER),无从复现;参考实现的做法是
+ *     把池子按 id 排序(slay-the-cli colorless/effects.ts:34-56 与 ironclad/uncommon.ts:300-306
+ *     的 ENGINE-NOTE),本作战斗内随机一律照此口径 —— 万事通/磁力/嬗变/发现四处此前漏了排序
+ *     (炼狱之刃早就排了),已补齐,这批场景现在通过;
+ *  3) 抽/落位的**时点**:化茧/变形要先把 3(5)张一次抽完、再逐张落位
+ *     (refs/sts_lightspeed/src/combat/Actions.cpp:546-561),参考实现是"抽一张落一张"交替
+ *     (colorless/effects.ts:97-110),两条流的掷点次序不同 —— 这是参考实现与反编译的差别,
+ *     本作按反编译;所以 chrysalis/metamorphosis 这两个 id 仍会出现在下面的清单里
+ *     (已是"参考缺口(随机池)"里仅剩的两组).
+ *
+ * 状态计数:(b) 参考缺口(随机池) 31 -> 10(化茧 5 + 变形 5),其余 21 条已通过;
+ * 另有 3 条表示差异(玩法一致),见 REPRESENTATION_ONLY.
+ * 逐条结论(共 34 = 31 随机池 + 3 表示差异):
+ *   已自证 34 条 —— 21 条(万事通 6 + 磁力 5 + 嬗变 5 + 发现 5)自证后已通过,
+ *     10 条(化茧/变形)自证为"本作按反编译、参考实现掷点次序不同"仍留在本清单,
+ *     3 条表示差异(反常/痛苦/嗜血)规则已自证、只差一条能力条目;
+ *   仍为参考缺口 10 条(化茧/变形,原因见上第 3 点);
+ *   无法自证 0 条。
+ * 断言位置:src/core/combat.rs 的 "colorless_random_pool_is_the_decompiled_35" 那一段
+ * (8 条测试,每条注释里都写了反编译出处行号)。
  */
 const RANDOM_CARD_IDS = [
   "infernal_blade",

@@ -1106,13 +1106,19 @@ impl Combat {
 
     /// 随机无色牌进手牌;free 表示本回合 0 费,upgraded 表示直接给升级版
     fn add_random_colorless_to_hand(&mut self, free: bool, upgraded: bool) {
-        if self.hand.len() >= HAND_LIMIT {
-            return;
-        }
-        let pool = cards::colorless_pool();
+        let mut pool = cards::colorless_pool();
         if pool.is_empty() {
             return;
         }
+        // 战斗内随机抽牌这一路要和参考实现同口径:池子按 id 排序
+        // (slay-the-cli colorless/effects.ts:41-56 的 colorlessPool 明确 sort by id 作
+        // ENGINE-NOTE;原版真正的牌库顺序在反编译里是打散的 Java HashMap 序
+        // ——CardPools.h:189-196 的 CombatColorlessCardPool,34 张、还漏了 BANDAGE_UP,
+        // 无从复现,详见 tools/sandbox_diff.ts 顶部随机池注释).
+        // 炼狱之刃(combat.rs AddRandomAttackToHand)与药水以外的这几处此前漏了排序.
+        pool.sort_by_key(|c| c.id);
+        // 掷点一定要先做:原版是 getTrulyRandomColorlessCardInCombat 先把牌抽出来,
+        // 再走 MakeTempCardInHand;手牌满只是"塞不进手",不省这一掷.
         let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
         let mut inst = CardInstance::new(def);
         if upgraded {
@@ -1121,7 +1127,9 @@ impl Combat {
         self.fix_new_card(&mut inst);
         inst.free_this_turn = free;
         let label = inst.label();
-        self.hand.push(inst);
+        // 手牌到上限就进弃牌堆(参考实现 makeTempCard:hand overflow goes to discard),
+        // 与本作其它"战斗中新造的牌"同一口径,不是把这张牌直接丢掉.
+        self.add_created_card_to_hand(inst);
         self.push_log(LogKind::Player, format!("{label} appears"));
     }
 
@@ -4792,23 +4800,54 @@ impl Combat {
                     }
                 }
                 Effect::AddRandomToDrawFree { kind, n } => {
-                    let pool = cards::class_pool_of_kind(kind);
+                    // 化茧 / 变形.反编译 Actions::PutRandomCardsInDrawPile
+                    // (refs/sts_lightspeed/src/combat/Actions.cpp:546-561)分两段:
+                    // 先把 n 张一次性抽好(每张各掷一次 cardRandomRng),再逐张落到抽牌堆的
+                    // 随机位置 —— 落位走 CardManager::shuffleIntoDrawPile
+                    // (refs/sts_lightspeed/src/combat/CardManager.cpp:215-223):抽牌堆为空就放
+                    // 唯一那格、不掷;否则掷 cardRandomRng.random(size-1),再
+                    // insertToDrawPile 插到 `begin()+idx`(CardManager.cpp:188-199).
+                    // 反编译的 drawPile 队尾是堆顶(popFromDrawPile 取 back,CardManager.cpp:141),
+                    // 本作 draw[0] 才是堆顶,所以位次要镜像:反编译的插入位次 i(从堆底数)
+                    // 对应本作的 span-i(span = 插入前的张数;i 取满 [0, span-1] 时
+                    // 本作落点铺满 [1, span]) —— 也就是说"洗进去"的牌永远压不到当前堆顶那张,
+                    // 这一点在下面测试里直接卡住.
+                    // 原先写法是"塞到堆尾再整体洗一遍":多耗一个 shuffleRng 的 long,落点分布
+                    // 也不同,cardRandomRng/shuffleRng 两条流从此整体错位.
+                    let mut pool = cards::class_pool_of_kind(kind);
                     if pool.is_empty() {
                         continue;
                     }
+                    // 与参考实现同口径:战斗内随机抽牌这条路的池子按 id 排序
+                    // (slay-the-cli colorless/effects.ts:97-110 的 classPool 明确 sort by id).
+                    // 化茧/变形在此之前漏了排序,抽出来的牌因此与参考对不上.
+                    pool.sort_by_key(|c| c.id);
+                    let mut picks: Vec<CardInstance> = Vec::with_capacity(n as usize);
                     for _ in 0..n {
                         let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
                         let mut inst = CardInstance::new(def);
                         self.fix_new_card(&mut inst);
                         inst.free_combat = true;
+                        picks.push(inst);
+                    }
+                    for inst in picks {
                         let label = inst.label();
-                        self.draw.push(inst);
+                        let idx = if self.draw.is_empty() {
+                            0
+                        } else {
+                            let span = self.draw.len();
+                            let roll = self
+                                .streams
+                                .floor(FloorStream::CardRandomRng)
+                                .random(span as u32 - 1) as usize;
+                            span - roll
+                        };
+                        self.draw.insert(idx, inst);
                         self.push_log(
                             LogKind::Info,
                             format!("{label} is shuffled in (costs 0 this combat)"),
                         );
                     }
-                    java_shuffle(&mut self.draw, &mut JavaRandom::new(self.streams.floor(FloorStream::ShuffleRng).random_long()));
                 }
                 Effect::ShuffleDiscardIntoDraw => {
                     // 参考实现的 reshuffleDiscardIntoDraw 无条件洗一次:哪怕弃牌堆是空的,
@@ -4893,29 +4932,17 @@ impl Combat {
                     }
                 }
                 Effect::OfferRandomCardsFromClass { n } => {
-                    let pool = cards::class_card_pool();
-                    if pool.is_empty() {
-                        continue;
-                    }
-                    let mut offered: Vec<CardInstance> = Vec::new();
-                    for _ in 0..n {
-                        let def = self.streams.floor(FloorStream::CardRandomRng).pick(&pool);
-                        let mut inst = CardInstance::new(def);
-                        self.fix_new_card(&mut inst);
-                        offered.push(inst);
-                    }
-                    self.begin_choice(
-                        ChoiceSource::Offered,
-                        ChoiceAction::ToHand,
-                        ChoiceFilter::Any,
-                        1,
-                        "choose 1 of 3 random cards",
-                    );
-                    if let Some(ch) = self.choice.as_mut() {
-                        ch.offered = offered;
-                        // 发现:挑中的那张本回合 0 费
-                        ch.free = true;
-                    }
+                    // 发现:原版 generateDiscoveryCards(refs/sts_lightspeed/src/game/Game.cpp:228-260)
+                    // 反复掷点直到凑够 n 张**互不相同**的本职业牌(掷到重的就重掷),
+                    // 牌池是本职业全部非基础牌(getTrulyRandomCardInCombat 的 CombatCardPool).
+                    // 参考实现那条路(randomCardDefs,slay-the-cli relics/lib.ts:108-117)是
+                    // "抽一张就把它从池子里拿走",与药水侧本作既有口径一致,故这里复用 offer_pick.
+                    // 原先直接 pick n 次、不剔重,会亮出重复候选 —— 与两边都不符.
+                    let mut pool = cards::class_card_pool();
+                    // 同参考实现:发现类亮牌的本职业池子按 id 排序
+                    // (slay-the-cli colorless/effects.ts:97-110 的 classPool).
+                    pool.sort_by_key(|c| c.id);
+                    self.offer_pick(pool, n as usize, true, "choose 1 of 3 random cards");
                 }
                 Effect::ExhaustUpTo { n } => {
                     self.begin_choice(
@@ -6544,6 +6571,392 @@ mod tests {
             assert!(card.free_this_turn, "嬗变给的牌本回合 0 费");
             assert_eq!(card.fixed_cost(), Some(0));
         }
+    }
+
+    // ==========================================================================
+    // 沙盒里那批 "(b) 参考缺口(随机池)" 卡片的不依赖参考实现的自证.
+    //
+    // 分三层:
+    //  1) 牌面规则(张数/费用/消耗/时点/剔重)一律对反编译 refs/sts_lightspeed/,
+    //     下面的测试就是这些断言的固化(每条都写了出处行号);
+    //  2) "抽到哪张"这一层:原版真正用的是反编译里打散的 Java HashMap 序
+    //     (CardPools.h:189-196 的 CombatColorlessCardPool、150-156 的 CombatTypeCardPool),
+    //     而且那两张表本身不全(漏 BANDAGE_UP / FEED / REAPER),无法复现;本作与参考实现
+    //     同口径 —— 战斗内随机一律把池子按 id 排序(slay-the-cli ironclad/uncommon.ts:300-306
+    //     与 colorless/effects.ts:34-56 的 ENGINE-NOTE)。断言见
+    //     colorless_random_pool_is_the_decompiled_35;
+    //  3) 化茧/变形多一层"先抽后落位"的时点,与参考实现的"逐个交替"不同,见
+    //     chrysalis_and_metamorphosis_pick_then_place_like_the_decompile。
+    // ==========================================================================
+
+    /// 手牌满时"战斗中新造的无色牌"进弃牌堆、不是凭空消失:参考实现 makeTempCard 的
+    /// hand overflow goes to discard(slay-the-cli interpreter.ts:407-408),本作原先直接
+    /// return,把这张牌丢了还省掉一次掷点。嬗变 X=3、手牌先摆满 10 张时,第 2/3 张要落到弃牌堆。
+    #[test]
+    fn colorless_gift_overflows_to_discard_when_hand_is_full() {
+        let mut c = staged(&["transmutation"], &["transmutation"]);
+        for _ in 0..9 {
+            c.hand.push(card("defend"));
+        }
+        assert_eq!(c.hand.len(), 10, "手牌先摆满");
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 10, "塞不进手的那些不留手上");
+        let overflow = c
+            .discard
+            .iter()
+            .filter(|x| cards::pool_of(x.def) == "colorless")
+            .count();
+        assert_eq!(overflow, 2, "多出来的 2 张进弃牌堆");
+        assert!(c.exhaust.iter().any(|x| x.def.id == "transmutation"));
+    }
+
+    /// 摆一副牌,但用指定 seed(用于"换种子看不变式"的检查)
+    fn staged_seed(seed: u64, deck: &[&str], hand: &[&str]) -> Combat {
+        let mut c = Combat::new(enc("jaw_worm_solo"), from_ids(80, deck), RngRegistry::new(seed));
+        c.hand.clear();
+        c.draw.clear();
+        c.discard.clear();
+        c.exhaust.clear();
+        for id in deck {
+            let inst = cards::card(id);
+            if hand.contains(id) && c.hand.len() < HAND_LIMIT {
+                c.hand.push(inst);
+            } else {
+                c.draw.push(inst);
+            }
+        }
+        c.energy = 9;
+        c
+    }
+
+    /// 无色随机池的成员与顺序 = 反编译 ColorlessRarityCardPool::colorlessCardBlob
+    /// (refs/sts_lightspeed/include/constants/CardPools.h:133-138):20 张 uncommon 打头,
+    /// 15 张 rare 收尾,每段按 id 排。这是本作 colorless_pool() 的池子
+    /// (src/core/cards.rs:3556-3562),万事通/磁力/嬗变都从它抽。
+    #[test]
+    fn colorless_random_pool_is_the_decompiled_35() {
+        let want = [
+            "bandage_up",
+            "blind",
+            "dark_shackles",
+            "deep_breath",
+            "discovery",
+            "dramatic_entrance",
+            "enlightenment",
+            "finesse",
+            "flash_of_steel",
+            "forethought",
+            "good_instincts",
+            "impatience",
+            "jack_of_all_trades",
+            "madness",
+            "mind_blast",
+            "panacea",
+            "panic_button",
+            "purity",
+            "swift_strike",
+            "trip",
+            "apotheosis",
+            "chrysalis",
+            "hand_of_greed",
+            "magnetism",
+            "master_of_strategy",
+            "mayhem",
+            "metamorphosis",
+            "panache",
+            "sadistic_nature",
+            "secret_technique",
+            "secret_weapon",
+            "the_bomb",
+            "thinking_ahead",
+            "transmutation",
+            "violence",
+        ];
+        let pool = cards::colorless_pool();
+        let got: Vec<&str> = pool.iter().map(|c| c.id).collect();
+        assert_eq!(got, want, "无色随机池成员/顺序");
+        assert!(
+            pool.iter().all(|c| matches!(c.rarity, Rarity::Uncommon | Rarity::Rare)),
+            "无色牌只有 uncommon/rare 两档"
+        );
+    }
+
+    /// 万事通:反编译 BattleContext.cpp:1367-1369 落到 Actions::JackOfAllTradesAction
+    /// (Actions.cpp:580-589) —— 基础版抽 1 张、升级版抽 2 张,每张各掷一次
+    /// getTrulyRandomColorlessCardInCombat;进手牌时**不动费用**(不是 0 费);
+    /// 自己消耗(Cards.h:590-637 的 doesCardExhaust,基础/升级都 true)。
+    #[test]
+    fn jack_of_all_trades_rules_match_the_decompile() {
+        // 基础版:1 张,照牌面收费
+        let mut c = staged(
+            &["jack_of_all_trades", "strike", "strike", "strike", "strike"],
+            &["jack_of_all_trades"],
+        );
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 1, "基础版给 1 张");
+        let gift = &c.hand[0];
+        assert_eq!(cards::pool_of(gift.def), "colorless");
+        assert!(matches!(gift.rarity(), Rarity::Uncommon | Rarity::Rare));
+        assert!(!gift.free_this_turn, "万事通给的牌照常收费,不是 0 费");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "jack_of_all_trades"),
+            "自己消耗"
+        );
+
+        // 升级版:2 张,自己仍然消耗
+        let mut c = staged(
+            &["jack_of_all_trades", "strike", "strike", "strike", "strike"],
+            &["jack_of_all_trades"],
+        );
+        c.hand[0].upgrade();
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 2, "升级版给 2 张");
+        assert!(c.hand.iter().all(|x| cards::pool_of(x.def) == "colorless"));
+        assert!(c.hand.iter().all(|x| !x.free_this_turn));
+        assert!(c.exhaust.iter().any(|x| x.def.id == "jack_of_all_trades"));
+    }
+
+    /// 磁力:反编译里这条状态是**空实现** —— Player::applyStartOfTurnPowers 的
+    /// `case PS::MAGNETISM:` 只剩一行注释(refs/sts_lightspeed/src/combat/Player.cpp:620-622),
+    /// 所以"哪一刻给、给几张"退到牌面文本("At the start of each turn, add a random
+    /// Colorless card to your hand.")与参考实现的同名能力。本作按"回合开始、每层各发一张"
+    /// (combat.rs start_turn 里的 `for _ in 0..mag`),下面是能自证的部分:
+    /// 叠两层 = 每回合两张、连续两回合都发、给的牌照常收费。
+    #[test]
+    fn magnetism_gifts_one_colorless_per_stack_per_turn() {
+        // 牌堆开大一点,两回合内不会重洗,免得上回合收到的牌被抽回来混淆计数
+        let mut deck = vec!["magnetism", "magnetism"];
+        deck.extend(std::iter::repeat("defend").take(20));
+        let mut c = staged(&deck, &["magnetism", "magnetism"]);
+        c.play_card(0, None).unwrap();
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.player.statuses.get(Status::Magnetism), 2, "叠两层");
+        for turn in 1..=2 {
+            c.end_turn();
+            let gifted: Vec<&CardInstance> = c
+                .hand
+                .iter()
+                .filter(|x| cards::pool_of(x.def) == "colorless")
+                .collect();
+            assert_eq!(gifted.len(), 2, "第 {turn} 回合该给两张无色牌");
+            assert!(
+                gifted.iter().all(|x| !x.free_this_turn),
+                "磁力给的牌照常收费"
+            );
+        }
+    }
+
+    /// 嬗变:反编译 Actions::TransmutationAction(Actions.cpp:591-607) ——
+    /// effectAmount = 花的 X + (化学 X ? 2 : 0);每张都是 getTrulyRandomColorlessCardInCombat,
+    /// 升级版给的是升级牌、costForTurn 置 0;X=0 且没化学 X 时直接返回(一张都不给)、
+    /// 能量照常在打牌时全花掉。基础形态见既有测试 transmutation_pours_x_colorless_cards_into_hand。
+    #[test]
+    fn transmutation_counts_chemical_x_and_upgrades_like_the_decompile() {
+        // 化学 X:X=1,给 1+2=3 张
+        let mut c = staged(&["transmutation"], &["transmutation"]);
+        c.relics.push(relic_def_or_panic("chemical_x"));
+        c.energy = 1;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.energy, 0, "X 花光能量");
+        assert_eq!(c.hand.len(), 3, "X=1 + 化学 X 的 2 = 3 张");
+        assert!(c.hand.iter().all(|x| x.free_this_turn));
+
+        // X=0 且没有化学 X:一张不给
+        let mut c = staged(&["transmutation"], &["transmutation"]);
+        c.energy = 0;
+        c.play_card(0, None).unwrap();
+        assert!(c.hand.is_empty(), "X=0 什么都不给");
+
+        // 升级版:给的牌是升级过的
+        let mut c = staged(&["transmutation"], &["transmutation"]);
+        c.hand[0].upgrade();
+        c.energy = 2;
+        c.play_card(0, None).unwrap();
+        assert_eq!(c.hand.len(), 2);
+        assert!(c.hand.iter().all(|x| x.upgraded), "升级版给升级牌");
+        assert!(c.hand.iter().all(|x| x.free_this_turn));
+    }
+
+    /// 化茧/变形的"抽/落位"时点:反编译 Actions::PutRandomCardsInDrawPile
+    /// (Actions.cpp:546-561)分两段 —— 先把 n 张一次抽完(每张一次 cardRandomRng),
+    /// 再逐张插进抽牌堆的随机位置(落位同样用 cardRandomRng,抽牌堆为空时用 0、不掷;
+    /// 见 CardManager.cpp:87-101 的 drawPile.insert(begin()+idx),idx ∈ [0, size-1])。
+    /// 三件事一起卡:①抽牌堆里原有的牌相对顺序不动(旧写法是"塞尾再整体洗",会把老牌洗乱);
+    /// ②掷点账目 = n 抽 + n 落位,且完全不碰 shuffleRng;③化茧只洗技能、变形只洗攻击,
+    /// 都是本场 0 费、出自本职业池;升级版分别洗 3/5 张(BattleContext.cpp:1261-1262、1388-1389)。
+    #[test]
+    fn chrysalis_and_metamorphosis_pick_then_place_like_the_decompile() {
+        let cases = [
+            ("chrysalis", 3u32, crate::core::card::CardType::Skill),
+            ("metamorphosis", 3, crate::core::card::CardType::Attack),
+        ];
+        for (stem, count, kind) in cases {
+            // 抽牌堆里摆无色牌:既不会被化茧/变形看中(它们只洗本职业红卡),
+            // 也就能干净地验证"原有牌顺序不动"
+            let mut c = staged(
+                &[stem, "bandage_up", "flash_of_steel", "blind", "forethought"],
+                &[stem],
+            );
+            let before: Vec<&str> = c.draw.iter().map(|x| x.def.id).collect();
+            assert_eq!(before.len(), 4, "抽牌堆摆 4 张");
+            let cr0 = c.streams.floor(FloorStream::CardRandomRng).counter();
+            let sh0 = c.streams.floor(FloorStream::ShuffleRng).counter();
+            c.play_card(0, None).unwrap();
+            let cr1 = c.streams.floor(FloorStream::CardRandomRng).counter();
+            let sh1 = c.streams.floor(FloorStream::ShuffleRng).counter();
+            assert_eq!(cr1 - cr0, 2 * count, "{stem}: n 次抽牌 + n 次落位");
+            assert_eq!(sh1 - sh0, 0, "{stem}: 不该动 shuffleRng");
+            assert_eq!(
+                c.draw.len(),
+                before.len() + count as usize,
+                "{stem}: 洗进去 {count} 张"
+            );
+            let kept: Vec<&str> = c
+                .draw
+                .iter()
+                .map(|x| x.def.id)
+                .filter(|id| before.contains(id))
+                .collect();
+            assert_eq!(kept, before, "{stem}: 抽牌堆原有的牌顺序不能变");
+            assert_eq!(
+                c.draw[0].def.id,
+                before[0],
+                "{stem}: 落点铺满 [1, span],洗进去的牌压不到原堆顶"
+            );
+            let added: Vec<&CardInstance> = c
+                .draw
+                .iter()
+                .filter(|x| !before.contains(&x.def.id))
+                .collect();
+            assert_eq!(added.len(), count as usize);
+            for x in added {
+                assert_eq!(x.kind(), kind, "{stem}: 洗进来的牌类型");
+                assert_eq!(cards::pool_of(x.def), "class", "{stem}: 只洗本职业的牌");
+                assert!(x.free_combat, "{stem}: 本场 0 费");
+                assert_eq!(x.fixed_cost(), Some(0));
+            }
+        }
+
+        // 升级版(up ? 5 : 3)
+        let mut c = staged(&["metamorphosis", "strike", "defend"], &["metamorphosis"]);
+        c.hand[0].upgrade();
+        let cr0 = c.streams.floor(FloorStream::CardRandomRng).counter();
+        c.play_card(0, None).unwrap();
+        let cr1 = c.streams.floor(FloorStream::CardRandomRng).counter();
+        assert_eq!(c.draw.len(), 2 + 5, "升级版洗 5 张");
+        assert_eq!(cr1 - cr0, 10, "5 抽 + 5 落位");
+    }
+
+    /// 发现:反编译 generateDiscoveryCards(Game.cpp:228-260)反复掷点,凑够 3 张
+    /// **互不相同**的本职业牌;牌池是本职业全部非基础牌(getTrulyRandomCardInCombat(cc)
+    /// 的 CombatCardPool);挑中的那张本回合 0 费;基础版消耗、升级版不消耗
+    /// (Cards.h:590-637 的 doesCardExhaust(DISCOVERY) = !upgraded)。
+    /// 旧写法是从同一个池子连抽三次、允许重复,这条按"换 120 个种子都不许出现重复"卡住它。
+    #[test]
+    fn discovery_offers_three_distinct_class_cards() {
+        for seed in 1u64..=120 {
+            let mut c = staged_seed(
+                seed,
+                &["discovery", "strike", "strike", "strike", "strike", "strike"],
+                &["discovery"],
+            );
+            c.play_card(0, None).unwrap();
+            let ids: Vec<&str> = {
+                let ch = c.choice.as_ref().expect("发现要开选择");
+                assert_eq!(ch.offered.len(), 3, "seed {seed}: 亮三张");
+                for x in &ch.offered {
+                    assert_eq!(cards::pool_of(x.def), "class", "seed {seed}: 本职业池");
+                    assert_ne!(x.rarity(), Rarity::Basic, "seed {seed}: 不含基础牌");
+                }
+                ch.offered.iter().map(|x| x.def.id).collect()
+            };
+            let mut uniq = ids.clone();
+            uniq.sort_unstable();
+            uniq.dedup();
+            assert_eq!(uniq.len(), 3, "seed {seed}: 三张候选不能重复,实际 {ids:?}");
+        }
+
+        // 挑中的那张:进手牌、本回合 0 费;基础版自己消耗
+        let mut c = staged(
+            &["discovery", "strike", "strike", "strike", "strike", "strike"],
+            &["discovery"],
+        );
+        c.play_card(0, None).unwrap();
+        let idx = c.choice_candidates()[0].0;
+        c.choose(idx).unwrap();
+        assert_eq!(c.hand.len(), 1, "挑中的进手牌");
+        assert!(c.hand[0].free_this_turn, "本回合 0 费");
+        assert!(
+            c.exhaust.iter().any(|x| x.def.id == "discovery"),
+            "基础版消耗"
+        );
+
+        // 升级版:不消耗
+        let mut c = staged(
+            &["discovery", "strike", "strike", "strike", "strike", "strike"],
+            &["discovery"],
+        );
+        c.hand[0].upgrade();
+        c.play_card(0, None).unwrap();
+        let idx = c.choice_candidates()[0].0;
+        c.choose(idx).unwrap();
+        assert!(
+            !c.exhaust.iter().any(|x| x.def.id == "discovery"),
+            "升级版不消耗"
+        );
+    }
+
+    /// 反常/痛苦/嗜血:反编译把前两者记成**手牌计数**(CardManager.cpp:280-310 的
+    /// handNormalityCount / handPainCount),闸门分别在 BattleContext.cpp:714(本回合打出
+    /// ≥3 张就禁)与 BattleContext.cpp:2656-2661(每打出一张"别的"牌掉 1 血,打出的那张
+    /// 痛苦自己不算);嗜血走 CardInstance::tookDamage(CardInstance.cpp:175-181)每掉一次血
+    /// 费用 -1。既有测试只覆盖了一层的情形,这里卡边界:两层痛苦 = 每次 2 血、两张反常也
+    /// 还是 3 张上限、嗜血在三个牌堆里一起降、战斗中新拿到的继承已降的价。
+    #[test]
+    fn curse_hand_counters_match_the_decompile() {
+        // 两层痛苦:打出一张别的牌掉 2 血
+        let mut c = guarded(&["strike"]);
+        c.hand = vec![card("pain"), card("pain"), card("strike")];
+        c.energy = 3;
+        c.play_card(2, Some(0)).unwrap();
+        assert_eq!(c.player.hp, 78, "两层痛苦 = 每次 2 血");
+        c.hand = vec![card("strike")];
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.player.hp, 78, "痛苦离开手牌就不再掉血");
+
+        // 两张反常:上限仍是 3(计数只判"有没有",不是张数)
+        let mut c = guarded(&["defend"]);
+        c.hand = vec![
+            card("normality"),
+            card("normality"),
+            card("defend"),
+            card("defend"),
+            card("defend"),
+            card("defend"),
+        ];
+        c.energy = 10;
+        for _ in 0..3 {
+            c.play_card(2, None).unwrap();
+        }
+        assert_eq!(c.cards_played, 3);
+        assert!(c.play_card(2, None).is_err(), "第 4 张仍被拦下");
+
+        // 嗜血:掉一次血,手牌/抽牌堆/弃牌堆里的都降 1
+        let mut c = staged(&["blood_for_blood"], &["blood_for_blood"]);
+        c.draw = vec![card("blood_for_blood")];
+        c.discard = vec![card("blood_for_blood")];
+        for pile in [&c.hand, &c.draw, &c.discard] {
+            assert_eq!(pile[0].cost_value(9), 4, "嗜血基础 4 费");
+        }
+        c.hit_player(1);
+        for pile in [&c.hand, &c.draw, &c.discard] {
+            assert_eq!(pile[0].cost_value(9), 3, "掉一次血每个堆里的嗜血都降 1");
+        }
+        // 战斗中后来拿到的嗜血继承已降的价,不能重置回 4
+        let mut fresh = cards::card("blood_for_blood");
+        c.fix_new_card(&mut fresh);
+        assert_eq!(fresh.cost_value(9), 3, "新拿到的嗜血继承已降的价");
     }
 
     #[test]

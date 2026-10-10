@@ -3,6 +3,17 @@
 //!
 //! 每一条对应用户可感知的一处不一致:参考实现(以及原版)是那样,本作曾经是另一样。
 //! 场景都是"手牌/抽牌堆摆死 + 一只怪"的最小局面,不依赖随机。
+//!
+//! 随机池那批牌(万事通/磁力/嬗变/发现/化茧/变形)本期从 "(b) 参考缺口" 反查出来的
+//! 三处 (a),断言统一放在 combat.rs 的 mod tests
+//! ("colorless_random_pool_is_the_decompiled_35" 起的那一段),这里不重复:
+//!   1) combat.rs chrysalis_and_metamorphosis_pick_then_place_like_the_decompile
+//!      —— 化茧/变形原先"塞堆尾再整体洗"(动 shuffleRng),改成按
+//!      Actions.cpp:546-561 + CardManager.cpp:215-223 的随机落位(只动 cardRandomRng);
+//!   2) combat.rs discovery_offers_three_distinct_class_cards
+//!      —— 发现原先连抽三次不剔重,按 Game.cpp:228-260 改成三张互不相同;
+//!   3) combat.rs 的 add_random_colorless_to_hand 溢出分支
+//!      —— 手牌满时原先把这张牌直接丢掉,改成进弃牌堆(参考 makeTempCard 的口径)。
 
 use crate::core::card::{CardInstance};
 use crate::core::combat::{Combat, CombatSetup, RunRelicCounters};
