@@ -2266,15 +2266,39 @@ impl App {
             Screen::Reward => vec![
                 ("j/k", "gold/cards/relic/potion"),
                 ("h/l", "card"),
-                ("enter", "take"),
+                ("space/enter", "take"),
                 ("c", "skip cards"),
                 ("esc", "leave"),
             ],
-            Screen::Shop => vec![("j/k", "pick"), ("enter", "buy"), ("esc", "leave")],
-            Screen::Rest => vec![("j/k", "pick"), ("enter", "confirm")],
-            Screen::Event => vec![("j/k", "pick"), ("enter", "choose")],
-            Screen::Treasure => vec![("enter", "take the relic"), ("s", "sapphire key")],
-            Screen::Pick => vec![("j/k", "pick"), ("enter", "confirm"), ("esc", "cancel")],
+            Screen::Shop => vec![
+                ("j/k", "pick"),
+                ("space/enter", "buy"),
+                ("esc", "leave"),
+            ],
+            Screen::Rest => vec![("j/k", "pick"), ("space/enter", "confirm"), ("esc", "leave")],
+            // 事件:提示跟着状态走 —— 还在选是"choose",出结果了是"continue"
+            Screen::Event => {
+                let showing_result = self
+                    .run
+                    .event
+                    .as_ref()
+                    .map(|st| st.result.is_some())
+                    .unwrap_or(false);
+                if showing_result {
+                    vec![("space/enter", "continue"), ("esc", "close")]
+                } else {
+                    vec![("j/k", "pick"), ("space/enter", "choose")]
+                }
+            }
+            Screen::Treasure => vec![
+                ("space/enter", "take the relic"),
+                ("s", "sapphire key"),
+            ],
+            Screen::Pick => vec![
+                ("j/k", "pick"),
+                ("space/enter", "confirm"),
+                ("esc", "cancel"),
+            ],
             Screen::Victory | Screen::Death => vec![
                 ("R", "same seed"),
                 ("n", "new seed"),
