@@ -88,6 +88,19 @@ const REPRESENTATION_ONLY: Record<string, string[]> = {
   "cards/dodge_and_roll": ["next_turn_block"],
   "cards/flying_knee": ["energized"],
   "cards/outmaneuver": ["energized"],
+  "cards/predator": ["draw_card_next_turn"],
+  "cards/doppelganger": ["draw_card_next_turn", "energized"],
+  // 两边给同一条能力起的名字不完全一致(参考用连字符/带 _power 后缀),两种都列上
+  "cards/wraith_form": ["wraith_form", "wraith_form_power"],
+  "cards/well_laid_plans": ["well_laid_plans", "well-laid_plans"],
+  "cards/phantasmal_killer": ["phantasmal", "phantasmal_killer"],
+  "cards/nightmare": ["nightmare_power", "nightmare"],
+  "cards/corpse_explosion": ["corpse_explosion", "corpse_explosion_power"],
+  "cards/burst": ["burst"],
+  "cards/blur": ["blur"],
+  // 炼金:战斗里拿到的药水本作记在 Combat::potions_gained 里、收尾时交给 run,
+  // 沙盒快照只反映战斗内的状态,参考则直接写进 potions 槽
+  "cards/alchemize": ["potions["],
 };
 
 /**
@@ -402,9 +415,12 @@ for (const item of list) {
   }
   // 分类:表示差异 / 随机抽牌的参考缺口 / 真不一致
   const stem = item.name.split("/").slice(0, 2).join("/");
-  const onlyIgnored = REPRESENTATION_ONLY[stem]?.every((key) =>
-    diffs.every((d) => d.includes(`powers.${key}`)),
-  );
+  // 每条差异都要被登记里的**某一个**名字解释(同一条能力两边可能叫不同名字,所以是
+  // "对每个 diff,存在一个 key 命中",而不是反过来)
+  const ignored = REPRESENTATION_ONLY[stem];
+  const onlyIgnored =
+    ignored !== undefined &&
+    diffs.every((d) => ignored.some((key) => d.includes(key.includes(".") ? key : `powers.${key}`)));
   const id = item.name.split("/")[1] ?? "";
   const randomish =
     RANDOM_CARD_IDS.includes(id) || (item.name.startsWith("relics/") && RANDOM_CARD_RELICS.includes(id));
