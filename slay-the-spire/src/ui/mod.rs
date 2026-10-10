@@ -1138,6 +1138,53 @@ mod tests {
         }
     }
 
+    /// 用户报告"Neow 的祝福选不了":四项被判成"不可选"时整片压暗、选中行也不画
+    /// 光标,按 j/k 看着毫无反应.这里盯界面层:光标所在的那一行要反白(SEL_BG),
+    /// 按 j 换一项反白要跟着走.
+    #[test]
+    fn neow_blessing_highlights_the_selected_option() {
+        let mut app = App::new(42);
+        app.run.open_neow();
+        app.clamp();
+        // 选项文本所在那一行有没有反白(None = 这一行没找到)
+        let row_selected = |app: &App, needle: &str| -> Option<bool> {
+            let mut term = Terminal::new(TestBackend::new(107, 24)).expect("test terminal");
+            term.draw(|f| render(f, app)).expect("draw");
+            let buf = term.backend().buffer();
+            for y in 0..buf.area.height {
+                let line: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+                if line.contains(needle) {
+                    return Some(
+                        (0..buf.area.width)
+                            .any(|x| buf[(x, y)].style().bg == theme::selected().bg),
+                    );
+                }
+            }
+            None
+        };
+        // 光标默认停在第一项
+        assert_eq!(
+            row_selected(&app, "Transform a card"),
+            Some(true),
+            "选中的祝福行要反白,否则看起来选不了"
+        );
+        assert_eq!(
+            row_selected(&app, "Gain a random common relic"),
+            Some(false),
+            "没选中的祝福不该有底色"
+        );
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert_eq!(
+            row_selected(&app, "Gain a random common relic"),
+            Some(true),
+            "按 j 换项,反白要跟着动"
+        );
+        assert_eq!(row_selected(&app, "Transform a card"), Some(false));
+    }
+
     #[test]
     fn map_edge_lights_only_when_its_parent_is_on_the_route() {
         // a - b

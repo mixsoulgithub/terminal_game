@@ -2321,6 +2321,34 @@ mod tests {
         assert_eq!(app.run.picker.as_ref().unwrap().index, 0);
     }
 
+    /// 用户报告"Neow 的祝福选不了":四项被判成"不可选"时整片压暗、光标也不画,
+    /// 按键看着毫无反应.这里从按键层走一遍并钉住四项都算可选 —— 数字键选中一项、
+    /// 事件屏给出结算文本、回车收尾回地图.
+    #[test]
+    fn neow_blessing_choices_respond_to_keys() {
+        let mut app = App::new(42);
+        app.run.open_neow();
+        app.clamp();
+        assert_eq!(app.run.screen, Screen::Event);
+        assert_eq!(app.run.event_choice_count(), 4, "开局应该摆出四个祝福");
+        for i in 0..4 {
+            assert!(
+                app.run.event_choice_available(i),
+                "Neow 第 {i} 项要可选,否则界面会整片压暗、光标不画"
+            );
+        }
+        // 数字键直接选第二项(随机普通遗物,不开新屏)
+        let relics = app.run.player.relics.len();
+        app.handle_key(key('2'));
+        assert_eq!(app.run.player.relics.len(), relics + 1, "数字键要真的选得动");
+        assert!(
+            app.run.event.as_ref().unwrap().result.is_some(),
+            "选中后事件屏要给出结算文本"
+        );
+        app.handle_key(enter());
+        assert_eq!(app.run.screen, Screen::Map, "回车收尾回地图");
+    }
+
     #[test]
     fn map_keys_look_along_the_road_and_pick_forks() {
         let mut app = App::new(1);

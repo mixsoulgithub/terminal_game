@@ -3447,6 +3447,12 @@ impl Run {
             // 20 张候选都能选(原版必须选一张才能离开这张网格界面)
             return st.result.is_none() && i < offer.cards.len();
         }
+        // Neow 的祝福是开局用 neowRng 掷出来的(不在 def.choices 里),四项永远可选.
+        // 不在这里认出来的话会掉进下面 def.choices 的空表,四项全被判成"不可选",
+        // 界面就会整片压暗、选中行也不画高亮,看起来像选不动.
+        if !st.neow_options.is_empty() {
+            return st.result.is_none() && i < st.neow_options.len();
+        }
         let Some(c) = st.def.choices.get(i) else {
             return false;
         };
@@ -9789,5 +9795,50 @@ mod ascension_tests {
         r.apply_neow("boss_relic", "").unwrap();
         assert_eq!(r.player.relics.len(), n + 1);
         assert_eq!(r.player.relics.last().unwrap().tier, RelicTier::Boss);
+    }
+
+    /// 用户报告"Neow 的祝福选不了".Neow 的选项是掷出来的、不在 def.choices 里,
+    /// 可用性判定不认它就会把四项全判成"不可选"(界面整片压暗、选中行不画高亮,
+    /// 看起来就是选不动).这里钉住:开局四项都算可选,且按序号选得动.
+    #[test]
+    fn neow_options_are_selectable_on_the_blessing_screen() {
+        let mut r = Run::new(42);
+        r.open_neow();
+        assert_eq!(r.event_choice_count(), 4, "开局应该摆出四个祝福");
+        for i in 0..4 {
+            assert!(r.event_choice_available(i), "Neow 第 {i} 项应该可选");
+            let (label, _, _) = r.event_choice_row(i).expect("每一项都要有文案");
+            assert!(
+                !label.is_empty() && label != "an unknown blessing",
+                "第 {i} 项文案缺失: {label}"
+            );
+        }
+
+        // 不开新屏的祝福:结算文本写回事件屏,再离开就回地图
+        let idx = r
+            .neow_option_list()
+            .iter()
+            .position(|o| o.bonus == "random_common_relic")
+            .expect("seed 42 第二项是随机普通遗物");
+        let relics = r.player.relics.len();
+        r.choose_event(idx).unwrap();
+        assert_eq!(r.screen, Screen::Event, "白拿遗物不该另开屏");
+        assert!(r.event.as_ref().unwrap().result.is_some(), "要给出结算文本");
+        assert_eq!(r.player.relics.len(), relics + 1);
+        assert!(!r.event_choice_available(idx), "结算之后不能再选");
+        r.leave_event();
+        assert_eq!(r.screen, Screen::Map);
+
+        // 会另开选牌屏的祝福(变形一张)照旧开屏,而且不是空候选
+        let mut r = Run::new(42);
+        r.open_neow();
+        let idx = r
+            .neow_option_list()
+            .iter()
+            .position(|o| o.bonus == "transform_card")
+            .expect("seed 42 第一项是变形一张");
+        r.choose_event(idx).unwrap();
+        assert_eq!(r.screen, Screen::Pick, "变形要开选牌屏");
+        assert!(!r.picker_candidates().is_empty(), "开局牌组不是空候选");
     }
 }
