@@ -1999,6 +1999,512 @@ for (const r of dump("potions")) {
     dataIssues.push(`药水 ${r[0]} 稀有度: 我们 ${r[1]} vs 语料 ${p.rarity}`);
 }
 
+// ---- 文案 ↔ 实现 双向校验(静态) ----
+//
+// 语料题面(JSON text)里的数值与触发描述,必须与本作源码里的常量一一对上:两边任一
+// 侧被改动都会在这里报错。数字/标志只从"两边各自抽取",规则表只记"文案正则 + 字段名",
+// 不重复写数字:
+//   ①语料侧:corpus 的 text(归一 + 取基础档)
+//   ②实现侧:src/core/relics.rs 的 desc + RelicFx 字段;src/core/potions.rs 的
+//      desc + PotionFx 载荷;src/core/cards.rs 的 text + cost/标志位/Effect 载荷。
+// 覆盖守卫:已实现内容里"文案含数字却没进表、也没登记"的,直接判失败,防止新内容静默漏检。
+const rustStr = (s: string) =>
+  s.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+/** 取语料 [基础|升级] 的基础档,折叠空白:同一份正则可同时匹配语料与实现两边文案 */
+const flatBase = (text: string) =>
+  text
+    .replace(/\[([^\]|]*)\|[^\]]*\]/g, "$1")
+    .replace(/\[([^\]]*)\]/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+const anyDigits = (t: string) => /\d/.test(t);
+
+interface RelicImpl {
+  desc: string;
+  fx: Map<string, string>;
+}
+function parseRelicImpls(raw: string): Map<string, RelicImpl> {
+  const out = new Map<string, RelicImpl>();
+  for (const block of raw.split("\n    RelicDef {").slice(1)) {
+    const id = block.match(/id: "([^"]+)"/)?.[1];
+    if (!id) continue;
+    const desc = rustStr(block.match(/desc: "((?:[^"\\]|\\.)*)"/)?.[1] ?? "");
+    const fx = new Map<string, string>();
+    const body = block.match(/fx: RelicFx \{([\s\S]*?)\n        \}/);
+    if (body)
+      for (const line of body[1]!.split("\n")) {
+        const m = line.match(/^\s*([a-z_0-9]+):\s*(.+?),\s*$/);
+        if (m) fx.set(m[1]!, m[2]!);
+      }
+    out.set(id, { desc, fx });
+  }
+  return out;
+}
+
+interface PotionImpl {
+  desc: string;
+  variant: string;
+  payload: Map<string, string>;
+}
+function parsePotionImpls(raw: string): Map<string, PotionImpl> {
+  const out = new Map<string, PotionImpl>();
+  for (const block of raw.split("\n    PotionDef {").slice(1)) {
+    const id = block.match(/id: "([^"]+)"/)?.[1];
+    if (!id) continue;
+    const desc = rustStr(block.match(/desc: "((?:[^"\\]|\\.)*)"/)?.[1] ?? "");
+    const fx = block.match(/fx: PotionFx::(\w+)(?:\s*\{([^}]*)\})?/);
+    const payload = new Map<string, string>();
+    if (fx?.[2])
+      for (const part of fx[2].split(",")) {
+        const m = part.match(/^\s*([a-z_0-9]+):\s*(.+?)\s*$/);
+        if (m) payload.set(m[1]!, m[2]!);
+      }
+    out.set(id, { desc, variant: fx?.[1] ?? "?", payload });
+  }
+  return out;
+}
+
+interface CardImpl {
+  text: string;
+  block: string;
+}
+function parseCardImpls(raw: string): Map<string, CardImpl> {
+  const out = new Map<string, CardImpl>();
+  for (const block of raw.split("\n    CardDef {").slice(1)) {
+    const id = block.match(/id: "([^"]+)"/)?.[1];
+    if (!id) continue;
+    out.set(id, { text: rustStr(block.match(/text: "((?:[^"\\]|\\.)*)"/)?.[1] ?? ""), block });
+  }
+  return out;
+}
+
+const SRC_RELICS_RS = readFileSync(join(ROOT, "src/core/relics.rs"), "utf8");
+const SRC_POTIONS_RS = readFileSync(join(ROOT, "src/core/potions.rs"), "utf8");
+const SRC_CARDS_RS = readFileSync(join(ROOT, "src/core/cards.rs"), "utf8");
+const SRC_COMBAT_RS = readFileSync(join(ROOT, "src/core/combat.rs"), "utf8");
+const SRC_RUN_RS = readFileSync(join(ROOT, "src/core/run.rs"), "utf8");
+/** 数值落在字面量里的遗物规则要在这些源码里查常量 */
+const RELIC_SRC_FILES: Record<string, string> = { "combat.rs": SRC_COMBAT_RS, "run.rs": SRC_RUN_RS };
+const relicImpl = parseRelicImpls(SRC_RELICS_RS);
+const potionImpl = parsePotionImpls(SRC_POTIONS_RS);
+const cardImpl = parseCardImpls(SRC_CARDS_RS);
+
+/** 遗物文案数值规则:re 在(语料 + 实现)两份文案上都要命中;捕获组 v 的数值经 scale
+ *  换算后必须等于 RelicFx 里 field 的常量。period 额外要求该数字出现在字段名里
+ *  (如 energy_every_3_turns / block_turn3);bool 表示字段是布尔,只校验为 true。 */
+interface RelicNumRule {
+  id: string;
+  re: RegExp;
+  field: string;
+  v?: number;
+  period?: number;
+  scale?: (n: number) => number;
+  bool?: boolean;
+}
+const R = (
+  id: string,
+  re: RegExp,
+  field: string,
+  extra: Omit<RelicNumRule, "id" | "re" | "field"> = {},
+): RelicNumRule => ({ id, re, field, ...extra });
+const RELIC_NUM_RULES: RelicNumRule[] = [
+  R("akabeko", /first Attack each combat deals (\d+) additional damage/, "combat_start_vigor"),
+  R("anchor", /with (\d+) Block/, "combat_start_block"),
+  R("ancient_tea_set", /enter a Rest Site, start the next combat with (\d+) extra Energy/, "energy_turn1_if_rested"),
+  R("astrolabe", /Transform (\d+) cards/, "transform_cards"),
+  R("bag_of_marbles", /apply (\d+) Vulnerable to ALL enemies/, "combat_start_enemy_vulnerable"),
+  R("bag_of_preparation", /each combat, draw (\d+) additional cards/, "combat_start_draw"),
+  R("bird_faced_urn", /play a Power card, heal (\d+) HP/, "heal_on_power_card"),
+  R("black_blood", /end of combat, heal (\d+) HP/, "post_combat_heal"),
+  R("blood_vial", /each combat, heal (\d+) HP/, "combat_start_heal"),
+  R("bloody_idol", /gain Gold, heal (\d+) HP/, "heal_on_gold_gain"),
+  R("blue_candle", /lose (\d+) HP and Exhaust/, "playable_curses_hp"),
+  R("bronze_scales", /with (\d+) Thorns/, "thorns"),
+  R("brimstone", /gain (\d+) Strength and ALL enemies gain (\d+) Strength/, "brimstone_self"),
+  R("brimstone", /gain (\d+) Strength and ALL enemies gain (\d+) Strength/, "brimstone_enemy", { v: 2 }),
+  R("burning_blood", /end of combat, heal (\d+) HP/, "post_combat_heal"),
+  R("busted_crown", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("busted_crown", /rewards have (\d+) less cards/, "card_reward_bonus", { scale: (n) => -n }),
+  R("calipers", /lose (\d+) Block/, "block_loss_cap"),
+  R("calling_bell", /and (\d+) relics/, "add_relics"),
+  R("captains_wheel", /At the start of your (\d+)\w* turn, gain (\d+) Block/, "block_turn3", { period: 1, v: 2 }),
+  R("cauldron", /brews (\d+) random potions/, "add_potions"),
+  R("centennial_puzzle", /draw (\d+) cards/, "draw_on_first_hp_loss"),
+  R("ceramic_fish", /add a card to your deck, gain (\d+) Gold/, "gold_on_card_add"),
+  R("champion_belt", /also apply (\d+) Weak/, "weak_on_vulnerable"),
+  R("charons_ashes", /Exhaust a card, deal (\d+) damage/, "damage_all_on_exhaust"),
+  R("chemical_x", /increased by (\d+)/, "x_cost_bonus"),
+  R("cloak_clasp", /gain (\d+) Block for each card/, "block_per_card_in_hand_at_end"),
+  R("clockwork_souvenir", /with (\d+) Artifact/, "combat_start_artifact"),
+  R("coffee_dripper", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("cursed_key", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("darkstone_periapt", /increase your Max HP by (\d+)/, "max_hp_on_curse"),
+  R("discerning_monocle", /reduced by (\d+)%/, "shop_discount_pct"),
+  R("du_vu_doll", /For each Curse in your deck, start each combat with (\d+) Strength/, "combat_start_strength_per_curse"),
+  R("ectoplasm", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("empty_cage", /remove (\d+) cards/, "remove_cards"),
+  R("eternal_feather", /For every (\d+) cards in your deck, heal (\d+) HP/, "rest_heal_per_5_deck", { period: 1, v: 2 }),
+  R("face_of_cleric", /end of combat, raise your Max HP by (\d+)/, "max_hp_on_victory"),
+  R("fusion_hammer", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("girya", /up to (\d+) times/, "rest_lift_max"),
+  R("golden_idol", /drop (\d+)% more Gold/, "gold_reward_pct"),
+  R("gremlin_horn", /enemy dies, gain (\d+) Energy/, "energy_on_kill"),
+  R("gremlin_horn", /and draw (\d+) card/, "draw_on_kill"),
+  R("gremlin_visage", /each combat with (\d+) Weak/, "combat_start_self_weak"),
+  R("hand_drill", /break an enemy's Block, apply (\d+) Vulnerable/, "vulnerable_on_block_break"),
+  R("happy_flower", /Every (\d+) turns, gain (\d+) Energy/, "energy_every_3_turns", { period: 1, v: 2 }),
+  R("horn_cleat", /At the start of your (\d+)\w* turn, gain (\d+) Block/, "block_turn2", { period: 1, v: 2 }),
+  R("hovering_kite", /discard a card each turn, gain (\d+) Energy/, "gain_energy_first_discard_per_turn"),
+  R("incense_burner", /Every (\d+) turns, gain (\d+) Intangible/, "intangible_every_6_turns", { period: 1, v: 2 }),
+  R("ink_bottle", /play (\d+) cards, draw (\d+) card/, "draw_per_10_cards", { period: 1, v: 2 }),
+  R("kunai", /play (\d+) Attacks in a single turn, gain (\d+) Dexterity/, "dexterity_per_3_attacks", { period: 1, v: 2 }),
+  R("lantern", /Gain (\d+) Energy on the first turn/, "combat_start_energy"),
+  R("lees_waffle", /raise your Max HP by (\d+)/, "max_hp"),
+  R("letter_opener", /play (\d+) Skills in a single turn, deal (\d+) damage/, "damage_all_per_3_skills", { period: 1, v: 2 }),
+  R("lizard_tail", /heal to (\d+)% of your Max HP/, "death_save_pct"),
+  R("magic_flower", /Healing is (\d+)% more effective/, "combat_heal_pct", { scale: (n) => 100 + n }),
+  R("mango", /raise your Max HP by (\d+)/, "max_hp"),
+  R("mark_of_pain", /shuffle (\d+) Wounds/, "combat_start_wounds"),
+  R("matryoshka", /The next (\d+) non-boss chests/, "extra_chest_relic_charges"),
+  R("maw_bank", /climb a floor, gain (\d+) Gold/, "gold_per_floor"),
+  R("meal_ticket", /enter a shop, heal (\d+) HP/, "heal_on_shop_enter"),
+  R("meat_on_the_bone", /end of combat, heal (\d+) HP/, "post_combat_heal_if_below_half"),
+  R("membership_card", /(\d+)% discount/, "shop_discount_pct"),
+  R("mercury_hourglass", /start of your turn, deal (\d+) damage/, "damage_all_turn_start"),
+  R("mutagenic_strength", /Start each combat with (\d+) Strength/, "combat_start_strength_turn1"),
+  R("neows_lament", /first (\d+) combats/, "neow_lament_combats"),
+  R("nilrys_codex", /shuffle 1 of (\d+) random cards/, "end_turn_shuffle_pick"),
+  R("nunchaku", /play (\d+) Attacks, gain (\d+) Energy/, "energy_per_10_attacks", { period: 1, v: 2 }),
+  R("odd_mushroom", /take (\d+)% more attack damage rather than/, "vulnerable_taken_pct", { scale: (n) => 100 + n }),
+  R("oddly_smooth_stone", /each combat, gain (\d+) Dexterity/, "combat_start_dexterity"),
+  R("old_coin", /Upon pickup, gain (\d+) Gold/, "gold"),
+  R("omamori", /next (\d+) Curses/, "curse_negate"),
+  R("orichalcum", /end your turn without Block, gain (\d+) Block/, "block_if_no_block_at_end"),
+  R("ornamental_fan", /play (\d+) Attacks in a single turn, gain (\d+) Block/, "block_per_3_attacks", { period: 1, v: 2 }),
+  R("orrery", /add (\d+) cards/, "pickup_card_picks"),
+  R("pantograph", /Boss combats, heal (\d+) HP/, "boss_combat_heal"),
+  R("paper_krane", /deal (\d+)% less damage rather than/, "weak_damage_pct", { scale: (n) => 100 - n }),
+  R("paper_phrog", /take (\d+)% more damage rather than/, "vulnerable_damage_pct", { scale: (n) => 100 + n }),
+  R("pear", /raise your Max HP by (\d+)/, "max_hp"),
+  R("pen_nib", /Every (\d+)th Attack you play deals double damage/, "double_damage_per_10_attacks", { period: 1, bool: true }),
+  R("philosophers_stone", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("philosophers_stone", /enemies start combat with (\d+) Strength/, "combat_start_enemy_strength"),
+  R("pocketwatch", /draw (\d+) additional cards at the start of your next turn/, "draw_next_turn_if_low_play"),
+  R("potion_belt", /gain (\d+) Potion slots/, "potion_slots"),
+  R("preserved_insect", /have (\d+)% less HP/, "elite_hp_reduction_pct"),
+  R("question_card", /card rewards have (\d+) additional card/, "card_reward_bonus"),
+  R("red_mask", /apply (\d+) Weak to ALL enemies/, "combat_start_enemy_weak"),
+  R("red_skull", /have (\d+) additional Strength/, "strength_when_bloodied"),
+  R("regal_pillow", /Whenever you Rest, heal an additional (\d+) HP/, "rest_heal_bonus"),
+  R("ring_of_the_snake", /each combat, draw (\d+) additional cards/, "combat_start_draw"),
+  R("ring_of_the_serpent", /draw (\d+) additional card/, "draw_per_turn"),
+  R("runic_cube", /lose HP, draw (\d+) card/, "draw_on_hp_loss"),
+  R("runic_dome", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("self_forming_clay", /gain (\d+) Block next turn/, "block_next_turn_on_hp_loss"),
+  R("shuriken", /play (\d+) Attacks in a single turn, gain (\d+) Strength/, "strength_per_3_attacks", { period: 1, v: 2 }),
+  R("singing_bowl", /raise your Max HP by (\d+) instead/, "max_hp_on_card_skip"),
+  R("slavers_collar", /gain (\d+) Energy at the start of your turn/, "combat_start_energy_elite_only"),
+  R("sling_of_courage", /Start each Elite combat with (\d+) Strength/, "combat_start_strength_elite"),
+  R("smiling_mask", /costs (\d+) Gold/, "removal_cost_fixed"),
+  R("snecko_eye", /start of your turn, draw (\d+) additional cards/, "draw_per_turn"),
+  R("sozu", /Gain (\d+) Energy at the start of your turn/, "combat_start_energy_per_turn"),
+  R("ssserpent_head", /enter a \? room, gain (\d+) Gold/, "gold_on_unknown_room"),
+  R("stone_calendar", /At the end of turn (\d+), deal (\d+) damage/, "damage_all_turn7", { period: 1, v: 2 }),
+  R("strange_spoon", /discard (\d+)% of the time/, "exhaust_to_discard_pct"),
+  R("strawberry", /raise your Max HP by (\d+)/, "max_hp"),
+  R("strike_dummy", /containing "Strike" deal (\d+) additional damage/, "strike_damage_bonus"),
+  R("sundial", /Every (\d+) times you shuffle your draw pile, gain (\d+) Energy/, "energy_per_3_shuffles", { period: 1, v: 2 }),
+  R("the_abacus", /shuffle your draw pile, gain (\d+) Block/, "block_on_shuffle"),
+  R("the_boot", /deal (\d+) or less unblocked/, "small_attack_boost_to", { scale: (n) => n + 1 }),
+  R("the_boot", /increase it to (\d+)/, "small_attack_boost_to"),
+  R("the_courier", /reduced by (\d+)%/, "shop_discount_pct"),
+  R("thread_and_needle", /each combat, gain (\d+) Plated Armor/, "combat_start_plated_armor"),
+  R("tingsha", /discard a card during your turn, deal (\d+) damage/, "damage_random_on_discard"),
+  R("tiny_chest", /Every (\d+)th \? room is a Treasure room/, "treasure_every_4_unknown", { period: 1, bool: true }),
+  R("toolbox", /choose 1 of (\d+) random Colorless/, "combat_start_colorless_pick"),
+  R("torii", /reduce it to (\d+)/, "small_attack_reduce_to"),
+  R("tough_bandages", /discard a card during your turn, gain (\d+) Block/, "block_on_discard"),
+  R("toy_ornithopter", /use a potion, heal (\d+) HP/, "heal_on_potion_use"),
+  R("tungsten_rod", /lose (\d+) less/, "hp_loss_reduction"),
+  R("vajra", /each combat, gain (\d+) Strength/, "combat_start_strength"),
+  R("velvet_choker", /more than (\d+) cards per turn/, "card_play_cap"),
+  R("war_paint", /Upgrade (\d+) random Skills/, "upgrade_random_skills"),
+  R("whetstone", /Upgrade (\d+) random Attacks/, "upgrade_random_attacks"),
+  R("wing_boots", /travel to (\d+) times/, "map_wing_charges"),
+  R("wrist_blade", /cost 0 deal (\d+) additional damage/, "zero_cost_attack_bonus"),
+];
+
+/** 数值落在源码字面量里(不在 RelicFx 字段)的遗物:文案里的阈值必须等于源码常量 */
+interface RelicLitRule {
+  id: string;
+  re: RegExp;
+  v?: number;
+  file: string;
+  lit: RegExp;
+}
+const RELIC_LIT_RULES: RelicLitRule[] = [
+  // 鸟居阈值:文案 "5 or less ... reduce it to 1",源码 combat.rs `taken <= 5`
+  { id: "torii", re: /(\d+) or less unblocked/, file: "combat.rs", lit: /taken <= (\d+)/ },
+  // 死灵之书:文案 "costs 2 or more",源码 combat.rs `cost >= 2`
+  { id: "necronomicon", re: /costs (\d+) or more/, file: "combat.rs", lit: /cost >= (\d+)/ },
+  // "每 X"类:文案周期必须等于实现里计数器的阈值/模数(字段名里的数字只证明命名,这里证明真在用它)
+  { id: "pen_nib", re: /Every (\d+)th Attack you play deals double damage/, file: "combat.rs", lit: /pen_nib >= (\d+)/ },
+  { id: "nunchaku", re: /play (\d+) Attacks, gain (\d+) Energy/, file: "combat.rs", lit: /attacks_total >= (\d+)/ },
+  { id: "ink_bottle", re: /play (\d+) cards, draw (\d+) card/, file: "combat.rs", lit: /cards_total >= (\d+)/ },
+  { id: "kunai", re: /play (\d+) Attacks in a single turn/, file: "combat.rs", lit: /attacks_this_turn % (\d+)/ },
+  { id: "shuriken", re: /play (\d+) Attacks in a single turn/, file: "combat.rs", lit: /attacks_this_turn % (\d+)/ },
+  { id: "ornamental_fan", re: /play (\d+) Attacks in a single turn/, file: "combat.rs", lit: /attacks_this_turn % (\d+)/ },
+  { id: "letter_opener", re: /play (\d+) Skills in a single turn/, file: "combat.rs", lit: /skills_this_turn % (\d+)/ },
+  { id: "happy_flower", re: /Every (\d+) turns, gain (\d+) Energy/, file: "combat.rs", lit: /happy_flower >= (\d+)/ },
+  { id: "incense_burner", re: /Every (\d+) turns, gain (\d+) Intangible/, file: "combat.rs", lit: /incense >= (\d+)/ },
+  { id: "sundial", re: /Every (\d+) times you shuffle your draw pile/, file: "combat.rs", lit: /sundial >= (\d+)/ },
+  { id: "tiny_chest", re: /Every (\d+)th \? room is a Treasure room/, file: "run.rs", lit: /unknown_rooms_seen % (\d+)/ },
+  { id: "eternal_feather", re: /For every (\d+) cards in your deck/, file: "run.rs", lit: /deck\.len\(\) as i32 \/ (\d+)/ },
+];
+
+/** 文案含数字但数值由别处机制承载(布尔字段 / run.rs 特判 / 隐含),显式登记 */
+const RELIC_NUM_SKIP: Record<string, string> = {
+  tiny_house: "拾取五连效果(1 药水/50 金/5 上限/1 牌/1 升级)由 run.rs 的 pickup_tiny_house 特判",
+  mummified_hand: "文案的 0 是'费用变 0'的机制描述,字段 zero_hand_card_on_power 是布尔",
+  enchiridion: "文案的 0 是'费用变 0'的机制描述,字段 add_random_power_card 是布尔",
+  matryoshka: "第二个 '2 Relics' 由基础箱 1 件 + 额外 1 件的机制隐含(第一个 'next 2 chests' 已入表)",
+};
+
+interface TextSource {
+  label: string;
+  text: string;
+}
+function checkRelicText(
+  impls: Map<string, RelicImpl>,
+  corpus: (id: string) => string | undefined,
+  srcFiles: Record<string, string>,
+): { fails: string[]; covered: number } {
+  const fails: string[] = [];
+  let covered = 0;
+  const sourcesOf = (id: string, impl?: RelicImpl): TextSource[] => {
+    const out: TextSource[] = [];
+    const ct = corpus(id);
+    if (ct !== undefined) out.push({ label: "语料", text: flatBase(norm(ct)) });
+    if (impl) out.push({ label: "实现文案", text: flatBase(impl.desc) });
+    return out;
+  };
+  for (const rule of RELIC_NUM_RULES) {
+    const impl = impls.get(rule.id);
+    if (!impl) {
+      fails.push(`遗物 ${rule.id}: relics.rs 里没有该 RelicDef`);
+      continue;
+    }
+    const raw = impl.fx.get(rule.field);
+    if (raw === undefined) {
+      fails.push(`遗物 ${rule.id}: RelicFx 里没有字段 ${rule.field}`);
+      continue;
+    }
+    for (const s of sourcesOf(rule.id, impl)) {
+      const m = s.text.match(rule.re);
+      if (!m) {
+        fails.push(`遗物 ${rule.id}[${s.label}]: 文案与规则 ${rule.re} 对不上`);
+        continue;
+      }
+      if (rule.period && !rule.field.includes(String(m[rule.period])))
+        fails.push(`遗物 ${rule.id}[${s.label}]: 文案周期 ${m[rule.period]} vs 字段名 ${rule.field}`);
+      if (rule.bool) {
+        if (raw !== "true") fails.push(`遗物 ${rule.id}[${s.label}]: 字段 ${rule.field}=${raw},文案说会触发`);
+      } else {
+        const n = Number(m[rule.v ?? 1]);
+        const want = rule.scale ? rule.scale(n) : n;
+        if (want !== Number(raw)) fails.push(`遗物 ${rule.id}[${s.label}]: 文案数值 ${n}${rule.scale ? `(→${want})` : ""} vs 实现 ${rule.field}=${raw}`);
+      }
+    }
+    covered++;
+  }
+  for (const rule of RELIC_LIT_RULES) {
+    const lit = (srcFiles[rule.file] ?? "").match(rule.lit);
+    if (!lit) {
+      fails.push(`遗物 ${rule.id}: ${rule.file} 里找不到常量 ${rule.lit}`);
+      continue;
+    }
+    for (const s of sourcesOf(rule.id, impls.get(rule.id))) {
+      const m = s.text.match(rule.re);
+      if (!m) {
+        fails.push(`遗物 ${rule.id}[${s.label}]: 文案与规则 ${rule.re} 对不上`);
+        continue;
+      }
+      if (Number(m[rule.v ?? 1]) !== Number(lit[1])) fails.push(`遗物 ${rule.id}[${s.label}]: 文案阈值 ${m[rule.v ?? 1]} vs ${rule.file} 常量 ${lit[1]}`);
+    }
+    covered++;
+  }
+  const ruled = new Set([...RELIC_NUM_RULES.map((r) => r.id), ...RELIC_LIT_RULES.map((r) => r.id)]);
+  for (const id of ourRelics) {
+    if (gated.has(`relic/${id}`)) continue;
+    if (ruled.has(id) || RELIC_NUM_SKIP[id]) continue;
+    const impl = impls.get(id);
+    const ct = corpus(id);
+    const txt = `${ct ? flatBase(norm(ct)) : ""}\n${impl ? flatBase(impl.desc) : ""}`;
+    if (anyDigits(txt)) fails.push(`遗物 ${id}: 文案含数字却没进双向校验表(加规则或登记 RELIC_NUM_SKIP)`);
+  }
+  return { fails, covered };
+}
+
+/** 药水文案数值 ↔ PotionFx 载荷(amount/n/pct);两边文案里的基础数值都要等于载荷 */
+const POTION_NUM_SKIP: Record<string, string> = {
+  duplication_potion: "文案用 'card is/... played twice' 描述,基础档没有数字;基础数值 1 取自语料 potency.base",
+  liquid_memories: "文案 'a card|2 cards' 的基础档是文字,没有数字;基础数值 1 取自语料 potency.base",
+  fairy_potion: "致死回血 30%/60% 由战斗致死保护实现,不是 PotionFx 常量(已在 POTION_NOT_COMPARED 登记)",
+};
+function potionPayload(p: PotionImpl): number | null {
+  for (const k of ["amount", "n", "pct"]) {
+    const v = p.payload.get(k);
+    if (v !== undefined) return Number(v);
+  }
+  return null;
+}
+function checkPotionText(
+  impls: Map<string, PotionImpl>,
+  corpus: (id: string) => CorpusPotion | undefined,
+): { fails: string[]; covered: number } {
+  const fails: string[] = [];
+  let covered = 0;
+  for (const id of ourPotions) {
+    const impl = impls.get(id);
+    if (!impl) {
+      fails.push(`药水 ${id}: potions.rs 里没有该 PotionDef`);
+      continue;
+    }
+    covered++;
+    const p = corpus(id);
+    const payload = potionPayload(impl);
+    const ct = p ? flatBase(norm(p.text)) : undefined;
+    const dt = flatBase(impl.desc);
+    if (payload === null) {
+      if (gated.has(`potion/${id}`) || POTION_NUM_SKIP[id]) continue;
+      const hasDigit = (ct !== undefined && anyDigits(ct)) || anyDigits(dt);
+      const base = p?.potency?.base ?? null;
+      if (hasDigit || base !== null) fails.push(`药水 ${id}: 文案含数字/potency 但 PotionFx 没有数值载荷,也没登记 POTION_NUM_SKIP`);
+      continue;
+    }
+    if (p?.potency && p.potency.base !== null && p.potency.base !== payload)
+      fails.push(`药水 ${id}: 语料 potency.base=${p.potency.base} vs 实现载荷=${payload}`);
+    const texts: TextSource[] = [];
+    if (ct !== undefined) texts.push({ label: "语料", text: ct });
+    texts.push({ label: "实现文案", text: dt });
+    for (const s of texts) {
+      const m0 = s.text.match(/\d+/);
+      const n = m0 ? Number(m0[0]) : null;
+      if (n === null) {
+        if (!POTION_NUM_SKIP[id]) fails.push(`药水 ${id}[${s.label}]: 文案里没有数值,无法与实现载荷 ${payload} 对照`);
+      } else if (n !== payload && !POTION_NUM_SKIP[id]) {
+        fails.push(`药水 ${id}[${s.label}]: 文案数值 ${n} vs 实现载荷=${payload}`);
+      }
+    }
+  }
+  return { fails, covered };
+}
+
+/** 状态/诅咒卡:文案里的标志词 ↔ CardDef 标志位;文案里的数值 ↔ Effect 载荷 */
+interface CurseRule {
+  label: string;
+  re: RegExp;
+  check: (block: string, m: RegExpMatchArray) => string | null;
+}
+const effectNum = (block: string, names: string[], key: string, want: number) => {
+  const re = new RegExp(`Effect::(?:${names.join("|")}) \\{\\s*${key}:\\s*(-?\\d+)`);
+  const m = block.match(re);
+  return m && Number(m[1]) === want ? null : `实现里没有 Effect::{${names.join("|")}} ${key}=${want}`;
+};
+const CURSE_RULES: CurseRule[] = [
+  { label: "不可打出", re: /\bUnplayable\b/, check: (b) => (/\bcost: Cost::Unplayable,/.test(b) ? null : "实现不是 Cost::Unplayable") },
+  { label: "虚无", re: /\bEthereal\b/, check: (b) => (/\bethereal: true,/.test(b) ? null : "实现 ethereal 不是 true") },
+  { label: "天生", re: /\bInnate\b/, check: (b) => (/\binnate: true,/.test(b) ? null : "实现 innate 不是 true") },
+  { label: "消耗", re: /\bExhaust\b/, check: (b) => (/\bexhaust: true,/.test(b) ? null : "实现 exhaust 不是 true") },
+  { label: "不可移除", re: /Cannot be removed from your deck/, check: (b) => (/\bunremovable: true,/.test(b) ? null : "实现 unremovable 不是 true") },
+  { label: "回合末掉血", re: /At the end of your turn, take (\d+) damage/, check: (b, m) => effectNum(b, ["DamageSelf", "LoseHp"], "amount", Number(m[1])) },
+  {
+    label: "回合末上状态",
+    re: /At the end of your turn, gain (\d+) (Weak|Frail)/,
+    check: (b, m) => {
+      const re = new RegExp(`Effect::AddSelfStatus \\{\\s*status: Status::${m[2]},\\s*n: (-?\\d+)`);
+      const mm = b.match(re);
+      return mm && Number(mm[1]) === Number(m[1]) ? null : `实现里没有对己方上 ${m[2]} ${m[1]} 层的 AddSelfStatus`;
+    },
+  },
+  {
+    label: "抽到掉能",
+    re: /drawn, lose (\d+) Energy/,
+    check: (b, m) => (new RegExp(`Effect::GainEnergy \\{\\s*n: -${m[1]} \\}`).test(b) ? null : `实现里没有 GainEnergy n=-${m[1]}`),
+  },
+  {
+    label: "出牌上限",
+    re: /cannot play more than (\d+) cards this turn/,
+    check: (b, m) => (new RegExp(`Effect::PlayLimitWhileInHand \\{\\s*max: ${m[1]}`).test(b) ? null : `实现里没有 PlayLimitWhileInHand max=${m[1]}`),
+  },
+  { label: "手牌掉血", re: /While in hand, lose (\d+) HP when other cards are played/, check: (b, m) => effectNum(b, ["LoseHpOnOtherCardPlayed"], "amount", Number(m[1])) },
+  { label: "按手牌掉血", re: /lose HP equal to the number of cards in your hand/, check: (b) => (b.includes("Effect::LoseHpPerHandCard") ? null : "实现里没有 LoseHpPerHandCard") },
+  { label: "复制回牌堆", re: /put a copy of this card on top of your draw pile/, check: (b) => (b.includes("Effect::CopySelfToDrawTop") ? null : "实现里没有 CopySelfToDrawTop") },
+  { label: "无法逃脱", re: /There is no escape from this curse/, check: (b) => (b.includes("Effect::SelfToHandOnExhaust") ? null : "实现里没有 SelfToHandOnExhaust") },
+  { label: "失去生命上限", re: /lose (\d+) Max HP/, check: (b, m) => effectNum(b, ["LoseMaxHpOnRemoved"], "n", Number(m[1])) },
+];
+function checkCurseText(
+  impls: Map<string, CardImpl>,
+  corpus: (id: string) => string | undefined,
+): { fails: string[]; covered: number } {
+  const fails: string[] = [];
+  let covered = 0;
+  for (const id of ourCards) {
+    const c = cardByGame.get(id);
+    if (!c || !["curse", "status"].includes(c.type.toLowerCase())) continue;
+    covered++;
+    const impl = impls.get(id);
+    if (!impl) {
+      fails.push(`状态/诅咒 ${id}: cards.rs 里没有该 CardDef`);
+      continue;
+    }
+    const ct0 = corpus(id);
+    const sources: TextSource[] = [];
+    if (ct0 !== undefined) sources.push({ label: "语料", text: flatBase(norm(ct0)) });
+    sources.push({ label: "实现文案", text: flatBase(impl.text) });
+    let matched = false;
+    for (const rule of CURSE_RULES) {
+      const hits = sources.map((s) => ({ s, m: s.text.match(rule.re) })).filter((h) => h.m !== null);
+      if (hits.length === 0) continue;
+      matched = true;
+      if (hits.length !== sources.length) fails.push(`状态/诅咒 ${id}: 规则[${rule.label}]只在一侧文案命中(${hits.map((h) => h.s.label).join(",")}),两边不一致`);
+      for (const h of hits) {
+        const err = rule.check(impl.block, h.m!);
+        if (err) fails.push(`状态/诅咒 ${id}[${h.s.label}] 规则[${rule.label}]: ${err}`);
+      }
+    }
+    if (!matched) fails.push(`状态/诅咒 ${id}: 文案没被任何规则覆盖(补规则或登记)`);
+    if (ct0 !== undefined) {
+      const ct = flatBase(norm(ct0));
+      const explained = new Set<string>();
+      for (const rule of CURSE_RULES) {
+        const m = ct.match(rule.re);
+        if (m?.[1] !== undefined) explained.add(String(Number(m[1])));
+      }
+      for (const tok of ct.match(/\d+/g) ?? []) if (!explained.has(String(Number(tok)))) fails.push(`状态/诅咒 ${id}: 语料文案里的数字 ${tok} 没有对应实现规则`);
+    }
+  }
+  return { fails, covered };
+}
+
+const textImplFails: string[] = [];
+let textImplChecks = 0;
+if (want("relics")) {
+  const r = checkRelicText(relicImpl, (id) => relicByGame.get(id)?.text, RELIC_SRC_FILES);
+  textImplFails.push(...r.fails);
+  textImplChecks += r.covered;
+}
+if (want("potions")) {
+  const r = checkPotionText(potionImpl, (id) => potionByGame.get(id));
+  textImplFails.push(...r.fails);
+  textImplChecks += r.covered;
+}
+if (want("cards")) {
+  const r = checkCurseText(cardImpl, (id) => cardByGame.get(id)?.text);
+  textImplFails.push(...r.fails);
+  textImplChecks += r.covered;
+}
+
 // ---- 守卫一:口径覆盖(未覆盖即报错) ----
 // 任何"有数值效果却没人比对、又没明确登记"的内容都直接判失败,不再只是报告里列一行。
 // 这正是哨卫"消耗回能"那类静默漏检的根源:改坏一处口径,守卫必须响。
@@ -2021,6 +2527,10 @@ if (want("relics")) {
   if (unclassifiedRelics.length > 0) guardFails.push(`遗物既没被 RELIC_RULES 覆盖也没登记原因: ${unclassifiedRelics.join(", ")}`);
 }
 if (dataIssues.length > 0) guardFails.push(`静态数据(费用/类型/稀有度)对语料不一致 ${dataIssues.length} 处`);
+if (textImplFails.length > 0) {
+  guardFails.push(`文案↔实现 双向校验不一致 ${textImplFails.length} 处:`);
+  for (const f of textImplFails) guardFails.push(`  ${f}`);
+}
 
 // ---- 守卫二:内容登记表(新增未登记即报错) ----
 // 本作 --dump 或语料里出现了登记表没有的卡/遗物/药水,或者登记表里的 tag 与工具当前
@@ -2298,6 +2808,71 @@ function spotCases(): SpotCase[] {
       },
       "遗物既没被",
     ),
+    // 文案↔实现 双向校验:语料侧改坏(遗物/药水/状态各一),静态表必须报出并点名
+    corpusCase(
+      "静态双向校验 遗物数值(改语料)",
+      (_cards, relics) => {
+        for (const r of relics) if (r.id === "STONE_CALENDAR") r.text = r.text?.replace("deal 52 damage", "deal 53 damage");
+      },
+      "遗物 stone_calendar",
+    ),
+    corpusCase(
+      "静态双向校验 药水数值(改语料)",
+      (_cards, _relics, potions) => {
+        for (const p of potions) if (p.id === "FIRE_POTION") p.text = p.text?.replace("20", "30");
+      },
+      "药水 fire_potion",
+    ),
+    corpusCase(
+      "静态双向校验 状态数值(改语料)",
+      (cards) => {
+        for (const c of cards) if (c.id === "BURN") c.text = c.text?.replace("take [2|4]", "take [3|6]");
+      },
+      "状态/诅咒 burn",
+    ),
+    // 实现侧改坏(在内存里篡改解析出来的常量),静态表同样必须报出 —— 冻结"实现侧抽取"这条链
+    {
+      spot: "静态双向校验 遗物常量(改实现)",
+      expect: "anchor",
+      run: () => {
+        const impls = new Map([...relicImpl].map(([k, v]) => [k, { desc: v.desc, fx: new Map(v.fx) }] as const));
+        impls.get("anchor")!.fx.set("combat_start_block", "11");
+        const { fails } = checkRelicText(impls, (id) => relicByGame.get(id)?.text, RELIC_SRC_FILES);
+        return fails.some((f) => f.includes("anchor")) ? null : `改坏实现常量后静态校验没点名 anchor: ${fails.join(" | ") || "(无失败)"}`;
+      },
+    },
+    {
+      spot: "静态双向校验 遗物计数器常量(改实现)",
+      expect: "pen_nib",
+      run: () => {
+        const { fails } = checkRelicText(relicImpl, (id) => relicByGame.get(id)?.text, {
+          ...RELIC_SRC_FILES,
+          "combat.rs": SRC_COMBAT_RS.replace("pen_nib >= 10", "pen_nib >= 9"),
+        });
+        return fails.some((f) => f.includes("pen_nib")) ? null : `改坏计数器常量后静态校验没点名 pen_nib: ${fails.join(" | ") || "(无失败)"}`;
+      },
+    },
+    {
+      spot: "静态双向校验 药水载荷(改实现)",
+      expect: "fire_potion",
+      run: () => {
+        const impls = new Map([...potionImpl].map(([k, v]) => [k, { desc: v.desc, variant: v.variant, payload: new Map(v.payload) }] as const));
+        impls.get("fire_potion")!.payload.set("amount", "21");
+        const { fails } = checkPotionText(impls, (id) => potionByGame.get(id));
+        return fails.some((f) => f.includes("fire_potion")) ? null : `改坏实现载荷后静态校验没点名 fire_potion: ${fails.join(" | ") || "(无失败)"}`;
+      },
+    },
+    {
+      spot: "静态双向校验 状态载荷(改实现)",
+      expect: "burn",
+      run: () => {
+        const impls = new Map([...cardImpl].map(([k, v]) => [k, { text: v.text, block: v.block }] as const));
+        const b = impls.get("burn")!;
+        impls.set("burn", { text: b.text, block: b.block.replace("Effect::DamageSelf { amount: 2 }", "Effect::DamageSelf { amount: 5 }") });
+        const { fails } = checkCurseText(impls, (id) => cardByGame.get(id)?.text);
+        return fails.some((f) => f.includes("burn")) ? null : `改坏实现载荷后静态校验没点名 burn: ${fails.join(" | ") || "(无失败)"}`;
+      },
+    },
   ];
 }
 
@@ -2351,6 +2926,9 @@ if (selfIssues.length) {
 }
 report.push(`静态数据(费用/类型/稀有度)对语料: ${dataIssues.length === 0 ? "全一致" : `${dataIssues.length} 处不一致`}`);
 for (const s of dataIssues) report.push(`  ${s}`);
+report.push("");
+report.push(`文案↔实现 双向校验(静态): ${textImplFails.length === 0 ? "全一致" : `${textImplFails.length} 处不一致`}(${textImplChecks} 条规则,数字只从语料与源码各自抽取)`);
+for (const s of textImplFails) report.push(`  ${s}`);
 report.push("");
 report.push("行为不一致清单:");
 if (mismatches.length === 0) report.push("  (无)");
