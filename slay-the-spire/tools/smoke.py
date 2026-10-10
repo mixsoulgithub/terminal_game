@@ -77,6 +77,12 @@ TYPE_RE = re.compile(r"\|\s*(Attack|Skill|Power|Status|Curse)\s+c\S*")
 KIND_RE = re.compile(r"[<\[(](Attack|Skill|Power|Status|Curse)[>\])]")
 ENERGY_RE = re.compile(r"\(\d+\)/\(\d+\) energy")
 
+# 战斗里挂起的选牌窗口(从弃牌/消耗/抽牌堆挑牌,或从手牌挑):
+# 信息行会写"it applies right away",从牌堆挑时窗口标题还会带"j/k pick, space or enter take".
+# 手牌来源没有窗口,信息行的措辞是"space to choose"(所以要靠它区分按键).
+CHOICE_RE = re.compile(r"it applies right away|j/k pick, space or enter take")
+HAND_CHOICE = "space to choose"
+
 
 def selected_kind(text: str) -> str | None:
     """从说明区那一行读出选中那张牌的类型(找不到就返回 None)。"""
@@ -104,6 +110,10 @@ def current(screen_text: str) -> str:
                  "TREASURE", "PICK", "MAP"):
         if f"-- {name} --" in screen_text:
             return name
+    # 战斗里挂起的选牌:窗口把能量行盖住了,认不出来就会误判成"?".
+    # 放在能量行前面,因为它优先级更高(手牌来源没有窗口、能量行还在).
+    if CHOICE_RE.search(screen_text):
+        return "CHOICE"
     # 战斗界面自带信息行和命令栏,没有 -- COMBAT -- 标记,靠能量行认
     if ENERGY_RE.search(screen_text):
         return "COMBAT"
@@ -213,6 +223,14 @@ def play(binary: str, seed: int, steps: int = 800) -> tuple[str, set[str], str]:
             else:
                 send("l")
                 moves += 1
+        elif where == "CHOICE":
+            # 战斗里挂起的选牌.从牌堆挑:回车就是"选中光标下那张"(窗口已自动打开、
+            # 光标在第 0 个).从手牌挑:先空格选中(选够张数会立刻生效),再回车确认
+            # (不限张数的那种要回车收工).
+            if HAND_CHOICE in text:
+                send(" ", "Enter")
+            else:
+                send("Enter")
         elif where == "REWARD":
             send("Enter", "Enter", "c", "Escape")
         elif where == "REST":
@@ -220,15 +238,25 @@ def play(binary: str, seed: int, steps: int = 800) -> tuple[str, set[str], str]:
         elif where == "SHOP":
             send("Escape")
         elif where == "EVENT":
-            send("Enter")
+            # 翻牌小游戏(match_and_keep):已经翻开的/本次刚翻的那格不能再选,
+            # 光标停原地时按回车只会报 "that card can not be flipped".
+            # 先用 j 挪到下一格再回车;光标是循环的,一格一格往下走正好凑齐 5 次尝试.
+            if "Flip card" in text:
+                send("j", "Enter")
+            else:
+                send("Enter")
         elif where == "TREASURE":
             send("Enter")
         elif where == "PICK":
             send("Enter")
         else:
             raise AssertionError(f"seed {seed}: 认不出界面,屏幕如下:\n{text}")
+    # 先抓屏再杀会话:stop() 之后 tmux 已经没了,再抓就是空的
+    stuck = screen()
     stop()
-    raise AssertionError(f"seed {seed}: {steps} 步之内没有结束,卡在 {current(screen())}")
+    raise AssertionError(
+        f"seed {seed}: {steps} 步之内没有结束,卡在 {current(stuck)},屏幕如下:\n{stuck}"
+    )
 
 
 def main() -> int:

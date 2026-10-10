@@ -3081,7 +3081,7 @@ impl Combat {
         need: usize,
         label: &str,
     ) {
-        self.choice = Some(Choice {
+        let ch = Choice {
             source,
             action,
             filter,
@@ -3094,7 +3094,15 @@ impl Combat {
             copies: 1,
             free: false,
             exhaust_after: false,
-        });
+        };
+        // 原版口径:没有候选可选的选牌动作不开窗口.参考实现里这些 action 在堆空(或
+        // 手里没有合规牌)时都是直接 return,例如 Headbutt(弃牌堆空)、Exhume(消耗堆
+        // 只剩自己)、Dual Wield(手里没有攻击/能力牌)、Warcry(手牌空).
+        // Offered 的候选要等亮牌时才填进 ch.offered,这里跳过这条判断.
+        if ch.source != ChoiceSource::Offered && self.candidates_of(&ch).is_empty() {
+            return;
+        }
+        self.choice = Some(ch);
     }
 
     /// 这次选择里还能选的卡(索引 + 卡);发现模式下列的是亮出来的那几张
@@ -5774,6 +5782,45 @@ mod tests {
         let ids: Vec<&str> = c.choice_candidates().iter().map(|(_, x)| x.def.id).collect();
         assert!(!ids.contains(&"exhume"), "掘出不能拿回自己:{ids:?}");
         assert!(ids.contains(&"bash"), "别的消耗牌还能拿:{ids:?}");
+    }
+
+    /// 没有候选可选的选牌动作不开窗口:原版这些 action 在堆空时直接 return,
+    /// 开了空窗口会让界面卡在"nothing to pick"上(smoke seed 101 就是这么卡的).
+    #[test]
+    fn empty_pile_choices_do_not_open() {
+        // 头槌:弃牌堆空 -> 只打伤害,不开选牌窗口
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.hand = vec![crate::core::cards::card("headbutt")];
+        c.energy = 3;
+        let e_hp = c.enemies[0].hp;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.enemies[0].hp, e_hp - 9, "伤害照常结算");
+        assert!(c.choice.is_none(), "弃牌堆空不该开选牌窗口");
+
+        // 头槌:弃牌堆有牌 -> 窗口照开(别把正常路径也闸掉)
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.discard.push(crate::core::cards::card("defend"));
+        c.hand = vec![crate::core::cards::card("headbutt")];
+        c.energy = 3;
+        c.play_card(0, Some(0)).unwrap();
+        assert_eq!(c.choice.as_ref().unwrap().source, ChoiceSource::Discard);
+
+        // 掘出:消耗堆里只有刚打出的掘出自己 -> 没得拿,不开窗口
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.hand = vec![crate::core::cards::card("exhume")];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "消耗堆只剩自己不该开选牌窗口");
+
+        // 二重身:手里只剩防御(没有攻击/能力牌)-> 没得复制,不开窗口
+        let mut c = combat_with("jaw_worm_solo", &["strike"; 4]);
+        c.hand = vec![
+            crate::core::cards::card("dual_wield"),
+            crate::core::cards::card("defend"),
+        ];
+        c.energy = 3;
+        c.play_card(0, None).unwrap();
+        assert!(c.choice.is_none(), "没有攻击/能力牌不该开选牌窗口");
     }
 
 
