@@ -413,14 +413,10 @@ const CARD_SPECIAL: Record<string, CardSpec> = {
     facts: (c, up) => [{ k: "damage", v: up ? c.upgrade.damage! : c.values.damage! }],
     board: { draw: [] },
   },
-  // 窒息:挂上窒息的这张牌自己也算一次"打出一张牌"(见 sandbox_diff 的 OURS_WRONG 说明)
+  // 窒息:挂上窒息的这张牌自己**不**算一次"打出一张牌"(反编译 useCard 里 onUseCard 钩子
+  // 排在效果之后但读入队时的状态),所以这一次只量到那一刀的伤害
   choke: {
-    facts: (c, up) => [
-      {
-        k: "damage",
-        v: (up ? c.upgrade.damage! : c.values.damage!) + (up ? c.upgrade.magic! : c.values.magic!),
-      },
-    ],
+    facts: (c, up) => [{ k: "damage", v: up ? c.upgrade.damage! : c.values.damage! }],
   },
   // 炸弹:第三回合末结算
   the_bomb: {
@@ -2866,6 +2862,7 @@ const CARD_RULES: CardRule[] = [
   numRule("玻璃刀减伤", /this card by (\d+) this combat/gi, [["DamageThenPenaltySelf", "penalty"]]),
   numRule("抽到手牌 N 张", /until you have (\d+) in your hand/gi, [["DrawUntil", "n"]]),
   numRule("本回合第 N 张技能", /next (\d+) Skills?/gi, [["AddSelfStatus", "n"]]),
+  numRule("下回合多抽", /(?:draw|Draw) (\d+) additional cards?/g, [["NextTurnDraw", "n"]]),
   numRule("敌方掉血", /(?:enemy )?loses (\d+) HP/gi, [["AddTargetStatus", "n"], ["LoseHp", "amount"]]),
   numRule(
     "次数",
@@ -3074,16 +3071,33 @@ const CARD_TEXT_SKIP: Record<string, { sub: RegExp; reason: string }[]> = {
   ],
   storm_of_steel: [{ sub: /Add \d+ Shiv/, reason: "飞刀张数 = 弃掉的张数,由 Effect::StormOfSteel 的结算承载" }],
   nightmare: [{ sub: /add 3 copies/, reason: "3 份副本由 Effect::NightmareChoose 的结算常量承载" }],
+  wraith_form: [
+    { sub: /lose 1 Dexterity/, reason: "掉 1 敏捷由 Status::WraithForm 的结算承载(载荷里 n 是无形层数)" },
+  ],
+  grand_finale: [
+    { sub: /Can only be played if there are no cards in your draw pile/, reason: "打出的前置条件写在 playable() 里,不是 CardDef 载荷" },
+  ],
   bullet_time: [{ sub: /to 0 this turn/, reason: "手牌降到 0 费由 Effect::SetHandCostZeroThisTurn 承载" }],
   setup: [{ sub: /costs 0 until played/, reason: "放到堆顶的牌 0 费由 Effect::SetupTopFromHand 的结算承载" }],
   distraction: [{ sub: /costs 0 this turn/, reason: "送到的牌 0 费由 Effect::AddRandomSkillToHand 的结算承载" }],
-  doppelganger: [{ sub: /[+X]\s*\(1\)/, reason: "X 费按实际能量结算,载荷里没有常量" }],
+  doppelganger: [
+    { sub: /[+X]\s*\(1\)/, reason: "X 费按实际能量结算,载荷里没有常量" },
+    { sub: /X\+1/, reason: "同上:升级档的 +1 写在 Effect 的 bonus 里" },
+  ],
+  escape_plan: [
+    { sub: /Draw 1 card/, reason: "抽 1 张由 Effect::DrawThenBlockIfSkill 的结算承载(载荷里是格挡值)" },
+    { sub: /If you draw a Skill/, reason: "条件由同一个 Effect 的结算承载" },
+  ],
+
   malaise: [{ sub: /X\+1/, reason: "X 费按实际能量结算,载荷里没有常量(升级档的 +1 写在 Effect 的 bonus 里)" }],
   tactician: [
     { sub: /If this card is discarded/, reason: "被弃掉时回能量写在引擎的 on_card_discarded 里(读 upgraded),不是 CardDef 载荷" },
     { sub: /\(\d+\)/, reason: "同上:回 1(2) 点能量由引擎承载" },
   ],
-  reflex: [{ sub: /If this card is discarded/, reason: "被弃掉时抽 2(3) 张写在引擎的 on_card_discarded 里" }],
+  reflex: [
+    { sub: /If this card is discarded from your hand, draw \d+ cards/, reason: "被弃掉时抽 2(3) 张写在引擎的 on_card_discarded 里(读 upgraded)" },
+    { sub: /If this card is discarded/, reason: "同上,条件也由引擎承载" },
+  ],
   bane: [{ sub: /If the enemy has Poison/, reason: "条件由 Effect::DamageTwiceIfTargetPoisoned 的结算承载" }],
   sneaky_strike: [{ sub: /If you have discarded a card this turn/, reason: "条件由 Effect::DamageAndEnergyIfDiscarded 的结算承载" }],
   heel_hook: [{ sub: /If the enemy has Weak/, reason: "条件由 Effect::DamageAndEnergyIfWeak 的结算承载" }],
