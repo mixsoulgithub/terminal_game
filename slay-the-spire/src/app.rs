@@ -101,8 +101,11 @@ pub struct App {
     pub play_banners: Vec<(u8, String, u8)>,
     /// 战斗开始时的快照(:restart fight)
     pub fight_snap: Option<crate::core::combat::Combat>,
+    /// 同一时刻的药水:战斗里喝掉的,回退时要还回来
+    fight_potions: Option<Vec<Option<&'static crate::core::potions::PotionDef>>>,
     /// 本回合开始时的快照(:restart turn)
     turn_snap: Option<crate::core::combat::Combat>,
+    turn_potions: Option<Vec<Option<&'static crate::core::potions::PotionDef>>>,
     /// 快照对应的 战斗序号 / 回合数
     snap_fight_seq: u64,
     snap_turn: u32,
@@ -156,7 +159,9 @@ impl App {
             battle_shakes: Vec::new(),
             play_banners: Vec::new(),
             fight_snap: None,
+            fight_potions: None,
             turn_snap: None,
+            turn_potions: None,
             snap_fight_seq: 0,
             snap_turn: 0,
             shake: 0,
@@ -2038,6 +2043,9 @@ impl App {
                     "" | "turn" => match (self.turn_snap.clone(), self.run.combat_mut()) {
                         (Some(snap), Some(c)) => {
                             *c = snap;
+                            if let Some(p) = self.turn_potions.clone() {
+                                self.run.player.potions = p;
+                            }
                             Ok("restarted the turn".to_string())
                         }
                         _ => Err("no battle to restart".to_string()),
@@ -2045,6 +2053,9 @@ impl App {
                     "fight" => match (self.fight_snap.clone(), self.run.combat_mut()) {
                         (Some(snap), Some(c)) => {
                             *c = snap;
+                            if let Some(p) = self.fight_potions.clone() {
+                                self.run.player.potions = p;
+                            }
                             Ok("restarted the fight".to_string())
                         }
                         _ => Err("no battle to restart".to_string()),
@@ -2150,17 +2161,23 @@ impl App {
         let Some(c) = self.run.combat() else {
             self.fight_snap = None;
             self.turn_snap = None;
+            self.fight_potions = None;
+            self.turn_potions = None;
             return;
         };
         let (turn, snap) = (c.turn, c.clone());
+        let potions = self.run.player.potions.clone();
         if self.fight_snap.is_none() || self.snap_fight_seq != seq {
             self.snap_fight_seq = seq;
             self.fight_snap = Some(snap.clone());
             self.turn_snap = Some(snap);
+            self.fight_potions = Some(potions.clone());
+            self.turn_potions = Some(potions);
             self.snap_turn = turn;
         } else if self.snap_turn != turn {
             self.snap_turn = turn;
             self.turn_snap = Some(snap);
+            self.turn_potions = Some(potions);
         }
     }
 
