@@ -3554,6 +3554,1954 @@ pub static CARDS: &[CardDef] = &[
             }]
         ),
     },
+    // ---- 绿职(静默者 The Silent) ----
+    // 飞刀(Shiv):绿职专属衍生物,zero 费、耗竭.不在任何随机牌池里(语料 pool=special).
+    CardDef {
+        id: "shiv",
+        name: "Shiv",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Special,
+        target: Target::Enemy,
+        text: "Deal 4 damage. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage { amount: 4, times: 1 }],
+        upgrade: up!(None, "Deal 6 damage. Exhaust.", [Effect::Damage {
+            amount: 6,
+            times: 1
+        }]),
+    },
+    CardDef {
+        id: "neutralize",
+        name: "Neutralize",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Basic,
+        target: Target::Enemy,
+        text: "Deal 3 damage. Apply 1 Weak.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage { amount: 3, times: 1 },
+            Effect::AddTargetStatus {
+                status: Status::Weak,
+                n: 1,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 4 damage. Apply 2 Weak.",
+            [
+                Effect::Damage { amount: 4, times: 1 },
+                Effect::AddTargetStatus {
+                    status: Status::Weak,
+                    n: 2
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "survivor",
+        name: "Survivor",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Basic,
+        target: Target::None,
+        text: "Gain 8 Block. Discard 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Block { amount: 8 },
+            Effect::DiscardChoose { n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 11 Block. Discard 1 card.",
+            [Effect::Block { amount: 11 }, Effect::DiscardChoose { n: 1 }]
+        ),
+    },
+    CardDef {
+        id: "acrobatics",
+        name: "Acrobatics",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Draw 3 cards. Discard 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Draw { n: 3 }, Effect::DiscardChoose { n: 1 }],
+        upgrade: up!(
+            None,
+            "Draw 4 cards. Discard 1 card.",
+            [Effect::Draw { n: 4 }, Effect::DiscardChoose { n: 1 }]
+        ),
+    },
+    CardDef {
+        id: "backflip",
+        name: "Backflip",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Gain 5 Block. Draw 2 cards.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Block { amount: 5 }, Effect::Draw { n: 2 }],
+        upgrade: up!(
+            None,
+            "Gain 8 Block. Draw 2 cards.",
+            [Effect::Block { amount: 8 }, Effect::Draw { n: 2 }]
+        ),
+    },
+    CardDef {
+        id: "bane",
+        name: "Bane",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 7 damage. If the enemy has Poison, deal 7 damage again.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageTwiceIfTargetPoisoned { amount: 7 }],
+        upgrade: up!(None, "Deal 10 damage. If the enemy has Poison, deal 10 damage again.", [Effect::DamageTwiceIfTargetPoisoned {
+            amount: 10
+        }]),
+    },
+    CardDef {
+        id: "blade_dance",
+        name: "Blade Dance",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Add 3 Shivs into your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddCardToHand { id: "shiv", n: 3 }],
+        upgrade: up!(None, "Add 4 Shivs into your hand.", [Effect::AddCardToHand {
+            id: "shiv",
+            n: 4
+        }]),
+    },
+    CardDef {
+        id: "cloak_and_dagger",
+        name: "Cloak and Dagger",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Gain 6 Block. Add 1 Shiv into your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Block { amount: 6 },
+            Effect::AddCardToHand { id: "shiv", n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 6 Block. Add 2 Shivs into your hand.",
+            [
+                Effect::Block { amount: 6 },
+                Effect::AddCardToHand { id: "shiv", n: 2 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "dagger_spray",
+        name: "Dagger Spray",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::All,
+        text: "Deal 4 damage to ALL enemies twice.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageAll {
+            amount: 4,
+            times: 2,
+        }],
+        upgrade: up!(None, "Deal 6 damage to ALL enemies twice.", [Effect::DamageAll {
+            amount: 6,
+            times: 2
+        }]),
+    },
+    CardDef {
+        id: "dagger_throw",
+        name: "Dagger Throw",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 9 damage. Draw 1 card. Discard 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage { amount: 9, times: 1 },
+            Effect::Draw { n: 1 },
+            Effect::DiscardChoose { n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 12 damage. Draw 1 card. Discard 1 card.",
+            [
+                Effect::Damage {
+                    amount: 12,
+                    times: 1
+                },
+                Effect::Draw { n: 1 },
+                Effect::DiscardChoose { n: 1 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "deadly_poison",
+        name: "Deadly Poison",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Apply 5 Poison.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddTargetStatus {
+            status: Status::Poison,
+            n: 5,
+        }],
+        upgrade: up!(None, "Apply 7 Poison.", [Effect::AddTargetStatus {
+            status: Status::Poison,
+            n: 7
+        }]),
+    },
+    CardDef {
+        id: "deflect",
+        name: "Deflect",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Gain 4 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Block { amount: 4 }],
+        upgrade: up!(None, "Gain 7 Block.", [Effect::Block { amount: 7 }]),
+    },
+    CardDef {
+        id: "dodge_and_roll",
+        name: "Dodge and Roll",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Gain 4 Block. Next turn, gain 4 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Block { amount: 4 },
+            Effect::NextTurnBlock { n: 4 },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 6 Block. Next turn, gain 6 Block.",
+            [Effect::Block { amount: 6 }, Effect::NextTurnBlock { n: 6 }]
+        ),
+    },
+    CardDef {
+        id: "flying_knee",
+        name: "Flying Knee",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 8 damage. Next turn, gain (1).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage { amount: 8, times: 1 },
+            Effect::NextTurnEnergy { n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 11 damage. Next turn, gain (1).",
+            [
+                Effect::Damage {
+                    amount: 11,
+                    times: 1
+                },
+                Effect::NextTurnEnergy { n: 1 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "outmaneuver",
+        name: "Outmaneuver",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Next turn, gain (2).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::NextTurnEnergy { n: 2 }],
+        upgrade: up!(None, "Next turn, gain (3).", [Effect::NextTurnEnergy { n: 3 }]),
+    },
+    CardDef {
+        id: "piercing_wail",
+        name: "Piercing Wail",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::All,
+        text: "ALL enemies lose 6 Strength this turn. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AllEnemiesLoseStrengthThisTurn { n: 6 }],
+        upgrade: up!(None, "ALL enemies lose 8 Strength this turn. Exhaust.", [Effect::AllEnemiesLoseStrengthThisTurn {
+            n: 8
+        }]),
+    },
+    CardDef {
+        id: "poisoned_stab",
+        name: "Poisoned Stab",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 6 damage. Apply 3 Poison.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage { amount: 6, times: 1 },
+            Effect::AddTargetStatus {
+                status: Status::Poison,
+                n: 3,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 8 damage. Apply 4 Poison.",
+            [
+                Effect::Damage { amount: 8, times: 1 },
+                Effect::AddTargetStatus {
+                    status: Status::Poison,
+                    n: 4
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "prepared",
+        name: "Prepared",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Common,
+        target: Target::None,
+        text: "Draw 1 card. Discard 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Draw { n: 1 }, Effect::DiscardChoose { n: 1 }],
+        upgrade: up!(
+            None,
+            "Draw 2 cards. Discard 2 cards.",
+            [Effect::Draw { n: 2 }, Effect::DiscardChoose { n: 2 }]
+        ),
+    },
+    CardDef {
+        id: "quick_slash",
+        name: "Quick Slash",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 8 damage. Draw 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage { amount: 8, times: 1 }, Effect::Draw { n: 1 }],
+        upgrade: up!(None, "Deal 12 damage. Draw 1 card.", [Effect::Damage {
+            amount: 12,
+            times: 1
+        }, Effect::Draw { n: 1 }]),
+    },
+    CardDef {
+        id: "slice",
+        name: "Slice",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 6 damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage { amount: 6, times: 1 }],
+        upgrade: up!(None, "Deal 9 damage.", [Effect::Damage { amount: 9, times: 1 }]),
+    },
+    CardDef {
+        id: "sneaky_strike",
+        name: "Sneaky Strike",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 12 damage. If you have discarded a card this turn, gain (2).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageAndEnergyIfDiscarded {
+            amount: 12,
+            energy: 2,
+        }],
+        upgrade: up!(None, "Deal 16 damage. If you have discarded a card this turn, gain (2).", [Effect::DamageAndEnergyIfDiscarded {
+            amount: 16,
+            energy: 2
+        }]),
+    },
+    CardDef {
+        id: "sucker_punch",
+        name: "Sucker Punch",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Common,
+        target: Target::Enemy,
+        text: "Deal 7 damage. Apply 1 Weak.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage { amount: 7, times: 1 },
+            Effect::AddTargetStatus {
+                status: Status::Weak,
+                n: 1,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 9 damage. Apply 2 Weak.",
+            [
+                Effect::Damage { amount: 9, times: 1 },
+                Effect::AddTargetStatus {
+                    status: Status::Weak,
+                    n: 2
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "accuracy",
+        name: "Accuracy",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Shivs deal 4 additional damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Accuracy,
+            n: 4,
+        }],
+        upgrade: up!(None, "Shivs deal 6 additional damage.", [Effect::AddSelfStatus {
+            status: Status::Accuracy,
+            n: 6
+        }]),
+    },
+    CardDef {
+        id: "all_out_attack",
+        name: "All-Out Attack",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::All,
+        text: "Deal 10 damage to ALL enemies. Discard 1 card at random.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::DamageAll {
+                amount: 10,
+                times: 1,
+            },
+            Effect::DiscardRandom { n: 1 },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 14 damage to ALL enemies. Discard 1 card at random.",
+            [
+                Effect::DamageAll {
+                    amount: 14,
+                    times: 1
+                },
+                Effect::DiscardRandom { n: 1 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "backstab",
+        name: "Backstab",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Innate. Deal 11 damage. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: true,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage {
+            amount: 11,
+            times: 1,
+        }],
+        upgrade: up!(None, "Innate. Deal 15 damage. Exhaust.", [Effect::Damage {
+            amount: 15,
+            times: 1
+        }]),
+    },
+    CardDef {
+        id: "blur",
+        name: "Blur",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Gain 5 Block. Block is not removed at the start of your next turn.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Block { amount: 5 },
+            Effect::AddSelfStatus {
+                status: Status::Blur,
+                n: 1,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Gain 8 Block. Block is not removed at the start of your next turn.",
+            [
+                Effect::Block { amount: 8 },
+                Effect::AddSelfStatus {
+                    status: Status::Blur,
+                    n: 1
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "bouncing_flask",
+        name: "Bouncing Flask",
+        cost: Cost::Fixed(2),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::Random,
+        text: "Apply 3 Poison to a random enemy 3 times.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::PoisonRandomEnemy { n: 3, times: 3 }],
+        upgrade: up!(None, "Apply 3 Poison to a random enemy 4 times.", [Effect::PoisonRandomEnemy {
+            n: 3,
+            times: 4
+        }]),
+    },
+    CardDef {
+        id: "calculated_gamble",
+        name: "Calculated Gamble",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Discard your hand, then draw that many cards. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DiscardHandThenDraw],
+        upgrade: up_no_exhaust!(None, "Discard your hand, then draw that many cards.", [Effect::DiscardHandThenDraw]),
+    },
+    CardDef {
+        id: "caltrops",
+        name: "Caltrops",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Whenever you are attacked, deal 3 damage back.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Thorns,
+            n: 3,
+        }],
+        upgrade: up!(None, "Whenever you are attacked, deal 5 damage back.", [Effect::AddSelfStatus {
+            status: Status::Thorns,
+            n: 5
+        }]),
+    },
+    CardDef {
+        id: "catalyst",
+        name: "Catalyst",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Double the enemy's Poison. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::MultiplyTargetPoison { mult: 2 }],
+        upgrade: up!(None, "Triple the enemy's Poison. Exhaust.", [Effect::MultiplyTargetPoison {
+            mult: 3
+        }]),
+    },
+    CardDef {
+        id: "choke",
+        name: "Choke",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 12 damage. Whenever you play a card this turn, the enemy loses 3 HP.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage {
+                amount: 12,
+                times: 1,
+            },
+            Effect::AddTargetStatus {
+                status: Status::Choke,
+                n: 3,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 12 damage. Whenever you play a card this turn, the enemy loses 5 HP.",
+            [
+                Effect::Damage {
+                    amount: 12,
+                    times: 1
+                },
+                Effect::AddTargetStatus {
+                    status: Status::Choke,
+                    n: 5
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "concentrate",
+        name: "Concentrate",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Discard 3 cards. Gain (2).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DiscardChoose { n: 3 }, Effect::GainEnergy { n: 2 }],
+        upgrade: up!(
+            None,
+            "Discard 2 cards. Gain (2).",
+            [Effect::DiscardChoose { n: 2 }, Effect::GainEnergy { n: 2 }]
+        ),
+    },
+    CardDef {
+        id: "crippling_cloud",
+        name: "Crippling Cloud",
+        cost: Cost::Fixed(2),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::All,
+        text: "Apply 4 Poison and 2 Weak to ALL enemies. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::AddAllEnemiesStatus {
+                status: Status::Poison,
+                n: 4,
+            },
+            Effect::AddAllEnemiesStatus {
+                status: Status::Weak,
+                n: 2,
+            },
+        ],
+        upgrade: up!(
+            None,
+            "Apply 7 Poison and 2 Weak to ALL enemies. Exhaust.",
+            [
+                Effect::AddAllEnemiesStatus {
+                    status: Status::Poison,
+                    n: 7
+                },
+                Effect::AddAllEnemiesStatus {
+                    status: Status::Weak,
+                    n: 2
+                }
+            ]
+        ),
+    },
+    CardDef {
+        id: "dash",
+        name: "Dash",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Gain 10 Block. Deal 10 damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Block { amount: 10 }, Effect::Damage {
+            amount: 10,
+            times: 1,
+        }],
+        upgrade: up!(None, "Gain 13 Block. Deal 13 damage.", [Effect::Block {
+            amount: 13
+        }, Effect::Damage {
+            amount: 13,
+            times: 1
+        }]),
+    },
+    CardDef {
+        id: "distraction",
+        name: "Distraction",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Add a random Skill into your hand. It costs 0 this turn. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddRandomSkillToHand],
+        upgrade: up!(Some(Cost::Fixed(0)), "Add a random Skill into your hand. It costs 0 this turn. Exhaust.", [Effect::AddRandomSkillToHand]),
+    },
+    CardDef {
+        id: "endless_agony",
+        name: "Endless Agony",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Whenever you draw this card, add a copy of it into your hand. Deal 4 damage. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[Effect::CopySelfToHand],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage { amount: 4, times: 1 }],
+        upgrade: up!(None, "Whenever you draw this card, add a copy of it into your hand. Deal 6 damage. Exhaust.", [Effect::Damage {
+            amount: 6,
+            times: 1
+        }]),
+    },
+    CardDef {
+        id: "escape_plan",
+        name: "Escape Plan",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Draw 1 card. If you draw a Skill, gain 3 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DrawThenBlockIfSkill { block: 3 }],
+        upgrade: up!(None, "Draw 1 card. If you draw a Skill, gain 5 Block.", [Effect::DrawThenBlockIfSkill {
+            block: 5
+        }]),
+    },
+    CardDef {
+        id: "eviscerate",
+        name: "Eviscerate",
+        cost: Cost::Fixed(3),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Costs 1 less for each card discarded this turn. Deal 7 damage 3 times.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage { amount: 7, times: 3 }],
+        upgrade: up!(
+            None,
+            "Costs 1 less for each card discarded this turn. Deal 9 damage 3 times.",
+            [Effect::Damage {
+                amount: 9,
+                times: 3
+            }]
+        ),
+    },
+    CardDef {
+        id: "expertise",
+        name: "Expertise",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Draw cards until you have 6 in your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DrawUntil { n: 6 }],
+        upgrade: up!(None, "Draw cards until you have 7 in your hand.", [Effect::DrawUntil {
+            n: 7
+        }]),
+    },
+    CardDef {
+        id: "finisher",
+        name: "Finisher",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 6 damage for each Attack played this turn.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamagePerAttackThisTurn { per: 6 }],
+        upgrade: up!(None, "Deal 8 damage for each Attack played this turn.", [Effect::DamagePerAttackThisTurn {
+            per: 8
+        }]),
+    },
+    CardDef {
+        id: "flechettes",
+        name: "Flechettes",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 4 damage for each Skill in your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamagePerSkillInHand { per: 4 }],
+        upgrade: up!(None, "Deal 6 damage for each Skill in your hand.", [Effect::DamagePerSkillInHand {
+            per: 6
+        }]),
+    },
+    CardDef {
+        id: "footwork",
+        name: "Footwork",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Gain 2 Dexterity.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Dexterity,
+            n: 2,
+        }],
+        upgrade: up!(None, "Gain 3 Dexterity.", [Effect::AddSelfStatus {
+            status: Status::Dexterity,
+            n: 3
+        }]),
+    },
+    CardDef {
+        id: "heel_hook",
+        name: "Heel Hook",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 5 damage. If the enemy has Weak, gain (1) and draw 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageAndEnergyIfWeak {
+            amount: 5,
+            energy: 1,
+            draw: 1,
+        }],
+        upgrade: up!(None, "Deal 8 damage. If the enemy has Weak, gain (1) and draw 1 card.", [Effect::DamageAndEnergyIfWeak {
+            amount: 8,
+            energy: 1,
+            draw: 1
+        }]),
+    },
+    CardDef {
+        id: "infinite_blades",
+        name: "Infinite Blades",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "At the start of your turn, add a Shiv into your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::InfiniteBlades,
+            n: 1,
+        }],
+        upgrade: up_innate!(None, "Innate. At the start of your turn, add a Shiv into your hand.", [Effect::AddSelfStatus {
+            status: Status::InfiniteBlades,
+            n: 1
+        }]),
+    },
+    CardDef {
+        id: "leg_sweep",
+        name: "Leg Sweep",
+        cost: Cost::Fixed(2),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Apply 2 Weak. Gain 11 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::AddTargetStatus {
+                status: Status::Weak,
+                n: 2,
+            },
+            Effect::Block { amount: 11 },
+        ],
+        upgrade: up!(
+            None,
+            "Apply 3 Weak. Gain 14 Block.",
+            [
+                Effect::AddTargetStatus {
+                    status: Status::Weak,
+                    n: 3
+                },
+                Effect::Block { amount: 14 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "masterful_stab",
+        name: "Masterful Stab",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Costs 1 additional for each time you lose HP this combat. Deal 12 damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage {
+            amount: 12,
+            times: 1,
+        }],
+        upgrade: up!(
+            None,
+            "Costs 1 additional for each time you lose HP this combat. Deal 16 damage.",
+            [Effect::Damage {
+                amount: 16,
+                times: 1
+            }]
+        ),
+    },
+    CardDef {
+        id: "noxious_fumes",
+        name: "Noxious Fumes",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "At the start of your turn, apply 2 Poison to ALL enemies.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::NoxiousFumes,
+            n: 2,
+        }],
+        upgrade: up!(None, "At the start of your turn, apply 3 Poison to ALL enemies.", [Effect::AddSelfStatus {
+            status: Status::NoxiousFumes,
+            n: 3
+        }]),
+    },
+    CardDef {
+        id: "predator",
+        name: "Predator",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 15 damage. Next turn, draw 2 additional cards.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage {
+                amount: 15,
+                times: 1,
+            },
+            Effect::NextTurnDraw { n: 2 },
+        ],
+        upgrade: up!(
+            None,
+            "Deal 20 damage. Next turn, draw 2 additional cards.",
+            [
+                Effect::Damage {
+                    amount: 20,
+                    times: 1
+                },
+                Effect::NextTurnDraw { n: 2 }
+            ]
+        ),
+    },
+    CardDef {
+        id: "reflex",
+        name: "Reflex",
+        cost: Cost::Unplayable,
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Unplayable. If this card is discarded from your hand, draw 2 cards.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[],
+        upgrade: up!(None, "Unplayable. If this card is discarded from your hand, draw 3 cards.", []),
+    },
+    CardDef {
+        id: "riddle_with_holes",
+        name: "Riddle with Holes",
+        cost: Cost::Fixed(2),
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 3 damage 5 times.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::Damage { amount: 3, times: 5 }],
+        upgrade: up!(None, "Deal 4 damage 5 times.", [Effect::Damage {
+            amount: 4,
+            times: 5
+        }]),
+    },
+    CardDef {
+        id: "setup",
+        name: "Setup",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Put a card from your hand on top of your draw pile. It costs 0 until played.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::SetupTopFromHand],
+        upgrade: up!(Some(Cost::Fixed(0)), "Put a card from your hand on top of your draw pile. It costs 0 until played.", [Effect::SetupTopFromHand]),
+    },
+    CardDef {
+        id: "skewer",
+        name: "Skewer",
+        cost: Cost::X,
+        kind: CardType::Attack,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Deal 7 damage X times.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageXHits { per: 7 }],
+        upgrade: up!(None, "Deal 10 damage X times.", [Effect::DamageXHits { per: 10 }]),
+    },
+    CardDef {
+        id: "tactician",
+        name: "Tactician",
+        cost: Cost::Unplayable,
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "Unplayable. If this card is discarded from your hand, gain (1).",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[],
+        upgrade: up!(None, "Unplayable. If this card is discarded from your hand, gain (2).", []),
+    },
+    CardDef {
+        id: "terror",
+        name: "Terror",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Uncommon,
+        target: Target::Enemy,
+        text: "Apply 99 Vulnerable. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddTargetStatus {
+            status: Status::Vulnerable,
+            n: 99,
+        }],
+        upgrade: up!(Some(Cost::Fixed(0)), "Apply 99 Vulnerable. Exhaust.", [Effect::AddTargetStatus {
+            status: Status::Vulnerable,
+            n: 99
+        }]),
+    },
+    CardDef {
+        id: "well_laid_plans",
+        name: "Well-Laid Plans",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Uncommon,
+        target: Target::None,
+        text: "At the end of your turn, Retain up to 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::WellLaidPlans,
+            n: 1,
+        }],
+        upgrade: up!(None, "At the end of your turn, Retain up to 2 cards.", [Effect::AddSelfStatus {
+            status: Status::WellLaidPlans,
+            n: 2
+        }]),
+    },
+    CardDef {
+        id: "adrenaline",
+        name: "Adrenaline",
+        cost: Cost::Fixed(0),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Gain (1). Draw 2 cards. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::GainEnergy { n: 1 }, Effect::Draw { n: 2 }],
+        upgrade: up!(None, "Gain (2). Draw 2 cards. Exhaust.", [Effect::GainEnergy {
+            n: 2
+        }, Effect::Draw { n: 2 }]),
+    },
+    CardDef {
+        id: "after_image",
+        name: "After Image",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Whenever you play a card, gain 1 Block.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::AfterImage,
+            n: 1,
+        }],
+        upgrade: up_innate!(None, "Innate. Whenever you play a card, gain 1 Block.", [Effect::AddSelfStatus {
+            status: Status::AfterImage,
+            n: 1
+        }]),
+    },
+    CardDef {
+        id: "alchemize",
+        name: "Alchemize",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Obtain a random potion. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::GainRandomPotion],
+        upgrade: up!(Some(Cost::Fixed(0)), "Obtain a random potion. Exhaust.", [Effect::GainRandomPotion]),
+    },
+    CardDef {
+        id: "a_thousand_cuts",
+        name: "A Thousand Cuts",
+        cost: Cost::Fixed(2),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Whenever you play a card, deal 1 damage to ALL enemies.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::ThousandCuts,
+            n: 1,
+        }],
+        upgrade: up!(None, "Whenever you play a card, deal 2 damage to ALL enemies.", [Effect::AddSelfStatus {
+            status: Status::ThousandCuts,
+            n: 2
+        }]),
+    },
+    CardDef {
+        id: "bullet_time",
+        name: "Bullet Time",
+        cost: Cost::Fixed(3),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "You cannot draw additional cards this turn. Reduce the cost of all cards in your hand to 0 this turn.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::AddSelfStatus {
+                status: Status::NoDraw,
+                n: 1,
+            },
+            Effect::SetHandCostZeroThisTurn,
+        ],
+        upgrade: up!(Some(Cost::Fixed(2)), "You cannot draw additional cards this turn. Reduce the cost of all cards in your hand to 0 this turn.", [
+            Effect::AddSelfStatus {
+                status: Status::NoDraw,
+                n: 1
+            },
+            Effect::SetHandCostZeroThisTurn
+        ]),
+    },
+    CardDef {
+        id: "burst",
+        name: "Burst",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "This turn, your next Skill is played twice.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Burst,
+            n: 1,
+        }],
+        upgrade: up!(None, "This turn, your next 2 Skills are played twice.", [Effect::AddSelfStatus {
+            status: Status::Burst,
+            n: 2
+        }]),
+    },
+    CardDef {
+        id: "corpse_explosion",
+        name: "Corpse Explosion",
+        cost: Cost::Fixed(2),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::Enemy,
+        text: "Apply 6 Poison. When the enemy dies, deal damage equal to its max HP to ALL enemies.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::CorpseExplosion { poison: 6 }],
+        upgrade: up!(None, "Apply 9 Poison. When the enemy dies, deal damage equal to its max HP to ALL enemies.", [Effect::CorpseExplosion {
+            poison: 9
+        }]),
+    },
+    CardDef {
+        id: "die_die_die",
+        name: "Die Die Die",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Rare,
+        target: Target::All,
+        text: "Deal 13 damage to ALL enemies. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageAll {
+            amount: 13,
+            times: 1,
+        }],
+        upgrade: up!(None, "Deal 17 damage to ALL enemies. Exhaust.", [Effect::DamageAll {
+            amount: 17,
+            times: 1
+        }]),
+    },
+    CardDef {
+        id: "doppelganger",
+        name: "Doppelganger",
+        cost: Cost::X,
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Next turn, draw X cards and gain X (1). Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::NextTurnDrawX { bonus: 0 }, Effect::NextTurnEnergyX {
+            bonus: 0,
+        }],
+        upgrade: up!(None, "Next turn, draw X+1 cards and gain X+1 (1). Exhaust.", [
+            Effect::NextTurnDrawX { bonus: 1 },
+            Effect::NextTurnEnergyX { bonus: 1 }
+        ]),
+    },
+    CardDef {
+        id: "envenom",
+        name: "Envenom",
+        cost: Cost::Fixed(2),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Whenever an Attack deals unblocked damage, apply 1 Poison.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::Envenom,
+            n: 1,
+        }],
+        upgrade: up!(Some(Cost::Fixed(1)), "Whenever an Attack deals unblocked damage, apply 1 Poison.", [Effect::AddSelfStatus {
+            status: Status::Envenom,
+            n: 1
+        }]),
+    },
+    CardDef {
+        id: "glass_knife",
+        name: "Glass Knife",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Rare,
+        target: Target::Enemy,
+        text: "Deal {d} damage twice. Decrease the damage of this card by 2 this combat.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageThenPenaltySelf {
+            amount: 8,
+            times: 2,
+            penalty: 2,
+        }],
+        upgrade: up!(None, "Deal {d} damage twice. Decrease the damage of this card by 2 this combat.", [Effect::DamageThenPenaltySelf {
+            amount: 12,
+            times: 2,
+            penalty: 2
+        }]),
+    },
+    CardDef {
+        id: "grand_finale",
+        name: "Grand Finale",
+        cost: Cost::Fixed(0),
+        kind: CardType::Attack,
+        rarity: Rarity::Rare,
+        target: Target::All,
+        text: "Can only be played if there are no cards in your draw pile. Deal 50 damage to ALL enemies.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::DamageAll {
+            amount: 50,
+            times: 1,
+        }],
+        upgrade: up!(None, "Can only be played if there are no cards in your draw pile. Deal 60 damage to ALL enemies.", [Effect::DamageAll {
+            amount: 60,
+            times: 1
+        }]),
+    },
+    CardDef {
+        id: "malaise",
+        name: "Malaise",
+        cost: Cost::X,
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::Enemy,
+        text: "Enemy loses X Strength. Apply X Weak. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::MalaiseX { bonus: 0 }],
+        upgrade: up!(None, "Enemy loses X+1 Strength. Apply X+1 Weak. Exhaust.", [Effect::MalaiseX {
+            bonus: 1
+        }]),
+    },
+    CardDef {
+        id: "nightmare",
+        name: "Nightmare",
+        cost: Cost::Fixed(3),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Choose a card. Next turn, add 3 copies of that card into your hand. Exhaust.",
+        exhaust: true,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::NightmareChoose],
+        upgrade: up!(Some(Cost::Fixed(2)), "Choose a card. Next turn, add 3 copies of that card into your hand. Exhaust.", [Effect::NightmareChoose]),
+    },
+    CardDef {
+        id: "phantasmal_killer",
+        name: "Phantasmal Killer",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Next turn, your Attacks deal double damage.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::PhantasmalKiller,
+            n: 1,
+        }],
+        upgrade: up!(Some(Cost::Fixed(0)), "Next turn, your Attacks deal double damage.", [Effect::AddSelfStatus {
+            status: Status::PhantasmalKiller,
+            n: 1
+        }]),
+    },
+    CardDef {
+        id: "storm_of_steel",
+        name: "Storm of Steel",
+        cost: Cost::Fixed(1),
+        kind: CardType::Skill,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Discard your hand. Add 1 Shiv into your hand for each card discarded.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::StormOfSteel { upgraded: false }],
+        upgrade: up!(None, "Discard your hand. Add 1 Shiv+ into your hand for each card discarded.", [Effect::StormOfSteel {
+            upgraded: true
+        }]),
+    },
+    CardDef {
+        id: "tools_of_the_trade",
+        name: "Tools of the Trade",
+        cost: Cost::Fixed(1),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "At the start of your turn, draw 1 card and discard 1 card.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[Effect::AddSelfStatus {
+            status: Status::ToolsOfTheTrade,
+            n: 1,
+        }],
+        upgrade: up!(Some(Cost::Fixed(0)), "At the start of your turn, draw 1 card and discard 1 card.", [Effect::AddSelfStatus {
+            status: Status::ToolsOfTheTrade,
+            n: 1
+        }]),
+    },
+    CardDef {
+        id: "unload",
+        name: "Unload",
+        cost: Cost::Fixed(1),
+        kind: CardType::Attack,
+        rarity: Rarity::Rare,
+        target: Target::Enemy,
+        text: "Deal 14 damage. Discard all non-Attack cards in your hand.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::Damage {
+                amount: 14,
+                times: 1,
+            },
+            Effect::DiscardNonAttacks,
+        ],
+        upgrade: up!(None, "Deal 18 damage. Discard all non-Attack cards in your hand.", [
+            Effect::Damage {
+                amount: 18,
+                times: 1
+            },
+            Effect::DiscardNonAttacks
+        ]),
+    },
+    CardDef {
+        id: "wraith_form",
+        name: "Wraith Form",
+        cost: Cost::Fixed(3),
+        kind: CardType::Power,
+        rarity: Rarity::Rare,
+        target: Target::None,
+        text: "Gain 2 Intangible. At the end of your turn, lose 1 Dexterity.",
+        exhaust: false,
+        ethereal: false,
+        innate: false,
+        retain: false,
+        multi_upgrade: false,
+        unremovable: false,
+        on_draw: &[],
+        on_end_turn: &[],
+        in_hand: &[],
+        effects: &[
+            Effect::AddSelfStatus {
+                status: Status::Intangible,
+                n: 2,
+            },
+            Effect::AddSelfStatus {
+                status: Status::WraithForm,
+                n: 1,
+            },
+        ],
+        upgrade: up!(None, "Gain 3 Intangible. At the end of your turn, lose 1 Dexterity.", [
+            Effect::AddSelfStatus {
+                status: Status::Intangible,
+                n: 3
+            },
+            Effect::AddSelfStatus {
+                status: Status::WraithForm,
+                n: 1
+            }
+        ]),
+    },
 ];
 
 /// 语料里这条卡牌的记录(展示数据以它为准)
@@ -3622,22 +5570,31 @@ fn bundle_order(pool: &mut [&'static CardDef]) {
     });
 }
 
+/// 本作已实装的职业颜色:棱彩碎片会把这些颜色的牌全混进奖励池
+/// (原作是五种颜色全混;蓝/紫还没实装,所以只有红绿两色)
+pub const IMPLEMENTED_CLASS_COLORS: &[&str] = &["red", "green"];
+
+/// 这张牌属不属于某个角色的职业牌池:语料里归 class,且颜色与本局角色一致
+fn in_class_pool(def: &CardDef, character: &str) -> bool {
+    pool_of(def) == "class" && color_key(def) == crate::core::roster::color_of(character)
+}
+
 /// 本职业里某一类型的牌(化茧/变形洗进抽牌堆的那些)
-pub fn class_pool_of_kind(kind: CardType) -> Vec<&'static CardDef> {
+pub fn class_pool_of_kind(kind: CardType, character: &str) -> Vec<&'static CardDef> {
     let mut out: Vec<&'static CardDef> = CARDS
         .iter()
-        .filter(|c| c.kind == kind && pool_of(c) == "class")
+        .filter(|c| c.kind == kind && in_class_pool(c, character))
         .collect();
     bundle_order(&mut out);
     out
 }
 
 /// 发现用的本职业牌池:攻击/技能/能力,不含基础牌
-pub fn class_card_pool() -> Vec<&'static CardDef> {
+pub fn class_card_pool(character: &str) -> Vec<&'static CardDef> {
     let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| {
-            pool_of(c) == "class"
+            in_class_pool(c, character)
                 && c.rarity != Rarity::Basic
                 && matches!(c.kind, CardType::Attack | CardType::Skill | CardType::Power)
         })
@@ -3662,28 +5619,36 @@ pub fn card(id: &str) -> crate::core::card::CardInstance {
 
 /// 按稀有度列出可奖励的卡(排除基础牌与状态牌)
 /// 无色牌不进普通奖励池:它们在原作里另有来路(商店/棱彩/事件)
-pub fn reward_pool(rarity: Rarity) -> Vec<&'static CardDef> {
+pub fn reward_pool(rarity: Rarity, character: &str) -> Vec<&'static CardDef> {
     let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| {
             c.rarity == rarity
                 && !matches!(c.kind, CardType::Status | CardType::Curse)
-                && pool_of(c) == "class"
+                && in_class_pool(c, character)
         })
         .collect();
     bundle_order(&mut out);
     out
 }
 
-/// 棱彩碎片用的奖励池:本职业牌 + 无色牌(语料里其余职业的牌本作没实装,
-/// 所以"其它颜色"在这里只能体现为无色牌)
-pub fn prismatic_reward_pool(rarity: Rarity) -> Vec<&'static CardDef> {
+/// 棱彩碎片用的奖励池:本职业牌 + 已实装的其他颜色职业牌 + 无色牌
+/// (原作是"无色牌与其他颜色的牌")
+pub fn prismatic_reward_pool(rarity: Rarity, character: &str) -> Vec<&'static CardDef> {
+    let mine = crate::core::roster::color_of(character);
     let mut out: Vec<&'static CardDef> = CARDS
         .iter()
         .filter(|c| {
             c.rarity == rarity
                 && !matches!(c.kind, CardType::Status | CardType::Curse)
-                && matches!(pool_of(c), "class" | "colorless")
+                && match pool_of(c) {
+                    "colorless" => true,
+                    "class" => {
+                        let col = color_key(c);
+                        col == mine || IMPLEMENTED_CLASS_COLORS.contains(&col)
+                    }
+                    _ => false,
+                }
         })
         .collect();
     bundle_order(&mut out);
@@ -3727,10 +5692,10 @@ mod tests {
     #[test]
     fn colorless_pool_is_usable_for_random_effects() {
         assert!(colorless_pool().len() >= 30);
-        assert!(class_pool_of_kind(CardType::Skill).len() >= 5, "本职业技能太少");
-        assert!(class_pool_of_kind(CardType::Attack).len() >= 5, "本职业攻击太少");
-        assert!(!class_card_pool().is_empty(), "发现没有牌可亮");
-        for c in class_card_pool() {
+        assert!(class_pool_of_kind(CardType::Skill, "ironclad").len() >= 5, "本职业技能太少");
+        assert!(class_pool_of_kind(CardType::Attack, "ironclad").len() >= 5, "本职业攻击太少");
+        assert!(!class_card_pool("ironclad").is_empty(), "发现没有牌可亮");
+        for c in class_card_pool("ironclad") {
             assert!(c.rarity != Rarity::Basic, "{} 是基础牌", c.id);
         }
     }
@@ -3811,18 +5776,21 @@ mod tests {
     #[test]
     fn every_reward_rarity_has_enough_cards() {
         for rarity in [Rarity::Common, Rarity::Uncommon, Rarity::Rare] {
-            let n = reward_pool(rarity).len();
+            let n = reward_pool(rarity, "ironclad").len();
             assert!(n >= 8, "{:?} 可奖励牌只有 {n} 张", rarity);
         }
     }
 
     #[test]
     fn status_and_curse_stay_out_of_reward_pools() {
-        assert!(reward_pool(Rarity::Special).is_empty());
+        assert!(reward_pool(Rarity::Special, "ironclad").is_empty());
         for c in CARDS.iter().filter(|c| c.rarity == Rarity::Special) {
+            // Special 档里除了状态/诅咒,还有绿职的衍生物(飞刀):它们是 token,
+            // 语料 pool=special,任何随机牌池都按 pool=="class"/"colorless" 取,自然抽不到
+            let token = pool_of(c) == "special";
             assert!(
-                matches!(c.kind, CardType::Status | CardType::Curse),
-                "{} 是 Special 但不是状态/诅咒",
+                matches!(c.kind, CardType::Status | CardType::Curse) || token,
+                "{} 是 Special 但既不是状态/诅咒也不是衍生物",
                 c.id
             );
         }
@@ -3955,7 +5923,7 @@ mod tests {
             if c.multi_upgrade {
                 continue;
             }
-            assert_ne!(u.text, c.text, "{} 升级后描述没变", c.id);
+            let text_changed = u.text != c.text;
             let up_effects = u.effects.unwrap_or(c.effects);
             let cost_changed = u.cost.map_or(false, |x| x != c.cost);
             // 数值型升级改效果,费用型升级(如 Body Slam)改费用,
@@ -3967,12 +5935,20 @@ mod tests {
                 .map_or(false, |e| !std::ptr::eq(e, c.on_end_turn));
             // 只改 Innate 的(暴戾+:效果数值不变,升级只是变成 Innate)
             let innate_changed = u.innate.map_or(false, |i| i != c.innate);
+            // 升级只改"被弃掉时的触发"的牌(战术家/反射):这两张不可打出,
+            // 触发写在引擎的 on_card_discarded 里并读 upgraded,所以 effects 不会变
+            let discard_triggered = matches!(c.id, "tactician" | "reflex");
+            // 升级得真的改变点什么:描述、数值、费用、消耗、回合末结算、Innate,
+            // 或者写在引擎里的弃牌触发(战术家/反射).纯改费用的牌(转移/布置/恐惧)
+            // 描述与基础版相同,所以描述这一条不能单独当硬门槛.
             assert!(
-                up_effects != c.effects
+                text_changed
+                    || up_effects != c.effects
                     || cost_changed
                     || exhaust_changed
                     || on_end_turn_changed
-                    || innate_changed,
+                    || innate_changed
+                    || discard_triggered,
                 "{} 的升级没有任何变化",
                 c.id
             );

@@ -171,13 +171,13 @@ fn first_card_reward_matches_reference() {
 fn class_card_pool_sizes_match_reference() {
     use crate::core::card::Rarity;
     use crate::core::cards;
-    assert_eq!(cards::reward_pool(Rarity::Common).len(), 20);
-    assert_eq!(cards::reward_pool(Rarity::Uncommon).len(), 36);
-    assert_eq!(cards::reward_pool(Rarity::Rare).len(), 16);
+    assert_eq!(cards::reward_pool(Rarity::Common, "ironclad").len(), 20);
+    assert_eq!(cards::reward_pool(Rarity::Uncommon, "ironclad").len(), 36);
+    assert_eq!(cards::reward_pool(Rarity::Rare, "ironclad").len(), 16);
     // basics 切片里那三张排在各自稀有度的最前
-    assert_eq!(cards::reward_pool(Rarity::Common)[0].id, "body_slam");
-    assert_eq!(cards::reward_pool(Rarity::Common)[1].id, "anger");
-    assert_eq!(cards::reward_pool(Rarity::Uncommon)[0].id, "whirlwind");
+    assert_eq!(cards::reward_pool(Rarity::Common, "ironclad")[0].id, "body_slam");
+    assert_eq!(cards::reward_pool(Rarity::Common, "ironclad")[1].id, "anger");
+    assert_eq!(cards::reward_pool(Rarity::Uncommon, "ironclad")[0].id, "whirlwind");
 }
 
 

@@ -41,7 +41,8 @@ fn staged(deck: &[&str], hand: &[&str]) -> Combat {
         lift_strength: 0,
         relic_counters: RunRelicCounters::default(),
         curse_negate: 0,
-    asc: 0,
+        asc: 0,
+        character: "ironclad",
     };
     let enc = enemies::encounter_def("jaw_worm_solo").expect("颚虫遭遇要在表里");
     let mut c = Combat::new(enc, setup, RngRegistry::new(21));

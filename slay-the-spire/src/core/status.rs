@@ -123,6 +123,37 @@ pub enum Status {
     Focus,
     /// 自己回合开始时掉等量生命再减一层(毒药水)
     Poison,
+    // 绿职(Silent)的能力与敌人身上的标记
+    /// 飞刀(Shiv)多打等量伤害(精准)
+    Accuracy,
+    /// 每打出一张牌获得等量格挡(残影)
+    AfterImage,
+    /// 每打出一张牌对所有敌人造成等量伤害(千刀万剐)
+    ThousandCuts,
+    /// 攻击造成未被格挡的伤害时给目标挂等量中毒(涂毒)
+    Envenom,
+    /// 自己回合开始往手里塞一张飞刀(无尽苦痛之刃);层数只作展示
+    InfiniteBlades,
+    /// 自己回合开始对所有敌人挂等量中毒(毒雾)
+    NoxiousFumes,
+    /// 自己回合开始抽 1 弃 1(千机万巧)
+    ToolsOfTheTrade,
+    /// 回合结束时掉 1 敏捷(幽魂形态);层数只作展示
+    WraithForm,
+    /// 下个回合开始不清空格挡(残影术);层数 = 还剩几个回合
+    Blur,
+    /// 下个回合攻击伤害翻倍(幻影杀手);层数 = 还剩几个回合
+    PhantasmalKiller,
+    /// 接下来等量张技能牌打两次(爆发)
+    Burst,
+    /// 回合结束时最多保留等量张手牌(周密计划)
+    WellLaidPlans,
+    /// 本回合每打出一张牌就掉等量生命(窒息)
+    Choke,
+    /// 死亡时按最大生命对所有敌人造成伤害(尸爆术)
+    CorpseExplosion,
+    /// 本回合攻击伤害翻倍(幻影杀手).回合末随减益一起清掉
+    DoubleDamage,
 }
 
 impl Status {
@@ -198,6 +229,21 @@ impl Status {
             LoseDexterity => "Lose Dexterity",
             Focus => "Focus",
             Poison => "Poison",
+            Accuracy => "Accuracy",
+            AfterImage => "After Image",
+            ThousandCuts => "A Thousand Cuts",
+            Envenom => "Envenom",
+            InfiniteBlades => "Infinite Blades",
+            NoxiousFumes => "Noxious Fumes",
+            ToolsOfTheTrade => "Tools of the Trade",
+            WraithForm => "Wraith Form",
+            Blur => "Blur",
+            PhantasmalKiller => "Phantasmal Killer",
+            Burst => "Burst",
+            WellLaidPlans => "Well-Laid Plans",
+            Choke => "Choke",
+            CorpseExplosion => "Corpse Explosion",
+            DoubleDamage => "Double Damage",
         }
     }
 
@@ -274,6 +320,21 @@ impl Status {
             LoseDexterity => "LDEX",
             Focus => "FOC",
             Poison => "PSN",
+            Accuracy => "ACC",
+            AfterImage => "AIMG",
+            ThousandCuts => "1KCT",
+            Envenom => "ENV",
+            InfiniteBlades => "IBLD",
+            NoxiousFumes => "FUME",
+            ToolsOfTheTrade => "TOTT",
+            WraithForm => "WRAI",
+            Blur => "BLUR",
+            PhantasmalKiller => "PHNT",
+            Burst => "BRST",
+            WellLaidPlans => "WLP",
+            Choke => "CHOK",
+            CorpseExplosion => "CORP",
+            DoubleDamage => "DBLD",
         }
     }
 
@@ -303,7 +364,13 @@ impl Status {
         if matches!(self, Confused | Hex | Surrounded | Constricted | Slow | Poison) {
             return false;
         }
-        self.is_debuff() || matches!(self, DoubleTap | NoBlock | Duplication)
+        // 残影术/幻影杀手是"自己数回合"的(在 combat.rs 的回合开始/结束处减层),
+        // 放进这里会被一轮结束时的减益递减顺手扣掉,根本轮不到它生效
+        self.is_debuff()
+            || matches!(
+                self,
+                DoubleTap | NoBlock | Duplication | Burst | DoubleDamage
+            )
     }
 
     /// 层数可以降到 0 以下(参考实现里 canGoNegative 的那几条):

@@ -134,6 +134,8 @@ pub enum Effect {
     ExhaustFromHand,
     /// 从手牌选一张放回抽牌堆顶(战吼)
     TopFromHand,
+    /// 从手牌选一张放到抽牌堆顶,并让它在打出前一直 0 费(布置)
+    SetupTopFromHand,
     /// 从手牌选一张攻击/能力牌,复制 `copies` 份(二重身;升级版一次复制两份)
     CopyFromHand { copies: u8 },
     /// 从消耗堆选一张回手牌(掘出)
@@ -201,6 +203,8 @@ pub enum Effect {
     CopySelfToDrawTop,
     /// 往弃牌堆塞 n 张自己的副本(愤怒;副本照抄升级数)
     AddSelfToDiscard { n: u8 },
+    /// 手牌里所有牌本回合 0 费(子弹时间)
+    SetHandCostZeroThisTurn,
     /// 被消耗时回到手牌(死灵诅咒)
     SelfToHandOnExhaust,
     /// 手里有这张牌时,别的牌被打出就掉 amount 点生命(痛苦)
@@ -210,6 +214,71 @@ pub enum Effect {
     /// 被移出牌组时(删牌/变形/被事件夺走)失去 n 点最大生命(寄生).
     /// 由 run.rs 的 pay_deck_leave_cost 在所有"原牌离开牌组"的入口结算(复制不算).
     LoseMaxHpOnRemoved { n: i32 },
+    // ---- 绿职(Silent)新增 ----
+    /// 从手牌弃掉 n 张(幸存者/准备/杂耍/匕首投掷/聚精会神);弃牌会触发弃牌遗物与"被弃掉"的牌
+    DiscardChoose { n: u8 },
+    /// 随机弃掉手牌里的 n 张(全力攻击)
+    DiscardRandom { n: u8 },
+    /// 弃掉整手牌,再抽等量张(算盘打)
+    DiscardHandThenDraw,
+    /// 弃掉整手牌,每弃一张往手里塞一把飞刀(钢之风暴);upgraded 时给飞刀+
+    StormOfSteel { upgraded: bool },
+    /// 弃掉手里所有非攻击牌(卸载)
+    DiscardNonAttacks,
+    /// 抽到手牌达到 n 张(专精)
+    DrawUntil { n: usize },
+    /// 抽 1 张;抽到的是技能牌就获得 block 点格挡(逃跑计划)
+    DrawThenBlockIfSkill { block: i32 },
+    /// 下回合 +n 能量(算计/飞膝)
+    NextTurnEnergy { n: i32 },
+    /// 下回合多抽 n 张(捕食)
+    NextTurnDraw { n: u8 },
+    /// 下回合获得 n 点格挡(翻滚)
+    NextTurnBlock { n: i32 },
+    /// 下回合 +X+bonus 能量(二重身)
+    NextTurnEnergyX { bonus: i32 },
+    /// 下回合多抽 X+bonus 张(二重身)
+    NextTurnDrawX { bonus: i32 },
+    /// 所有敌人本回合失去 n 点力量(刺耳尖叫)
+    AllEnemiesLoseStrengthThisTurn { n: i32 },
+    /// X 费:目标失去 X+bonus 点力量并挂 X+bonus 层虚弱(萎靡)
+    MalaiseX { bonus: i32 },
+    /// 随机一张本职业技能牌进手牌,本回合 0 费(转移)
+    AddRandomSkillToHand,
+    /// 拿一瓶随机药水(炼金)
+    GainRandomPotion,
+    /// 从手牌选一张:下回合往手里放 3 张它的副本(梦魇)
+    NightmareChoose,
+    /// 把手里这张牌的副本再塞一张进手牌(无尽苦痛被抽到时)
+    CopySelfToHand,
+    /// 伤害 = per * 手牌里的技能牌数(飞镖)
+    DamagePerSkillInHand { per: i32 },
+    /// 伤害 = per * 本回合已打出的攻击牌数(终结技)
+    DamagePerAttackThisTurn { per: i32 },
+    /// 打 per 点伤害,段数 = 本张牌实际消耗的能量(串刺)
+    DamageXHits { per: i32 },
+    /// 目标身上有中毒时再打一次(祸不单行)
+    DamageTwiceIfTargetPoisoned { amount: i32 },
+    /// 造成伤害;目标处于虚弱则回能量并抽牌(脚跟钩)
+    DamageAndEnergyIfWeak {
+        amount: i32,
+        energy: i32,
+        draw: u8,
+    },
+    /// 造成伤害;本回合弃过牌则回能量(偷袭)
+    DamageAndEnergyIfDiscarded { amount: i32, energy: i32 },
+    /// 造成伤害;本卡本次战斗的伤害再 -penalty(玻璃刀;改动只在本场战斗内)
+    DamageThenPenaltySelf {
+        amount: i32,
+        times: u8,
+        penalty: i32,
+    },
+    /// 随机敌人挂 n 层中毒,共 times 次(弹跳药瓶)
+    PoisonRandomEnemy { n: i32, times: u8 },
+    /// 目标的中毒翻 mult 倍(催化剂)
+    MultiplyTargetPoison { mult: i32 },
+    /// 挂中毒并标记:死亡时按最大生命对所有敌人造成伤害(尸爆术)
+    CorpseExplosion { poison: i32 },
 }
 
 /// 升级后的覆盖项:None 表示沿用基础值
@@ -287,6 +356,8 @@ pub struct CardInstance {
     pub master_idx: Option<usize>,
     /// 被瓶装遗物封装过:战斗开局直接进手牌(一张牌只会进一个瓶子)
     pub bottled: bool,
+    /// 本回合被"周密计划"选中保留(回合结束不清掉,回合过后恢复)
+    pub retain_this_turn: bool,
 }
 
 impl CardInstance {
@@ -304,6 +375,7 @@ impl CardInstance {
             topped: 0,
             master_idx: None,
             bottled: false,
+            retain_this_turn: false,
         }
     }
 

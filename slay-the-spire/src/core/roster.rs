@@ -17,6 +17,11 @@ pub fn find(id: &str) -> Option<&'static corpus::CharacterInfo> {
     all().iter().find(|c| c.id == id)
 }
 
+/// 角色 id 对应的卡牌颜色(red/green/blue/purple).认不出按红职算
+pub fn color_of(char_id: &str) -> &'static str {
+    find(char_id).map(|c| c.color).unwrap_or("red")
+}
+
 /// 起始牌组里本游戏还没实现的牌
 pub fn missing_cards(c: &corpus::CharacterInfo) -> Vec<&'static str> {
     c.deck

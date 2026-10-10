@@ -3654,6 +3654,8 @@ pub mod sandbox {
     }
 
     struct Scenario {
+        /// 本局角色(语料 id).沙盒默认铁甲;绿职场景在 json 里写 "character": "silent"
+        character: &'static str,
         hp: i32,
         max_hp: i32,
         gold: i32,
@@ -3790,6 +3792,7 @@ pub mod sandbox {
             return Err("scenario 根要是个对象".to_string());
         }
         let mut sc = Scenario {
+            character: "ironclad",
             hp: 80,
             max_hp: 80,
             gold: 99,
@@ -3806,6 +3809,12 @@ pub mod sandbox {
             sc.max_hp = num_or(p, "max_hp", sc.max_hp)?;
         }
         sc.gold = num_or(root, "gold", sc.gold)?;
+        if let Some(v) = root.get("character") {
+            let id = v.as_str().ok_or("character 要是字符串")?;
+            let ch = crate::core::roster::find(id)
+                .ok_or_else(|| format!("不认识的角色: {id}"))?;
+            sc.character = ch.id;
+        }
         if let Some(v) = root.get("rested") {
             sc.rested = matches!(v, Json::Bool(true));
         }
@@ -4181,6 +4190,7 @@ pub mod sandbox {
             relic_counters: counters,
             curse_negate: 0,
             asc: 0,
+            character: sc.character,
         };
         let mut c = Combat::new(enc, setup, RngRegistry::new(seed));
 

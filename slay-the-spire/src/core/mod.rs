@@ -87,13 +87,14 @@ mod content_tests {
         }
     }
 
-    /// 只有铁甲能开局;另外三职各缺起始牌,且 fx 全零的起始遗物也算"没实现"
+    /// 铁甲与静默者能开局;蓝紫两职各缺起始牌,且 fx 全零的起始遗物也算"没实现"
     #[test]
     fn roster_reports_exactly_which_characters_are_playable() {
         let reason = |id: &str| roster::blocked_reason(roster::find(id).unwrap());
         assert!(roster::playable(roster::find("ironclad").unwrap()));
         assert_eq!(reason("ironclad"), None);
-        assert_eq!(reason("silent"), Some("cards: survivor neutralize".to_string()));
+        assert!(roster::playable(roster::find("silent").unwrap()));
+        assert_eq!(reason("silent"), None);
         // cracked_core/pure_water 有定义但 fx 全零(充能球/Miracle 机制没实现),
         // 不能当"已实现",否则补上起始牌后会误判为可开局
         assert_eq!(
@@ -186,7 +187,7 @@ mod content_tests {
     fn every_reward_rarity_can_fill_a_pick() {
         // 奖励三选一与商店都要按稀有度抽牌,池子太小会直接抽空
         for rarity in [Rarity::Common, Rarity::Uncommon, Rarity::Rare] {
-            let n = cards::reward_pool(rarity).len();
+            let n = cards::reward_pool(rarity, "ironclad").len();
             assert!(n >= 3, "{rarity:?} 奖励池只有 {n} 张");
         }
     }

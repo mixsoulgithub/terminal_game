@@ -1567,6 +1567,7 @@ impl Run {
                     relic_counters: run.relic_counters,
                     curse_negate: run.omamori_charges,
                     asc: run.ascension,
+                    character: run.character,
                 };
                 let mut c = Combat::new(enc, setup, run.streams.clone());
                 // 重建时的第一回合与开局的洗牌都会动这些计数器(还带一次日晷),
@@ -1883,6 +1884,7 @@ impl Run {
             // 御守:战斗里被怪物塞进牌组的诅咒也要挡
             curse_negate: self.omamori_charges,
             asc: self.ascension,
+            character: self.character,
         };
         self.combat = Some(Combat::new(enc, setup, self.streams.clone()));
         // headless 对拍:参考实现没实现尼尔瑞的抄本,整件当不存在
@@ -2925,7 +2927,7 @@ impl Run {
         if kind == CardType::Power && rarity == Rarity::Common {
             rarity = Rarity::Uncommon;
         }
-        let pool: Vec<&CardDef> = cards::reward_pool(rarity)
+        let pool: Vec<&CardDef> = cards::reward_pool(rarity, self.character)
             .into_iter()
             .filter(|c| c.kind == kind)
             .collect();
@@ -3083,7 +3085,7 @@ impl Run {
     /// 再从该稀有度的职业牌池里用 mathUtilRng 抽一张(稀有位次用本作的池子序).
     fn roll_courier_class_card(&mut self) -> Option<ShopItem> {
         let rarity = self.roll_card_rarity(EnemyKind::Normal, false);
-        let pool = cards::reward_pool(rarity);
+        let pool = cards::reward_pool(rarity, self.character);
         if pool.is_empty() {
             return None;
         }
@@ -3935,7 +3937,7 @@ impl Run {
         let mut rolled: Vec<&'static CardDef> = Vec::new();
         for _ in 0..LIBRARY_CARD_COUNT {
             let rarity = self.roll_card_rarity(EnemyKind::Normal, false);
-            let pool = cards::reward_pool(rarity);
+            let pool = cards::reward_pool(rarity, self.character);
             if pool.is_empty() {
                 continue;
             }
@@ -4486,7 +4488,7 @@ impl Run {
                 Ok(String::new())
             }
             "one_random_rare_card" => {
-                let pool = cards::reward_pool(Rarity::Rare);
+                let pool = cards::reward_pool(Rarity::Rare, self.character);
                 if pool.is_empty() {
                     return Err("rare card pool is empty".to_string());
                 }
@@ -4622,7 +4624,7 @@ impl Run {
             } else {
                 Rarity::Common
             };
-            let pool = cards::reward_pool(rarity);
+            let pool = cards::reward_pool(rarity, self.character);
             if pool.is_empty() {
                 break;
             }
@@ -4826,11 +4828,11 @@ impl Run {
     /// 随机一张本职业牌(不限稀有度时从三档里挑)
     fn random_class_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
         let mut pool: Vec<&'static CardDef> = match rarity {
-            Some(r) => cards::reward_pool(r),
+            Some(r) => cards::reward_pool(r, self.character),
             None => {
-                let mut v = cards::reward_pool(Rarity::Common);
-                v.extend(cards::reward_pool(Rarity::Uncommon));
-                v.extend(cards::reward_pool(Rarity::Rare));
+                let mut v = cards::reward_pool(Rarity::Common, self.character);
+                v.extend(cards::reward_pool(Rarity::Uncommon, self.character));
+                v.extend(cards::reward_pool(Rarity::Rare, self.character));
                 v
             }
         };
@@ -6450,9 +6452,9 @@ impl Run {
                 _ => {}
             }
             let pool = if prismatic {
-                cards::prismatic_reward_pool(rarity)
+                cards::prismatic_reward_pool(rarity, self.character)
             } else {
-                cards::reward_pool(rarity)
+                cards::reward_pool(rarity, self.character)
             };
             if pool.is_empty() {
                 break;
@@ -7054,11 +7056,11 @@ mod tests {
     #[test]
     fn prismatic_shard_mixes_colorless_into_rewards() {
         // 无色牌全是罕见/稀有档,拿罕见档比
-        let plain = cards::reward_pool(Rarity::Uncommon).len();
-        let prismatic = cards::prismatic_reward_pool(Rarity::Uncommon).len();
+        let plain = cards::reward_pool(Rarity::Uncommon, "ironclad").len();
+        let prismatic = cards::prismatic_reward_pool(Rarity::Uncommon, "ironclad").len();
         assert!(prismatic > plain, "棱彩池要比普通池大");
         assert!(
-            cards::prismatic_reward_pool(Rarity::Uncommon)
+            cards::prismatic_reward_pool(Rarity::Uncommon, "ironclad")
                 .iter()
                 .any(|c| cards::pool_of(c) == "colorless"),
             "棱彩池里要有无色牌"

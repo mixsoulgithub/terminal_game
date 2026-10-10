@@ -510,15 +510,15 @@ impl MatchKeep {
         let mut slots: [Option<&'static str>; 6] = [None; 6];
         slots[0] = pick_id(
             streams.run(RunStream::CardRng),
-            cards::reward_pool(Rarity::Rare),
+            cards::reward_pool(Rarity::Rare, character),
         );
         slots[1] = pick_id(
             streams.run(RunStream::CardRng),
-            cards::reward_pool(Rarity::Uncommon),
+            cards::reward_pool(Rarity::Uncommon, character),
         );
         slots[2] = pick_id(
             streams.run(RunStream::CardRng),
-            cards::reward_pool(Rarity::Common),
+            cards::reward_pool(Rarity::Common, character),
         );
         // 飞升 15+:这一格从"非普通无色牌"换成"又一张随机诅咒"(参考实现)
         slots[3] = if asc >= 15 {

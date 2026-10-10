@@ -228,6 +228,15 @@ pub struct RelicFx {
     pub draw_pile_in_order: bool,
     /// 药水强度额外加百分之几(神圣树皮)
     pub potion_potency_pct: i32,
+    // ---- 绿职(Silent)相关 ----
+    /// 施加中毒时额外加等量层(蛇骨头)
+    pub poison_apply_bonus: i32,
+    /// 战斗开始给所有敌人挂等量中毒(扭曲漏斗)
+    pub combat_start_poison_all: i32,
+    /// 战斗开始往手里塞等量把飞刀(忍者卷轴)
+    pub combat_start_shivs: i32,
+    /// 敌人死亡时把它身上的中毒转给另一个随机敌人(标本)
+    pub poison_transfer_on_death: bool,
 }
 
 impl RelicFx {
@@ -391,6 +400,10 @@ impl RelicFx {
         map_wing_charges: 0,
         draw_pile_in_order: false,
         potion_potency_pct: 0,
+        poison_apply_bonus: 0,
+        combat_start_poison_all: 0,
+        combat_start_shivs: 0,
+        poison_transfer_on_death: false,
     };
 
     /// 这件遗物在本作里没有任何效果(fx 全零)
@@ -808,8 +821,11 @@ pub static RELICS: &[RelicDef] = &[
         desc: "Whenever you apply Poison, apply an additional 1 Poison.",
         tier: RelicTier::Common,
         pool: "green",
-        fx: RelicFx::ZERO,
-        note: "绿职专属遗物,本作只有铁甲可玩(中毒机制本作已实现,红职无中毒来源)",
+        fx: RelicFx {
+            poison_apply_bonus: 1,
+            ..RelicFx::ZERO
+        },
+        note: "",
     },
     RelicDef {
         id: "strawberry",
@@ -1076,8 +1092,11 @@ pub static RELICS: &[RelicDef] = &[
         desc: "At the start each combat, add 3 Shivs into your hand.",
         tier: RelicTier::Uncommon,
         pool: "green",
-        fx: RelicFx::ZERO,
-        note: "Shiv 不在本作牌池(绿职专属)",
+        fx: RelicFx {
+            combat_start_shivs: 3,
+            ..RelicFx::ZERO
+        },
+        note: "",
     },
     RelicDef {
         id: "ornamental_fan",
@@ -1617,8 +1636,11 @@ pub static RELICS: &[RelicDef] = &[
         desc: "Whenever an enemy dies, transfer any Poison it has to a random enemy.",
         tier: RelicTier::Rare,
         pool: "green",
-        fx: RelicFx::ZERO,
-        note: "绿职专属遗物,本作只有铁甲可玩(中毒机制本作已实现,红职无中毒来源)",
+        fx: RelicFx {
+            poison_transfer_on_death: true,
+            ..RelicFx::ZERO
+        },
+        note: "",
     },
     RelicDef {
         id: "thread_and_needle",
@@ -1888,6 +1910,7 @@ pub static RELICS: &[RelicDef] = &[
         tier: RelicTier::Boss,
         pool: "green",
         fx: RelicFx {
+            removes_starter_relic: true,
             draw_per_turn: 1,
             ..RelicFx::ZERO
         },
@@ -2256,8 +2279,11 @@ pub static RELICS: &[RelicDef] = &[
         desc: "At the start of each combat, apply 4 Poison to ALL enemies.",
         tier: RelicTier::Shop,
         pool: "green",
-        fx: RelicFx::ZERO,
-        note: "绿职专属遗物,本作只有铁甲可玩(中毒机制本作已实现,红职无中毒来源)",
+        fx: RelicFx {
+            combat_start_poison_all: 4,
+            ..RelicFx::ZERO
+        },
+        note: "",
     },
     RelicDef {
         id: "cauldron",
@@ -2685,15 +2711,12 @@ mod tests {
         "pure_water",
         "damaru",
         "data_disk",
-        "snecko_skull",
         "duality",
         "gold_plated_cables",
-        "ninja_scroll",
         "symbiotic_virus",
         "teardrop_locket",
         "emotion_chip",
         "golden_eye",
-        "the_specimen",
         "frozen_core",
         "holy_water",
         "inserter",
@@ -2701,7 +2724,6 @@ mod tests {
         "violet_lotus",
         "melange",
         "runic_capacitor",
-        "twisted_funnel",
         "cultist_headpiece",
         "spirit_poop",
         "circlet",
@@ -2720,7 +2742,7 @@ mod tests {
         let mut want: Vec<&str> = GATED_RELICS.to_vec();
         want.sort_unstable();
         assert_eq!(zero, want, "fx 全零的集合必须与 GATED_RELICS 一致");
-        assert_eq!(zero.len(), 25);
+        assert_eq!(zero.len(), 21);
         // 每一件都写明了原因
         for id in GATED_RELICS {
             assert!(

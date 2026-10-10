@@ -824,6 +824,7 @@ mod effect_tests {
 
     fn combat_in(encounter: &'static str, deck: &[&str]) -> Combat {
         let setup = CombatSetup {
+            character: "ironclad",
             rested: false,
             hp: 80,
             max_hp: 80,
@@ -1152,6 +1153,7 @@ mod effect_tests {
         relics: &[&'static crate::core::relics::RelicDef],
     ) -> Combat {
         let setup = CombatSetup {
+            character: "ironclad",
             rested: false,
             hp: 80,
             max_hp: 80,
@@ -1255,14 +1257,23 @@ mod effect_tests {
     /// 本作没有 Miracle/Shiv 这两张 special token(cards.rs 的牌池范围只到红职+无色+诅咒状态),
     /// 于是 AddCardToHand 找不到定义就无事发生 —— 这是范围限制,不是这次要改的交互.
     #[test]
-    fn add_card_to_hand_potions_are_inert_without_the_token_cards() {
+    fn token_card_potions_are_inert_without_the_token_cards() {
+        // 奇迹(观者)还没实装,所以"瓶装奇迹"照旧空转
         assert!(crate::core::cards::card_def("miracle").is_none());
-        assert!(crate::core::cards::card_def("shiv").is_none());
+        // 飞刀实装之后"诡计药水"就该真的给 3 张飞刀+(静默者的 token)
+        assert!(crate::core::cards::card_def("shiv").is_some());
         let mut c = combat();
         let before = c.hand.len();
         c.use_potion(def("bottled_miracle"), None);
+        assert_eq!(c.hand.len(), before, "没有 miracle 就不该有手牌变化");
         c.use_potion(def("cunning_potion"), None);
-        assert_eq!(c.hand.len(), before, "没有对应的 token 牌就不该有手牌变化");
+        assert_eq!(c.hand.len(), before + 3, "诡计药水给 3 张飞刀");
+        let shivs = c
+            .hand
+            .iter()
+            .filter(|k| k.def.id == "shiv" && k.upgraded)
+            .count();
+        assert_eq!(shivs, 3, "诡计药水给的是飞刀+(升级版)");
     }
 
     /// 灵药(ExhaustMany):可选,能消耗任意张(含诅咒),也可以一张都不消耗.

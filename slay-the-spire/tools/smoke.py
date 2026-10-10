@@ -188,7 +188,10 @@ def map_legend_present(text: str) -> bool:
     当前位置的 "[] you" 与燃烧精英的 "E* Burning"(宽度不够时图例退化成
     底栏一行,那两行就对不上,也算没到位)。
     """
-    return "[] you" in text and re.search(r"E\*?\s+Burning", text) is not None
+    return (
+        re.search(r"\[\]\s+you", text) is not None
+        and re.search(r"E\*?\s+Burning", text) is not None
+    )
 
 
 def enter_the_game() -> None:
