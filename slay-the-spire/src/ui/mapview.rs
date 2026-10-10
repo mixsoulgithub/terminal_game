@@ -175,26 +175,31 @@ fn map_glyph(kind: NodeKind, burning: bool, wide: bool) -> &'static str {
     }
 }
 
-/// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名
+/// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名。
+/// 标记统一占 3 格再空 1 格,这样每一行名字都从同一列起头
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
+    let row = |marker: &str, name: &str| format!("{marker:<3} {name}");
     let mut out: Vec<(String, Style)> = Vec::new();
     if run.wing_boots_charges() > 0 {
         out.push((
-            format!("Wing Boots  x{}", run.wing_boots_charges()),
+            row("", &format!("Wing Boots x{}", run.wing_boots_charges())),
             theme::fg(theme::GOLD),
         ));
     }
     out.extend(vec![
-        ("[] you".to_string(), Style::default().add_modifier(Modifier::BOLD)),
-        ("?  Unknown".to_string(), theme::kind_style(NodeKind::Event)),
-        ("$  Merchant".to_string(), theme::kind_style(NodeKind::Shop)),
-        ("T  Treasure".to_string(), theme::kind_style(NodeKind::Treasure)),
-        (" R  Rest".to_string(), theme::kind_style(NodeKind::Rest)),
-        ("e  Enemy".to_string(), theme::kind_style(NodeKind::Monster)),
-        (" E  Elite".to_string(), theme::kind_style(NodeKind::Elite)),
-        (" E* Burning".to_string(), theme::kind_style(NodeKind::Elite)),
+        (row("[]", "you"), Style::default().add_modifier(Modifier::BOLD)),
         (
-            format!("B  {}", run.boss_name()),
+            row("?", "Unknown"),
+            theme::kind_style(NodeKind::Event),
+        ),
+        (row("$", "Merchant"), theme::kind_style(NodeKind::Shop)),
+        (row("T", "Treasure"), theme::kind_style(NodeKind::Treasure)),
+        (row(" R ", "Rest"), theme::kind_style(NodeKind::Rest)),
+        (row("e", "Enemy"), theme::kind_style(NodeKind::Monster)),
+        (row(" E ", "Elite"), theme::kind_style(NodeKind::Elite)),
+        (row(" E*", "Burning"), theme::kind_style(NodeKind::Elite)),
+        (
+            row("B", run.boss_name()),
             theme::kind_style(NodeKind::Boss),
         ),
     ]);
