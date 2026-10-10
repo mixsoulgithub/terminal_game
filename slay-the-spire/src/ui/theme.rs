@@ -52,13 +52,6 @@ pub fn kind_style(kind: NodeKind) -> Style {
     }
 }
 
-/// 燃烧精英:橙底(和普通精英的暗红底区分),地图与图例共用
-pub fn burning_style() -> Style {
-    Style::default()
-        .fg(BG)
-        .bg(WARN)
-        .add_modifier(Modifier::BOLD)
-}
 
 /// 遗物名字的颜色:按档次——起始/普通默认白,罕见蓝,稀有多橙黄,
 /// Boss 红,商店绿,事件紫,兜底(Special)用金币色

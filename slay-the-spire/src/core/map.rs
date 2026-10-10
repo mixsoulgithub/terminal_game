@@ -41,9 +41,11 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+
+    /// 单字符记号:只有金标准排版对比用(界面走 mapview 里那套带色底的记号)
+    #[cfg(test)]
     pub fn sigil(self) -> char {
         match self {
-            // 普通怪与精英都是 E,精英靠红底区分
             NodeKind::Monster => 'e',
             NodeKind::Elite => 'E',
             NodeKind::Event => '?',

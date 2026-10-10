@@ -36,7 +36,7 @@ pub struct BattleShake {
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
 const COMMANDS: &[&str] = &[
-    "card", "help", "q", "quit", "relic", "restart", "room", "run", "save", "seed", "ui", "win",
+    "card", "help", "q", "quit", "relic", "restart", "room", "run", "save", "seed", "win",
 ];
 /// :room / :relic / :card 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
@@ -44,7 +44,6 @@ const RELIC_ARGS: &[&str] = &["add", "remove"];
 const CARD_ARGS: &[&str] = &["add", "pile", "remove", "upgrade"];
 const RUN_ARGS: &[&str] = &["save", "seed"];
 const RESTART_ARGS: &[&str] = &["fight", "run", "turn"];
-const UI_ARGS: &[&str] = &["map"];
 
 pub struct App {
     pub run: Run,
@@ -52,12 +51,6 @@ pub struct App {
     pub cmd: String,
     /// 种子窗口里正在敲的 base-35 串
     pub seed_in: String,
-    /// 地图界面的第几种画法(:ui map 1..5)
-    pub map_ui: u8,
-    /// :ui map 不给序号时:每 2 秒换下一种画法
-    pub map_ui_cycle: bool,
-    /// 轮换倒计时,单位是帧(60ms 一帧)
-    pub ui_cycle_left: u32,
     pub overlay: Option<Overlay>,
     pub overlay_scroll: u16,
     /// 上一次渲染算出的最大滚动量:到底之后再按 j 不会继续累加
@@ -133,9 +126,6 @@ impl App {
             mode: Mode::Normal,
             cmd: String::new(),
             seed_in: String::new(),
-            map_ui: 1,
-            map_ui_cycle: false,
-            ui_cycle_left: 0,
             comp_list: Vec::new(),
             comp_idx: 0,
             comp_pending: false,
@@ -493,7 +483,6 @@ impl App {
                     Some("card") => CARD_ARGS,
                     Some("run") => RUN_ARGS,
                     Some("restart") => RESTART_ARGS,
-                    Some("ui") => UI_ARGS,
                     _ => &[],
                 };
                 matching(args, cur)
@@ -527,9 +516,6 @@ impl App {
     /// 浩劫链播报的基础时长(60ms 一帧,40 帧约 2.4 秒)
     pub const BANNER_FRAMES: u8 = 40;
 
-    /// :ui map 轮换的间隔(60ms 一帧,33 帧约 2 秒)
-    pub const UI_CYCLE_FRAMES: u32 = 33;
-
     /// 链越深停得越久:第 1 层是基础时长,每深一层多四分之一个基础时长
     pub fn banner_frames(depth: u8) -> u8 {
         Self::BANNER_FRAMES.saturating_add(
@@ -541,8 +527,7 @@ impl App {
 
     /// 还在抖(或有消息要倒计时):事件循环要用超时轮询,好一帧帧重画
     pub fn ticking(&self) -> bool {
-        self.map_ui_cycle
-            || self.shake > 0
+        self.shake > 0
             || self.msg_ttl > 0
             || !self.battle_shakes.is_empty()
             || !self.play_banners.is_empty()
@@ -554,18 +539,6 @@ impl App {
     pub fn tick(&mut self) -> bool {
         use crate::core::combat::ShakeWho;
         self.run.tick_win_hold();
-        // :ui map 轮换:到点就换下一种画法,换完重新计时
-        if self.map_ui_cycle {
-            self.ui_cycle_left = self.ui_cycle_left.saturating_sub(1);
-            if self.ui_cycle_left == 0 {
-                self.map_ui = if self.map_ui >= crate::ui::mapview::UI_COUNT {
-                    1
-                } else {
-                    self.map_ui + 1
-                };
-                self.ui_cycle_left = Self::UI_CYCLE_FRAMES;
-            }
-        }
         self.shake = self.shake.saturating_sub(1);
         if self.msg_ttl > 0 {
             self.msg_ttl -= 1;
@@ -1973,42 +1946,6 @@ impl App {
                     None => self.warn(format!("bad seed: {arg}")),
                 },
             },
-            // :ui map <1-5> 固定一种地图画法;:ui map 不给序号就每 2 秒轮着放一遍
-            "ui" => {
-                let (sub, args) = split_sub(rest);
-                match (sub, args) {
-                    ("map", "") => {
-                        self.map_ui_cycle = !self.map_ui_cycle;
-                        self.ui_cycle_left = Self::UI_CYCLE_FRAMES;
-                        if self.map_ui_cycle {
-                            self.info(format!(
-                                "map ui {}: cycling every 2s (1..{})",
-                                self.map_ui,
-                                crate::ui::mapview::UI_COUNT
-                            ));
-                        } else {
-                            self.info(format!("map ui {} pinned", self.map_ui));
-                        }
-                    }
-                    ("map", n) => match n.parse::<u8>() {
-                        Ok(v) if (1..=crate::ui::mapview::UI_COUNT).contains(&v) => {
-                            self.map_ui = v;
-                            self.map_ui_cycle = false;
-                            self.info(format!("map ui {v}"));
-                        }
-                        _ => self.warn(format!(
-                            "bad map ui: {n} (1..{})",
-                            crate::ui::mapview::UI_COUNT
-                        )),
-                    },
-                    _ => self.info(format!(
-                        "map ui {} {}   |   :ui map <1-{}>  /  :ui map (cycle)",
-                        self.map_ui,
-                        if self.map_ui_cycle { "(cycling)" } else { "" },
-                        crate::ui::mapview::UI_COUNT
-                    )),
-                }
-            },
             // :relic add <名字|all> / :relic remove <名字>
             "relic" => {
                 let (sub, args) = split_sub(rest);
@@ -2352,7 +2289,6 @@ impl App {
             (":run", "run the current seed from the beginning"),
             (":run seed [n]", "start a new run (random seed if omitted; also saves it)"),
             (":run save <name>", "load a save from the save directory"),
-            (":ui map <1-5>", "pick a map look; no number = cycle all of them every 2s"),
             (":save [name]", "save the current run (auto-named if omitted)"),
 
             ("ctrl-c", "quit at any time"),

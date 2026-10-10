@@ -181,10 +181,10 @@ def map_legend_present(text: str) -> bool:
     """地图右上角的图例画出来了没(当前渲染:每个符号一行,竖排在右侧)。
 
     不看底栏的 `-- MAP --`(别处也可能出现),而是认图例里现在真实存在的两行:
-    当前位置的 "[] you" 与燃烧精英的 "E  Burning"(宽度不够时图例退化成
+    当前位置的 "[] you" 与燃烧精英的 "E* Burning"(宽度不够时图例退化成
     底栏一行,那两行就对不上,也算没到位)。
     """
-    return "[] you" in text and re.search(r"E\s+Burning", text) is not None
+    return "[] you" in text and re.search(r"E\*?\s+Burning", text) is not None
 
 
 def enter_the_game() -> None:
@@ -611,7 +611,7 @@ def act_map(text: str) -> None:
             return 2
         if sym == "e":
             return 3
-        if sym == "E":
+        if sym in ("E", "E*"):
             return 9
         return 6  # Boss 名字:没得选时才走
 
