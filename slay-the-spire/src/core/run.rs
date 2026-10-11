@@ -1203,8 +1203,9 @@ impl Run {
             .map(|p| p.map(|d| d.id).unwrap_or("-"))
             .collect();
         out.push_str(&format!("potions={}\n", potions.join(",")));
-        // 战斗现场(测试存档用):老存档没这几行,读到没有就照旧重建地图
-        if let Some(c) = self.combat.as_ref() {
+        // 战斗现场(测试存档用):老存档没这几行,读到没有就照旧重建地图.
+        // 已经开到奖励屏就不再写:那一场打完了,留着只会让"继续"时又冒出来
+        if let Some(c) = self.combat.as_ref().filter(|_| self.reward.is_none()) {
             // 抽牌堆序列化时"顶牌在下标 0";老存档是反的,靠这一行认出来并明确拒绝
             out.push_str("combat_pile_order=top\n");
             out.push_str(&format!("combat_encounter={}\n", c.encounter_id));
@@ -1237,7 +1238,54 @@ impl Run {
                 .collect();
             out.push_str(&format!("combat_enemies={}\n", foes.join(",")));
         }
+        // 奖励屏:打完一场要在这一屏退出/继续,所以奖励本身也要进存档
+        if let Some(r) = self.reward.as_ref() {
+            out.push_str(&format!("reward_gold={}\n", r.gold));
+            out.push_str(&format!("reward_gold_taken={}\n", r.gold_taken as u8));
+            out.push_str(&format!("reward_extra_gold={}\n", r.extra_gold));
+            out.push_str(&format!("reward_extra_gold_taken={}\n", r.extra_gold_taken as u8));
+            let cards: Vec<String> = r.cards.iter().map(card_token).collect();
+            out.push_str(&format!("reward_cards={}\n", cards.join(",")));
+            out.push_str(&format!("reward_card_taken={}\n", r.card_taken as u8));
+            out.push_str(&format!("reward_at_rest={}\n", r.at_rest as u8));
+            let queued: Vec<String> = r
+                .queued
+                .iter()
+                .map(|g| g.iter().map(card_token).collect::<Vec<_>>().join(","))
+                .collect();
+            out.push_str(&format!("reward_queued={}\n", queued.join(";")));
+            out.push_str(&format!(
+                "reward_relic={}\n",
+                r.relic.map(|d| d.id).unwrap_or("-")
+            ));
+            let choices: Vec<&str> = r.relic_choices.iter().map(|d| d.id).collect();
+            out.push_str(&format!("reward_relic_choices={}\n", choices.join(",")));
+            out.push_str(&format!("reward_relic_taken={}\n", r.relic_taken as u8));
+            let potions: Vec<&str> = r.potions.iter().map(|d| d.id).collect();
+            out.push_str(&format!("reward_potions={}\n", potions.join(",")));
+            let taken: String = r
+                .potion_taken
+                .iter()
+                .map(|b| if *b { '1' } else { '0' })
+                .collect();
+            out.push_str(&format!("reward_potion_taken={taken}\n"));
+            out.push_str(&format!("reward_emerald_key={}\n", r.emerald_key as u8));
+            out.push_str(&format!("reward_index={}\n", r.index));
+            out.push_str(&format!("reward_next={}\n", r.next.name()));
+        }
         out
+    }
+
+    /// 存档里的屏幕名换回枚举(只认奖励屏会指向的那几处)
+    fn screen_from_name(name: &str) -> Screen {
+        match name.trim() {
+            "SHOP" => Screen::Shop,
+            "EVENT" => Screen::Event,
+            "REST" => Screen::Rest,
+            "TREASURE" => Screen::Treasure,
+            "COMBAT" => Screen::Combat,
+            _ => Screen::Map,
+        }
     }
 
     /// 从存档文本恢复一局
@@ -1653,6 +1701,54 @@ impl Run {
             run.combat = None;
         }
         run.reward = None;
+        // 存档里带着奖励屏:恢复它并把屏幕设回去(那一场已经打完,不再挂战斗)
+        if let Some(v) = get("reward_gold") {
+            let mut r = RewardState::empty(Screen::Map);
+            r.gold = v.trim().parse().unwrap_or(0);
+            r.gold_taken = int("reward_gold_taken", 0) != 0;
+            r.extra_gold = int("reward_extra_gold", 0);
+            r.extra_gold_taken = int("reward_extra_gold_taken", 0) != 0;
+            r.cards = parse_cards(get("reward_cards").unwrap_or("")).unwrap_or_default();
+            r.card_taken = int("reward_card_taken", 0) != 0;
+            r.at_rest = int("reward_at_rest", 0) != 0;
+            r.queued = get("reward_queued")
+                .unwrap_or("")
+                .split(';')
+                .filter(|g| !g.trim().is_empty())
+                .map(|g| parse_cards(g).unwrap_or_default())
+                .collect();
+            r.relic = get("reward_relic")
+                .map(str::trim)
+                .filter(|id| *id != "-" && !id.is_empty())
+                .and_then(crate::core::relics::relic_def);
+            r.relic_choices = get("reward_relic_choices")
+                .unwrap_or("")
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .filter_map(crate::core::relics::relic_def)
+                .collect();
+            r.relic_taken = int("reward_relic_taken", 0) != 0;
+            r.potions = get("reward_potions")
+                .unwrap_or("")
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty() && *id != "-")
+                .filter_map(crate::core::potions::by_id)
+                .collect();
+            r.potion_taken = get("reward_potion_taken")
+                .unwrap_or("")
+                .chars()
+                .map(|c| c == '1')
+                .collect();
+            r.emerald_key = int("reward_emerald_key", 0) != 0;
+            r.index = int("reward_index", 0).max(0) as usize;
+            r.next = get("reward_next").map(Self::screen_from_name).unwrap_or(Screen::Map);
+            run.reward = Some(r);
+            run.combat = None;
+            run.screen = Screen::Reward;
+            run.reward_clamp();
+        }
         run.shop = None;
         run.picker = None;
         // treasure 不在这里清:它随存档往返(宝箱房另存的那份要能接着开)
@@ -6633,6 +6729,39 @@ mod tests {
         for _ in 0..=Run::VICTORY_HOLD {
             r.tick_win_hold();
         }
+    }
+
+    /// 奖励屏存档往返:退出/继续要回到奖励屏,而不是重打一场
+    #[test]
+    fn save_round_trip_keeps_the_reward_screen() {
+        let mut r = Run::new(3);
+        r.debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        {
+            let c = r.combat_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = crate::core::combat::Phase::Won;
+        }
+        settle(&mut r);
+        assert!(r.reward.is_some(), "打完该进奖励屏");
+
+        let text = r.save_text();
+        assert!(!text.contains("combat_encounter="), "奖励屏不该再写战斗现场");
+        assert!(text.contains("reward_gold="), "奖励要进存档");
+
+        let back = Run::from_save(&text).expect("存档能读回来");
+        assert_eq!(back.screen, Screen::Reward, "继续之后要回到奖励屏");
+        assert!(back.combat.is_none(), "奖励阶段不该挂着战斗");
+        let a = r.reward.as_ref().unwrap();
+        let b = back.reward.as_ref().expect("奖励要恢复出来");
+        assert_eq!((a.gold, a.index, a.gold_taken), (b.gold, b.index, b.gold_taken));
+        assert_eq!(
+            a.cards.iter().map(|c| c.def.id).collect::<Vec<_>>(),
+            b.cards.iter().map(|c| c.def.id).collect::<Vec<_>>(),
+            "候选牌要一样"
+        );
+        assert_eq!(back.save_text(), text, "存-读-存 内容应该稳定");
     }
 
     use super::*;

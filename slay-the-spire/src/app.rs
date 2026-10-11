@@ -446,7 +446,8 @@ impl App {
 
     pub fn maybe_save(&mut self) {
         match self.run.screen {
-            Screen::Map => {
+            // 地图和奖励屏都写:打完一场的奖励屏也要能退出/继续回来
+            Screen::Map | Screen::Reward => {
                 let _ = save::write(&self.run.save_text());
             }
             Screen::Victory | Screen::Death => save::clear(),
