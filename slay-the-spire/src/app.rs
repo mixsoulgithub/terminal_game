@@ -201,7 +201,7 @@ impl App {
         vec![
             ("continue", save::exists(), "resume the saved run"),
             ("new game", true, "pick a character"),
-            ("compendium", true, "cards, relics, potions, events and monsters"),
+            ("compendium", true, "cards, relics, potions, events, monsters and buffs"),
             ("quit", true, "leave the spire"),
         ]
     }
@@ -357,7 +357,8 @@ impl App {
                     KeyCode::Char('2') => 1,
                     KeyCode::Char('3') => 2,
                     KeyCode::Char('4') => 3,
-                    _ => 4,
+                    KeyCode::Char('5') => 4,
+                    _ => 5,
                 };
                 self.library = Library::ALL[i];
                 self.lib_tab = 0;
@@ -2258,7 +2259,7 @@ impl App {
             Screen::Library => vec![
                 ("j/k", "pick"),
                 ("h/l tab", "change tab"),
-                ("1-5", "cards/relics/potions/events/monsters"),
+                ("1-6", "cards/relics/potions/events/monsters/buffs"),
                 ("g/G", "top/bottom"),
                 ("esc", "back"),
             ],

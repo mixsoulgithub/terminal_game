@@ -14,15 +14,18 @@ pub enum Library {
     Potions,
     Events,
     Enemies,
+    /// 增益/减益汇总:本作实现的每一条状态都在这里
+    Buffs,
 }
 
 impl Library {
-    pub const ALL: [Library; 5] = [
+    pub const ALL: [Library; 6] = [
         Library::Cards,
         Library::Relics,
         Library::Potions,
         Library::Events,
         Library::Enemies,
+        Library::Buffs,
     ];
 
     pub fn title(self) -> &'static str {
@@ -32,6 +35,7 @@ impl Library {
             Library::Potions => "potion lab",
             Library::Events => "event ledger",
             Library::Enemies => "enemy list",
+            Library::Buffs => "buff & debuff",
         }
     }
 }
@@ -73,6 +77,108 @@ pub struct Item {
     pub color_key: &'static str,
     /// tag 是不是"费用"(卡牌是,遗物/药水不是)
     pub show_cost: bool,
+}
+
+/// 状态归到哪一组:纯标记 -> Markers,负面 -> Debuffs,其余算 Buffs
+fn status_group(s: crate::core::status::Status) -> &'static str {
+    if s.is_marker() {
+        "Markers"
+    } else if s.is_debuff() {
+        "Debuffs"
+    } else {
+        "Buffs"
+    }
+}
+
+/// 这条效果挂的是哪个状态(没有就是 None)
+fn effect_status(e: &crate::core::card::Effect) -> Option<crate::core::status::Status> {
+    use crate::core::card::Effect;
+    match e {
+        Effect::AddSelfStatus { status, .. }
+        | Effect::AddTargetStatus { status, .. }
+        | Effect::AddAllEnemiesStatus { status, .. } => Some(*status),
+        Effect::DoubleSelfStatus(s) => Some(*s),
+        _ => None,
+    }
+}
+
+/// 谁会带来这条状态:先看牌(打出/抽到/回合末/在手),再看怪物(天生状态/亡语)
+fn status_sources(s: crate::core::status::Status) -> String {
+    let mut names: Vec<&'static str> = Vec::new();
+    for c in cards::CARDS {
+        let lists = [c.effects, c.on_draw, c.on_end_turn, c.in_hand];
+        let up = c.upgrade.and_then(|u| u.effects).unwrap_or(&[]);
+        if lists
+            .iter()
+            .any(|es| es.iter().any(|e| effect_status(e) == Some(s)))
+            || up.iter().any(|e| effect_status(e) == Some(s))
+        {
+            names.push(c.name);
+        }
+    }
+    let monster = enemies::ENEMIES.iter().any(|e| {
+        e.innate.iter().any(|(st, _)| *st == s)
+            || e.on_death.iter().any(
+                |fx| matches!(fx, crate::core::enemy::EnemyFx::PlayerStatus { status, .. } if *status == s),
+            )
+    });
+    let mut parts: Vec<String> = Vec::new();
+    if !names.is_empty() {
+        let head = names.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+        if names.len() > 3 {
+            parts.push(format!("cards: {head} +{}", names.len() - 3));
+        } else {
+            parts.push(format!("cards: {head}"));
+        }
+    }
+    if monster {
+        parts.push("monsters".to_string());
+    }
+    if parts.is_empty() {
+        "no source in this build".to_string()
+    } else {
+        parts.join("; ")
+    }
+}
+
+/// 一条状态的说明:优先用参考语料的能力文案,语料里没有的那几条手写
+fn status_text(s: crate::core::status::Status) -> String {
+    if let Some(p) = corpus::POWERS.iter().find(|p| p.id == s.power_id()) {
+        return p.text.to_string();
+    }
+    s.summary_fallback().to_string()
+}
+
+fn status_items(group: &str) -> Vec<Item> {
+    use crate::core::status::Status;
+    let mut out = Vec::new();
+    for &s in Status::ALL {
+        if status_group(s) != group {
+            continue;
+        }
+        let (rarity_key, kind) = if s.is_marker() {
+            ("marker", "marker")
+        } else if s.is_debuff() {
+            ("curse", "debuff")
+        } else {
+            ("special", "buff")
+        };
+        out.push(Item {
+            name: s.name(),
+            sub: format!("{kind}   {}", status_sources(s)),
+            tag: s.short().to_string(),
+            text: status_text(s),
+            text_up: String::new(),
+            done: true,
+            rarity_key,
+            tag_up: String::new(),
+            kind,
+            target_tag: String::new(),
+            color_key: "gray",
+            show_cost: false,
+        });
+    }
+    out
 }
 
 /// 卡牌分组:和参考实现的 src/content/cards/ 一致 —— 状态牌、诅咒牌各自成组,
@@ -122,6 +228,12 @@ pub fn groups(lib: Library) -> Vec<Group> {
             .iter()
             .map(|&(_, title, color)| group(title, color))
             .collect(),
+        // 增益/减益:正面 / 负面 / 纯标记(引擎不读,只在界面上标一下)
+        Library::Buffs => vec![
+            group("Buffs", "yellow"),
+            group("Debuffs", "red"),
+            group("Markers", "gray"),
+        ],
         // 怪物按层分页,见 MONSTER_ACTS
         Library::Enemies => MONSTER_ACTS
             .iter()
@@ -181,6 +293,7 @@ pub fn items(lib: Library, tab: usize) -> Vec<Item> {
         Library::Potions => potion_items(g.name),
         Library::Events => event_items(g.name),
         Library::Enemies => monster_items(g.name),
+        Library::Buffs => status_items(g.name),
     }
 }
 
@@ -201,6 +314,15 @@ pub fn header_note(lib: Library) -> Option<String> {
                 .count(),
             corpus::MONSTERS.len(),
         ),
+        Library::Buffs => {
+            let count = |g: &str| status_items(g).len();
+            return Some(format!(
+                "buffs {}   debuffs {}   markers {}",
+                count("Buffs"),
+                count("Debuffs"),
+                count("Markers")
+            ));
+        }
         _ => return None,
     };
     let (done, total) = progress(lib);
@@ -211,6 +333,10 @@ pub fn header_note(lib: Library) -> Option<String> {
 
 /// 已实现/全部条数,标题上显示
 pub fn progress(lib: Library) -> (usize, usize) {
+    if lib == Library::Buffs {
+        let n = crate::core::status::Status::ALL.len();
+        return (n, n);
+    }
     let gs = groups(lib);
     let mut done = 0;
     let mut total = 0;
@@ -863,4 +989,40 @@ mod tests {
         assert!(boss.text.contains("hp 240\n"), "{}", boss.text);
         assert!(boss.text.contains("asc 250\n"), "{}", boss.text);
     }
+    /// 增益/减益册把 Status::ALL 一条不漏地分到三组里,条目内容不空
+    #[test]
+    fn buff_book_covers_every_status() {
+        let mut sum = 0usize;
+        for (i, g) in groups(Library::Buffs).iter().enumerate() {
+            let rows = items(Library::Buffs, i);
+            assert!(!rows.is_empty(), "分组 {} 没有条目", g.name);
+            for r in &rows {
+                assert!(!r.text.is_empty(), "{} 没有说明", r.name);
+                assert!(!r.sub.is_empty(), "{} 没有副标题", r.name);
+                assert_eq!(r.kind.is_empty(), false);
+            }
+            sum += rows.len();
+        }
+        assert_eq!(sum, crate::core::status::Status::ALL.len());
+    }
+
+    /// 每一组的状态归属按 is_debuff/is_marker 划分,不重不漏
+    #[test]
+    fn buff_groups_partition_the_statuses() {
+        let gs = groups(Library::Buffs);
+        assert_eq!(gs.len(), 3);
+        for &s in crate::core::status::Status::ALL {
+            let want = if s.is_marker() {
+                "Markers"
+            } else if s.is_debuff() {
+                "Debuffs"
+            } else {
+                "Buffs"
+            };
+            let group = gs.iter().position(|g| g.name == want).expect("分组名对得上");
+            let names: Vec<&str> = items(Library::Buffs, group).iter().map(|r| r.name).collect();
+            assert!(names.contains(&s.name()), "{} 不在 {} 里", s.name(), want);
+        }
+    }
+
 }

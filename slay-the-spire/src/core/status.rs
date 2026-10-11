@@ -157,6 +157,149 @@ pub enum Status {
 }
 
 impl Status {
+    /// 图鉴"buff 汇总"要一条不漏:这里是全部状态变体.
+    /// 新增变体时 status_all_lists_every_variant 会失败(它去数 name() 的分支数).
+    pub const ALL: &'static [Status] = &[
+        Status::Strength, Status::Dexterity, Status::Vulnerable, Status::Weak, Status::Frail, Status::Entangled,
+        Status::DemonForm, Status::Metallicize, Status::FeelNoPain, Status::DarkEmbrace, Status::Evolve, Status::FireBreathing,
+        Status::Barricade, Status::Brutality, Status::Rupture, Status::Regenerate, Status::Thorns, Status::Berserk,
+        Status::Combust, Status::Corruption, Status::DoubleTap, Status::Juggernaut, Status::Rage, Status::FlameBarrier,
+        Status::Artifact, Status::NoBlock, Status::NoDraw, Status::Mayhem, Status::Magnetism, Status::Panache,
+        Status::SadisticNature, Status::PlatedArmor, Status::Constricted, Status::Confused, Status::Hex, Status::DrawReduction,
+        Status::Surrounded, Status::Intangible, Status::Ritual, Status::Enrage, Status::Anger, Status::SharpHide,
+        Status::BeatOfDeath, Status::Curiosity, Status::CurlUp, Status::Explosive, Status::Fading, Status::Flight,
+        Status::Invincible, Status::Malleable, Status::Minion, Status::MinionLeader, Status::ModeShift, Status::PainfulStabs,
+        Status::Reactive, Status::Regrow, Status::Shifting, Status::Slow, Status::SporeCloud, Status::Split,
+        Status::Stasis, Status::StrengthUp, Status::TimeWarp, Status::Asleep, Status::Duplication, Status::LoseStrength,
+        Status::LoseDexterity, Status::Focus, Status::Poison, Status::Accuracy, Status::AfterImage, Status::ThousandCuts,
+        Status::Envenom, Status::InfiniteBlades, Status::NoxiousFumes, Status::ToolsOfTheTrade, Status::WraithForm, Status::Blur,
+        Status::PhantasmalKiller, Status::Burst, Status::WellLaidPlans, Status::Choke, Status::CorpseExplosion, Status::DoubleDamage,
+    ];
+
+    /// 图鉴用的语料 id:语料里的能力名与我们多数能对上,对不上的别名写在这里
+    pub fn power_id(self) -> &'static str {
+        use Status::*;
+        match self {
+            SadisticNature => "sadistic",
+            Anger => "angry",
+            Choke => "choked",
+            ThousandCuts => "thousand_cuts",
+            PhantasmalKiller => "phantasmal",
+            StrengthUp => "strength_up",
+            Regrow => "regrow",
+            WellLaidPlans => "well_laid_plans",
+            other => other.name_key(),
+        }
+    }
+
+    /// 语料里没有对应能力文案的少数几条,这里手写一句
+    pub fn summary_fallback(self) -> &'static str {
+        use Status::*;
+        match self {
+            Regrow => "半血复活一次的倒计时(暗灵)",
+            StrengthUp => "每回合结束获得等量力量(圆球步行者)",
+            WellLaidPlans => "回合结束时最多保留等量张手牌",
+            _ => "",
+        }
+    }
+
+    /// 纯标记类(引擎不读,只在界面上标一下):图鉴归到 markers 分组
+    pub fn is_marker(self) -> bool {
+        use Status::*;
+        matches!(self, Reactive | Split | Stasis)
+    }
+
+    /// name() 转小写下划线(语料 id 的写法)
+    fn name_key(self) -> &'static str {
+        use Status::*;
+        match self {
+            Strength => "strength",
+            Dexterity => "dexterity",
+            Vulnerable => "vulnerable",
+            Weak => "weak",
+            Frail => "frail",
+            Entangled => "entangled",
+            DemonForm => "demon_form",
+            Metallicize => "metallicize",
+            FeelNoPain => "feel_no_pain",
+            DarkEmbrace => "dark_embrace",
+            Evolve => "evolve",
+            FireBreathing => "fire_breathing",
+            Barricade => "barricade",
+            Brutality => "brutality",
+            Rupture => "rupture",
+            Regenerate => "regenerate",
+            Thorns => "thorns",
+            Berserk => "berserk",
+            Combust => "combust",
+            Corruption => "corruption",
+            DoubleTap => "double_tap",
+            Juggernaut => "juggernaut",
+            Rage => "rage",
+            FlameBarrier => "flame_barrier",
+            Artifact => "artifact",
+            NoBlock => "no_block",
+            NoDraw => "no_draw",
+            Mayhem => "mayhem",
+            Magnetism => "magnetism",
+            Panache => "panache",
+            SadisticNature => "sadistic_nature",
+            PlatedArmor => "plated_armor",
+            Constricted => "constricted",
+            Confused => "confused",
+            Hex => "hex",
+            DrawReduction => "draw_reduction",
+            Surrounded => "surrounded",
+            Intangible => "intangible",
+            Ritual => "ritual",
+            Enrage => "enrage",
+            Anger => "anger",
+            SharpHide => "sharp_hide",
+            BeatOfDeath => "beat_of_death",
+            Curiosity => "curiosity",
+            CurlUp => "curl_up",
+            Explosive => "explosive",
+            Fading => "fading",
+            Flight => "flight",
+            Invincible => "invincible",
+            Malleable => "malleable",
+            Minion => "minion",
+            MinionLeader => "minion_leader",
+            ModeShift => "mode_shift",
+            PainfulStabs => "painful_stabs",
+            Reactive => "reactive",
+            Regrow => "regrow",
+            Shifting => "shifting",
+            Slow => "slow",
+            SporeCloud => "spore_cloud",
+            Split => "split",
+            Stasis => "stasis",
+            StrengthUp => "strength_up",
+            TimeWarp => "time_warp",
+            Asleep => "asleep",
+            Duplication => "duplication",
+            LoseStrength => "lose_strength",
+            LoseDexterity => "lose_dexterity",
+            Focus => "focus",
+            Poison => "poison",
+            Accuracy => "accuracy",
+            AfterImage => "after_image",
+            ThousandCuts => "a_thousand_cuts",
+            Envenom => "envenom",
+            InfiniteBlades => "infinite_blades",
+            NoxiousFumes => "noxious_fumes",
+            ToolsOfTheTrade => "tools_of_the_trade",
+            WraithForm => "wraith_form",
+            Blur => "blur",
+            PhantasmalKiller => "phantasmal_killer",
+            Burst => "burst",
+            WellLaidPlans => "well_laid_plans",
+            Choke => "choke",
+            CorpseExplosion => "corpse_explosion",
+            DoubleDamage => "double_damage",
+        }
+    }
+
     pub fn name(self) -> &'static str {
         use Status::*;
         match self {
@@ -526,6 +669,41 @@ impl Statuses {
 
 #[cfg(test)]
 mod tests {
+    /// 图鉴"buff 汇总"靠 Status::ALL 列举:它必须与枚举分支一一对应.
+    /// 用 name() 的分支数当基准(那个 match 没有通配分支,新增变体会被编译器逼着补上).
+    #[test]
+    fn status_all_lists_every_variant() {
+        let src = include_str!("status.rs");
+        let start = src.find("pub fn name(self)").expect("name() 必须在");
+        let tail = &src[start..];
+        let end = tail.find("\n        }").expect("name() 的收尾括号必须在");
+        let arms = tail[..end].matches(" => \"").count();
+        assert_eq!(
+            Status::ALL.len(),
+            arms,
+            "Status::ALL 少列了变体:枚举里有 {arms} 条,name() 与 ALL 必须同步"
+        );
+        let mut ids: Vec<&str> = Status::ALL.iter().map(|s| s.name()).collect();
+        ids.sort_unstable();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(n, ids.len(), "Status::ALL 里有重复项");
+    }
+
+    /// 图鉴里每条状态都要有一句说明:语料里有就用语料的,没有的走手写兜底
+    #[test]
+    fn every_status_has_a_summary() {
+        for &s in Status::ALL {
+            let in_corpus = crate::core::corpus::POWERS.iter().any(|p| p.id == s.power_id());
+            assert!(
+                in_corpus || !s.summary_fallback().is_empty(),
+                "{} 既不在语料 POWERS 里也没有手写兜底",
+                s.name()
+            );
+            assert!(!s.name().is_empty() && !s.short().is_empty());
+        }
+    }
+
     use super::*;
 
     #[test]

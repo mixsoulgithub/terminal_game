@@ -118,6 +118,21 @@ def gen_cards(src: str) -> str:
     return "\n".join(rows)
 
 
+def gen_powers(src: str) -> str:
+    rows = []
+    for p in load(src, "powers"):
+        rows.append(
+            "    PowerInfo {{ id: {}, corpus_id: {}, name: {}, kind: {}, text: {} }},".format(
+                rs(game_id(p["id"])),
+                rs(p["id"]),
+                rs(p["name"]),
+                rs(p.get("kind", "")),
+                rs(resolve_markup(p.get("text", ""), False)),
+            )
+        )
+    return "\n".join(rows)
+
+
 def gen_relics(src: str) -> str:
     rows = []
     for r in load(src, "relics"):
@@ -297,6 +312,16 @@ pub struct EventInfo {
     pub text: &\'static str,
 }
 
+pub struct PowerInfo {
+    /// 本游戏的 id(语料 id 转小写)
+    pub id: &\'static str,
+    pub corpus_id: &\'static str,
+    pub name: &\'static str,
+    /// buff / debuff
+    pub kind: &\'static str,
+    pub text: &\'static str,
+}
+
 pub struct MonsterInfo {
     /// 本游戏的敌人 id(语料 id 转小写, 史莱姆的 _S/_M/_L 展开成 _small/_medium/_large)
     pub id: &\'static str,
@@ -337,6 +362,7 @@ def main():
     parts = [HEADER]
     for name, ty, fn in [
         ("cards", "CardInfo", gen_cards),
+        ("powers", "PowerInfo", gen_powers),
         ("relics", "RelicInfo", gen_relics),
         ("potions", "PotionInfo", gen_potions),
         ("events", "EventInfo", gen_events),
