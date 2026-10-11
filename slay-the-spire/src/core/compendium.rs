@@ -151,6 +151,26 @@ fn status_text(s: crate::core::status::Status) -> String {
     s.summary_fallback().to_string()
 }
 
+/// 说明 + 候选图标清单:评审时按序号或字形名挑,选中后写回 tools/nf_status_glyphs.py 的表
+fn status_text_with_candidates(s: crate::core::status::Status) -> String {
+    let mut t = status_text(s);
+    let cands = s.glyph_candidates();
+    if cands.is_empty() {
+        return t;
+    }
+    t.push_str(&format!(
+        "\n\n候选图标(序号或字形名告诉我就行;当前配色 {};要无色就说 no-color): ",
+        s.icon_color_key()
+    ));
+    for (i, (ch, name)) in cands.iter().enumerate() {
+        if i > 0 {
+            t.push_str(" / ");
+        }
+        t.push_str(&format!("{}) {} {}", i + 1, ch, name));
+    }
+    t
+}
+
 fn status_items(group: &str) -> Vec<Item> {
     use crate::core::status::Status;
     let mut out = Vec::new();
@@ -171,7 +191,7 @@ fn status_items(group: &str) -> Vec<Item> {
             sub: format!("{}   {kind}   {}", s.short(), status_sources(s)),
             tag: s.glyph().to_string(),
             tag_color_key: s.icon_color_key(),
-            text: status_text(s),
+            text: status_text_with_candidates(s),
             text_up: String::new(),
             done: true,
             rarity_key,

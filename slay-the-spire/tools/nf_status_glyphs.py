@@ -137,6 +137,94 @@ COLOR = {
     "Intangible": "block",
 }
 
+# 状态 -> 候选图标的关键词(按关键词从字体字形名里搜,最多取 10 个;第一个是当前用的)
+KEYWORDS = {
+    "Strength": ["dumbbell", "weight", "muscle", "fist", "fitness", "strong"],
+    "Dexterity": ["shoe_prints", "shoe", "running", "walk", "wind", "feather"],
+    "Vulnerable": ["heart_crack", "heart_broken", "shield_halved", "crack", "broken", "target"],
+    "Weak": ["face_dizzy", "dizzy", "face_tired", "face_grimace", "down", "arrow_down"],
+    "Frail": ["crutch", "bone", "skeleton", "shield_halved", "heart_broken"],
+    "Entangled": ["spider", "web", "net", "rope", "chain"],
+    "DemonForm": ["fire_flame_curved", "fire", "flame", "demon", "devil", "skull"],
+    "Metallicize": ["shield_halved", "shield", "metal", "gear", "cog", "anvil"],
+    "FeelNoPain": ["hand_holding_heart", "heart", "hand_holding", "shield_heart"],
+    "DarkEmbrace": ["moon_o", "moon", "cloud_moon", "moon_cloud"],
+    "Evolve": ["dna", "flask", "seedling", "arrows_up", "arrow_up"],
+    "FireBreathing": ["fire", "fire_flame_simple", "dragon", "flame", "smog"],
+    "Barricade": ["chess_rook", "wall", "brick", "fort", "castle", "shield"],
+    "Brutality": ["blood_bag", "blood", "droplet", "heart", "syringe"],
+    "Rupture": ["droplet_slash", "droplet", "blood", "syringe", "flask"],
+    "Regenerate": ["heart_pulse", "heartbeat", "heart", "plus", "medkit", "bandage"],
+    "Thorns": ["cactus", "thorn", "spike", "plant", "star", "sun"],
+    "Berserk": ["face_grin_stars", "flame", "fire", "bolt", "skull", "rage"],
+    "Combust": ["fire_flame_simple", "fire", "flame", "bomb", "burst", "smog"],
+    "Corruption": ["biohazard", "skull", "poison", "virus", "radiation"],
+    "DoubleTap": ["repeat", "clone", "copy", "retweet", "arrows_rotate"],
+    "Juggernaut": ["truck_fast", "truck", "car", "bolt", "rocket", "train"],
+    "Rage": ["face_angry", "angry", "face_grimace", "face_grin_stars", "angry_face"],
+    "FlameBarrier": ["flame_thick", "flame", "fire", "shield", "wall"],
+    "Artifact": ["gem", "diamond", "shield", "star", "shield_halved"],
+    "NoBlock": ["ban", "circle_slash", "cancel", "shield_off", "shield"],
+    "NoDraw": ["circle_slash", "ban", "hand_dots", "hand", "cards", "lock"],
+    "Mayhem": ["shuffle", "dice", "random", "cards", "sparkles"],
+    "Magnetism": ["magnet", "circle_dot", "magnet_flat"],
+    "Panache": ["feather", "feather_pointed", "hat", "star", "sparkles"],
+    "SadisticNature": ["face_grin_tongue_squint", "face_grin", "smile", "skull", "devil"],
+    "PlatedArmor": ["shield_plus", "shield", "armor", "shield_halved", "vest"],
+    "Constricted": ["ring", "compress", "arrows_to_line", "circle", "snake"],
+    "Ritual": ["hands_praying", "pray", "candle", "church", "star", "moon"],
+    "Enrage": ["bullhorn", "megaphone", "angry", "face_angry", "bolt"],
+    "Anger": ["face_grimace", "face_angry", "angry", "face_frown", "bolt"],
+    "SharpHide": ["hand_fist", "shield_halved", "spike", "sword", "shield"],
+    "BeatOfDeath": ["heartbeat", "heart_pulse", "heart", "heart_broken", "skull"],
+    "Curiosity": ["magnify", "magnifying_glass", "search", "question", "eye"],
+    "CurlUp": ["shield_plus_outline", "shield", "circle_notch", "snail", "shield_halved"],
+    "Explosive": ["bomb", "bomb_off", "burst", "fire", "skull", "radiation"],
+    "Fading": ["hourglass_end", "hourglass", "ghost", "clock", "hourglass_o"],
+    "Flight": ["dove", "feather", "wing", "bird", "plane", "cloud"],
+    "Invincible": ["shield", "shield_halved", "shield_plus", "castle", "crown"],
+    "Malleable": ["shapes", "dice", "puzzle", "circle", "square"],
+    "Minion": ["users", "user", "user_friends", "account_group", "person"],
+    "MinionLeader": ["crown", "chess_king", "star", "skull", "flag"],
+    "ModeShift": ["rotate", "arrows_rotate", "sync", "refresh", "shield"],
+    "PainfulStabs": ["syringe", "injection", "needle", "dagger", "sword", "bolt"],
+    "Reactive": ["bolt", "lightning", "bolt_auto", "flash", "zap"],
+    "Regrow": ["seedling", "plant", "leaf", "sprout", "recycle", "heart"],
+    "Shifting": ["arrows_v", "arrows_up_down", "arrows", "exchange", "refresh"],
+    "Slow": ["clock_o", "clock", "hourglass", "snail", "tachometer"],
+    "SporeCloud": ["cloud", "smog", "clouds", "fog", "poison", "spa"],
+    "Split": ["source_branch", "code_branch", "clone", "fork", "share", "scissors"],
+    "Stasis": ["box_archive", "box", "pause", "lock", "clock", "freeze"],
+    "StrengthUp": ["angles_up", "arrow_up", "arrow_up_long", "chevron_up", "bolt"],
+    "TimeWarp": ["hourglass", "clock", "hourglass_half", "hourglass_end", "stopwatch"],
+    "Asleep": ["bed_pulse", "bed", "moon", "bell_sleep", "sleep", "zzz"],
+    "Duplication": ["clone", "copy", "repeat", "files", "layer_group"],
+    "LoseStrength": ["arrow_down", "arrow_down_long", "angles_down", "dumbbell"],
+    "LoseDexterity": ["arrow_down", "arrow_down_long", "angles_down", "shoe_prints"],
+    "Focus": ["bullseye", "crosshairs", "target", "eye", "circle_dot"],
+    "Accuracy": ["crosshairs", "bullseye", "target", "dagger", "knife", "feather"],
+    "AfterImage": ["images", "image", "ghost", "copy", "clone", "film"],
+    "ThousandCuts": ["utensils", "knife", "scissors", "swords", "blade", "khanda"],
+    "Envenom": ["flask", "poison", "syringe", "skull_crossbones", "biohazard"],
+    "InfiniteBlades": ["khanda", "sword", "swords", "dagger", "knife", "infinity"],
+    "NoxiousFumes": ["smog", "cloud", "poison", "fog", "spa", "biohazard"],
+    "ToolsOfTheTrade": ["screwdriver_wrench", "toolbox", "wrench", "gear", "tools"],
+    "WraithForm": ["ghost", "ghost_alt", "spirit", "shield", "cloud"],
+    "Blur": ["eye_slash", "low_vision", "eye", "cloud", "wind"],
+    "PhantasmalKiller": ["user_secret", "mask", "spy", "dagger", "ghost", "eye"],
+    "Burst": ["forward", "bolt", "fast_forward", "rocket", "angles_right"],
+    "WellLaidPlans": ["checklist", "list_check", "clipboard", "list", "map", "compass"],
+    "Choke": ["hand_front_right", "hand", "hand_fist", "hourglass", "skull"],
+    "CorpseExplosion": ["bomb", "skull_crossbones", "fire", "burst", "radiation", "biohazard"],
+    "DoubleDamage": ["check_double", "bolt", "dumbbell", "swords", "chevron_double"],
+    "Poison": ["skull_crossbones", "flask", "biohazard", "skull", "droplet", "syringe"],
+    "Confused": ["help_circle", "question", "face_dizzy", "shuffle", "dice"],
+    "Hex": ["hexagon", "hat_wizard", "magic", "star", "sparkles"],
+    "DrawReduction": ["cards_outline", "cards", "arrow_down", "minus", "hand"],
+    "Surrounded": ["account_group", "users", "people", "arrows", "circle"],
+    "Intangible": ["ghost", "shield", "spirit", "cloud", "eye_slash"],
+}
+
 def variants(src: str):
     """status.rs 里 Status 枚举的变体(按声明顺序)"""
     i = src.index("pub enum Status {")
@@ -186,6 +274,27 @@ def main():
         for v in vs
     ]
     color_lines = [f'            {v} => "{COLOR[v]}",' for v in vs]
+
+    def candidates(status: str):
+        out = []
+        picked = MAP[status].lower().replace("-", "_")
+        # 当前用的排第一,其余按关键词从字形名里搜(名字排序保证稳定)
+        out.append(picked)
+        for kw in KEYWORDS.get(status, []):
+            for n in sorted(byname):
+                if kw in n and n not in out:
+                    out.append(n)
+                    if len(out) >= 10:
+                        break
+            if len(out) >= 10:
+                break
+        return out[:10]
+
+    cand_lines = []
+    for v in vs:
+        items = candidates(v)
+        pairs = ", ".join(f"('\\u{{{byname[n]:x}}}', \"{n.replace('_', '-')}\")" for n in items)
+        cand_lines.append(f"            {v} => &[{pairs}],")
     print("\n".join(lines))
     if "--write" in sys.argv:
         body = (
@@ -203,8 +312,15 @@ def main():
             + "\n".join(color_lines)
             + "\n        }\n    }\n"
         )
+        body += (
+            "\n    /// 候选图标(最多 10 个,第一个是当前用的):图鉴把这份清单附在说明后面,\n"
+            "    /// 评审时按序号或字形名挑.候选也是按字形名从字体 cmap 里搜出来的,挑到的都在字体里.\n"
+            "    pub fn glyph_candidates(self) -> &'static [(char, &'static str)] {\n        use Status::*;\n        match self {\n"
+            + "\n".join(cand_lines)
+            + "\n        }\n    }\n"
+        )
         start = src.index("    /// 图鉴里每条状态前显示一个 Nerd Font 图标")
-        end = src.index("\n    }\n", src.index("pub fn glyph(self) -> char {")) + len("\n    }\n")
+        end = src.index("\n    }\n", src.index("pub fn icon_color_key(self) -> &'static str {")) + len("\n    }\n")
         src = src[:start] + body + src[end:]
         open(STATUS_RS, "w", encoding="utf-8").write(src)
         print(f"已写回 {STATUS_RS}", file=sys.stderr)
