@@ -62,6 +62,40 @@ pub fn display_width(s: &str) -> usize {
         .sum()
 }
 
+/// 状态徽章:上行图标(3 列,右对齐)、下行数值(3 列,带 +/-)。
+/// 图标 2 列 -> 前面补 1 个空格;1 列 -> 补 2 个空格;字符型图标必须是 ASCII 大写。
+/// 数值:0..=99 带 +,负数带 -,>99 直接写数字(心之壁垒那种 200/999),超范围夹住。
+pub const BADGE_W: usize = 3;
+
+/// 把图标补到 3 列(右对齐).图标超过 3 列时原样返回,由调用方决定怎么收
+pub fn badge_icon(icon: &str) -> String {
+    let w = display_width(icon);
+    if w >= BADGE_W {
+        return icon.to_string();
+    }
+    format!("{}{}", " ".repeat(BADGE_W - w), icon)
+}
+
+/// 数值那一行(B):-99..=-1 -> "-N";0..=99 -> "+N";100..=999 -> "N";越界夹到 3 列
+pub fn badge_value(v: i32) -> String {
+    let s = match v {
+        v if v < -99 => "-99".to_string(),
+        v if v < 0 => format!("{v}"),
+        v if v > 999 => "999".to_string(),
+        v if v > 99 => format!("{v}"),
+        v => format!("+{v}"),
+    };
+    // 右对齐补到 3 列(2 宽 -> space+2,1 宽 -> 2 space+1)
+    format!("{:>width$}", s, width = BADGE_W)
+}
+
+/// 一个徽章的两行(A 图标 / B 数值),都补到 3 列
+pub fn badge(icon: &str, value: i32) -> (String, String) {
+    let a = badge_icon(icon);
+    let b = badge_value(value);
+    (a, b)
+}
+
 /// 药水名里的 "Potion" 换成 ~,只在放不下时才用
 pub fn potion_label(name: &str) -> String {
     name.replace("Potion", "~")
@@ -1546,3 +1580,43 @@ mod tests {
 
 
 
+
+#[cfg(test)]
+mod badge_tests {
+    use super::*;
+
+    /// 上行:2 列图标补 1 空格,1 列补 2 空格,都是 3 列
+    #[test]
+    fn badge_icon_pads_to_three_columns() {
+        assert_eq!(display_width(&badge_icon("\u{1F4AA}")), 3, "emoji 双宽");
+        assert_eq!(badge_icon("\u{1F4AA}"), " \u{1F4AA}");
+        assert_eq!(display_width(&badge_icon("X")), 3, "单字符");
+        assert_eq!(badge_icon("X"), "  X");
+        assert_eq!(badge_icon("AB"), " AB");
+        assert_eq!(display_width(&badge_icon("AB")), 3);
+    }
+
+    /// 下行:0..=99 带 +,负数带 -,>99 写纯数字,越界夹住
+    #[test]
+    fn badge_value_signs_and_clamps() {
+        assert_eq!(badge_value(2), " +2");
+        assert_eq!(badge_value(-2), " -2");
+        assert_eq!(badge_value(0), " +0");
+        assert_eq!(badge_value(99), "+99");
+        assert_eq!(badge_value(-99), "-99");
+        assert_eq!(badge_value(100), "100");
+        assert_eq!(badge_value(999), "999");
+        assert_eq!(badge_value(1000), "999", "超范围夹到 3 列");
+        assert_eq!(badge_value(-1000), "-99");
+    }
+
+    /// 徽章两行等宽(3 列),并排摆不会串
+    #[test]
+    fn badge_lines_are_equal_width() {
+        for (icon, v) in [("\u{1F4AA}", 2), ("X", -2), ("AB", 200), ("\u{1F335}", 99)] {
+            let (a, b) = badge(icon, v);
+            assert_eq!(display_width(&a), 3, "{icon} 上行");
+            assert_eq!(display_width(&b), 3, "{icon} 下行");
+        }
+    }
+}

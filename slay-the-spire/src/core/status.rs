@@ -187,96 +187,97 @@ impl Status {
 
 
 
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
-    pub fn glyph(self) -> char {
+    pub fn glyph(self) -> &'static str {
         use Status::*;
         match self {
-            Strength => '\u{1f4aa}', // emoji \U0001f4aa
-            Dexterity => '\u{1f45f}', // emoji \U0001f45f
-            Vulnerable => '\u{1f494}', // emoji \U0001f494
-            Weak => '\u{1f974}', // emoji \U0001f974
-            Frail => '\u{1f9b4}', // emoji \U0001f9b4
-            Entangled => '\u{1f9f6}', // emoji \U0001f9f6
-            DemonForm => '\u{1f608}', // emoji \U0001f608
-            Metallicize => '\u{1f529}', // emoji \U0001f529
-            FeelNoPain => '\u{1f48a}', // emoji \U0001f48a
-            DarkEmbrace => '\u{1f311}', // emoji \U0001f311
-            Evolve => '\u{1f9ec}', // emoji \U0001f9ec
-            FireBreathing => '\u{1f432}', // emoji \U0001f432
-            Barricade => '\u{1f9f1}', // emoji \U0001f9f1
-            Brutality => '\u{1f4a2}', // emoji \U0001f4a2
-            Rupture => '\u{1fa78}', // emoji \U0001fa78
-            Regenerate => '\u{1f49a}', // emoji \U0001f49a
-            Thorns => '\u{1f335}', // emoji \U0001f335
-            Berserk => '\u{1f92c}', // emoji \U0001f92c
-            Combust => '\u{1f525}', // emoji \U0001f525
-            Corruption => '\u{1f9a0}', // emoji \U0001f9a0
-            DoubleTap => '\u{1f501}', // emoji \U0001f501
-            Juggernaut => '\u{1f682}', // emoji \U0001f682
-            Rage => '\u{1f621}', // emoji \U0001f621
-            FlameBarrier => '\u{1f30b}', // emoji \U0001f30b
-            Artifact => '\u{1f48e}', // emoji \U0001f48e
-            NoBlock => '\u{1f6ab}', // emoji \U0001f6ab
-            NoDraw => '\u{26d4}', // emoji \u26d4
-            Mayhem => '\u{1f300}', // emoji \U0001f300
-            Magnetism => '\u{1f9f2}', // emoji \U0001f9f2
-            Panache => '\u{1f3a9}', // emoji \U0001f3a9
-            SadisticNature => '\u{1f60f}', // emoji \U0001f60f
-            PlatedArmor => '\u{1f9ba}', // emoji \U0001f9ba
-            Constricted => '\u{1f40d}', // emoji \U0001f40d
-            Confused => '\u{1f635}', // emoji \U0001f635
-            Hex => '\u{1f52e}', // emoji \U0001f52e
-            DrawReduction => '\u{1f53b}', // emoji \U0001f53b
-            Surrounded => '\u{1f465}', // emoji \U0001f465
-            Intangible => '\u{1f4a0}', // emoji \U0001f4a0
-            Ritual => '\u{1f9ff}', // emoji \U0001f9ff
-            Enrage => '\u{1f4e2}', // emoji \U0001f4e2
-            Anger => '\u{1f620}', // emoji \U0001f620
-            SharpHide => '\u{1f994}', // emoji \U0001f994
-            BeatOfDeath => '\u{1f493}', // emoji \U0001f493
-            Curiosity => '\u{1f50d}', // emoji \U0001f50d
-            CurlUp => '\u{1f40c}', // emoji \U0001f40c
-            Explosive => '\u{1f4a3}', // emoji \U0001f4a3
-            Fading => '\u{231b}', // emoji \u231b
-            Flight => '\u{1f985}', // emoji \U0001f985
-            Invincible => '\u{1f3f0}', // emoji \U0001f3f0
-            Malleable => '\u{1f9fd}', // emoji \U0001f9fd
-            Minion => '\u{1f47e}', // emoji \U0001f47e
-            MinionLeader => '\u{1f451}', // emoji \U0001f451
-            ModeShift => '\u{1f504}', // emoji \U0001f504
-            PainfulStabs => '\u{1f489}', // emoji \U0001f489
-            Reactive => '\u{26a1}', // emoji \u26a1
-            Regrow => '\u{1f331}', // emoji \U0001f331
-            Shifting => '\u{1f503}', // emoji \U0001f503
-            Slow => '\u{1f9a5}', // emoji \U0001f9a5
-            SporeCloud => '\u{1f344}', // emoji \U0001f344
-            Split => '\u{1f500}', // emoji \U0001f500
-            Stasis => '\u{1f512}', // emoji \U0001f512
-            StrengthUp => '\u{1f53c}', // emoji \U0001f53c
-            TimeWarp => '\u{23f0}', // emoji \u23f0
-            Asleep => '\u{1f4a4}', // emoji \U0001f4a4
-            Duplication => '\u{1f0cf}', // emoji \U0001f0cf
-            LoseStrength => '\u{1f4c9}', // emoji \U0001f4c9
-            LoseDexterity => '\u{1f53d}', // emoji \U0001f53d
-            Focus => '\u{1f3af}', // emoji \U0001f3af
-            Poison => '\u{1f922}', // emoji \U0001f922
-            Accuracy => '\u{1f3f9}', // emoji \U0001f3f9
-            AfterImage => '\u{1f4f8}', // emoji \U0001f4f8
-            ThousandCuts => '\u{1f52a}', // emoji \U0001f52a
-            Envenom => '\u{1f9ea}', // emoji \U0001f9ea
-            InfiniteBlades => '\u{eecf}', // fa-khanda
-            NoxiousFumes => '\u{1f637}', // emoji \U0001f637
-            ToolsOfTheTrade => '\u{1f527}', // emoji \U0001f527
-            WraithForm => '\u{1f47b}', // emoji \U0001f47b
-            Blur => '\u{1f4a8}', // emoji \U0001f4a8
-            PhantasmalKiller => '\u{1f3ad}', // emoji \U0001f3ad
-            Burst => '\u{1f4a5}', // emoji \U0001f4a5
-            WellLaidPlans => '\u{1f9ed}', // emoji \U0001f9ed
-            Choke => '\u{1f616}', // emoji \U0001f616
-            CorpseExplosion => '\u{1f9e8}', // emoji \U0001f9e8
-            DoubleDamage => '\u{1f93a}', // emoji \U0001f93a
+            Strength => "\u{1f4aa}", // emoji \U0001f4aa
+            Dexterity => "\u{1f45f}", // emoji \U0001f45f
+            Vulnerable => "\u{1f494}", // emoji \U0001f494
+            Weak => "\u{f04e5}", // md-sword
+            Frail => "\u{1f9b4}", // emoji \U0001f9b4
+            Entangled => "\u{1f9f6}", // emoji \U0001f9f6
+            DemonForm => "\u{1f608}", // emoji \U0001f608
+            Metallicize => "\u{1f529}", // emoji \U0001f529
+            FeelNoPain => "\u{1f48a}", // emoji \U0001f48a
+            DarkEmbrace => "\u{1f311}", // emoji \U0001f311
+            Evolve => "\u{1f9ec}", // emoji \U0001f9ec
+            FireBreathing => "\u{1f432}", // emoji \U0001f432
+            Barricade => "\u{1f9f1}", // emoji \U0001f9f1
+            Brutality => "\u{1f4a2}", // emoji \U0001f4a2
+            Rupture => "\u{1fa78}", // emoji \U0001fa78
+            Regenerate => "\u{1f49a}", // emoji \U0001f49a
+            Thorns => "\u{1f335}", // emoji \U0001f335
+            Berserk => "\u{1f92c}", // emoji \U0001f92c
+            Combust => "\u{1f525}", // emoji \U0001f525
+            Corruption => "\u{1f9a0}", // emoji \U0001f9a0
+            DoubleTap => "\u{1f501}", // emoji \U0001f501
+            Juggernaut => "\u{1f682}", // emoji \U0001f682
+            Rage => "\u{1f621}", // emoji \U0001f621
+            FlameBarrier => "\u{1f30b}", // emoji \U0001f30b
+            Artifact => "\u{1f48e}", // emoji \U0001f48e
+            NoBlock => "\u{1f6ab}", // emoji \U0001f6ab
+            NoDraw => "\u{26d4}", // emoji \u26d4
+            Mayhem => "\u{1f300}", // emoji \U0001f300
+            Magnetism => "\u{1f9f2}", // emoji \U0001f9f2
+            Panache => "\u{1f3a9}", // emoji \U0001f3a9
+            SadisticNature => "\u{1f60f}", // emoji \U0001f60f
+            PlatedArmor => "\u{1f9ba}", // emoji \U0001f9ba
+            Constricted => "\u{1f40d}", // emoji \U0001f40d
+            Confused => "\u{1f635}", // emoji \U0001f635
+            Hex => "\u{1f52e}", // emoji \U0001f52e
+            DrawReduction => "\u{1f53b}", // emoji \U0001f53b
+            Surrounded => "\u{1f465}", // emoji \U0001f465
+            Intangible => "\u{1f4a0}", // emoji \U0001f4a0
+            Ritual => "\u{1f9ff}", // emoji \U0001f9ff
+            Enrage => "\u{1f4e2}", // emoji \U0001f4e2
+            Anger => "\u{1f620}", // emoji \U0001f620
+            SharpHide => "\u{1f994}", // emoji \U0001f994
+            BeatOfDeath => "\u{1f493}", // emoji \U0001f493
+            Curiosity => "\u{1f50d}", // emoji \U0001f50d
+            CurlUp => "\u{1f40c}", // emoji \U0001f40c
+            Explosive => "\u{1f4a3}", // emoji \U0001f4a3
+            Fading => "\u{231b}", // emoji \u231b
+            Flight => "\u{1f985}", // emoji \U0001f985
+            Invincible => "\u{1f3f0}", // emoji \U0001f3f0
+            Malleable => "\u{1f9fd}", // emoji \U0001f9fd
+            Minion => "\u{1f47e}", // emoji \U0001f47e
+            MinionLeader => "\u{1f451}", // emoji \U0001f451
+            ModeShift => "\u{1f504}", // emoji \U0001f504
+            PainfulStabs => "\u{1f489}", // emoji \U0001f489
+            Reactive => "\u{26a1}", // emoji \u26a1
+            Regrow => "\u{1f331}", // emoji \U0001f331
+            Shifting => "\u{1f503}", // emoji \U0001f503
+            Slow => "\u{1f9a5}", // emoji \U0001f9a5
+            SporeCloud => "\u{1f344}", // emoji \U0001f344
+            Split => "\u{1f500}", // emoji \U0001f500
+            Stasis => "\u{1f512}", // emoji \U0001f512
+            StrengthUp => "\u{1f53c}", // emoji \U0001f53c
+            TimeWarp => "\u{23f0}", // emoji \u23f0
+            Asleep => "\u{1f4a4}", // emoji \U0001f4a4
+            Duplication => "\u{1f0cf}", // emoji \U0001f0cf
+            LoseStrength => "\u{1f4c9}", // emoji \U0001f4c9
+            LoseDexterity => "\u{1f53d}", // emoji \U0001f53d
+            Focus => "\u{1f3af}", // emoji \U0001f3af
+            Poison => "\u{1f922}", // emoji \U0001f922
+            Accuracy => "\u{1f3f9}", // emoji \U0001f3f9
+            AfterImage => "\u{1f4f8}", // emoji \U0001f4f8
+            ThousandCuts => "\u{1f52a}", // emoji \U0001f52a
+            Envenom => "\u{1f9ea}", // emoji \U0001f9ea
+            InfiniteBlades => "\u{eecf}", // fa-khanda
+            NoxiousFumes => "\u{1f637}", // emoji \U0001f637
+            ToolsOfTheTrade => "\u{1f527}", // emoji \U0001f527
+            WraithForm => "\u{1f47b}", // emoji \U0001f47b
+            Blur => "\u{1f4a8}", // emoji \U0001f4a8
+            PhantasmalKiller => "\u{1f3ad}", // emoji \U0001f3ad
+            Burst => "\u{1f4a5}", // emoji \U0001f4a5
+            WellLaidPlans => "\u{1f9ed}", // emoji \U0001f9ed
+            Choke => "\u{1f616}", // emoji \U0001f616
+            CorpseExplosion => "\u{1f9e8}", // emoji \U0001f9e8
+            DoubleDamage => "\u{1f93a}", // emoji \U0001f93a
         }
     }
 
@@ -372,94 +373,94 @@ impl Status {
         }
     }
 
-    /// 当前图标是不是 emoji(emoji 自带颜色,图标那一列就不再按配色键上色)
-    pub fn icon_is_emoji(self) -> bool {
+    /// 图标种类:emoji(自带颜色,不再按配色键上色)/ nf / text(1-2 个大写字符)
+    pub fn icon_kind(self) -> &'static str {
         use Status::*;
         match self {
-            Strength => true,
-            Dexterity => true,
-            Vulnerable => true,
-            Weak => true,
-            Frail => true,
-            Entangled => true,
-            DemonForm => true,
-            Metallicize => true,
-            FeelNoPain => true,
-            DarkEmbrace => true,
-            Evolve => true,
-            FireBreathing => true,
-            Barricade => true,
-            Brutality => true,
-            Rupture => true,
-            Regenerate => true,
-            Thorns => true,
-            Berserk => true,
-            Combust => true,
-            Corruption => true,
-            DoubleTap => true,
-            Juggernaut => true,
-            Rage => true,
-            FlameBarrier => true,
-            Artifact => true,
-            NoBlock => true,
-            NoDraw => true,
-            Mayhem => true,
-            Magnetism => true,
-            Panache => true,
-            SadisticNature => true,
-            PlatedArmor => true,
-            Constricted => true,
-            Confused => true,
-            Hex => true,
-            DrawReduction => true,
-            Surrounded => true,
-            Intangible => true,
-            Ritual => true,
-            Enrage => true,
-            Anger => true,
-            SharpHide => true,
-            BeatOfDeath => true,
-            Curiosity => true,
-            CurlUp => true,
-            Explosive => true,
-            Fading => true,
-            Flight => true,
-            Invincible => true,
-            Malleable => true,
-            Minion => true,
-            MinionLeader => true,
-            ModeShift => true,
-            PainfulStabs => true,
-            Reactive => true,
-            Regrow => true,
-            Shifting => true,
-            Slow => true,
-            SporeCloud => true,
-            Split => true,
-            Stasis => true,
-            StrengthUp => true,
-            TimeWarp => true,
-            Asleep => true,
-            Duplication => true,
-            LoseStrength => true,
-            LoseDexterity => true,
-            Focus => true,
-            Poison => true,
-            Accuracy => true,
-            AfterImage => true,
-            ThousandCuts => true,
-            Envenom => true,
-            InfiniteBlades => false,
-            NoxiousFumes => true,
-            ToolsOfTheTrade => true,
-            WraithForm => true,
-            Blur => true,
-            PhantasmalKiller => true,
-            Burst => true,
-            WellLaidPlans => true,
-            Choke => true,
-            CorpseExplosion => true,
-            DoubleDamage => true,
+            Strength => "emoji",
+            Dexterity => "emoji",
+            Vulnerable => "emoji",
+            Weak => "nf",
+            Frail => "emoji",
+            Entangled => "emoji",
+            DemonForm => "emoji",
+            Metallicize => "emoji",
+            FeelNoPain => "emoji",
+            DarkEmbrace => "emoji",
+            Evolve => "emoji",
+            FireBreathing => "emoji",
+            Barricade => "emoji",
+            Brutality => "emoji",
+            Rupture => "emoji",
+            Regenerate => "emoji",
+            Thorns => "emoji",
+            Berserk => "emoji",
+            Combust => "emoji",
+            Corruption => "emoji",
+            DoubleTap => "emoji",
+            Juggernaut => "emoji",
+            Rage => "emoji",
+            FlameBarrier => "emoji",
+            Artifact => "emoji",
+            NoBlock => "emoji",
+            NoDraw => "emoji",
+            Mayhem => "emoji",
+            Magnetism => "emoji",
+            Panache => "emoji",
+            SadisticNature => "emoji",
+            PlatedArmor => "emoji",
+            Constricted => "emoji",
+            Confused => "emoji",
+            Hex => "emoji",
+            DrawReduction => "emoji",
+            Surrounded => "emoji",
+            Intangible => "emoji",
+            Ritual => "emoji",
+            Enrage => "emoji",
+            Anger => "emoji",
+            SharpHide => "emoji",
+            BeatOfDeath => "emoji",
+            Curiosity => "emoji",
+            CurlUp => "emoji",
+            Explosive => "emoji",
+            Fading => "emoji",
+            Flight => "emoji",
+            Invincible => "emoji",
+            Malleable => "emoji",
+            Minion => "emoji",
+            MinionLeader => "emoji",
+            ModeShift => "emoji",
+            PainfulStabs => "emoji",
+            Reactive => "emoji",
+            Regrow => "emoji",
+            Shifting => "emoji",
+            Slow => "emoji",
+            SporeCloud => "emoji",
+            Split => "emoji",
+            Stasis => "emoji",
+            StrengthUp => "emoji",
+            TimeWarp => "emoji",
+            Asleep => "emoji",
+            Duplication => "emoji",
+            LoseStrength => "emoji",
+            LoseDexterity => "emoji",
+            Focus => "emoji",
+            Poison => "emoji",
+            Accuracy => "emoji",
+            AfterImage => "emoji",
+            ThousandCuts => "emoji",
+            Envenom => "emoji",
+            InfiniteBlades => "nf",
+            NoxiousFumes => "emoji",
+            ToolsOfTheTrade => "emoji",
+            WraithForm => "emoji",
+            Blur => "emoji",
+            PhantasmalKiller => "emoji",
+            Burst => "emoji",
+            WellLaidPlans => "emoji",
+            Choke => "emoji",
+            CorpseExplosion => "emoji",
+            DoubleDamage => "emoji",
         }
     }
 
@@ -562,7 +563,7 @@ impl Status {
             Strength => &[('\u{1f4aa}', "emoji U+1F4AA"), ('\u{ed67}', "fa-dumbbell"), ('\u{f01e6}', "md-dumbbell"), ('\u{ee94}', "fa-weight-hanging"), ('\u{ed93}', "fa-weight-scale"), ('\u{f05c9}', "md-format-line-weight"), ('\u{f05a1}', "md-weight"), ('\u{f0d3f}', "md-weight-gram"), ('\u{f05a2}', "md-weight-kilogram"), ('\u{f115d}', "md-weight-lifter")],
             Dexterity => &[('\u{1f45f}', "emoji U+1F45F"), ('\u{ee14}', "fa-shoe_prints"), ('\u{f0a58}', "md-horseshoe"), ('\u{f15ca}', "md-shoe-ballet"), ('\u{f15c7}', "md-shoe-cleat"), ('\u{f0b47}', "md-shoe-formal"), ('\u{f0b48}', "md-shoe-heel"), ('\u{f0dfa}', "md-shoe-print"), ('\u{f15c8}', "md-shoe-sneaker"), ('\u{f1a72}', "md-snowshoeing")],
             Vulnerable => &[('\u{1f494}', "emoji U+1F494"), ('\u{ef4f}', "fa-heart_crack"), ('\u{f02d4}', "md-heart-broken"), ('\u{f0d14}', "md-heart-broken-outline"), ('\u{ed25}', "fa-shield-halved"), ('\u{ef05}', "fa-house-chimney-crack"), ('\u{f02ed}', "md-image-broken"), ('\u{f02ee}', "md-image-broken-variant"), ('\u{f0da4}', "md-trophy-broken"), ('\u{ebf8}', "cod-target")],
-            Weak => &[('\u{1f974}', "emoji U+1F974"), ('\u{f04e5}', "md-sword"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f0787}', "md-sword-cross"), ('\u{ec08}', "cod-bell-slash"), ('\u{ec09}', "cod-bell-slash-dot"), ('\u{eabd}', "cod-circle-slash")],
+            Weak => &[('\u{f04e5}', "md-sword"), ('\u{1f974}', "emoji U+1F974"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f0787}', "md-sword-cross"), ('\u{ec08}', "cod-bell-slash"), ('\u{ec09}', "cod-bell-slash-dot"), ('\u{eabd}', "cod-circle-slash")],
             Frail => &[('\u{1f9b4}', "emoji U+1F9B4"), ('\u{f099e}', "md-shield_off"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account")],
             Entangled => &[('\u{1f9f6}', "emoji U+1F9F6"), ('\u{ef10}', "fa-spider"), ('\u{f11ea}', "md-spider"), ('\u{f11eb}', "md-spider-thread"), ('\u{f0bca}', "md-spider-web"), ('\u{e845}', "dev-nodewebkit"), ('\u{e8e1}', "dev-webflow"), ('\u{e8e2}', "dev-weblate"), ('\u{e8e3}', "dev-webpack"), ('\u{f070f}', "md-search-web")],
             DemonForm => &[('\u{1f608}', "emoji U+1F608"), ('\u{ef76}', "fa-fire_flame_curved"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
@@ -1265,12 +1266,12 @@ mod tests {
         let mut seen: Vec<(char, &'static str)> = Vec::new();
         for &s in Status::ALL {
             let g = s.glyph();
-            // nf 字形在 PUA(>=0xE000),emoji 在更低的码位:两者都只要"非 ASCII 且非空"
-            assert!(!g.is_ascii(), "{} 没有图标", s.name());
-            if let Some((_, other)) = seen.iter().find(|(c, _)| *c == g) {
+            assert!(!g.trim().is_empty(), "{} 没有图标", s.name());
+            let gc = g.chars().next().expect("图标非空");
+            if let Some((_, other)) = seen.iter().find(|(c, _)| *c == gc) {
                 panic!("{} 与 {} 共用同一个图标 {:?}", s.name(), other, g);
             }
-            seen.push((g, s.name()));
+            seen.push((gc, s.name()));
         }
         assert_eq!(seen.len(), Status::ALL.len());
     }
@@ -1295,7 +1296,7 @@ mod tests {
         for &s in Status::ALL {
             let c = s.glyph_candidates();
             assert!(!c.is_empty() && c.len() <= 10, "{} 的候选数 {}", s.name(), c.len());
-            assert_eq!(c[0].0, s.glyph(), "{} 的第一个候选要等于当前图标", s.name());
+            assert_eq!(c[0].0.to_string(), s.glyph(), "{} 的第一个候选要等于当前图标", s.name());
             let mut seen: Vec<char> = Vec::new();
             for (ch, name) in c {
                 assert!(!name.is_empty(), "{} 的候选没有字形名", s.name());
@@ -1311,11 +1312,11 @@ mod tests {
     fn glyph_widths_match_their_kind() {
         for &s in Status::ALL {
             let g = s.glyph();
-            let w = crate::ui::display_width(&g.to_string());
-            if s.icon_is_emoji() {
+            let w = crate::ui::display_width(g);
+            if s.icon_kind() == "emoji" {
                 assert_eq!(w, 2, "{} 的 emoji {} 宽度是 {w},应为 2", s.name(), g);
             } else {
-                assert_eq!(w, 1, "{} 的 nf 字形 {} 宽度是 {w},应为 1", s.name(), g);
+                assert!((1..=2).contains(&w), "{} 的图标 {} 宽度是 {w},应为 1~2", s.name(), g);
             }
         }
     }

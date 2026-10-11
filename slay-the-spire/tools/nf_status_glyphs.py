@@ -407,6 +407,11 @@ EMOJI = {
 MODE = {k: "emoji" for k in EMOJI}
 # ♾(U+267E) 在 unicode-width 里是窄码位,会串行;这一条没有合适的双宽替代,保留 nf 字形
 MODE["InfiniteBlades"] = "nf"
+# 弱化:原图是断剑,emoji 里没有合适的双宽断剑,用 nf 的剑形(可上色)
+MODE["Weak"] = "nf"
+
+# 兜底:既没有合适 emoji、也没有合适 nf 字形时用 1-2 个大写字符(占 1~2 列,徽章里右对齐)
+TEXT = {}
 
 def variants(src: str):
     """status.rs 里 Status 枚举的变体(按声明顺序)"""
@@ -467,14 +472,24 @@ def main():
         for v, ch, eaw in narrow:
             print(f"emoji 不是双宽(会串行): {v} {ch!r} east_asian_width={eaw}", file=sys.stderr)
         return 1
+    bad_text = [
+        (v, TEXT.get(v))
+        for v in vs
+        if MODE[v] == "text" and not (TEXT.get(v) and 1 <= len(TEXT[v]) <= 2 and TEXT[v].isupper() and TEXT[v].isascii())
+    ]
+    if bad_text:
+        print(f"text 图标必须是 1-2 个大写 ASCII 字符: {bad_text}", file=sys.stderr)
+        return 1
     unused = [v for v in MAP if v not in vs]
     if unused:
         print(f"映射表里有枚举里不存在的键: {unused}", file=sys.stderr)
         return 1
     def glyph_lit(v):
         if MODE[v] == "emoji":
-            return "'\\u{%x}', // emoji %s" % (ord(EMOJI[v]), EMOJI[v].encode("unicode_escape").decode())
-        return "'\\u{%x}', // %s" % (byname[MAP[v].lower().replace('-', '_')], MAP[v])
+            return '"\\u{%x}", // emoji %s' % (ord(EMOJI[v]), EMOJI[v].encode("unicode_escape").decode())
+        if MODE[v] == "text":
+            return '"%s", // 大写字符' % TEXT[v]
+        return '"\\u{%x}", // %s' % (byname[MAP[v].lower().replace('-', '_')], MAP[v])
 
     lines = [f"            {v} => {glyph_lit(v)}" for v in vs]
     color_lines = [f'            {v} => "{COLOR[v]}",' for v in vs]
@@ -490,6 +505,10 @@ def main():
 
         out = []
         if MODE[status] == "emoji":
+            out.append((ord(emoji_ch), emoji_label(emoji_ch)))
+            out.append((byname[picked_nf], MAP[status]))
+        elif MODE[status] == "text":
+            out.append((ord(TEXT[status][0]), "text " + TEXT[status]))
             out.append((ord(emoji_ch), emoji_label(emoji_ch)))
             out.append((byname[picked_nf], MAP[status]))
         else:
@@ -509,7 +528,7 @@ def main():
         return out[:10]
 
     orig_lines = [f'            {v} => "{ORIGINAL.get(v, "?")}",' for v in vs]
-    emoji_flag = [f'            {v} => {"true" if MODE[v] == "emoji" else "false"},' for v in vs]
+    kind_lines = [f'            {v} => "{MODE[v]}",' for v in vs]
 
     cand_lines = []
     for v in vs:
@@ -522,7 +541,7 @@ def main():
             "\n    /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑\n"
             "    /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \\u{...} 转义,文件保持 ASCII.\n"
             "    /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.\n"
-            "    pub fn glyph(self) -> char {\n        use Status::*;\n        match self {\n"
+            "    pub fn glyph(self) -> &'static str {\n        use Status::*;\n        match self {\n"
             + "\n".join(lines)
             + "\n        }\n    }\n"
         )
@@ -534,9 +553,9 @@ def main():
             + "\n        }\n    }\n"
         )
         body += (
-            "\n    /// 当前图标是不是 emoji(emoji 自带颜色,图标那一列就不再按配色键上色)\n"
-            "    pub fn icon_is_emoji(self) -> bool {\n        use Status::*;\n        match self {\n"
-            + "\n".join(emoji_flag)
+            "\n    /// 图标种类:emoji(自带颜色,不再按配色键上色)/ nf / text(1-2 个大写字符)\n"
+            "    pub fn icon_kind(self) -> &'static str {\n        use Status::*;\n        match self {\n"
+            + "\n".join(kind_lines)
             + "\n        }\n    }\n"
         )
         body += (

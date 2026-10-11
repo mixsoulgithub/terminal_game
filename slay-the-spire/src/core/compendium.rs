@@ -158,6 +158,22 @@ fn status_text_with_candidates(s: crate::core::status::Status) -> String {
     if cands.is_empty() {
         return t;
     }
+    // 徽章预览:上行图标、下行数值,每格 3 列(2 宽补 1 空格,1 宽补 2 空格),格间空 1 格
+    let (a2, b2) = crate::ui::badge(s.glyph(), 2);
+    let (am2, bm2) = crate::ui::badge(s.glyph(), -2);
+    let (a200, b200) = crate::ui::badge(s.glyph(), 200);
+    // 说明区是"按词换行"的,连续空格会被吞掉;预览里改用不换行空格保住 3 列对齐
+    // (真实 HUD 是按坐标逐格画,不经过换行器)
+    let nb = |s: String| s.replace(' ', "\u{a0}");
+    t.push_str(&format!(
+        "\n\n徽章(每格 3 列,格间空 1 格,右对齐;示例值 +2 / -2 / 200):\n{} {} {}\n{} {} {}",
+        nb(a2),
+        nb(am2),
+        nb(a200),
+        nb(b2),
+        nb(bm2),
+        nb(b200)
+    ));
     t.push_str(&format!(
         "\n\n原作图形:{}(用来对最像的那个). 候选(序号或字形名告诉我就行;当前配色 {};要无色就说 no-color): ",
         s.original_icon_note(),
@@ -192,7 +208,7 @@ fn status_items(group: &str) -> Vec<Item> {
             sub: format!("{}   {kind}   {}", s.short(), status_sources(s)),
             tag: s.glyph().to_string(),
             // emoji 自带颜色:标记一下,渲染时不再按配色键上色
-            tag_color_key: if s.icon_is_emoji() {
+            tag_color_key: if s.icon_kind() == "emoji" {
                 "emoji"
             } else {
                 s.icon_color_key()
