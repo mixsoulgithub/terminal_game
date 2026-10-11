@@ -159,7 +159,8 @@ fn status_text_with_candidates(s: crate::core::status::Status) -> String {
         return t;
     }
     t.push_str(&format!(
-        "\n\n候选图标(序号或字形名告诉我就行;当前配色 {};要无色就说 no-color): ",
+        "\n\n原作图形:{}(用来对最像的那个). 候选(序号或字形名告诉我就行;当前配色 {};要无色就说 no-color): ",
+        s.original_icon_note(),
         s.icon_color_key()
     ));
     for (i, (ch, name)) in cands.iter().enumerate() {

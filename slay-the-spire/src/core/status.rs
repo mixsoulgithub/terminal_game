@@ -180,6 +180,7 @@ impl Status {
 
 
 
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
@@ -189,25 +190,25 @@ impl Status {
             Strength => '\u{ed67}', // fa-dumbbell
             Dexterity => '\u{ee14}', // fa-shoe_prints
             Vulnerable => '\u{ef4f}', // fa-heart_crack
-            Weak => '\u{ee30}', // fa-face_dizzy
-            Frail => '\u{ef7e}', // fa-crutch
+            Weak => '\u{f04e5}', // md-sword
+            Frail => '\u{f099e}', // md-shield_off
             Entangled => '\u{ef10}', // fa-spider
             DemonForm => '\u{ef76}', // fa-fire_flame_curved
             Metallicize => '\u{ed25}', // fa-shield_halved
-            FeelNoPain => '\u{ed9b}', // fa-hand_holding_heart
+            FeelNoPain => '\u{ed74}', // fa-bandage
             DarkEmbrace => '\u{f186}', // fa-moon_o
-            Evolve => '\u{ed7d}', // fa-dna
+            Evolve => '\u{f0638}', // md-cards
             FireBreathing => '\u{f06d}', // fa-fire
-            Barricade => '\u{ed66}', // fa-chess_rook
+            Barricade => '\u{f07fe}', // md-wall
             Brutality => '\u{f0cec}', // md-blood_bag
             Rupture => '\u{ee8e}', // fa-droplet_slash
             Regenerate => '\u{f05f6}', // md-heart_pulse
             Thorns => '\u{f0db5}', // md-cactus
             Berserk => '\u{ee50}', // fa-face_grin_stars
             Combust => '\u{ed78}', // fa-fire_flame_simple
-            Corruption => '\u{ef35}', // fa-biohazard
-            DoubleTap => '\u{f01e}', // fa-repeat
-            Juggernaut => '\u{ed8b}', // fa-truck_fast
+            Corruption => '\u{ee15}', // fa-skull
+            DoubleTap => '\u{f0787}', // md-sword_cross
+            Juggernaut => '\u{ef84}', // fa-helmet_safety
             Rage => '\u{ee1f}', // fa-face_angry
             FlameBarrier => '\u{e0c0}', // ple-flame_thick
             Artifact => '\u{f219}', // fa-gem
@@ -218,9 +219,9 @@ impl Status {
             Panache => '\u{edf7}', // fa-feather
             SadisticNature => '\u{ee53}', // fa-face_grin_tongue_squint
             PlatedArmor => '\u{f0ada}', // md-shield_plus
-            Constricted => '\u{ef0b}', // fa-ring
+            Constricted => '\u{f150e}', // md-snake
             Confused => '\u{f02d7}', // md-help_circle
-            Hex => '\u{f02d8}', // md-hexagon
+            Hex => '\u{ef21}', // fa-hurricane
             DrawReduction => '\u{f0639}', // md-cards_outline
             Surrounded => '\u{f0849}', // md-account_group
             Intangible => '\u{f02a0}', // md-ghost
@@ -249,7 +250,7 @@ impl Status {
             Stasis => '\u{f187}', // fa-box_archive
             StrengthUp => '\u{f102}', // fa-angles_up
             TimeWarp => '\u{f254}', // fa-hourglass
-            Asleep => '\u{ed8a}', // fa-bed_pulse
+            Asleep => '\u{f04b2}', // md-sleep
             Duplication => '\u{f24d}', // fa-clone
             LoseStrength => '\u{f063}', // fa-arrow_down
             LoseDexterity => '\u{ea9a}', // cod-arrow_down
@@ -257,7 +258,7 @@ impl Status {
             Poison => '\u{ef0e}', // fa-skull_crossbones
             Accuracy => '\u{f05b}', // fa-crosshairs
             AfterImage => '\u{f00f}', // fa-images
-            ThousandCuts => '\u{f0f5}', // fa-utensils
+            ThousandCuts => '\u{f09fb}', // md-knife
             Envenom => '\u{f0c3}', // fa-flask
             InfiniteBlades => '\u{eecf}', // fa-khanda
             NoxiousFumes => '\u{ef29}', // fa-smog
@@ -365,6 +366,97 @@ impl Status {
         }
     }
 
+    /// 原作这条状态的图标长什么样(据资料与观察;带 ? 的不确定,评审时纠正)
+    pub fn original_icon_note(self) -> &'static str {
+        use Status::*;
+        match self {
+            Strength => "屈臂肌肉",
+            Dexterity => "带翼的靴子/脚步",
+            Vulnerable => "裂开的心",
+            Weak => "断剑",
+            Frail => "破盾",
+            Entangled => "蛛网",
+            DemonForm => "恶魔头(带角)",
+            Metallicize => "金属齿轮",
+            FeelNoPain => "绷带",
+            DarkEmbrace => "暗色斗篷?",
+            Evolve => "卡牌+上箭头",
+            FireBreathing => "龙头吐火",
+            Barricade => "铁壁",
+            Brutality => "血滴",
+            Rupture => "血滴+上箭头",
+            Regenerate => "心+加号",
+            Thorns => "荆棘球/仙人球",
+            Berserk => "红色怒面",
+            Combust => "火焰",
+            Corruption => "紫色骷髅",
+            DoubleTap => "两把交叉的剑",
+            Juggernaut => "骑士头盔",
+            Rage => "怒面",
+            FlameBarrier => "火焰盾",
+            Artifact => "宝石/宝珠",
+            NoBlock => "带斜杠的盾",
+            NoDraw => "带斜杠的卡",
+            Mayhem => "混乱漩涡",
+            Magnetism => "磁铁",
+            Panache => "羽饰帽",
+            SadisticNature => "诡异的笑面",
+            PlatedArmor => "板甲盾",
+            Constricted => "缠绕的蛇/藤",
+            Confused => "问号/漩涡",
+            Hex => "紫色漩涡",
+            DrawReduction => "卡牌+下箭头",
+            Surrounded => "两侧的敌人/人群",
+            Intangible => "幽魂",
+            Ritual => "图腾/烛火?",
+            Enrage => "怒号/喇叭",
+            Anger => "怒面",
+            SharpHide => "尖刺盾",
+            BeatOfDeath => "心跳/心",
+            Curiosity => "放大镜/问号?",
+            CurlUp => "蜷缩的虫",
+            Explosive => "炸弹",
+            Fading => "沙漏",
+            Flight => "翅膀",
+            Invincible => "盾+锁",
+            Malleable => "变形方块",
+            Minion => "小怪剪影",
+            MinionLeader => "王冠",
+            ModeShift => "齿轮/盾",
+            PainfulStabs => "针/匕首",
+            Reactive => "闪电",
+            Regrow => "嫩芽",
+            Shifting => "双向箭头",
+            Slow => "沙漏",
+            SporeCloud => "孢子云",
+            Split => "分裂的史莱姆",
+            Stasis => "上锁的卡/盒子",
+            StrengthUp => "上箭头",
+            TimeWarp => "时钟/沙漏",
+            Asleep => "沉睡(月亮/zzz)",
+            Duplication => "两张卡",
+            LoseStrength => "向下箭头",
+            LoseDexterity => "向下箭头",
+            Focus => "球/眼睛",
+            Poison => "骷髅+毒",
+            Accuracy => "靶心+飞刀",
+            AfterImage => "残影/分身",
+            ThousandCuts => "许多刀刃",
+            Envenom => "毒牙/绿色毒滴?",
+            InfiniteBlades => "无尽的剑",
+            NoxiousFumes => "毒云",
+            ToolsOfTheTrade => "工具",
+            WraithForm => "幽魂",
+            Blur => "残像/抹影?",
+            PhantasmalKiller => "面具/幻影刺客",
+            Burst => "爆发前冲",
+            WellLaidPlans => "地图/计划",
+            Choke => "掐住的手",
+            CorpseExplosion => "爆炸的骷髅",
+            DoubleDamage => "双重影像",
+        }
+    }
+
     /// 候选图标(最多 10 个,第一个是当前用的):图鉴把这份清单附在说明后面,
     /// 评审时按序号或字形名挑.候选也是按字形名从字体 cmap 里搜出来的,挑到的都在字体里.
     pub fn glyph_candidates(self) -> &'static [(char, &'static str)] {
@@ -373,25 +465,25 @@ impl Status {
             Strength => &[('\u{ed67}', "fa-dumbbell"), ('\u{f01e6}', "md-dumbbell"), ('\u{ee94}', "fa-weight-hanging"), ('\u{ed93}', "fa-weight-scale"), ('\u{f05c9}', "md-format-line-weight"), ('\u{f05a1}', "md-weight"), ('\u{f0d3f}', "md-weight-gram"), ('\u{f05a2}', "md-weight-kilogram"), ('\u{f115d}', "md-weight-lifter"), ('\u{f09b5}', "md-weight-pound")],
             Dexterity => &[('\u{ee14}', "fa-shoe-prints"), ('\u{f0a58}', "md-horseshoe"), ('\u{f15ca}', "md-shoe-ballet"), ('\u{f15c7}', "md-shoe-cleat"), ('\u{f0b47}', "md-shoe-formal"), ('\u{f0b48}', "md-shoe-heel"), ('\u{f0dfa}', "md-shoe-print"), ('\u{f15c8}', "md-shoe-sneaker"), ('\u{f1a72}', "md-snowshoeing"), ('\u{eb7b}', "cod-vm-running")],
             Vulnerable => &[('\u{ef4f}', "fa-heart-crack"), ('\u{f02d4}', "md-heart-broken"), ('\u{f0d14}', "md-heart-broken-outline"), ('\u{ed25}', "fa-shield-halved"), ('\u{ef05}', "fa-house-chimney-crack"), ('\u{f02ed}', "md-image-broken"), ('\u{f02ee}', "md-image-broken-variant"), ('\u{f0da4}', "md-trophy-broken"), ('\u{ebf8}', "cod-target"), ('\u{f04fe}', "md-target")],
-            Weak => &[('\u{ee30}', "fa-face-dizzy"), ('\u{ee8f}', "fa-face-tired"), ('\u{ee48}', "fa-face-grimace"), ('\u{ebfc}', "cod-arrow-circle-down"), ('\u{ea9a}', "cod-arrow-down"), ('\u{ea9d}', "cod-arrow-small-down"), ('\u{eab4}', "cod-chevron-down"), ('\u{eac2}', "cod-cloud-download"), ('\u{ea78}', "cod-desktop-download"), ('\u{eaf3}', "cod-fold-down")],
-            Frail => &[('\u{ef7e}', "fa-crutch"), ('\u{e752}', "dev-backbonejs"), ('\u{ee9a}', "fa-bone"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{e289}', "fae-bones"), ('\u{f00b9}', "md-bone"), ('\u{f19e0}', "md-bone-off"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{ed25}', "fa-shield-halved")],
+            Weak => &[('\u{f04e5}', "md-sword"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f0787}', "md-sword-cross"), ('\u{ec08}', "cod-bell-slash"), ('\u{ec09}', "cod-bell-slash-dot"), ('\u{eabd}', "cod-circle-slash"), ('\u{f1f6}', "fa-bell-slash")],
+            Frail => &[('\u{f099e}', "md-shield-off"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline")],
             Entangled => &[('\u{ef10}', "fa-spider"), ('\u{f11ea}', "md-spider"), ('\u{f11eb}', "md-spider-thread"), ('\u{f0bca}', "md-spider-web"), ('\u{e845}', "dev-nodewebkit"), ('\u{e8e1}', "dev-webflow"), ('\u{e8e2}', "dev-weblate"), ('\u{e8e3}', "dev-webpack"), ('\u{f070f}', "md-search-web"), ('\u{f1316}', "md-semantic-web")],
             DemonForm => &[('\u{ef76}', "fa-fire-flame-curved"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire"), ('\u{f0edd}', "md-campfire")],
             Metallicize => &[('\u{ed25}', "fa-shield-halved"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline"), ('\u{f15a7}', "md-shield-account-variant")],
-            FeelNoPain => &[('\u{ed9b}', "fa-hand-holding-heart"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o"), ('\u{f21e}', "fa-heartbeat"), ('\u{e23a}', "fae-real-heart")],
+            FeelNoPain => &[('\u{ed74}', "fa-bandage"), ('\u{f0daf}', "md-bandage"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o")],
             DarkEmbrace => &[('\u{f186}', "fa-moon-o"), ('\u{f1829}', "md-shield-moon-outline"), ('\u{eeef}', "fa-cloud-moon"), ('\u{ef1b}', "fa-cloud-moon-rain"), ('\u{e226}', "fae-moon-cloud"), ('\u{f0f61}', "md-moon-first-quarter"), ('\u{f0f62}', "md-moon-full"), ('\u{f0f63}', "md-moon-last-quarter"), ('\u{f0f64}', "md-moon-new"), ('\u{f0f65}', "md-moon-waning-crescent")],
-            Evolve => &[('\u{ed7d}', "fa-dna"), ('\u{e272}', "fae-dna"), ('\u{f0684}', "md-dna"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline"), ('\u{f13f4}', "md-flask-empty-off")],
+            Evolve => &[('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f0639}', "md-cards-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple"), ('\u{f18a4}', "md-cards-playing-club-multiple-outline")],
             FireBreathing => &[('\u{f06d}', "fa-fire"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire"), ('\u{f0edd}', "md-campfire")],
-            Barricade => &[('\u{ed66}', "fa-chess-rook"), ('\u{f085b}', "md-chess-rook"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f07fe}', "md-wall"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline")],
+            Barricade => &[('\u{f07fe}', "md-wall"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline"), ('\u{f041c}', "md-wall-sconce-flat-variant"), ('\u{f17ca}', "md-wall-sconce-flat-variant-outline")],
             Brutality => &[('\u{f0cec}', "md-blood-bag"), ('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
             Rupture => &[('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{f0cec}', "md-blood-bag"), ('\u{ed8d}', "fa-syringe"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline")],
             Regenerate => &[('\u{f05f6}', "md-heart-pulse"), ('\u{f21e}', "fa-heartbeat"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o")],
             Thorns => &[('\u{f0db5}', "md-cactus"), ('\u{e22f}', "fae-plant"), ('\u{ead2}', "cod-debug-restart"), ('\u{eb90}', "cod-debug-restart-frame"), ('\u{ead3}', "cod-debug-start"), ('\u{ea6a}', "cod-star-empty"), ('\u{eb59}', "cod-star-full"), ('\u{eb5a}', "cod-star-half"), ('\u{ee50}', "fa-face-grin-stars"), ('\u{f251}', "fa-hourglass-start")],
             Berserk => &[('\u{ee50}', "fa-face-grin-stars"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c0}', "ple-flame-thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored"), ('\u{e787}', "dev-firebase")],
             Combust => &[('\u{ed78}', "fa-fire-flame-simple"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire"), ('\u{f0edd}', "md-campfire")],
-            Corruption => &[('\u{ef35}', "fa-biohazard"), ('\u{e286}', "fae-biohazard"), ('\u{f00a7}', "md-biohazard"), ('\u{eeeb}', "fa-book-skull"), ('\u{ee15}', "fa-skull"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{f1132}', "md-bottle-tonic-skull"), ('\u{f1133}', "md-bottle-tonic-skull-outline"), ('\u{f068c}', "md-skull"), ('\u{f0bc6}', "md-skull-crossbones")],
-            DoubleTap => &[('\u{f01e}', "fa-repeat"), ('\u{f0b6}', "fa-repeat-alt"), ('\u{f0456}', "md-repeat"), ('\u{f0457}', "md-repeat-off"), ('\u{f0458}', "md-repeat-once"), ('\u{f0547}', "md-repeat-variant"), ('\u{eb3e}', "cod-repo-clone"), ('\u{f24d}', "fa-clone"), ('\u{f43f}', "oct-repo-clone"), ('\u{ebcc}', "cod-copy")],
-            Juggernaut => &[('\u{ed8b}', "fa-truck-fast"), ('\u{f0788}', "md-truck-fast"), ('\u{f129c}', "md-truck-fast-outline"), ('\u{f0d1}', "fa-truck"), ('\u{f0f9}', "fa-truck-medical"), ('\u{eeb8}', "fa-truck-monster"), ('\u{edac}', "fa-truck-moving"), ('\u{eeb9}', "fa-truck-pickup"), ('\u{edab}', "fa-truck-ramp-box"), ('\u{f0c67}', "md-dump-truck")],
+            Corruption => &[('\u{ee15}', "fa-skull"), ('\u{eeeb}', "fa-book-skull"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{f1132}', "md-bottle-tonic-skull"), ('\u{f1133}', "md-bottle-tonic-skull-outline"), ('\u{f068c}', "md-skull"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{f0bc8}', "md-skull-outline"), ('\u{f14c7}', "md-skull-scan")],
+            DoubleTap => &[('\u{f0787}', "md-sword-cross"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f01e}', "fa-repeat"), ('\u{f0b6}', "fa-repeat-alt"), ('\u{f0456}', "md-repeat"), ('\u{f0457}', "md-repeat-off")],
+            Juggernaut => &[('\u{ef84}', "fa-helmet-safety"), ('\u{f0dc0}', "md-diving-helmet"), ('\u{f025f}', "md-football-helmet"), ('\u{f0d93}', "md-racing-helmet"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline")],
             Rage => &[('\u{ee1f}', "fa-face-angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee48}', "fa-face-grimace"), ('\u{ee50}', "fa-face-grin-stars")],
             FlameBarrier => &[('\u{e0c0}', "ple-flame-thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox")],
             Artifact => &[('\u{f219}', "fa-gem"), ('\u{f0a81}', "md-zodiac-gemini"), ('\u{f29f}', "fa-diamond"), ('\u{eea2}', "fa-diamond-turn-right"), ('\u{f15ec}', "md-baseball-diamond"), ('\u{f15ed}', "md-baseball-diamond-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a6}', "md-cards-playing-diamond"), ('\u{f18a7}', "md-cards-playing-diamond-multiple")],
@@ -402,9 +494,9 @@ impl Status {
             Panache => &[('\u{edf7}', "fa-feather"), ('\u{e7d8}', "dev-feathersjs"), ('\u{ee34}', "fa-feather-pointed"), ('\u{f06d3}', "md-feather"), ('\u{e7f8}', "dev-hardhat"), ('\u{e7bb}', "dev-redhat"), ('\u{efb7}', "fa-hat-cowboy"), ('\u{efb8}', "fa-hat-cowboy-side"), ('\u{ef01}', "fa-hat-wizard"), ('\u{edb0}', "fa-pied-piper-hat")],
             SadisticNature => &[('\u{ee53}', "fa-face-grin-tongue-squint"), ('\u{ee49}', "fa-face-grin"), ('\u{ee4b}', "fa-face-grin-beam"), ('\u{ee4c}', "fa-face-grin-beam-sweat"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee4e}', "fa-face-grin-squint"), ('\u{ee4f}', "fa-face-grin-squint-tears"), ('\u{ee50}', "fa-face-grin-stars"), ('\u{ee51}', "fa-face-grin-tears"), ('\u{ee52}', "fa-face-grin-tongue")],
             PlatedArmor => &[('\u{f0ada}', "md-shield-plus"), ('\u{f0adb}', "md-shield-plus-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account")],
-            Constricted => &[('\u{ef0b}', "fa-ring"), ('\u{eb8d}', "cod-symbol-string"), ('\u{e8ac}', "dev-spring"), ('\u{f2a4}', "fa-hard-of-hearing"), ('\u{ed8d}', "fa-syringe"), ('\u{e23d}', "fae-ring"), ('\u{f003d}', "md-arrange-bring-forward"), ('\u{f003e}', "md-arrange-bring-to-front"), ('\u{f009e}', "md-bell-ring"), ('\u{f009f}', "md-bell-ring-outline")],
+            Constricted => &[('\u{f150e}', "md-snake"), ('\u{ec16}', "cod-snake"), ('\u{f1ca}', "fa-vine"), ('\u{eb8d}', "cod-symbol-string"), ('\u{e8ac}', "dev-spring"), ('\u{f2a4}', "fa-hard-of-hearing"), ('\u{ef0b}', "fa-ring"), ('\u{ed8d}', "fa-syringe"), ('\u{e23d}', "fae-ring"), ('\u{f003d}', "md-arrange-bring-forward")],
             Confused => &[('\u{f02d7}', "md-help-circle"), ('\u{f0625}', "md-help-circle-outline"), ('\u{eb32}', "cod-question"), ('\u{f128}', "fa-question"), ('\u{f059}', "fa-question-circle"), ('\u{f29c}', "fa-question-circle-o"), ('\u{f0b59}', "md-account-question"), ('\u{f0b5a}', "md-account-question-outline"), ('\u{f1231}', "md-beaker-question"), ('\u{f1232}', "md-beaker-question-outline")],
-            Hex => &[('\u{f02d8}', "md-hexagon"), ('\u{e24f}', "fae-hexagon"), ('\u{f0049}', "md-arrow-down-bold-hexagon-outline"), ('\u{f0051}', "md-arrow-left-bold-hexagon-outline"), ('\u{f0058}', "md-arrow-right-bold-hexagon-outline"), ('\u{f0061}', "md-arrow-up-bold-hexagon-outline"), ('\u{f15ff}', "md-dots-hexagon"), ('\u{f06e1}', "md-hexagon-multiple"), ('\u{f10f2}', "md-hexagon-multiple-outline"), ('\u{f02d9}', "md-hexagon-outline")],
+            Hex => &[('\u{ef21}', "fa-hurricane"), ('\u{f0898}', "md-weather-hurricane"), ('\u{e36c}', "weather-hurricane"), ('\u{e3c7}', "weather-hurricane-warning"), ('\u{e24f}', "fae-hexagon"), ('\u{f0049}', "md-arrow-down-bold-hexagon-outline"), ('\u{f0051}', "md-arrow-left-bold-hexagon-outline"), ('\u{f0058}', "md-arrow-right-bold-hexagon-outline"), ('\u{f0061}', "md-arrow-up-bold-hexagon-outline"), ('\u{f15ff}', "md-dots-hexagon")],
             DrawReduction => &[('\u{f0639}', "md-cards-outline"), ('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple"), ('\u{f18a4}', "md-cards-playing-club-multiple-outline")],
             Surrounded => &[('\u{f0849}', "md-account-group"), ('\u{f0b58}', "md-account-group-outline"), ('\u{f0c0}', "fa-users"), ('\u{edd3}', "fa-users-gear"), ('\u{eda2}', "fa-people-carry-box"), ('\u{f038f}', "md-nature-people"), ('\u{f4fd}', "oct-people"), ('\u{f07e}', "fa-arrows-left-right"), ('\u{f047}', "fa-arrows-up-down-left-right"), ('\u{f07d}', "fa-arrows-v")],
             Intangible => &[('\u{f02a0}', "md-ghost"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{eefe}', "fa-ghost"), ('\u{f2ac}', "fa-snapchat-ghost"), ('\u{f09f5}', "md-ghost-off"), ('\u{f165c}', "md-ghost-off-outline"), ('\u{f165d}', "md-ghost-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield")],
@@ -433,7 +525,7 @@ impl Status {
             Stasis => &[('\u{f187}', "fa-box-archive"), ('\u{f0765}', "checkbox-blank-circle"), ('\u{f043d}', "checkbox-blank-circle-outline"), ('\u{f0766}', "checkbox-blank-circle-outline.1"), ('\u{eb09}', "cod-inbox"), ('\u{e707}', "dev-dropbox"), ('\u{ed75}', "fa-box"), ('\u{ed95}', "fa-box-open"), ('\u{ed76}', "fa-boxes-stacked"), ('\u{f16b}', "fa-dropbox")],
             StrengthUp => &[('\u{f102}', "fa-angles-up"), ('\u{eaa1}', "cod-arrow-up"), ('\u{f062}', "fa-arrow-up"), ('\u{efb2}', "fa-arrow-up-9-1"), ('\u{efb0}', "fa-arrow-up-short-wide"), ('\u{efae}', "fa-arrow-up-z-a"), ('\u{f0aa}', "fa-circle-arrow-up"), ('\u{ee3d}', "fa-file-arrow-up"), ('\u{f176}', "fa-long-arrow-up"), ('\u{f14c}', "fa-square-arrow-up-right")],
             TimeWarp => &[('\u{f254}', "fa-hourglass"), ('\u{f253}', "fa-hourglass-end"), ('\u{f252}', "fa-hourglass-half"), ('\u{f250}', "fa-hourglass-o"), ('\u{f251}', "fa-hourglass-start"), ('\u{f4e3}', "oct-hourglass"), ('\u{f017}', "fa-clock-o"), ('\u{edc7}', "fa-user-clock"), ('\u{f0b56}', "md-account-clock"), ('\u{f0b57}', "md-account-clock-outline")],
-            Asleep => &[('\u{ed8a}', "fa-bed-pulse"), ('\u{e7d0}', "dev-embeddedc"), ('\u{ed7f}', "fa-cart-flatbed"), ('\u{ee66}', "fa-cart-flatbed-suitcase"), ('\u{e283}', "fae-bed"), ('\u{f02e3}', "md-bed"), ('\u{f0fd4}', "md-bed-double"), ('\u{f0fd3}', "md-bed-double-outline"), ('\u{f08a0}', "md-bed-empty"), ('\u{f0fd2}', "md-bed-king")],
+            Asleep => &[('\u{f04b2}', "md-sleep"), ('\u{23fe}', "iec-sleep-mode"), ('\u{f00a0}', "md-bell-sleep"), ('\u{f0a93}', "md-bell-sleep-outline"), ('\u{f12d1}', "md-chat-sleep"), ('\u{f12d2}', "md-chat-sleep-outline"), ('\u{f0904}', "md-power-sleep"), ('\u{f04b3}', "md-sleep-off"), ('\u{eeef}', "fa-cloud-moon"), ('\u{ef1b}', "fa-cloud-moon-rain")],
             Duplication => &[('\u{f24d}', "fa-clone"), ('\u{eb3e}', "cod-repo-clone"), ('\u{f43f}', "oct-repo-clone"), ('\u{ebcc}', "cod-copy"), ('\u{f1f9}', "fa-copyright"), ('\u{f018f}', "md-content-copy"), ('\u{f1939}', "md-copyleft"), ('\u{f05e6}', "md-copyright"), ('\u{f4bb}', "oct-copy"), ('\u{f01e}', "fa-repeat")],
             LoseStrength => &[('\u{f063}', "fa-arrow-down"), ('\u{ea9a}', "cod-arrow-down"), ('\u{efb1}', "fa-arrow-down-9-1"), ('\u{efaf}', "fa-arrow-down-short-wide"), ('\u{efad}', "fa-arrow-down-z-a"), ('\u{f218}', "fa-cart-arrow-down"), ('\u{f0ab}', "fa-circle-arrow-down"), ('\u{ee36}', "fa-file-arrow-down"), ('\u{f175}', "fa-long-arrow-down"), ('\u{f1868}', "md-account-arrow-down")],
             LoseDexterity => &[('\u{ea9a}', "cod-arrow-down"), ('\u{f063}', "fa-arrow-down"), ('\u{efb1}', "fa-arrow-down-9-1"), ('\u{efaf}', "fa-arrow-down-short-wide"), ('\u{efad}', "fa-arrow-down-z-a"), ('\u{f218}', "fa-cart-arrow-down"), ('\u{f0ab}', "fa-circle-arrow-down"), ('\u{ee36}', "fa-file-arrow-down"), ('\u{f175}', "fa-long-arrow-down"), ('\u{f1868}', "md-account-arrow-down")],
@@ -441,7 +533,7 @@ impl Status {
             Poison => &[('\u{ef0e}', "fa-skull-crossbones"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline"), ('\u{f13f4}', "md-flask-empty-off")],
             Accuracy => &[('\u{f05b}', "fa-crosshairs"), ('\u{eea9}', "fa-location-crosshairs"), ('\u{f01a3}', "md-crosshairs"), ('\u{f01a4}', "md-crosshairs-gps"), ('\u{f0f45}', "md-crosshairs-off"), ('\u{f1136}', "md-crosshairs-question"), ('\u{f140}', "fa-bullseye"), ('\u{f05dd}', "md-bullseye"), ('\u{f08c9}', "md-bullseye-arrow"), ('\u{ebf8}', "cod-target")],
             AfterImage => &[('\u{f00f}', "fa-images"), ('\u{ed19}', "fa-image-portrait"), ('\u{f0509}', "image-filter-hdr"), ('\u{f08cc}', "md-camera-image"), ('\u{f021f}', "md-file-image"), ('\u{f1772}', "md-file-image-marker"), ('\u{f1773}', "md-file-image-marker-outline"), ('\u{f193b}', "md-file-image-minus"), ('\u{f193c}', "md-file-image-minus-outline"), ('\u{f0eb0}', "md-file-image-outline")],
-            ThousandCuts => &[('\u{f0f5}', "fa-utensils"), ('\u{f09fb}', "md-knife"), ('\u{f09fc}', "md-knife-military"), ('\u{f0a70}', "md-silverware-fork-knife"), ('\u{f257}', "fa-hand-scissors-o"), ('\u{f0c4}', "fa-scissors"), ('\u{f0a6b}', "md-scissors-cutting"), ('\u{f0c86}', "md-fuse-blade"), ('\u{f0d2c}', "md-rollerblade"), ('\u{f002e}', "md-rollerblade-off")],
+            ThousandCuts => &[('\u{f09fb}', "md-knife"), ('\u{f09fc}', "md-knife-military"), ('\u{f0a70}', "md-silverware-fork-knife"), ('\u{f0c86}', "md-fuse-blade"), ('\u{f0d2c}', "md-rollerblade"), ('\u{f002e}', "md-rollerblade-off"), ('\u{f0e61}', "md-saw-blade"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword")],
             Envenom => &[('\u{f0c3}', "fa-flask"), ('\u{e7dc}', "dev-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline"), ('\u{f13f4}', "md-flask-empty-off"), ('\u{f13f5}', "md-flask-empty-off-outline"), ('\u{f0095}', "md-flask-empty-outline"), ('\u{f123c}', "md-flask-empty-plus")],
             InfiniteBlades => &[('\u{eecf}', "fa-khanda"), ('\u{f10fd}', "md-khanda"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross"), ('\u{f09fb}', "md-knife"), ('\u{f09fc}', "md-knife-military")],
             NoxiousFumes => &[('\u{ef29}', "fa-smog"), ('\u{f0a71}', "md-smog"), ('\u{e36d}', "weather-smog"), ('\u{ebaa}', "cod-cloud"), ('\u{eac2}', "cod-cloud-download"), ('\u{eac3}', "cod-cloud-upload"), ('\u{e792}', "dev-cloudflare"), ('\u{e793}', "dev-cloudflareworkers"), ('\u{e7f1}', "dev-googlecloud"), ('\u{f0c2}', "fa-cloud")],
