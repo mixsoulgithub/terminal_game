@@ -1573,6 +1573,15 @@ impl App {
         let cur = self.run.reward.as_ref().map(|r| r.index).unwrap_or(0).min(n.saturating_sub(1));
         let cur_g = group_of(cur);
         match key.code {
+            // 挑 Boss 遗物那一阶段:竖排列表,j/k 逐件走(h/l 也照旧能用)
+            KeyCode::Char('j') | KeyCode::Down if !boss_slots.is_empty() => {
+                let pos = boss_slots.iter().position(|i| *i == cur).unwrap_or(0);
+                self.set_reward_index(boss_slots[(pos + 1) % boss_slots.len()]);
+            }
+            KeyCode::Char('k') | KeyCode::Up if !boss_slots.is_empty() => {
+                let pos = boss_slots.iter().position(|i| *i == cur).unwrap_or(0);
+                self.set_reward_index(boss_slots[(pos + boss_slots.len() - 1) % boss_slots.len()]);
+            }
             KeyCode::Char('j') | KeyCode::Down if boss_slots.is_empty() => {
                 if let Some(pos) = groups.iter().position(|g| *g == cur_g) {
                     if let Some(&ng) = groups.get(pos + 1) {
@@ -2372,7 +2381,7 @@ impl App {
             ],
             // 还在挑 Boss 遗物(第一阶段):提示只说这一阶段能用的键
             Screen::Reward if self.run.boss_relic_pending() => vec![
-                ("h/l", "pick a boss relic"),
+                ("h/l j/k", "pick a boss relic"),
                 ("space/enter", "take"),
                 ("esc", "leave"),
             ],
@@ -3258,6 +3267,39 @@ mod tests {
         app.handle_key(esc());
         assert!(app.potion_pending.is_none());
         assert!(app.run.player.potions[0].is_some(), "取消不该消耗药水");
+    }
+
+    /// 挑 Boss 遗物那一阶段:竖排列表,j/k 在遗物之间走,光标不会跑到金币/卡牌上
+    #[test]
+    fn boss_relic_stage_walks_with_j_k() {
+        let mut app = App::new(3);
+        let _ = app.run.debug_room("boss");
+        {
+            let c = app.run.combat_mut().expect("boss 房要能开打");
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = crate::core::combat::Phase::Won;
+        }
+        app.run.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            app.run.tick_win_hold();
+        }
+        assert!(app.run.boss_relic_pending(), "打完 Boss 要先挑遗物");
+        let first = app.run.reward.as_ref().unwrap().index;
+        app.handle_key(key('j'));
+        let second = app.run.reward.as_ref().unwrap().index;
+        assert_ne!(second, first, "j 换下一件遗物");
+        app.handle_key(key('j'));
+        assert_ne!(app.run.reward.as_ref().unwrap().index, second, "再按继续往下");
+        app.handle_key(key('k'));
+        assert_eq!(app.run.reward.as_ref().unwrap().index, second, "k 回到上一件");
+        // 光标始终落在那三格遗物上
+        let slots = app.run.reward_slots();
+        assert!(matches!(
+            slots.get(app.run.reward.as_ref().unwrap().index),
+            Some(crate::core::run::RewardSlot::RelicChoice(_))
+        ));
     }
 
     /// "亮三张选一"的窗口(Discovery / 无色药水那类)也要能用 j/k 走光标

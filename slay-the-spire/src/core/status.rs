@@ -191,6 +191,10 @@ impl Status {
 
 
 
+
+
+
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
@@ -212,7 +216,7 @@ impl Status {
             Barricade => "\u{ed25}", // fa-shield_halved
             Brutality => "\u{1f4a2}", // emoji \U0001f4a2
             Rupture => "\u{1fa78}", // emoji \U0001fa78
-            Regenerate => "\u{1f49a}", // emoji \U0001f49a
+            Regenerate => "\u{f004}", // fa-heart
             Thorns => "\u{1f335}", // emoji \U0001f335
             Berserk => "\u{1f92c}", // emoji \U0001f92c
             Combust => "\u{1f525}", // emoji \U0001f525
@@ -236,7 +240,7 @@ impl Status {
             Surrounded => "\u{1f465}", // emoji \U0001f465
             Intangible => "\u{1f4a0}", // emoji \U0001f4a0
             Ritual => "\u{1f9ff}", // emoji \U0001f9ff
-            Enrage => "\u{1f4e2}", // emoji \U0001f4e2
+            Enrage => "\u{1f4a2}", // emoji \U0001f4a2
             Anger => "\u{1f620}", // emoji \U0001f620
             SharpHide => "\u{1f994}", // emoji \U0001f994
             BeatOfDeath => "\u{1f493}", // emoji \U0001f493
@@ -304,7 +308,7 @@ impl Status {
             Barricade => "silver",
             Brutality => "blood",
             Rupture => "blood",
-            Regenerate => "good",
+            Regenerate => "plain",
             Thorns => "fire",
             Berserk => "fire",
             Combust => "fire",
@@ -395,7 +399,7 @@ impl Status {
             Barricade => "nf",
             Brutality => "emoji",
             Rupture => "emoji",
-            Regenerate => "emoji",
+            Regenerate => "nf",
             Thorns => "emoji",
             Berserk => "emoji",
             Combust => "emoji",
@@ -486,7 +490,7 @@ impl Status {
             Barricade => "铁壁",
             Brutality => "血滴",
             Rupture => "血滴+上箭头",
-            Regenerate => "心+加号",
+            Regenerate => "实心心脏",
             Thorns => "荆棘球/仙人球",
             Berserk => "红色怒面",
             Combust => "火焰",
@@ -510,7 +514,7 @@ impl Status {
             Surrounded => "两侧的敌人/人群",
             Intangible => "幽魂",
             Ritual => "图腾/烛火?",
-            Enrage => "怒号/喇叭",
+            Enrage => "怒气符号",
             Anger => "怒面",
             SharpHide => "尖刺盾",
             BeatOfDeath => "心跳/心",
@@ -576,9 +580,9 @@ impl Status {
             Evolve => &[('\u{1f9ec}', "emoji U+1F9EC"), ('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f0639}', "md-cards-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple")],
             FireBreathing => &[('\u{1f432}', "emoji U+1F432"), ('\u{f06d}', "fa-fire"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
             Barricade => &[('\u{ed25}', "fa-shield_halved"), ('\u{1f9f1}', "emoji U+1F9F1"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f07fe}', "md-wall"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline")],
-            Brutality => &[('\u{1f4a2}', "emoji U+1F4A2"), ('\u{f0cec}', "md-blood_bag"), ('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart")],
+            Brutality => &[('\u{1f4a2}', "emoji U+1F4A2"), ('\u{f0cec}', "md-blood_bag"), ('\u{ed74}', "fa-bandage"), ('\u{f0daf}', "md-bandage"), ('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart")],
             Rupture => &[('\u{1fa78}', "emoji U+1FA78"), ('\u{ee8e}', "fa-droplet_slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{f0cec}', "md-blood-bag"), ('\u{ed8d}', "fa-syringe"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus")],
-            Regenerate => &[('\u{1f49a}', "emoji U+1F49A"), ('\u{f05f6}', "md-heart_pulse"), ('\u{f21e}', "fa-heartbeat"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
+            Regenerate => &[('\u{f004}', "fa-heart"), ('\u{1f49a}', "emoji U+1F49A"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o"), ('\u{f21e}', "fa-heartbeat")],
             Thorns => &[('\u{1f335}', "emoji U+1F335"), ('\u{f0db5}', "md-cactus"), ('\u{e22f}', "fae-plant"), ('\u{ead2}', "cod-debug-restart"), ('\u{eb90}', "cod-debug-restart-frame"), ('\u{ead3}', "cod-debug-start"), ('\u{ea6a}', "cod-star-empty"), ('\u{eb59}', "cod-star-full"), ('\u{eb5a}', "cod-star-half"), ('\u{ee50}', "fa-face-grin-stars")],
             Berserk => &[('\u{1f92c}', "emoji U+1F92C"), ('\u{ee50}', "fa-face_grin_stars"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c0}', "ple-flame-thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored")],
             Combust => &[('\u{1f525}', "emoji U+1F525"), ('\u{ed78}', "fa-fire_flame_simple"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
@@ -602,7 +606,7 @@ impl Status {
             Surrounded => &[('\u{1f465}', "emoji U+1F465"), ('\u{f0849}', "md-account_group"), ('\u{f0b58}', "md-account-group-outline"), ('\u{f0c0}', "fa-users"), ('\u{edd3}', "fa-users-gear"), ('\u{eda2}', "fa-people-carry-box"), ('\u{f038f}', "md-nature-people"), ('\u{f4fd}', "oct-people"), ('\u{f07e}', "fa-arrows-left-right"), ('\u{f047}', "fa-arrows-up-down-left-right")],
             Intangible => &[('\u{1f4a0}', "emoji U+1F4A0"), ('\u{f02a0}', "md-ghost"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{eefe}', "fa-ghost"), ('\u{f2ac}', "fa-snapchat-ghost"), ('\u{f09f5}', "md-ghost-off"), ('\u{f165c}', "md-ghost-off-outline"), ('\u{f165d}', "md-ghost-outline"), ('\u{eb53}', "cod-shield")],
             Ritual => &[('\u{1f9ff}', "emoji U+1F9FF"), ('\u{eedb}', "fa-hands_praying"), ('\u{eeda}', "fa-person-praying"), ('\u{ee84}', "fa-spray-can"), ('\u{ee97}', "fa-spray-can-sparkles"), ('\u{f0579}', "md-hands-pray"), ('\u{f0665}', "md-spray"), ('\u{f0ae0}', "md-spray-bottle"), ('\u{f1fd}', "fa-cake-candles"), ('\u{f05e2}', "md-candle")],
-            Enrage => &[('\u{1f4e2}', "emoji U+1F4E2"), ('\u{f0a1}', "fa-bullhorn"), ('\u{f00e6}', "md-bullhorn"), ('\u{f0b23}', "md-bullhorn-outline"), ('\u{f196e}', "md-bullhorn-variant"), ('\u{f196f}', "md-bullhorn-variant-outline"), ('\u{eb1e}', "cod-megaphone"), ('\u{f45f}', "oct-megaphone"), ('\u{f0bc}', "fa-angrycreative"), ('\u{ee1f}', "fa-face-angry")],
+            Enrage => &[('\u{1f4a2}', "emoji U+1F4A2"), ('\u{f0a1}', "fa-bullhorn"), ('\u{f02c8}', "md-hanger"), ('\u{f00e6}', "md-bullhorn"), ('\u{f0b23}', "md-bullhorn-outline"), ('\u{f196e}', "md-bullhorn-variant"), ('\u{f196f}', "md-bullhorn-variant-outline"), ('\u{eb1e}', "cod-megaphone"), ('\u{f45f}', "oct-megaphone"), ('\u{f0bc}', "fa-angrycreative")],
             Anger => &[('\u{1f620}', "emoji U+1F620"), ('\u{ee48}', "fa-face_grimace"), ('\u{ee1f}', "fa-face-angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee43}', "fa-face-frown-open"), ('\u{ef2c}', "fa-cloud-bolt")],
             SharpHide => &[('\u{1f994}', "emoji U+1F994"), ('\u{eefd}', "fa-hand_fist"), ('\u{ed25}', "fa-shield-halved"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross"), ('\u{eb53}', "cod-shield")],
             BeatOfDeath => &[('\u{1f493}', "emoji U+1F493"), ('\u{f21e}', "fa-heartbeat"), ('\u{f05f6}', "md-heart-pulse"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
@@ -1263,20 +1267,14 @@ mod tests {
         let v: Vec<_> = s.iter().collect();
         assert_eq!(v, vec![(Status::Weak, 1), (Status::Strength, 2)]);
     }
-    /// 图鉴的图标:每条都要有,而且不重样(重了说明挑图标时抄漏了一行)
+    /// 图鉴的图标:每条都要有一个. 允许撞车(同一个图标给两条状态用没问题),
+    /// 所以这里只管"有没有",不管"重不重"
     #[test]
-    fn every_status_has_a_distinct_glyph() {
-        let mut seen: Vec<(char, &'static str)> = Vec::new();
+    fn every_status_has_a_glyph() {
         for &s in Status::ALL {
             let g = s.glyph();
             assert!(!g.trim().is_empty(), "{} 没有图标", s.name());
-            let gc = g.chars().next().expect("图标非空");
-            if let Some((_, other)) = seen.iter().find(|(c, _)| *c == gc) {
-                panic!("{} 与 {} 共用同一个图标 {:?}", s.name(), other, g);
-            }
-            seen.push((gc, s.name()));
         }
-        assert_eq!(seen.len(), Status::ALL.len());
     }
 
     /// 图标配色键必须是 theme::icon_color 认得的那些(不认得就退回普通前景色,

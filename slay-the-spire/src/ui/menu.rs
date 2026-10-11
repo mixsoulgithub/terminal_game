@@ -45,50 +45,67 @@ fn reward(buf: &mut Buffer, area: Rect, app: &App) {
         .collect();
     if !boss.is_empty() {
         let cur = r.index;
-        let pieces: Vec<(String, usize)> = boss
+        let avail = (area.width as usize).saturating_sub(8);
+        // 三件 Boss 遗物一件一段:名字一行(带档次)+ 说明一行,像奖励屏里的牌那样摆,
+        // 光看名字选不动(原版这里也是列出说明的)
+        let rows: Vec<(String, String, usize, ratatui::style::Color)> = boss
             .iter()
-            .map(|i| {
-                let name = match slots.get(*i) {
-                    Some(RewardSlot::RelicChoice(k)) => {
-                        r.relic_choices.get(*k).map(|d| d.name.to_string()).unwrap_or_default()
-                    }
-                    _ => String::new(),
-                };
-                (name, *i)
+            .map(|i| match slots.get(*i) {
+                Some(RewardSlot::RelicChoice(k)) => match r.relic_choices.get(*k) {
+                    Some(d) => (
+                        format!("{}  [{}]", d.name, d.tier.name()),
+                        d.desc.to_string(),
+                        *i,
+                        theme::relic_tier_color(d.tier),
+                    ),
+                    None => (String::new(), String::new(), *i, theme::BAD),
+                },
+                _ => (String::new(), String::new(), *i, theme::BAD),
             })
             .collect();
-        let gap = 6usize;
-        let total: usize = pieces
-            .iter()
-            .map(|(n, _)| crate::ui::display_width(n))
-            .sum::<usize>()
-            + gap * (pieces.len().saturating_sub(1));
-        let y = area.y + area.height / 2;
-        let mut x = area.x + (area.width as usize).saturating_sub(total) as u16 / 2;
-        for (name, idx) in &pieces {
-            let w = crate::ui::display_width(name);
-            let style = if *idx == cur {
-                theme::selected()
-            } else {
-                theme::fg(theme::BAD)
-            };
-            put_padded(buf, x, y, name, w, style);
-            x += (w + gap) as u16;
-        }
+        // 标题 1 行 + 每件 2 行 + 提示 1 行,整块居中
+        let block_h = rows.len() as u16 * 2 + 3;
+        let mut y = area.y + area.height.saturating_sub(block_h) / 2;
         crate::ui::put_centered_line(
             buf,
             area.x,
-            y.saturating_sub(2),
+            y,
             area.width as usize,
             "choose a boss relic",
             theme::fg(theme::FG),
         );
+        y += 2;
+        for (name, desc, idx, color) in &rows {
+            let sel = *idx == cur;
+            let style = if sel {
+                theme::selected()
+            } else {
+                theme::fg(*color)
+            };
+            put_padded(
+                buf,
+                area.x + 2,
+                y,
+                &format!("{}{}", marker(sel), name),
+                (area.width as usize).saturating_sub(4),
+                style,
+            );
+            put_padded(
+                buf,
+                area.x + 4,
+                y + 1,
+                &crate::ui::truncate(desc, avail),
+                (area.width as usize).saturating_sub(6),
+                theme::dim(),
+            );
+            y += 2;
+        }
         crate::ui::put_centered_line(
             buf,
             area.x,
-            y + 2,
+            y + 1,
             area.width as usize,
-            "h/l pick   space/enter take",
+            "h/l j/k pick   space/enter take",
             theme::dim(),
         );
         return;

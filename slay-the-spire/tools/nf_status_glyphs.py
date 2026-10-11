@@ -21,7 +21,7 @@ MAP = {
     "DemonForm": "fa-fire_flame_curved", "Metallicize": "fa-shield_halved",
     "FeelNoPain": "fa-bandage", "DarkEmbrace": "fa-moon_o", "Evolve": "md-cards",
     "FireBreathing": "fa-fire", "Barricade": "fa-shield_halved", "Brutality": "md-blood_bag",
-    "Rupture": "fa-droplet_slash", "Regenerate": "md-heart_pulse", "Thorns": "md-cactus",
+    "Rupture": "fa-droplet_slash", "Regenerate": "fa-heart", "Thorns": "md-cactus",
     "Berserk": "fa-face_grin_stars", "Combust": "fa-fire_flame_simple", "Corruption": "fa-skull",
     "DoubleTap": "md-sword_cross", "Juggernaut": "fa-helmet_safety", "Rage": "fa-face_angry",
     "FlameBarrier": "ple-flame_thick", "Artifact": "fa-gear", "NoBlock": "fa-ban",
@@ -66,7 +66,7 @@ COLOR = {
     "Barricade": "silver",
     "Brutality": "blood",
     "Rupture": "blood",
-    "Regenerate": "good",
+    "Regenerate": "plain",
     "Thorns": "fire",
     "Berserk": "fire",
     "Combust": "fire",
@@ -154,7 +154,7 @@ KEYWORDS = {
     "Barricade": ["wall", "brick", "chess_rook", "castle", "shield"],
     "Brutality": ["blood_bag", "blood", "droplet", "heart", "syringe"],
     "Rupture": ["droplet_slash", "droplet", "blood", "syringe", "flask"],
-    "Regenerate": ["heart_pulse", "heartbeat", "heart", "plus", "medkit", "bandage"],
+    "Regenerate": ["heart", "heart_pulse", "heartbeat", "plus", "medkit", "bandage"],
     "Thorns": ["cactus", "thorn", "spike", "plant", "star", "sun"],
     "Berserk": ["face_grin_stars", "flame", "fire", "bolt", "skull", "rage"],
     "Combust": ["fire_flame_simple", "fire", "flame", "bomb", "burst", "smog"],
@@ -173,7 +173,8 @@ KEYWORDS = {
     "PlatedArmor": ["shield_plus", "shield", "armor", "shield_halved", "vest"],
     "Constricted": ["snake", "vine", "ring", "compress", "circle"],
     "Ritual": ["hands_praying", "pray", "candle", "church", "star", "moon"],
-    "Enrage": ["bullhorn", "megaphone", "angry", "face_angry", "bolt"],
+    "Enrage": ["anger", "bullhorn", "megaphone", "angry", "face_angry", "bolt"],
+    "Brutality": ["adhesive_bandage", "bandage", "droplet", "heart", "skull"],
     "Anger": ["face_grimace", "face_angry", "angry", "face_frown", "bolt"],
     "SharpHide": ["hand_fist", "shield_halved", "spike", "sword", "shield"],
     "BeatOfDeath": ["heartbeat", "heart_pulse", "heart", "heart_broken", "skull"],
@@ -243,7 +244,7 @@ ORIGINAL = {
     "Barricade": "铁壁",
     "Brutality": "血滴",
     "Rupture": "血滴+上箭头",
-    "Regenerate": "心+加号",
+    "Regenerate": "实心心脏",
     "Thorns": "荆棘球/仙人球",
     "Berserk": "红色怒面",
     "Combust": "火焰",
@@ -262,7 +263,7 @@ ORIGINAL = {
     "PlatedArmor": "板甲盾",
     "Constricted": "缠绕的蛇/藤",
     "Ritual": "图腾/烛火?",
-    "Enrage": "怒号/喇叭",
+    "Enrage": "怒气符号",
     "Anger": "怒面",
     "SharpHide": "尖刺盾",
     "BeatOfDeath": "心跳/心",
@@ -351,7 +352,7 @@ EMOJI = {
     "PlatedArmor": "\U0001F9BA",
     "Constricted": "\U0001F40D",
     "Ritual": "\U0001F9FF",
-    "Enrage": "\U0001F4E2",
+    "Enrage": "\U0001F4A2",
     "Anger": "\U0001F620",
     "SharpHide": "\U0001F994",
     "BeatOfDeath": "\U0001F493",
@@ -413,6 +414,8 @@ MODE["Weak"] = "nf"
 MODE["Artifact"] = "nf"
 # 破盾:用 nf 的"带警告的盾"(md-shield_alert_outline, U+F0ECD),配减益绿
 MODE["Frail"] = "nf"
+# 再生:实心心脏(fa-heart),白色
+MODE["Regenerate"] = "nf"
 # 铁壁:半截盾(fa-shield_halved, U+ED25)配银色;板甲:盾+同步箭头(md-shield_sync, U+F11A2)
 MODE["Barricade"] = "nf"
 MODE["PlatedArmor"] = "nf"
