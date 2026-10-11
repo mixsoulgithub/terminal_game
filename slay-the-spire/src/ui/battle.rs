@@ -454,7 +454,7 @@ fn enemy_block_w(c: &Combat, i: usize, hide_intents: bool) -> u16 {
     w as u16 + 2
 }
 
-/// 一个敌人的五行(自上而下):意图 / 血量(格挡/当前)/ 名字 / 状态图标 / 状态数值.
+/// 一个敌人的五行(自上而下):意图 / 血量(格挡/当前/上限)/ 名字 / 状态图标 / 状态数值.
 /// 意图用记号语法(见 intent_tokens);状态两行是 3 列徽章(见 ui::badge),左右都不加缩进,
 /// 靠每格自带的右对齐补位.
 fn enemy_lines(c: &Combat, i: usize, hide_intents: bool) -> Vec<Vec<(String, Style)>> {
@@ -462,7 +462,7 @@ fn enemy_lines(c: &Combat, i: usize, hide_intents: bool) -> Vec<Vec<(String, Sty
     if !e.alive() {
         return vec![
             vec![("".to_string(), theme::dim())],
-            vec![("0/0".to_string(), theme::dim())],
+            vec![("0/0/0".to_string(), theme::dim())],
             vec![("dead".to_string(), theme::dim())],
             vec![("".to_string(), theme::dim())],
             vec![("".to_string(), theme::dim())],
@@ -470,11 +470,13 @@ fn enemy_lines(c: &Combat, i: usize, hide_intents: bool) -> Vec<Vec<(String, Sty
     }
     // 第一行:本回合意图
     let intent = enemy_intent_line(c, i, hide_intents);
-    // 第二行:格挡/当前血量(格挡蓝、当前血红)
+    // 第二行:格挡/当前/上限(格挡蓝、血量与上限红)
     let blood = vec![
         (e.block.to_string(), theme::fg(theme::BLOCK)),
         ("/".to_string(), theme::dim()),
         (e.hp.to_string(), theme::fg(theme::BAD)),
+        ("/".to_string(), theme::dim()),
+        (e.max_hp.to_string(), theme::fg(theme::BAD)),
     ];
     // 第三行:名字
     let name_line = vec![(
@@ -757,7 +759,11 @@ mod tests {
         let lines = enemy_lines(c, 0, false);
         assert_eq!(lines.len(), 5, "五行");
         let e = &c.enemies[0];
-        assert_eq!(row_text(&lines[1]), format!("{}/{}", e.block, e.hp), "血液行是 格挡/当前");
+        assert_eq!(
+            row_text(&lines[1]),
+            format!("{}/{}/{}", e.block, e.hp, e.max_hp),
+            "血液行是 格挡/当前/上限"
+        );
         assert_eq!(row_text(&lines[2]), e.name, "第三行是名字");
         // 标签行只有"图标"和"数值"两种内容,且两行等宽(每格 3 列)
         let w = |l: &[(String, Style)]| -> usize {
