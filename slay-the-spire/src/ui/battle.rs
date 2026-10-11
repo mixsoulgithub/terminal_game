@@ -53,10 +53,9 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     if area.height < 8 || area.width < 60 {
         return;
     }
-    // 底部两行固定:信息行 + 命令栏
-    let command = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
-    let info = Rect::new(area.x, area.y + area.height - 2, area.width, 1);
-    let main = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(2));
+    // 底部固定一行:左边是提示/原因,右边是 "? help"(按 : 时整条让给命令行)
+    let status = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+    let main = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
     let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
     let card = c.hand.get(sel);
     // 底部:能量+小结线 / 手牌行 / 成本+类型线 / 说明两行 / 收尾线
@@ -198,10 +197,9 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     // 收尾线
     crate::ui::hline(buf, main.x, y, main.width, crate::ui::BOX_H, theme::fg(theme::BORDER));
 
-    render_info(buf, info, app, c);
-    render_command(buf, command, app);
+    render_status(buf, status, app, c);
     // 战斗里也要有命令行补全提示
-    crate::ui::command_hints(buf, command, app);
+    crate::ui::command_hints(buf, status, app);
 }
 
 // ---- 角色区 ----
@@ -652,10 +650,10 @@ fn render_enemy_block(buf: &mut Buffer, slot: Rect, lines: &[Vec<(String, Style)
     }
 }
 
-// ---- 底部两栏 ----
+// ---- 底部一行 ----
 
-/// 信息行:先说打不出去的原因,再顺带一句当前操作
-fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
+/// 底部提示文字:先说打不出去的原因,再顺带一句当前操作
+fn info_text(app: &App, c: &Combat) -> (String, Style) {
     let sel = app.hand_sel.min(c.hand.len().saturating_sub(1));
     let reason = if c.hand.is_empty() {
         None
@@ -664,7 +662,7 @@ fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     };
     // 选牌模式:只显示"怎么选",不再掺打牌提示与打不出的原因
     let choice_source = c.choice.as_ref().map(|ch| ch.source);
-    let (text, style) = if let Some(source) = choice_source {
+    if let Some(source) = choice_source {
         if !app.msg.is_empty() {
             (app.msg.clone(), theme::fg(theme::WARN))
         } else if source == crate::core::combat::ChoiceSource::Hand {
@@ -679,7 +677,7 @@ fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
             )
         }
     } else {
-        let (text, style) = match reason {
+        match reason {
             Some(r) => (format!("cannot play: {r}"), theme::fg(theme::WARN)),
             None if !app.msg.is_empty() => (app.msg.clone(), theme::fg(theme::FG)),
             None if c.hand.is_empty() => (
@@ -693,23 +691,36 @@ fn render_info(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
                 },
                 _ => ("[enter] play".to_string(), theme::dim()),
             },
-        };
-        (text, style)
-    };
-    // 提示要抖的时候整句话往右挪一格(和商店那套一致)
-    let x = area.x + 2 + app.shake_nudge() as u16;
-    put(buf, x, area.y, &truncate(&text, (area.width as usize).saturating_sub(2)), style);
+        }
+    }
 }
 
-/// 命令栏:平时只写 "? help";按 : 进入命令行时整条让给输入
-fn render_command(buf: &mut Buffer, area: Rect, app: &App) {
+/// 底部那一行:平时左边写提示、右边写 "? help";按 : 后整条让给命令行
+/// (补全提示由 ui::command_hints 叠在这一行上面)
+fn render_status(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
     if app.mode == Mode::Command {
         let line = format!(":{}_", app.cmd);
         put_padded(buf, area.x, area.y, &line, area.width as usize, theme::selected());
         return;
     }
-    put(buf, area.x + 2, area.y, "? help", theme::dim());
+    let (text, style) = info_text(app, c);
+    // 右边给 "? help" 留 6 列 + 两侧各 2 列;剩不下就不写它
+    let help = "? help";
+    let room = (area.width as usize).saturating_sub(2);
+    let reserve = help.len() + 3;
+    let (text_w, show_help) = if room > reserve {
+        (room - reserve, true)
+    } else {
+        (room, false)
+    };
+    // 提示要抖的时候整句话往右挪一格(和商店那套一致)
+    let x = area.x + 2 + app.shake_nudge() as u16;
+    put(buf, x, area.y, &truncate(&text, text_w), style);
+    if show_help {
+        put(buf, area.x + area.width - (help.len() as u16) - 2, area.y, help, theme::dim());
+    }
 }
+
 
 
 #[cfg(test)]
