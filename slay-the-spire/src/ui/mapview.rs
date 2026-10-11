@@ -111,6 +111,17 @@ fn chosen_future(app: &App) -> Option<Vec<bool>> {
     Some(app.run.map.forward_reachable(chosen))
 }
 
+/// 地图上一个节点画出来的字:没选中时燃烧精英多带一个 *(3 格宽,色块正好铺满),
+/// 选中时用 [] 框起来、且不带燃烧标记 —— 框住时只占节点自己的 3 格,
+/// 多一个字(比如 E*)就会让底色越到后面的连接线上
+fn node_text(kind: NodeKind, burning: bool, is_sel: bool) -> String {
+    if is_sel {
+        format!("[{}]", map_glyph(kind, false, false))
+    } else {
+        map_glyph(kind, burning, true).to_string()
+    }
+}
+
 /// 没选中时是单个字符(燃烧精英多一个 *);选中时左右各铺一格,
 /// 好让色块正好铺满三格
 fn map_glyph(kind: NodeKind, burning: bool, wide: bool) -> &'static str {
@@ -175,7 +186,8 @@ fn map_glyph(kind: NodeKind, burning: bool, wide: bool) -> &'static str {
     }
 }
 
-/// 图例:一个符号一行,颜色照搬地图上的用法;Boss 那行直接写它这一局的全名。
+/// 图例:一个符号一行,颜色照搬地图上的用法(Boss 名由地图本体写在 Boss 节点旁边,
+/// 这里不再重复一行)。
 /// 标记统一占 3 格再空 1 格,这样每一行名字都从同一列起头
 fn legend_lines(run: &Run) -> Vec<(String, Style)> {
     // 标记一律去掉左右补白再补到 3 格:地图上的色块要左右铺满,图例这里只要对齐
@@ -199,10 +211,6 @@ fn legend_lines(run: &Run) -> Vec<(String, Style)> {
         (row("e", "Enemy"), theme::kind_style(NodeKind::Monster)),
         (row(" E ", "Elite"), theme::kind_style(NodeKind::Elite)),
         (row(" E*", "Burning"), theme::kind_style(NodeKind::Elite)),
-        (
-            row("B", run.boss_name()),
-            theme::kind_style(NodeKind::Boss),
-        ),
     ]);
     out
 }
@@ -302,12 +310,7 @@ fn render_floor(
                 style
             };
             // 选中的那一格用 [] 框起来:这就是图例里那行 "[] you"
-            let text = if is_sel {
-                format!("[{}]", map_glyph(k, burning, false))
-            } else {
-                map_glyph(k, burning, true).to_string()
-            };
-            (x - 1, text, style)
+            (x - 1, node_text(k, burning, is_sel), style)
         } else if lit {
             // 最左那一列借不到左边的格子:不铺底,只把字色提亮
             (
@@ -401,5 +404,71 @@ fn render_edges(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 选中的节点框起来只占自己的 3 格:燃烧精英选中时不再带 *,否则底色会越到连接线上
+    #[test]
+    fn selected_node_keeps_three_columns() {
+        assert_eq!(
+            crate::ui::display_width(&node_text(NodeKind::Elite, true, true)),
+            3,
+            "选中的燃烧精英要跟普通精英一样宽"
+        );
+        assert_eq!(node_text(NodeKind::Elite, true, true), "[E]");
+        assert_eq!(node_text(NodeKind::Elite, false, true), "[E]");
+        // 没选中时还是 3 格宽(带 *,左右各铺一格)
+        assert_eq!(node_text(NodeKind::Elite, true, false), " E*");
+        assert_eq!(
+            crate::ui::display_width(&node_text(NodeKind::Elite, true, false)),
+            3
+        );
+        assert_eq!(node_text(NodeKind::Monster, false, true), "[e]");
+    }
+
+    /// 地图整屏渲染出来也不再有 Boss 图例行,燃烧精英那行还在
+    #[test]
+    fn map_render_has_no_boss_legend_row() {
+        let mut app = App::new(3);
+        app.run.screen = crate::core::run::Screen::Map;
+        let area = ratatui::layout::Rect::new(0, 0, 110, 24);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        render(&mut buf, area, &app);
+        let mut text = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                text.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            text.push('\n');
+        }
+        // Boss 名只在地图本体出现一次(节点旁边);去掉图例那行后就只剩这一处
+        assert_eq!(
+            text.matches(app.run.boss_name()).count(),
+            1,
+            "Boss 名只该出现在地图本体,不该再有图例行:{}",
+            app.run.boss_name()
+        );
+        assert!(text.contains("Burning"), "燃烧精英那行该在:{text}");
+        assert!(text.contains("Elite"), "普通精英那行该在:{text}");
+    }
+
+    /// 图例不再重复 Boss 那行(地图本体已经写着)
+    #[test]
+    fn legend_has_no_boss_row() {
+        let run = Run::new(3);
+        let text: Vec<String> = legend_lines(&run).into_iter().map(|(t, _)| t).collect();
+        assert!(
+            !text.iter().any(|l| l.contains(run.boss_name())),
+            "图例里不该再有 Boss 行:{text:?}"
+        );
+        assert!(
+            text.iter().any(|l| l.contains("Elite") && l.contains("Burning") == false),
+            "精英那行还在:{text:?}"
+        );
+        assert!(text.iter().any(|l| l.contains("Burning")), "燃烧精英那行还在:{text:?}");
     }
 }
