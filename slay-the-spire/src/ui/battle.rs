@@ -218,11 +218,12 @@ fn round_by_side(v: f32, width: u16) -> u16 {
 /// 角色:画像的重心放在屏幕 1/4 处,增减益跟着画像中心。
 /// off 是抖动偏移(掉血往左退、出手往右冲)。
 fn render_character(buf: &mut Buffer, area: Rect, c: &Combat, off: i32) {
-    if area.width == 0 || area.height < 14 {
+    // 只要塞得下"画像 + 两行徽章"就画;14 是早先留下的余量,没有别的含义
+    if area.width == 0 || area.height < (ART_H + 2) as u16 {
         return;
     }
     let art_rows = ART_H;
-    let block_h = (art_rows + 1) as u16; // 画像 + 增减益(不再有血条)
+    let block_h = (art_rows + 2) as u16; // 画像 + 两行徽章
     let voff = (area.height as usize).saturating_sub(block_h as usize) / 2;
     // 画像中心落在屏幕 1/4 处
     let center = area.x as f32 + area.width as f32 / 4.0;
