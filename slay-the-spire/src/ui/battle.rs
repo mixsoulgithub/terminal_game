@@ -1,13 +1,13 @@
 // 战斗界面:上面是"说明区(带框) | 角色区 | 敌人区",中间一条横线,下面是卡牌列表.
-// 角色区:30x10 的画像 + 一行增减益,不画框;卡牌列表:能量 / 一行手牌(│ 分隔)/ 牌堆小结.
-// 敌人区按数量平分高度,每个敌人四行:血量 / 名字 / 缩进的动作 / 缩进的状态.
+// 角色区:20x10 的画像 + 两行增减益徽章,不画框;卡牌列表:能量 / 一行手牌(│ 分隔)/ 牌堆小结.
+// 敌人区按数量平分高度,每个敌人五行:意图 / 格挡-血量 / 名字 / 状态图标 / 状态数值.
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::{App, Mode};
 use crate::core::combat::Combat;
-use crate::core::enemy::Intent;
+use crate::core::enemy::{EnemyFx, Intent};
 use crate::ui::theme;
 use crate::ui::{display_width, put, put_padded, truncate};
 
@@ -245,23 +245,15 @@ fn render_character(buf: &mut Buffer, area: Rect, c: &Combat, off: i32) {
         }
     }
     let buff_y = area.y + voff as u16 + art_rows as u16;
-    let words: Vec<(String, Style)> = c
-        .player
-        .statuses
-        .iter()
-        .enumerate()
-        .flat_map(|(i, (st, n))| {
-            let sep = (i > 0).then(|| ("  ".to_string(), theme::fg(theme::FG)));
-            let color = if st.is_debuff() { theme::DEBUFF } else { theme::BUFF };
-            sep.into_iter()
-                .chain([(format!("{} {}", st.short(), n), theme::fg(color))])
-        })
-        .collect();
-    let len: usize = words.iter().map(|(t, _)| display_width(t)).sum();
-    let mut bx = cx + (IMG_W.saturating_sub(len) / 2) as u16;
-    for (t, st) in &words {
-        put(buf, bx, buff_y, t, *st);
-        bx += display_width(t) as u16;
+    // 增减益也是两行徽章(上行图标、下行数值,每格 3 列),在画像下面居中
+    let (icons, values) = status_badge_lines(&c.player.statuses);
+    for (r, line) in [&icons, &values].into_iter().enumerate() {
+        let len: usize = line.iter().map(|(t, _)| display_width(t)).sum();
+        let mut bx = cx + (IMG_W.saturating_sub(len) / 2) as u16;
+        for (t, st) in line {
+            put(buf, bx, buff_y + r as u16, t, *st);
+            bx += display_width(t) as u16;
+        }
     }
 }
 
@@ -463,101 +455,150 @@ fn enemy_block_w(c: &Combat, i: usize, hide_intents: bool) -> u16 {
     w as u16 + 2
 }
 
-/// 一个敌人的四行:血量/上限/格挡、名字、本回合动作、身上的状态.
-/// 动作与状态相对名字缩进两格. 符文穹顶下动作那行留空(看不到意图).
+/// 一个敌人的五行(自上而下):意图 / 血量(格挡/当前)/ 名字 / 状态图标 / 状态数值.
+/// 意图用记号语法(见 intent_tokens);状态两行是 3 列徽章(见 ui::badge),左右都不加缩进,
+/// 靠每格自带的右对齐补位.
 fn enemy_lines(c: &Combat, i: usize, hide_intents: bool) -> Vec<Vec<(String, Style)>> {
     let e = &c.enemies[i];
     if !e.alive() {
         return vec![
-            vec![("0/0/0".to_string(), theme::dim())],
+            vec![("".to_string(), theme::dim())],
+            vec![("0/0".to_string(), theme::dim())],
             vec![("dead".to_string(), theme::dim())],
+            vec![("".to_string(), theme::dim())],
+            vec![("".to_string(), theme::dim())],
         ];
     }
-    // 第一行:血量/上限/格挡
-    let hp_line = vec![
-        (format!("{}/{}", e.hp, e.max_hp), theme::fg(theme::BAD)),
-        ("/".to_string(), theme::dim()),
+    // 第一行:本回合意图
+    let intent = enemy_intent_line(c, i, hide_intents);
+    // 第二行:格挡/当前血量(格挡蓝、当前血红)
+    let blood = vec![
         (e.block.to_string(), theme::fg(theme::BLOCK)),
+        ("/".to_string(), theme::dim()),
+        (e.hp.to_string(), theme::fg(theme::BAD)),
     ];
-    // 第二行:名字
+    // 第三行:名字
     let name_line = vec![(
         e.name.clone(),
         Style::default().fg(theme::BAD).add_modifier(Modifier::BOLD),
     )];
-    // 第三行:本回合动作(符文穹顶下整行留空)
-    let mut action: Vec<(String, Style)> = vec![("  ".to_string(), theme::fg(theme::FG))];
-    if !hide_intents {
-        for (j, (text, color)) in enemy_action_tokens(c, i).into_iter().enumerate() {
-            if j > 0 {
-                action.push((" ".to_string(), theme::fg(theme::FG)));
-            }
-            action.push((text, theme::fg(color).add_modifier(Modifier::BOLD)));
-        }
-    }
-    // 第四行:身上的增减益
-    let mut status: Vec<(String, Style)> = vec![("  ".to_string(), theme::fg(theme::FG))];
-    for (j, (st, n)) in e.statuses.iter().enumerate() {
-        if j > 0 {
-            status.push((" ".to_string(), theme::fg(theme::FG)));
-        }
-        let color = if st.is_debuff() { theme::DEBUFF } else { theme::BUFF };
-        status.push((format!("{} {}", st.short(), n), theme::fg(color)));
-    }
-    vec![hp_line, name_line, action, status]
+    // 第四、五行:状态徽章的图标行与数值行
+    let (icons, values) = status_badge_lines(&e.statuses);
+    vec![intent, blood, name_line, icons, values]
 }
 
-/// 本回合动作记号:按意图分类,攻击伤害用实算值(含增减益与随回合成长)
-fn enemy_action_tokens(c: &Combat, i: usize) -> Vec<(String, Color)> {
+/// 身上的增减益渲染成两行徽章:上行图标(emoji 自带色 / nf 用配色键)、下行数值
+/// (减益绿、增益紫),每格 3 列右对齐,格间空 1 格.
+fn status_badge_lines(
+    statuses: &crate::core::status::Statuses,
+) -> (Vec<(String, Style)>, Vec<(String, Style)>) {
+    let mut icons: Vec<(String, Style)> = Vec::new();
+    let mut values: Vec<(String, Style)> = Vec::new();
+    for (j, (st, n)) in statuses.entries().enumerate() {
+        if j > 0 {
+            icons.push((" ".to_string(), theme::fg(theme::FG)));
+            values.push((" ".to_string(), theme::fg(theme::FG)));
+        }
+        let (icon, value) = crate::ui::badge(st.glyph(), *n);
+        let color = if st.is_debuff() { theme::DEBUFF } else { theme::BUFF };
+        icons.push((icon, crate::ui::status_icon_style(*st)));
+        values.push((value, theme::fg(color)));
+    }
+    (icons, values)
+}
+
+/// 意图行的上下文:把敌人的这一步摊成记号需要的几个数,交给 intent_tokens 排版.
+fn enemy_intent_line(c: &Combat, i: usize, hide_intents: bool) -> Vec<(String, Style)> {
     let e = &c.enemies[i];
     if !e.up() {
-        return vec![("--".to_string(), theme::DIM)];
+        return vec![("--".to_string(), theme::dim())];
     }
-    let intent = e.intent();
+    if hide_intents {
+        // 符文穹顶:整行留空,但仍占一行(行数固定)
+        return vec![("".to_string(), theme::dim())];
+    }
+    let mv = &e.def.moves[e.next_move];
+    let fx = crate::core::ascension::effects(e.def.id, mv.name, mv.effects, e.asc);
+    // 攻击伤害用实算值(含增减益与随回合成长);它也是"按伤害给格挡"那类法术的参考值
+    let (per, times): (i32, u8) = if e.intent().attacks() {
+        c.predicted_damage(i)
+    } else {
+        (0, 0)
+    };
+    let mut block = c.intent_block(i);
+    if fx.iter().any(|f| matches!(f, EnemyFx::BlockFromDamage)) {
+        block += per * times as i32;
+    }
+    intent_tokens(e.intent(), &fx, per, times, block)
+        .into_iter()
+        .enumerate()
+        .flat_map(|(j, (text, color))| {
+            let mut v: Vec<(String, Style)> = Vec::new();
+            if j > 0 {
+                v.push((" ".to_string(), theme::fg(theme::FG)));
+            }
+            v.push((text, theme::fg(color).add_modifier(Modifier::BOLD)));
+            v
+        })
+        .collect()
+}
+
+/// 意图记号(纯函数,便于直接测):
+/// - 攻击 `!伤害` / `!伤害x次数`(红)
+/// - 格挡 `(数值)`(蓝)
+/// - 减益 `@缩写数值`(绿)
+/// - 自身增益 `💭缩写数值`(紫)
+/// - 睡觉 `💤`、眩晕 `💫`、逃跑 `>>`、未知 `?`
+/// 什么都不匹配就退回 `?`.
+fn intent_tokens(
+    intent: Intent,
+    fx: &[EnemyFx],
+    per: i32,
+    times: u8,
+    block: i32,
+) -> Vec<(String, Color)> {
     match intent {
-        Intent::Sleep => return vec![("SLEEP".to_string(), theme::DIM)],
-        Intent::Stun => return vec![("STUNNED".to_string(), theme::DIM)],
-        Intent::Escape => return vec![("ESCAPE".to_string(), theme::DEBUFF)],
-        Intent::Unknown => return vec![("???".to_string(), theme::DIM)],
+        Intent::Sleep => return vec![("\u{1F4A4}".to_string(), theme::DIM)],
+        Intent::Stun => return vec![("\u{1F4AB}".to_string(), theme::DIM)],
+        Intent::Escape => return vec![(">>".to_string(), theme::DEBUFF)],
+        Intent::Unknown => return vec![("?".to_string(), theme::DIM)],
         _ => {}
     }
-    let debuff = matches!(
-        intent,
-        Intent::Debuff
-            | Intent::StrongDebuff
-            | Intent::AttackDebuff { .. }
-            | Intent::DefendDebuff { .. }
-    );
-    let buff = matches!(
-        intent,
-        Intent::Buff | Intent::DefendBuff { .. } | Intent::AttackBuff { .. }
-    );
     let mut out: Vec<(String, Color)> = Vec::new();
-    if debuff {
-        out.push(("DEBUFF".to_string(), theme::DEBUFF));
-    }
-    if buff {
-        out.push(("BUFF".to_string(), theme::BUFF));
-    }
     if intent.attacks() {
-        let (per, times) = c.predicted_damage(i);
         out.push((
             if times > 1 {
-                format!("ATTACK {per}x{times}")
+                format!("!{per}x{times}")
             } else {
-                format!("ATTACK {per}")
+                format!("!{per}")
             },
             theme::BAD,
         ));
     }
-    let block = c.intent_block(i);
     if block > 0 {
-        out.push((format!("BLOCK {block}"), theme::BLOCK));
+        out.push((format!("({block})"), theme::BLOCK));
+    }
+    for f in fx {
+        match f {
+            // 打到玩家身上的:减益用绿、非减益用默认色
+            EnemyFx::PlayerStatus { status, n } => {
+                let color = if status.is_debuff() { theme::DEBUFF } else { theme::FG };
+                out.push((format!("@{}{}", status.short(), n), color));
+            }
+            // 给自己/同伴上的:算"策略",减益仍标绿
+            EnemyFx::GainStatus { status, n, .. } => {
+                let color = if status.is_debuff() { theme::DEBUFF } else { theme::BUFF };
+                out.push((format!("\u{1F4AD}{}{}", status.short(), n), color));
+            }
+            _ => {}
+        }
     }
     if out.is_empty() {
-        out.push(("???".to_string(), theme::DIM));
+        out.push(("?".to_string(), theme::DIM));
     }
     out
 }
+
 
 /// 把一个敌人的几行贴右画出来;整块宽度取最长一行,选中时铺底色
 fn render_enemy_block(buf: &mut Buffer, slot: Rect, lines: &[Vec<(String, Style)>], selected: bool) {
@@ -675,22 +716,99 @@ mod tests {
     use super::*;
     use crate::core::run::Run;
 
-    /// 符文穹顶:开战后动作行留空(看不到敌人意图),别的行照常
+    fn row_text(line: &[(String, Style)]) -> String {
+        line.iter().map(|(t, _)| t.as_str()).collect()
+    }
+
+    /// 符文穹顶:意图行留空(看不到敌人意图),别的行照常
     #[test]
     fn runic_dome_hides_enemy_intents() {
         let mut r = Run::new(3);
         r.debug_add_relic("runic_dome").unwrap();
         r.debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
         let c = r.combat.as_ref().expect("进战斗");
-        assert!(
-            !enemy_action_tokens(c, 0).is_empty(),
-            "没有穹顶时看得到意图记号"
-        );
+        let shown = enemy_intent_line(c, 0, false);
+        assert!(!row_text(&shown).trim().is_empty(), "没有穹顶时看得到意图记号");
         let lines = enemy_lines(c, 0, true);
-        let action: String = lines[2].iter().map(|(t, _)| t.as_str()).collect();
-        assert_eq!(action.trim(), "", "符文穹顶下动作行留空");
+        assert_eq!(row_text(&lines[0]).trim(), "", "符文穹顶下意图行留空");
         // 名字与血量行还在,敌人照常行动(只是看不到)
-        let name: String = lines[1].iter().map(|(t, _)| t.as_str()).collect();
-        assert!(!name.trim().is_empty(), "名字行照常");
+        assert!(!row_text(&lines[2]).trim().is_empty(), "名字行照常");
+        assert!(row_text(&lines[1]).contains('/'), "血量行照常");
+    }
+
+    /// 行序固定为:意图 / 格挡-血量 / 名字 / 状态图标 / 状态数值
+    #[test]
+    fn enemy_lines_order_is_intent_blood_name_badges() {
+        let mut r = Run::new(3);
+        r.debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        let c = r.combat.as_ref().expect("进战斗");
+        let lines = enemy_lines(c, 0, false);
+        assert_eq!(lines.len(), 5, "五行");
+        let e = &c.enemies[0];
+        assert_eq!(row_text(&lines[1]), format!("{}/{}", e.block, e.hp), "血液行是 格挡/当前");
+        assert_eq!(row_text(&lines[2]), e.name, "第三行是名字");
+        // 标签行只有"图标"和"数值"两种内容,且两行等宽(每格 3 列)
+        let w = |l: &[(String, Style)]| -> usize {
+            l.iter().map(|(t, _)| display_width(t)).sum()
+        };
+        assert_eq!(w(&lines[3]), w(&lines[4]), "图标行与数值行等宽");
+    }
+
+    /// 意图记号:攻击 !N / !NxM、格挡 (N)、减益 @缩写N、自身增益 💭缩写N
+    #[test]
+    fn intent_tokens_follow_the_symbol_spec() {
+        let tok = |t: &[(String, Color)]| -> String {
+            t.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(" ")
+        };
+        let dmg = intent_tokens(Intent::Attack { damage: 25, times: 1 }, &[], 25, 1, 0);
+        assert_eq!(tok(&dmg), "!25");
+        assert_eq!(dmg[0].1, theme::BAD, "攻击是红的");
+        assert_eq!(tok(&intent_tokens(Intent::Attack { damage: 3, times: 3 }, &[], 3, 3, 0)), "!3x3");
+        let def = intent_tokens(Intent::Defend, &[], 0, 0, 23);
+        assert_eq!(tok(&def), "(23)");
+        assert_eq!(def[0].1, theme::BLOCK, "格挡是蓝的");
+        let db = intent_tokens(
+            Intent::Debuff,
+            &[EnemyFx::PlayerStatus { status: crate::core::status::Status::Weak, n: 2 }],
+            0,
+            0,
+            0,
+        );
+        assert_eq!(tok(&db), "@WEAK2");
+        assert_eq!(db[0].1, theme::DEBUFF, "减益是绿的");
+        let st = intent_tokens(
+            Intent::Buff,
+            &[EnemyFx::GainStatus { status: crate::core::status::Status::Strength, n: 3, scope: crate::core::enemy::Scope::SelfOnly }],
+            0,
+            0,
+            0,
+        );
+        assert_eq!(tok(&st), "\u{1F4AD}STR3", "自身增益用思考气泡");
+        // 攻击+格挡+减益同时出现时按 攻击 / 格挡 / 减益 的顺序排
+        let mix = intent_tokens(
+            Intent::AttackDebuff { damage: 7, times: 2 },
+            &[EnemyFx::PlayerStatus { status: crate::core::status::Status::Vulnerable, n: 1 }],
+            7,
+            2,
+            5,
+        );
+        assert_eq!(tok(&mix), "!7x2 (5) @VULN1");
+        // 特殊意图
+        assert_eq!(tok(&intent_tokens(Intent::Sleep, &[], 0, 0, 0)), "\u{1F4A4}");
+        assert_eq!(tok(&intent_tokens(Intent::Stun, &[], 0, 0, 0)), "\u{1F4AB}");
+        assert_eq!(tok(&intent_tokens(Intent::Escape, &[], 0, 0, 0)), ">>");
+        assert_eq!(tok(&intent_tokens(Intent::Unknown, &[], 0, 0, 0)), "?");
+        assert_eq!(tok(&intent_tokens(Intent::Defend, &[], 0, 0, 0)), "?", "没数就退回 ?");
+    }
+
+    /// 状态两行徽章:每格 3 列右对齐,格间 1 格,数值带符号
+    #[test]
+    fn status_badge_lines_pair_icons_with_values() {
+        let mut st = crate::core::status::Statuses::new();
+        st.add(crate::core::status::Status::Strength, 2);
+        st.add(crate::core::status::Status::Dexterity, 3);
+        let (icons, values) = status_badge_lines(&st);
+        assert_eq!(row_text(&icons), " \u{1F4AA}  \u{1F45F}", "图标行");
+        assert_eq!(row_text(&values), " +2  +3", "数值行");
     }
 }

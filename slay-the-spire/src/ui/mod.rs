@@ -96,6 +96,19 @@ pub fn badge(icon: &str, value: i32) -> (String, String) {
     (a, b)
 }
 
+/// 状态图标的颜色:emoji 自带颜色(不覆盖);nf 字形按配色键;两者都没有就暗色
+pub fn status_icon_style(s: crate::core::status::Status) -> ratatui::style::Style {
+    if s.icon_kind() == "emoji" {
+        return theme::fg(theme::FG);
+    }
+    let key = s.icon_color_key();
+    if key.is_empty() {
+        theme::dim()
+    } else {
+        theme::fg(theme::icon_color(key))
+    }
+}
+
 /// 药水名里的 "Potion" 换成 ~,只在放不下时才用
 pub fn potion_label(name: &str) -> String {
     name.replace("Potion", "~")
