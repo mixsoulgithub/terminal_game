@@ -45,6 +45,15 @@ const CARD_ARGS: &[&str] = &["add", "pile", "remove", "upgrade"];
 const RUN_ARGS: &[&str] = &["save", "seed"];
 const RESTART_ARGS: &[&str] = &["fight", "run", "turn"];
 
+/// 药水栏满时"丢一瓶腾位置"之后,要不要自动重试刚才那次获取
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TossThen {
+    /// 奖励屏:丢完自动再取光标那一格
+    Reward,
+    /// 商店:丢完自动再买光标那一格
+    Shop,
+}
+
 pub struct App {
     pub run: Run,
     pub mode: Mode,
@@ -81,6 +90,8 @@ pub struct App {
     pub potion_pending: Option<usize>,
     /// 药水列表里按过 t,下一个数字是"丢掉"而不是"喝掉"
     pub toss_pending: bool,
+    /// 这次丢瓶是为了哪次获取(丢完自动重试)
+    pub toss_then: Option<TossThen>,
     pub msg: String,
     pub warn: bool,
     pub quit: bool,
@@ -152,6 +163,7 @@ impl App {
             potion_sel: None,
             potion_pending: None,
             toss_pending: false,
+            toss_then: None,
             msg: String::new(),
             warn: false,
             quit: false,
@@ -455,6 +467,7 @@ impl App {
         self.potion_sel = None;
         self.potion_pending = None;
         self.toss_pending = false;
+        self.toss_then = None;
         self.info(format!("new run, seed {seed}"));
     }
 
@@ -788,6 +801,7 @@ impl App {
             if let Some(other) = overlay_key_of(self, key.code) {
                 self.potion_pending = None;
                 self.toss_pending = false;
+                self.toss_then = None;
                 if other == ov {
                     self.overlay = None;
                 } else {
@@ -819,6 +833,7 @@ impl App {
         if key.code == KeyCode::Char('p') {
             self.potion_sel = Some(0);
             self.toss_pending = false;
+            self.toss_then = None;
             self.info("h/l choose a potion, enter drink, t then 1-3 toss");
             return;
         }
@@ -870,6 +885,7 @@ impl App {
                 self.overlay = None;
                 self.potion_pending = None;
                 self.toss_pending = false;
+                self.toss_then = None;
                 // 正在选牌:esc 等于取消这次出牌
                 if picking && self.run.combat().map(|c| c.choice.is_some()).unwrap_or(false) {
                     if let Some(c) = self.run.combat_mut() {
@@ -1003,15 +1019,24 @@ impl App {
                 self.potion_sel = Some((cur + n - 1) % n);
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                self.potion_sel = None;
-                if self.run.player.potions[cur].is_some() {
-                    self.drink(cur);
+                // 丢瓶模式:空格/回车 = 丢掉这一瓶(不是喝)
+                if self.toss_pending {
+                    self.finish_toss(cur);
                 } else {
-                    self.warn("that slot is empty");
+                    self.potion_sel = None;
+                    if self.run.player.potions[cur].is_some() {
+                        self.drink(cur);
+                    } else {
+                        self.warn("that slot is empty");
+                    }
                 }
             }
             // esc 或再按一次 p 都退回"不看药水说明"的状态
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('p') => self.potion_sel = None,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('p') => {
+                self.potion_sel = None;
+                self.toss_pending = false;
+                self.toss_then = None;
+            }
             KeyCode::Char('t') => {
                 self.toss_pending = true;
                 self.info("press 1-3 to toss that potion");
@@ -1019,12 +1044,10 @@ impl App {
             KeyCode::Char(c) => {
                 if let Some(slot) = digit_slot(c) {
                     if slot < n {
-                        let toss = std::mem::take(&mut self.toss_pending);
-                        self.potion_sel = None;
-                        if toss {
-                            let r = self.run.toss_potion(slot);
-                            self.ok(r);
+                        if self.toss_pending {
+                            self.finish_toss(slot);
                         } else {
+                            self.potion_sel = None;
                             self.drink(slot);
                         }
                     }
@@ -1106,6 +1129,33 @@ impl App {
                 self.clamp();
             }
             Err(e) => self.warn(e),
+        }
+    }
+
+    /// 取/买药水被"栏满"挡住时:不干等,直接把顶栏药水选择叫出来并进入丢瓶模式
+    /// (那里空格=丢,不是喝),丢完按 then 自动重试这次获取. 返回 true 表示已交给丢瓶流程.
+    fn route_potion_full<T>(&mut self, res: &Result<T, String>, then: Option<TossThen>) -> bool {
+        if !matches!(res, Err(e) if e.starts_with("no free potion slot")) {
+            return false;
+        }
+        self.potion_sel = Some(0);
+        self.toss_pending = true;
+        self.toss_then = then;
+        self.info("no free potion slot: j/k pick one, space/enter toss it, esc cancel");
+        true
+    }
+
+    /// 丢一瓶腾位置;如果这次丢瓶是为了某次获取,丢成功后自动重试(= 原版那个
+    /// "背包满了,丢哪瓶换新的"对话框)
+    fn finish_toss(&mut self, slot: usize) {
+        let r = self.run.toss_potion(slot);
+        self.ok(r);
+        self.potion_sel = None;
+        self.toss_pending = false;
+        match self.toss_then.take() {
+            Some(TossThen::Reward) => self.take_reward(),
+            Some(TossThen::Shop) => self.buy_shop(),
+            None => {}
         }
     }
 
@@ -1601,6 +1651,23 @@ impl App {
         }
     }
 
+    /// 买光标那件;药水栏满了就转去丢瓶流程
+    fn buy_shop(&mut self) {
+        let r = self.run.buy_selected();
+        if self.route_potion_full(&r, Some(TossThen::Shop)) {
+            return;
+        }
+        // 灰行(卖光了 / 钱不够):抖一下提示买不了
+        if let Err(e) = &r {
+            if e == "sold out" || e.starts_with("needs ") {
+                self.shake = App::SHAKE_FRAMES;
+                self.shake_row = self.run.shop.as_ref().map(|s| s.index);
+            }
+        }
+        self.ok(r);
+        self.run.shop_clamp();
+    }
+
     fn set_reward_index(&mut self, i: usize) {
         if let Some(r) = self.run.reward.as_mut() {
             r.index = i;
@@ -1609,6 +1676,9 @@ impl App {
 
     fn take_reward(&mut self) {
         let r = self.run.reward_take();
+        if self.route_potion_full(&r, Some(TossThen::Reward)) {
+            return;
+        }
         self.ok(r);
         self.run.reward_clamp();
         if self.run.reward_slots().is_empty() {
@@ -1647,18 +1717,7 @@ impl App {
                     s.index = n.saturating_sub(1);
                 }
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                let r = self.run.buy_selected();
-                // 灰行(卖光了 / 钱不够):抖一下提示买不了
-                if let Err(e) = &r {
-                    if e == "sold out" || e.starts_with("needs ") {
-                        self.shake = App::SHAKE_FRAMES;
-                        self.shake_row = self.run.shop.as_ref().map(|s| s.index);
-                    }
-                }
-                self.ok(r);
-                self.run.shop_clamp();
-            }
+            KeyCode::Enter | KeyCode::Char(' ') => self.buy_shop(),
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.run.leave_shop();
                 self.info("back to the map");
@@ -1737,6 +1796,9 @@ impl App {
             KeyCode::Enter | KeyCode::Char(' ') => {
                 let i = self.run.event.as_ref().map(|s| s.index).unwrap_or(0);
                 let r = self.run.choose_event(i);
+                if self.route_potion_full(&r, None) {
+                    return;
+                }
                 self.ok_unit(r);
                 self.clamp();
             }
@@ -1745,6 +1807,9 @@ impl App {
                     if slot < n {
                         self.run.event_index_set(slot);
                         let r = self.run.choose_event(slot);
+                        if self.route_potion_full(&r, None) {
+                            return;
+                        }
                         self.ok_unit(r);
                         self.clamp();
                     }
@@ -3216,6 +3281,73 @@ mod tests {
         app.handle_key(key('p'));
         app.handle_key(key('3'));
         assert!(app.run.player.potions[2].is_some(), "仙女在瓶中不该被主动喝掉");
+    }
+
+    /// 药水栏满了再取奖励屏的药水:先叫出"丢哪瓶"的选择(那里空格是丢、不是喝),
+    /// 丢完自动把这瓶奖励收进来
+    #[test]
+    fn full_belt_potion_reward_opens_toss_picker_then_takes_it() {
+        let mut app = App::new(12);
+        app.handle_key(enter());
+        {
+            let c = app.run.combat_mut().unwrap();
+            for e in c.enemies.iter_mut() {
+                e.hp = 0;
+            }
+            c.phase = crate::core::combat::Phase::Won;
+        }
+        app.run.sync_combat();
+        for _ in 0..=Run::VICTORY_HOLD {
+            app.run.tick_win_hold();
+        }
+        // 造一份只有一瓶药水的奖励
+        let want = crate::core::potions::by_id("strength_potion").unwrap();
+        {
+            let r = app.run.reward.as_mut().unwrap();
+            r.gold = 0;
+            r.gold_taken = true;
+            r.cards.clear();
+            r.relic = None;
+            r.potions = vec![want];
+            r.potion_taken = vec![false];
+        }
+        let potion_slot = app
+            .run
+            .reward_slots()
+            .iter()
+            .position(|s| matches!(s, crate::core::run::RewardSlot::Potion(_)))
+            .expect("奖励里要有一瓶药水");
+        app.set_reward_index(potion_slot);
+
+        // 三格塞满,且都不是那瓶想要的
+        let fillers: Vec<&'static crate::core::potions::PotionDef> = crate::core::potions::POTIONS
+            .iter()
+            .filter(|p| p.id != want.id)
+            .take(3)
+            .collect();
+        for (i, d) in fillers.iter().enumerate() {
+            app.run.player.potions[i] = Some(d);
+        }
+        assert!(app.run.player.potions.iter().all(|p| p.is_some()), "先塞满");
+
+        // 取药水时不该只是报错,而是进入丢瓶模式
+        app.take_reward();
+        assert!(app.toss_pending && app.potion_sel.is_some(), "应该叫出丢瓶选择");
+        assert_eq!(app.toss_then, Some(TossThen::Reward));
+        assert!(!app.run.player.potions.iter().flatten().any(|p| p.id == want.id), "还没丢就不该拿到");
+
+        // 空格 = 丢掉当前这瓶(不是喝),丢完自动把奖励那瓶收进来
+        app.handle_key(key(' '));
+        assert!(!app.toss_pending && app.potion_sel.is_none(), "丢完就收摊");
+        assert_eq!(app.toss_then, None);
+        assert!(
+            app.run.player.potions.iter().flatten().any(|p| p.id == want.id),
+            "腾出来的位置应该被奖励那瓶占上:{:?}",
+            app.run.player.potions.iter().flatten().map(|p| p.id).collect::<Vec<_>>()
+        );
+        let ids: Vec<&str> = app.run.player.potions.iter().flatten().map(|p| p.id).collect();
+        assert_eq!(ids.len(), 3, "丢一瓶拿一瓶,还是三瓶:{ids:?}");
+        assert!(!ids.contains(&fillers[0].id), "被丢的是光标那瓶:{ids:?}");
     }
 
     #[test]
