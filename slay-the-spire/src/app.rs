@@ -1668,6 +1668,32 @@ impl App {
         self.run.shop_clamp();
     }
 
+    /// :restart turn|fight. 回滚战斗之后必须再 sync 一次:金币/血量这些 run 侧的影子副本
+    /// (combat.player_gold 等)只在 sync 时才写回,不补这一步就会留下"回滚前"的数字,
+    /// 下一次同步又把它冲掉 —— 贪婪之手赚到的金币就是这么丢的
+    fn restart_battle(&mut self, sub: &str) -> Result<String, String> {
+        let (snap, potions, msg) = match sub {
+            "" | "turn" => (self.turn_snap.clone(), self.turn_potions.clone(), "restarted the turn"),
+            "fight" => (
+                self.fight_snap.clone(),
+                self.fight_potions.clone(),
+                "restarted the fight",
+            ),
+            other => return Err(format!("unknown restart target: {other}")),
+        };
+        let (Some(snap), true) = (snap, self.run.combat().is_some()) else {
+            return Err("no battle to restart".to_string());
+        };
+        if let Some(c) = self.run.combat_mut() {
+            *c = snap;
+        }
+        if let Some(p) = potions {
+            self.run.player.potions = p;
+        }
+        self.run.sync_combat();
+        Ok(msg.to_string())
+    }
+
     fn set_reward_index(&mut self, i: usize) {
         if let Some(r) = self.run.reward.as_mut() {
             r.index = i;
@@ -2133,32 +2159,12 @@ impl App {
             "restart" => {
                 let (sub, _) = split_sub(rest);
                 let r: Result<String, String> = match sub {
-                    "" | "turn" => match (self.turn_snap.clone(), self.run.combat_mut()) {
-                        (Some(snap), Some(c)) => {
-                            *c = snap;
-                            if let Some(p) = self.turn_potions.clone() {
-                                self.run.player.potions = p;
-                            }
-                            Ok("restarted the turn".to_string())
-                        }
-                        _ => Err("no battle to restart".to_string()),
-                    },
-                    "fight" => match (self.fight_snap.clone(), self.run.combat_mut()) {
-                        (Some(snap), Some(c)) => {
-                            *c = snap;
-                            if let Some(p) = self.fight_potions.clone() {
-                                self.run.player.potions = p;
-                            }
-                            Ok("restarted the fight".to_string())
-                        }
-                        _ => Err("no battle to restart".to_string()),
-                    },
                     "run" => {
                         let seed = self.run.seed;
                         self.restart(seed);
                         Ok(format!("restarted the run (seed {seed})"))
                     }
-                    other => Err(format!("unknown restart target: {other}")),
+                    other => self.restart_battle(other),
                 };
                 self.ok(r);
                 self.clamp();
@@ -3247,6 +3253,28 @@ mod tests {
         app.handle_key(esc());
         assert!(app.potion_pending.is_none());
         assert!(app.run.player.potions[0].is_some(), "取消不该消耗药水");
+    }
+
+    /// :restart turn 要把这一回合赚到的金币一起吐回去(贪婪之手):战斗回滚了,
+    /// run 侧的影子副本也得跟着回来,否则下一次同步会把钱白吞掉
+    #[test]
+    fn restart_rolls_back_gold_gained_in_the_turn() {
+        let mut app = App::new(3);
+        app.run
+            .debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        app.clamp(); // 存回合快照
+        let before = app.run.player.gold;
+        // 模拟贪婪之手致命一击:战斗里记账,再同步到 run
+        app.run.combat_mut().unwrap().gold_gained = 20;
+        app.run.sync_combat();
+        assert_eq!(app.run.player.gold, before + 20, "先真的赚到 20");
+
+        app.restart_battle("turn").unwrap();
+        assert_eq!(app.run.player.gold, before, "restart 之后金币回到回合开始");
+        // 回滚之后再赚一次照样生效(别把钱白吞掉)
+        app.run.combat_mut().unwrap().gold_gained = 20;
+        app.run.sync_combat();
+        assert_eq!(app.run.player.gold, before + 20, "回滚后照样能赚到");
     }
 
     #[test]
