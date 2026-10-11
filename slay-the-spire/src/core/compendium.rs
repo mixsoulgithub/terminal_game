@@ -165,8 +165,9 @@ fn status_items(group: &str) -> Vec<Item> {
         };
         out.push(Item {
             name: s.name(),
-            sub: format!("{kind}   {}", status_sources(s)),
-            tag: s.short().to_string(),
+            // 副标题保留短标记:图标占了 tag 那一列(先在图鉴里过一遍,好看再往 HUD 铺)
+            sub: format!("{}   {kind}   {}", s.short(), status_sources(s)),
+            tag: s.glyph().to_string(),
             text: status_text(s),
             text_up: String::new(),
             done: true,

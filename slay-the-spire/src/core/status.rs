@@ -176,6 +176,101 @@ impl Status {
         Status::PhantasmalKiller, Status::Burst, Status::WellLaidPlans, Status::Choke, Status::CorpseExplosion, Status::DoubleDamage,
     ];
 
+
+
+    /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
+    /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
+    /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
+    pub fn glyph(self) -> char {
+        use Status::*;
+        match self {
+            Strength => '\u{ed67}', // fa-dumbbell
+            Dexterity => '\u{ee14}', // fa-shoe_prints
+            Vulnerable => '\u{ef4f}', // fa-heart_crack
+            Weak => '\u{ee30}', // fa-face_dizzy
+            Frail => '\u{ef7e}', // fa-crutch
+            Entangled => '\u{ef10}', // fa-spider
+            DemonForm => '\u{ef76}', // fa-fire_flame_curved
+            Metallicize => '\u{ed25}', // fa-shield_halved
+            FeelNoPain => '\u{ed9b}', // fa-hand_holding_heart
+            DarkEmbrace => '\u{f186}', // fa-moon_o
+            Evolve => '\u{ed7d}', // fa-dna
+            FireBreathing => '\u{f06d}', // fa-fire
+            Barricade => '\u{ed66}', // fa-chess_rook
+            Brutality => '\u{f0cec}', // md-blood_bag
+            Rupture => '\u{ee8e}', // fa-droplet_slash
+            Regenerate => '\u{f05f6}', // md-heart_pulse
+            Thorns => '\u{f0db5}', // md-cactus
+            Berserk => '\u{ee50}', // fa-face_grin_stars
+            Combust => '\u{ed78}', // fa-fire_flame_simple
+            Corruption => '\u{ef35}', // fa-biohazard
+            DoubleTap => '\u{f01e}', // fa-repeat
+            Juggernaut => '\u{ed8b}', // fa-truck_fast
+            Rage => '\u{ee1f}', // fa-face_angry
+            FlameBarrier => '\u{e0c0}', // ple-flame_thick
+            Artifact => '\u{f219}', // fa-gem
+            NoBlock => '\u{f05e}', // fa-ban
+            NoDraw => '\u{eabd}', // cod-circle_slash
+            Mayhem => '\u{f074}', // fa-shuffle
+            Magnetism => '\u{f076}', // fa-magnet
+            Panache => '\u{edf7}', // fa-feather
+            SadisticNature => '\u{ee53}', // fa-face_grin_tongue_squint
+            PlatedArmor => '\u{f0ada}', // md-shield_plus
+            Constricted => '\u{ef0b}', // fa-ring
+            Confused => '\u{f02d7}', // md-help_circle
+            Hex => '\u{f02d8}', // md-hexagon
+            DrawReduction => '\u{f0639}', // md-cards_outline
+            Surrounded => '\u{f0849}', // md-account_group
+            Intangible => '\u{f02a0}', // md-ghost
+            Ritual => '\u{eedb}', // fa-hands_praying
+            Enrage => '\u{f0a1}', // fa-bullhorn
+            Anger => '\u{ee48}', // fa-face_grimace
+            SharpHide => '\u{eefd}', // fa-hand_fist
+            BeatOfDeath => '\u{f21e}', // fa-heartbeat
+            Curiosity => '\u{f0349}', // md-magnify
+            CurlUp => '\u{f0adb}', // md-shield_plus_outline
+            Explosive => '\u{f0691}', // md-bomb
+            Fading => '\u{f253}', // fa-hourglass_end
+            Flight => '\u{ed99}', // fa-dove
+            Invincible => '\u{f132}', // fa-shield
+            Malleable => '\u{eeb0}', // fa-shapes
+            Minion => '\u{f0c0}', // fa-users
+            MinionLeader => '\u{edeb}', // fa-crown
+            ModeShift => '\u{f2f1}', // fa-rotate
+            PainfulStabs => '\u{ed8d}', // fa-syringe
+            Reactive => '\u{f0db3}', // md-bolt
+            Regrow => '\u{eda7}', // fa-seedling
+            Shifting => '\u{f07d}', // fa-arrows_v
+            Slow => '\u{f017}', // fa-clock_o
+            SporeCloud => '\u{f0c2}', // fa-cloud
+            Split => '\u{f062c}', // md-source_branch
+            Stasis => '\u{f187}', // fa-box_archive
+            StrengthUp => '\u{f102}', // fa-angles_up
+            TimeWarp => '\u{f254}', // fa-hourglass
+            Asleep => '\u{ed8a}', // fa-bed_pulse
+            Duplication => '\u{f24d}', // fa-clone
+            LoseStrength => '\u{f063}', // fa-arrow_down
+            LoseDexterity => '\u{ea9a}', // cod-arrow_down
+            Focus => '\u{f140}', // fa-bullseye
+            Poison => '\u{ef0e}', // fa-skull_crossbones
+            Accuracy => '\u{f05b}', // fa-crosshairs
+            AfterImage => '\u{f00f}', // fa-images
+            ThousandCuts => '\u{f0f5}', // fa-utensils
+            Envenom => '\u{f0c3}', // fa-flask
+            InfiniteBlades => '\u{eecf}', // fa-khanda
+            NoxiousFumes => '\u{ef29}', // fa-smog
+            ToolsOfTheTrade => '\u{ef70}', // fa-screwdriver_wrench
+            WraithForm => '\u{eefe}', // fa-ghost
+            Blur => '\u{f070}', // fa-eye_slash
+            PhantasmalKiller => '\u{f21b}', // fa-user_secret
+            Burst => '\u{f04e}', // fa-forward
+            WellLaidPlans => '\u{eab3}', // cod-checklist
+            Choke => '\u{f0a4f}', // md-hand_front_right
+            CorpseExplosion => '\u{f1e2}', // fa-bomb
+            DoubleDamage => '\u{ee29}', // fa-check_double
+        }
+    }
+
     /// 图鉴用的语料 id:语料里的能力名与我们多数能对上,对不上的别名写在这里
     pub fn power_id(self) -> &'static str {
         use Status::*;
@@ -789,4 +884,19 @@ mod tests {
         let v: Vec<_> = s.iter().collect();
         assert_eq!(v, vec![(Status::Weak, 1), (Status::Strength, 2)]);
     }
+    /// 图鉴的图标:每条都要有,而且不重样(重了说明挑图标时抄漏了一行)
+    #[test]
+    fn every_status_has_a_distinct_glyph() {
+        let mut seen: Vec<(char, &'static str)> = Vec::new();
+        for &s in Status::ALL {
+            let g = s.glyph();
+            assert!(g as u32 > 0xE000, "{} 没有图标", s.name());
+            if let Some((_, other)) = seen.iter().find(|(c, _)| *c == g) {
+                panic!("{} 与 {} 共用同一个图标 {:?}", s.name(), other, g);
+            }
+            seen.push((g, s.name()));
+        }
+        assert_eq!(seen.len(), Status::ALL.len());
+    }
+
 }
