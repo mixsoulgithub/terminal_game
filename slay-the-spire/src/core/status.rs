@@ -188,6 +188,7 @@ impl Status {
 
 
 
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
@@ -218,7 +219,7 @@ impl Status {
             Juggernaut => "\u{1f682}", // emoji \U0001f682
             Rage => "\u{1f621}", // emoji \U0001f621
             FlameBarrier => "\u{1f30b}", // emoji \U0001f30b
-            Artifact => "\u{1f48e}", // emoji \U0001f48e
+            Artifact => "\u{f013}", // fa-gear
             NoBlock => "\u{1f6ab}", // emoji \U0001f6ab
             NoDraw => "\u{26d4}", // emoji \u26d4
             Mayhem => "\u{1f300}", // emoji \U0001f300
@@ -310,7 +311,7 @@ impl Status {
             Juggernaut => "fire",
             Rage => "block",
             FlameBarrier => "block",
-            Artifact => "good",
+            Artifact => "copper",
             NoBlock => "bad",
             NoDraw => "energy",
             Mayhem => "energy",
@@ -401,7 +402,7 @@ impl Status {
             Juggernaut => "emoji",
             Rage => "emoji",
             FlameBarrier => "emoji",
-            Artifact => "emoji",
+            Artifact => "nf",
             NoBlock => "emoji",
             NoDraw => "emoji",
             Mayhem => "emoji",
@@ -492,7 +493,7 @@ impl Status {
             Juggernaut => "骑士头盔",
             Rage => "怒面",
             FlameBarrier => "火焰盾",
-            Artifact => "宝石/宝珠",
+            Artifact => "铜黄色的器物(像齿轮/小机件)",
             NoBlock => "带斜杠的盾",
             NoDraw => "带斜杠的卡",
             Mayhem => "混乱漩涡",
@@ -584,7 +585,7 @@ impl Status {
             Juggernaut => &[('\u{1f682}', "emoji U+1F682"), ('\u{ef84}', "fa-helmet_safety"), ('\u{f0dc0}', "md-diving-helmet"), ('\u{f025f}', "md-football-helmet"), ('\u{f0d93}', "md-racing-helmet"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield")],
             Rage => &[('\u{1f621}', "emoji U+1F621"), ('\u{ee1f}', "fa-face_angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee48}', "fa-face-grimace"), ('\u{ee50}', "fa-face-grin-stars")],
             FlameBarrier => &[('\u{1f30b}', "emoji U+1F30B"), ('\u{e0c0}', "ple-flame_thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored"), ('\u{e787}', "dev-firebase")],
-            Artifact => &[('\u{1f48e}', "emoji U+1F48E"), ('\u{f219}', "fa-gem"), ('\u{f0a81}', "md-zodiac-gemini"), ('\u{f29f}', "fa-diamond"), ('\u{eea2}', "fa-diamond-turn-right"), ('\u{f15ec}', "md-baseball-diamond"), ('\u{f15ed}', "md-baseball-diamond-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a6}', "md-cards-playing-diamond")],
+            Artifact => &[('\u{f013}', "fa-gear"), ('\u{1f48e}', "emoji U+1F48E"), ('\u{eaf8}', "cod-gear"), ('\u{eb51}', "cod-settings-gear"), ('\u{f085}', "fa-gears"), ('\u{edc8}', "fa-user-gear"), ('\u{edd3}', "fa-users-gear"), ('\u{f423}', "oct-gear"), ('\u{f1370}', "md-account-cog"), ('\u{f1371}', "md-account-cog-outline")],
             NoBlock => &[('\u{1f6ab}', "emoji U+1F6AB"), ('\u{f05e}', "fa-ban"), ('\u{e818}', "dev-kibana"), ('\u{ee16}', "fa-ban-smoking"), ('\u{ed74}', "fa-bandage"), ('\u{f2d5}', "fa-bandcamp"), ('\u{eda3}', "fa-piggy-bank"), ('\u{e281}', "fae-banana"), ('\u{f0daf}', "md-bandage"), ('\u{f0070}', "md-bank")],
             NoDraw => &[('\u{26d4}', "emoji U+26D4"), ('\u{eabd}', "cod-circle_slash"), ('\u{f468}', "oct-circle-slash"), ('\u{e818}', "dev-kibana"), ('\u{f05e}', "fa-ban"), ('\u{ee16}', "fa-ban-smoking"), ('\u{ed74}', "fa-bandage"), ('\u{f2d5}', "fa-bandcamp"), ('\u{eda3}', "fa-piggy-bank"), ('\u{e281}', "fae-banana")],
             Mayhem => &[('\u{1f300}', "emoji U+1F300"), ('\u{f074}', "fa-shuffle"), ('\u{f049d}', "md-shuffle"), ('\u{f049e}', "md-shuffle-disabled"), ('\u{f049f}', "md-shuffle-variant"), ('\u{edec}', "fa-dice"), ('\u{eef5}', "fa-dice-d20"), ('\u{eef6}', "fa-dice-d6"), ('\u{eded}', "fa-dice-five"), ('\u{edee}', "fa-dice-four")],
@@ -1277,16 +1278,29 @@ mod tests {
     }
 
     /// 图标配色键必须是 theme::icon_color 认得的那些(不认得就退回普通前景色,
-    /// 这里直接判失败,免得"看着像上了色其实是灰的")
+    /// 这里直接判失败,免得"看着像上了色其实是灰的").
+    /// 支持哪些键以 theme.rs 里 icon_color 的 match 分支为准,不另立第二份名单.
     #[test]
     fn icon_color_keys_are_supported() {
-        const KEYS: &[&str] = &[
-            "good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "dim",
-            "plain",
-        ];
+        let theme_src = include_str!("../ui/theme.rs");
+        let body = theme_src
+            .split("pub fn icon_color(key: &str) -> Color {")
+            .nth(1)
+            .expect("theme.rs 里要有 icon_color");
+        let body = body.split("_ => FG,").next().expect("icon_color 要有兜底分支");
+        let keys: Vec<&str> = body
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('"'))
+            .filter_map(|l| l.split('"').next())
+            .collect();
+        assert!(keys.len() >= 10, "icon_color 的分支看着不对: {keys:?}");
         for &s in Status::ALL {
             let k = s.icon_color_key();
-            assert!(KEYS.contains(&k), "{} 的配色键 {k} 不在支持列表里", s.name());
+            assert!(
+                keys.contains(&k),
+                "{} 的配色键 {k} 不在 theme::icon_color 里({keys:?})",
+                s.name()
+            );
         }
     }
 

@@ -502,7 +502,8 @@ fn status_badge_lines(
             values.push((" ".to_string(), theme::fg(theme::FG)));
         }
         let (icon, value) = crate::ui::badge(st.glyph(), *n);
-        let color = if st.is_debuff() { theme::DEBUFF } else { theme::BUFF };
+        // 数值默认白色,减益才上绿
+        let color = if st.is_debuff() { theme::DEBUFF } else { theme::FG };
         icons.push((icon, crate::ui::status_icon_style(*st)));
         values.push((value, theme::fg(color)));
     }
@@ -589,7 +590,7 @@ fn intent_tokens(
             }
             // 给自己/同伴上的:算"策略",减益仍标绿
             EnemyFx::GainStatus { status, n, .. } => {
-                let color = if status.is_debuff() { theme::DEBUFF } else { theme::BUFF };
+                let color = if status.is_debuff() { theme::DEBUFF } else { theme::FG };
                 out.push((format!("\u{1F4AD}{}{}", status.short(), n), color));
             }
             _ => {}
@@ -734,6 +735,8 @@ fn render_buff_panel(
 /// 一条状态在窗口里的一行:图标(3 列) + 数值(3 列) + 名字(12 列) + 说明,总宽正好 width
 fn buff_row(s: &crate::core::status::Status, n: i32, width: usize) -> Vec<(String, Style)> {
     let (icon, value) = crate::ui::badge(s.glyph(), n);
+    // 数值默认白色(减益绿),名字仍按增减益上色
+    let num_color = if s.is_debuff() { theme::DEBUFF } else { theme::FG };
     let color = if s.is_debuff() { theme::DEBUFF } else { theme::BUFF };
     let name_w = 12.min(width);
     let desc_w = width.saturating_sub(3 + 1 + 3 + 1 + name_w + 1);
@@ -741,7 +744,7 @@ fn buff_row(s: &crate::core::status::Status, n: i32, width: usize) -> Vec<(Strin
     vec![
         (icon, crate::ui::status_icon_style(*s)),
         (" ".to_string(), theme::fg(theme::FG)),
-        (value, theme::fg(color)),
+        (value, theme::fg(num_color)),
         (" ".to_string(), theme::fg(theme::FG)),
         (format!("{:<name_w$}", truncate(s.name(), name_w)), theme::fg(color)),
         (" ".to_string(), theme::fg(theme::FG)),
@@ -995,5 +998,11 @@ mod tests {
         let (icons, values) = status_badge_lines(&st);
         assert_eq!(row_text(&icons), " \u{1F4AA}  \u{1F45F}", "图标行");
         assert_eq!(row_text(&values), " +2  +3", "数值行");
+        // 增益数值默认白色;减益才上绿
+        assert_eq!(values[0].1.fg, Some(theme::FG), "增益数值是白的");
+        let mut bad = crate::core::status::Statuses::new();
+        bad.add(crate::core::status::Status::Vulnerable, 3);
+        let (_, dv) = status_badge_lines(&bad);
+        assert_eq!(dv[0].1.fg, Some(theme::DEBUFF), "减益数值是绿的");
     }
 }

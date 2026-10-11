@@ -24,7 +24,7 @@ MAP = {
     "Rupture": "fa-droplet_slash", "Regenerate": "md-heart_pulse", "Thorns": "md-cactus",
     "Berserk": "fa-face_grin_stars", "Combust": "fa-fire_flame_simple", "Corruption": "fa-skull",
     "DoubleTap": "md-sword_cross", "Juggernaut": "fa-helmet_safety", "Rage": "fa-face_angry",
-    "FlameBarrier": "ple-flame_thick", "Artifact": "fa-gem", "NoBlock": "fa-ban",
+    "FlameBarrier": "ple-flame_thick", "Artifact": "fa-gear", "NoBlock": "fa-ban",
     "NoDraw": "cod-circle_slash", "Mayhem": "fa-shuffle", "Magnetism": "fa-magnet",
     "Panache": "fa-feather", "SadisticNature": "fa-face_grin_tongue_squint",
     "PlatedArmor": "md-shield_plus", "Constricted": "md-snake", "Ritual": "fa-hands_praying",
@@ -75,7 +75,7 @@ COLOR = {
     "Juggernaut": "fire",
     "Rage": "block",
     "FlameBarrier": "block",
-    "Artifact": "good",
+    "Artifact": "copper",
     "NoBlock": "bad",
     "NoDraw": "energy",
     "Mayhem": "energy",
@@ -163,7 +163,7 @@ KEYWORDS = {
     "Juggernaut": ["helmet", "shield", "truck_fast", "bolt"],
     "Rage": ["face_angry", "angry", "face_grimace", "face_grin_stars", "angry_face"],
     "FlameBarrier": ["flame_thick", "flame", "fire", "shield", "wall"],
-    "Artifact": ["gem", "diamond", "shield", "star", "shield_halved"],
+    "Artifact": ["gear", "cog", "wrench", "screwdriver", "gauge", "gem", "shield"],
     "NoBlock": ["ban", "circle_slash", "cancel", "shield_off", "shield"],
     "NoDraw": ["circle_slash", "ban", "hand_dots", "hand", "cards", "lock"],
     "Mayhem": ["shuffle", "dice", "random", "cards", "sparkles"],
@@ -252,7 +252,7 @@ ORIGINAL = {
     "Juggernaut": "骑士头盔",
     "Rage": "怒面",
     "FlameBarrier": "火焰盾",
-    "Artifact": "宝石/宝珠",
+    "Artifact": "铜黄色的器物(像齿轮/小机件)",
     "NoBlock": "带斜杠的盾",
     "NoDraw": "带斜杠的卡",
     "Mayhem": "混乱漩涡",
@@ -409,6 +409,8 @@ MODE = {k: "emoji" for k in EMOJI}
 MODE["InfiniteBlades"] = "nf"
 # 弱化:原图是断剑,emoji 里没有合适的双宽断剑,用 nf 的剑形(可上色)
 MODE["Weak"] = "nf"
+# 神器:原图是铜黄色的小器物,用 nf 齿轮 + 铜黄色(emoji 里对不上)
+MODE["Artifact"] = "nf"
 
 # 兜底:既没有合适 emoji、也没有合适 nf 字形时用 1-2 个大写字符(占 1~2 列,徽章里右对齐)
 TEXT = {}
@@ -448,7 +450,7 @@ def main():
         print(f"没配颜色的状态: {miss_c}", file=sys.stderr)
         return 1
     used_keys = set(COLOR.values())
-    known_keys = {"good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "dim", "plain"}
+    known_keys = {"good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "copper", "dim", "plain"}
     bad_keys = used_keys - known_keys
     if bad_keys:
         print(f"配色键不在 theme::icon_color 支持的集合里: {sorted(bad_keys)}", file=sys.stderr)

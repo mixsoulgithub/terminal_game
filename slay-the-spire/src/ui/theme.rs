@@ -16,6 +16,8 @@ pub const BLOOD: Color = Color::Rgb(236, 96, 108);
 pub const YELLOW: Color = Color::Rgb(238, 226, 104);
 pub const BLOCK: Color = Color::Rgb(122, 176, 240);
 pub const GOLD: Color = Color::Rgb(250, 186, 66);
+/// 铜黄:神器这类"铜色小器物"用
+pub const COPPER: Color = Color::Rgb(212, 146, 74);
 pub const BUFF: Color = Color::Rgb(206, 150, 255);
 pub const DEBUFF: Color = Color::Rgb(140, 220, 170);
 pub const INFO: Color = Color::Rgb(150, 190, 230);
@@ -164,8 +166,8 @@ pub fn corpus_color(rarity: &str) -> Color {
     }
 }
 
-/// 状态图标配色键(Status::icon_color_key 用):按语义挑一个已有的主题色,
-/// 不新增颜色,免得图鉴/战斗/HUD 三处配色各走各的
+/// 状态图标配色键(Status::icon_color_key 用):按语义挑主题色,图鉴/战斗/HUD 三处共用.
+/// copper 是新增的:神器那类"铜色小器物"在原作里就是铜黄,别的色都对不上
 pub fn icon_color(key: &str) -> Color {
     match key {
         "good" => GOOD,
@@ -174,10 +176,12 @@ pub fn icon_color(key: &str) -> Color {
         "fire" => WARN,
         "poison" => DEBUFF,
         "energy" => GOLD,
+        "copper" => COPPER,
         "ghost" => INFO,
         "arcane" => BUFF,
         "blood" => BLOOD,
         "dim" => DIM,
+        "plain" => FG,
         _ => FG,
     }
 }
