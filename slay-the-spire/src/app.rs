@@ -92,6 +92,8 @@ pub struct App {
     pub toss_pending: bool,
     /// 这次丢瓶是为了哪次获取(丢完自动重试)
     pub toss_then: Option<TossThen>,
+    /// 宝箱屏的光标:0 = 遗物,1 = 蓝钥匙
+    pub treasure_sel: usize,
     pub msg: String,
     pub warn: bool,
     pub quit: bool,
@@ -164,6 +166,7 @@ impl App {
             potion_pending: None,
             toss_pending: false,
             toss_then: None,
+            treasure_sel: 0,
             msg: String::new(),
             warn: false,
             quit: false,
@@ -834,7 +837,7 @@ impl App {
             self.potion_sel = Some(0);
             self.toss_pending = false;
             self.toss_then = None;
-            self.info("h/l choose a potion, enter drink, t then 1-3 toss");
+            self.info("j/k pick a potion, enter drink, t toss the chosen one");
             return;
         }
         // 全局叠加层开关:任何阶段(含结算界面)都能看牌组/地图/遗物/药水
@@ -869,6 +872,21 @@ impl App {
             // 光标要停在第一张牌上,别停在小标题上
             self.deck_cursor_end(false);
         }
+    }
+
+    /// 这个叠加层是不是"卡片列表":能用 j/k/g/G 走光标,而不是滚文本.
+    /// 新增列表型叠加层时只改这里,别再散落四份 matches(offered 就是这么漏掉的)
+    fn overlay_is_card_list(&self) -> bool {
+        matches!(
+            self.overlay,
+            Some(
+                Overlay::Deck
+                    | Overlay::Draw
+                    | Overlay::Discard
+                    | Overlay::Exhaust
+                    | Overlay::Offered
+            )
+        )
     }
 
     fn overlay_key(&mut self, key: KeyEvent) {
@@ -930,13 +948,7 @@ impl App {
                 self.clamp();
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if matches!(
-                    self.overlay,
-                    Some(Overlay::Deck)
-                        | Some(Overlay::Draw)
-                        | Some(Overlay::Discard)
-                        | Some(Overlay::Exhaust)
-                ) {
+                if self.overlay_is_card_list() {
                     self.move_deck_cursor(1);
                 } else {
                     // 先夹回有效范围(历史记录打开时是从 u16::MAX/2 起步的),
@@ -946,41 +958,15 @@ impl App {
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if matches!(
-                    self.overlay,
-                    Some(Overlay::Deck)
-                        | Some(Overlay::Draw)
-                        | Some(Overlay::Discard)
-                        | Some(Overlay::Exhaust)
-                ) {
+                if self.overlay_is_card_list() {
                     self.move_deck_cursor(-1);
                 } else {
                     let cur = self.overlay_scroll.min(self.overlay_max.get());
                     self.overlay_scroll = cur.saturating_sub(1);
                 }
             }
-            KeyCode::Char('g')
-                if matches!(
-                    self.overlay,
-                    Some(Overlay::Deck)
-                        | Some(Overlay::Draw)
-                        | Some(Overlay::Discard)
-                        | Some(Overlay::Exhaust)
-                ) =>
-            {
-                self.deck_cursor_end(false)
-            }
-            KeyCode::Char('G')
-                if matches!(
-                    self.overlay,
-                    Some(Overlay::Deck)
-                        | Some(Overlay::Draw)
-                        | Some(Overlay::Discard)
-                        | Some(Overlay::Exhaust)
-                ) =>
-            {
-                self.deck_cursor_end(true)
-            }
+            KeyCode::Char('g') if self.overlay_is_card_list() => self.deck_cursor_end(false),
+            KeyCode::Char('G') if self.overlay_is_card_list() => self.deck_cursor_end(true),
             KeyCode::Char('g') => self.overlay_scroll = 0,
             KeyCode::Char('G') => self.overlay_scroll = u16::MAX / 2,
             KeyCode::Char('t') if self.overlay == Some(Overlay::Potions) => {
@@ -1037,10 +1023,8 @@ impl App {
                 self.toss_pending = false;
                 self.toss_then = None;
             }
-            KeyCode::Char('t') => {
-                self.toss_pending = true;
-                self.info("press 1-3 to toss that potion");
-            }
+            // t = 丢掉光标选中的这瓶(先 j/k 选中,再按 t)
+            KeyCode::Char('t') => self.finish_toss(cur),
             KeyCode::Char(c) => {
                 if let Some(slot) = digit_slot(c) {
                     if slot < n {
@@ -1848,19 +1832,37 @@ impl App {
     // ---- 宝箱 ----
 
     fn treasure_key(&mut self, key: KeyEvent) {
-        if key.code == KeyCode::Char('s') && self.run.chest_sapphire_available() {
-            self.run.take_sapphire_key();
-            self.info("you take the Sapphire Key");
-            self.clamp();
-            return;
-        }
-        if matches!(
-            key.code,
-            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('t') | KeyCode::Esc | KeyCode::Char('q')
-        ) {
-            self.run.take_treasure();
-            self.info("back to the map");
-            self.clamp();
+        let can_key = self.run.chest_sapphire_available();
+        let n = 1 + can_key as usize;
+        self.treasure_sel = self.treasure_sel.min(n - 1);
+        match key.code {
+            // j/k 在"遗物"和"蓝钥匙"之间选,回车/空格拿选中的那个
+            KeyCode::Char('j') | KeyCode::Down => self.treasure_sel = (self.treasure_sel + 1) % n,
+            KeyCode::Char('k') | KeyCode::Up => self.treasure_sel = (self.treasure_sel + n - 1) % n,
+            KeyCode::Char('1') => self.treasure_sel = 0,
+            KeyCode::Char('2') if can_key => self.treasure_sel = 1,
+            // s 保留成"直接拿钥匙"的快捷方式
+            KeyCode::Char('s') if can_key => {
+                self.run.take_sapphire_key();
+                self.info("you take the Sapphire Key");
+                self.clamp();
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if can_key && self.treasure_sel == 1 {
+                    self.run.take_sapphire_key();
+                    self.info("you take the Sapphire Key");
+                } else {
+                    self.run.take_treasure();
+                    self.info("back to the map");
+                }
+                self.clamp();
+            }
+            KeyCode::Char('t') | KeyCode::Esc | KeyCode::Char('q') => {
+                self.run.take_treasure();
+                self.info("back to the map");
+                self.clamp();
+            }
+            _ => {}
         }
     }
 
@@ -2305,6 +2307,9 @@ impl App {
             self.target_sel = 0;
             self.buffs_enemy = false;
             self.buffs_self = false;
+        }
+        if self.run.screen != Screen::Treasure {
+            self.treasure_sel = 0;
         }
         let reach = self.run.travel_options().len();
         if reach == 0 {
@@ -3255,6 +3260,28 @@ mod tests {
         assert!(app.run.player.potions[0].is_some(), "取消不该消耗药水");
     }
 
+    /// "亮三张选一"的窗口(Discovery / 无色药水那类)也要能用 j/k 走光标
+    #[test]
+    fn offered_choice_overlay_moves_with_j_k() {
+        let mut app = App::new(3);
+        app.run
+            .debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        app.run.combat_mut().unwrap().use_potion(
+            crate::core::potions::by_id("attack_potion").unwrap(),
+            None,
+        );
+        app.clamp(); // 有待选择会自动把窗口叫出来
+        assert_eq!(app.overlay, Some(Overlay::Offered), "三选一窗口该自动打开");
+        let first = app.overlay_sel;
+        app.handle_key(key('j'));
+        let second = app.overlay_sel;
+        assert_ne!(second, first, "j 要把光标挪到下一张");
+        app.handle_key(key('j'));
+        assert_ne!(app.overlay_sel, second, "再按一次继续往下");
+        app.handle_key(key('k'));
+        assert_eq!(app.overlay_sel, second, "k 回到上一张");
+    }
+
     /// :restart turn 要把这一回合赚到的金币一起吐回去(贪婪之手):战斗回滚了,
     /// run 侧的影子副本也得跟着回来,否则下一次同步会把钱白吞掉
     #[test]
@@ -3277,6 +3304,50 @@ mod tests {
         assert_eq!(app.run.player.gold, before + 20, "回滚后照样能赚到");
     }
 
+    /// 宝箱:j/k 在遗物和蓝钥匙之间选,空格拿选中的那个
+    #[test]
+    fn treasure_picks_between_relic_and_sapphire_key() {
+        let mut app = App::new(3);
+        app.run.debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        // 造一个"有蓝钥匙可选"的宝箱
+        {
+            let run = &mut app.run;
+            run.treasure = crate::core::relics::RELICS.iter().find(|r| r.tier == crate::core::relics::RelicTier::Common);
+            run.chest = Some(crate::core::run::Chest {
+                size: crate::core::run::ChestSize::Medium,
+                gold_present: false,
+                tier: crate::core::relics::RelicTier::Common,
+                empty: false,
+                opened: false,
+            });
+            run.keys.sapphire = false;
+        }
+        app.run.screen = crate::core::run::Screen::Treasure;
+        assert!(app.run.chest_sapphire_available(), "这个箱子该能拿钥匙");
+
+        // 屏幕上是"两个选项 + > 光标",提示也换成 j/k + space
+        let area = ratatui::layout::Rect::new(0, 0, 80, 20);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        crate::ui::menu::render(&mut buf, area, &app);
+        let mut text = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                text.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("> "), "光标那个选项要有 > :{text}");
+        assert!(text.contains("Sapphire Key"), "钥匙要作为选项列出来:{text}");
+        assert!(text.contains("j/k pick"), "提示要写 j/k:{text}");
+
+        // j 跳到钥匙那格,空格拿的是钥匙(遗物作废)
+        app.handle_key(key('j'));
+        assert_eq!(app.treasure_sel, 1);
+        app.handle_key(key(' '));
+        assert!(app.run.keys.sapphire, "空格拿的是蓝钥匙");
+        assert_eq!(app.treasure_sel, 0, "离开宝箱后光标复位");
+    }
+
     #[test]
     fn potion_list_toss_flow() {
         let mut app = App::new(9);
@@ -3284,12 +3355,19 @@ mod tests {
         app.run.player.potions[0] = Some(def);
         app.handle_key(key('p'));
         assert_eq!(app.potion_sel, Some(0));
-        // t 之后按数字是丢掉
+        // t = 丢掉光标选中的那瓶(这里是第 1 瓶)
         app.handle_key(key('t'));
-        assert!(app.toss_pending);
-        app.handle_key(key('1'));
-        assert!(app.run.player.potions[0].is_none(), "t + 1 应该丢掉药水");
+        assert!(app.run.player.potions[0].is_none(), "t 丢掉选中的那瓶");
         assert!(app.potion_sel.is_none());
+        // 先 j 选中第 2 瓶再按 t:丢的就是第 2 瓶
+        app.run.player.potions[0] = Some(def);
+        app.run.player.potions[1] = Some(def);
+        app.handle_key(key('p'));
+        app.handle_key(key('j'));
+        assert_eq!(app.potion_sel, Some(1));
+        app.handle_key(key('t'));
+        assert!(app.run.player.potions[1].is_none(), "j 之后 t 丢的是第 2 瓶");
+        assert!(app.run.player.potions[0].is_some(), "第 1 瓶留着");
         // 不带 t 时按数字是喝掉;地图上只能喝能在地图上用的那瓶
         let map_potion = crate::core::potions::POTIONS
             .iter()

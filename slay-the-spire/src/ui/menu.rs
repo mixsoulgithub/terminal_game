@@ -713,6 +713,24 @@ fn treasure(buf: &mut Buffer, area: Rect, app: &App) {
         theme::fg(theme::FG),
     );
     y += 2;
+    // 两个选项:拿遗物,或者拿蓝钥匙(遗物作废). j/k 选,空格拿选中的那个
+    let can_key = app.run.chest_sapphire_available();
+    let n = 1 + can_key as usize;
+    let sel = app.treasure_sel.min(n - 1);
+    let marked = |i: usize, text: String| -> String {
+        if i == sel {
+            format!("> {text}")
+        } else {
+            format!("  {text}")
+        }
+    };
+    let opt_style = |i: usize, base: ratatui::style::Color| {
+        if i == sel {
+            theme::selected()
+        } else {
+            theme::fg(base)
+        }
+    };
     match app.run.treasure {
         Some(relic) => {
             crate::ui::put_centered_line(
@@ -720,8 +738,8 @@ fn treasure(buf: &mut Buffer, area: Rect, app: &App) {
                 inner_x,
                 y,
                 inner_w,
-                &format!("{}  [{}]", relic.name, relic.tier.name()),
-                theme::fg(theme::relic_tier_color(relic.tier)),
+                &marked(0, format!("{}  [{}]", relic.name, relic.tier.name())),
+                opt_style(0, theme::relic_tier_color(relic.tier)),
             );
             if y + 1 < area.y + area.height - 1 {
                 crate::ui::put_centered_line(
@@ -738,25 +756,24 @@ fn treasure(buf: &mut Buffer, area: Rect, app: &App) {
             crate::ui::put_centered_line(buf, inner_x, y, inner_w, "(empty)", theme::dim());
         }
     }
-    if y + 3 < area.y + area.height - 1 {
+    if can_key && y + 3 < area.y + area.height - 1 {
         crate::ui::put_centered_line(
             buf,
             inner_x,
             y + 3,
             inner_w,
-            "press enter to take it",
-            theme::dim(),
+            &marked(1, "Sapphire Key (forfeit the relic)".to_string()),
+            opt_style(1, theme::BLOCK),
         );
     }
-    // 还没有蓝钥匙时,可以按 s 拿钥匙(遗物作废)
-    if app.run.chest_sapphire_available() && y + 4 < area.y + area.height - 1 {
+    if y + 5 < area.y + area.height - 1 {
         crate::ui::put_centered_line(
             buf,
             inner_x,
-            y + 4,
+            y + 5,
             inner_w,
-            "press s to take the Sapphire Key (forfeit the relic)",
-            theme::fg(theme::BLOCK),
+            "j/k pick, space take, esc leave with the relic",
+            theme::dim(),
         );
     }
 }

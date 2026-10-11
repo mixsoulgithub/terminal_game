@@ -198,7 +198,7 @@ pub fn lines(app: &App, ov: Overlay) -> Vec<(String, Style)> {
             }
             out.push((String::new(), theme::dim()));
             out.push((
-                "1-3 drink that potion, t then 1-3 toss it".to_string(),
+                "1-3 or enter drink that potion, j/k then t tosses the chosen one".to_string(),
                 theme::fg(theme::INFO),
             ));
         }
