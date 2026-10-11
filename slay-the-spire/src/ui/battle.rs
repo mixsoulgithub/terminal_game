@@ -549,8 +549,8 @@ fn enemy_intent_line(c: &Combat, i: usize, hide_intents: bool) -> Vec<(String, S
 /// 意图记号(纯函数,便于直接测):
 /// - 攻击 `!伤害` / `!伤害x次数`(红)
 /// - 格挡 `(数值)`(蓝)
-/// - 减益 `@缩写数值`(绿)
-/// - 自身增益 `💭缩写数值`(紫)
+/// - 减益 `@`(绿;只给符号,细节看 s 的增益窗口)
+/// - 自身/同伴增益 `💭`(只给符号)
 /// - 睡觉 `💤`、眩晕 `💫`、逃跑 `>>`、未知 `?`
 /// 什么都不匹配就退回 `?`.
 fn intent_tokens(
@@ -581,20 +581,32 @@ fn intent_tokens(
     if block > 0 {
         out.push((format!("({block})"), theme::BLOCK));
     }
+    // 减益与"策略"只留符号,不写是哪个状态、多少层(细节去 s/S 的增益窗口看);
+    // 同一类不管几个都并成一个符号
+    let mut player_status = false;
+    let mut player_debuff = false;
+    let mut self_status = false;
+    let mut self_debuff = false;
     for f in fx {
         match f {
-            // 打到玩家身上的:减益用绿、非减益用默认色
-            EnemyFx::PlayerStatus { status, n } => {
-                let color = if status.is_debuff() { theme::DEBUFF } else { theme::FG };
-                out.push((format!("@{}{}", status.short(), n), color));
+            EnemyFx::PlayerStatus { status, .. } => {
+                player_status = true;
+                player_debuff |= status.is_debuff();
             }
-            // 给自己/同伴上的:算"策略",减益仍标绿
-            EnemyFx::GainStatus { status, n, .. } => {
-                let color = if status.is_debuff() { theme::DEBUFF } else { theme::FG };
-                out.push((format!("\u{1F4AD}{}{}", status.short(), n), color));
+            EnemyFx::GainStatus { status, .. } => {
+                self_status = true;
+                self_debuff |= status.is_debuff();
             }
             _ => {}
         }
+    }
+    if player_status {
+        let color = if player_debuff { theme::DEBUFF } else { theme::FG };
+        out.push(("@".to_string(), color));
+    }
+    if self_status {
+        let color = if self_debuff { theme::DEBUFF } else { theme::FG };
+        out.push(("\u{1F4AD}".to_string(), color));
     }
     if out.is_empty() {
         out.push(("?".to_string(), theme::DIM));
@@ -872,7 +884,7 @@ mod tests {
         assert_eq!(w(&lines[3]), w(&lines[4]), "图标行与数值行等宽");
     }
 
-    /// 意图记号:攻击 !N / !NxM、格挡 (N)、减益 @缩写N、自身增益 💭缩写N
+    /// 意图记号:攻击 !N / !NxM、格挡 (N)、减益 @、自身增益 💭(后两者只给符号)
     #[test]
     fn intent_tokens_follow_the_symbol_spec() {
         let tok = |t: &[(String, Color)]| -> String {
@@ -892,7 +904,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(tok(&db), "@WEAK2");
+        assert_eq!(tok(&db), "@");
         assert_eq!(db[0].1, theme::DEBUFF, "减益是绿的");
         let st = intent_tokens(
             Intent::Buff,
@@ -901,7 +913,7 @@ mod tests {
             0,
             0,
         );
-        assert_eq!(tok(&st), "\u{1F4AD}STR3", "自身增益用思考气泡");
+        assert_eq!(tok(&st), "\u{1F4AD}", "自身增益用思考气泡,不带说明");
         // 攻击+格挡+减益同时出现时按 攻击 / 格挡 / 减益 的顺序排
         let mix = intent_tokens(
             Intent::AttackDebuff { damage: 7, times: 2 },
@@ -910,7 +922,29 @@ mod tests {
             2,
             5,
         );
-        assert_eq!(tok(&mix), "!7x2 (5) @VULN1");
+        assert_eq!(tok(&mix), "!7x2 (5) @");
+        // 多个减益 / 多个自身增益都并成一个符号
+        let many = intent_tokens(
+            Intent::StrongDebuff,
+            &[
+                EnemyFx::PlayerStatus { status: crate::core::status::Status::Weak, n: 2 },
+                EnemyFx::PlayerStatus {
+                    status: crate::core::status::Status::Frail,
+                    n: 5,
+                },
+                EnemyFx::GainStatus {
+                    status: crate::core::status::Status::Strength,
+                    n: 3,
+                    scope: crate::core::enemy::Scope::SelfOnly,
+                },
+            ],
+            0,
+            0,
+            0,
+        );
+        assert_eq!(tok(&many), "@ \u{1F4AD}", "减益/策略各只留一个符号");
+        assert_eq!(many[0].1, theme::DEBUFF, "减益符号是绿的");
+        assert_eq!(many[1].1, theme::FG, "增益符号默认白");
         // 特殊意图
         assert_eq!(tok(&intent_tokens(Intent::Sleep, &[], 0, 0, 0)), "\u{1F4A4}");
         assert_eq!(tok(&intent_tokens(Intent::Stun, &[], 0, 0, 0)), "\u{1F4AB}");
