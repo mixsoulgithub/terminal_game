@@ -181,96 +181,102 @@ impl Status {
 
 
 
+
+
+
+
+
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
     pub fn glyph(self) -> char {
         use Status::*;
         match self {
-            Strength => '\u{ed67}', // fa-dumbbell
-            Dexterity => '\u{ee14}', // fa-shoe_prints
-            Vulnerable => '\u{ef4f}', // fa-heart_crack
-            Weak => '\u{f04e5}', // md-sword
-            Frail => '\u{f099e}', // md-shield_off
-            Entangled => '\u{ef10}', // fa-spider
-            DemonForm => '\u{ef76}', // fa-fire_flame_curved
-            Metallicize => '\u{ed25}', // fa-shield_halved
-            FeelNoPain => '\u{ed74}', // fa-bandage
-            DarkEmbrace => '\u{f186}', // fa-moon_o
-            Evolve => '\u{f0638}', // md-cards
-            FireBreathing => '\u{f06d}', // fa-fire
-            Barricade => '\u{f07fe}', // md-wall
-            Brutality => '\u{f0cec}', // md-blood_bag
-            Rupture => '\u{ee8e}', // fa-droplet_slash
-            Regenerate => '\u{f05f6}', // md-heart_pulse
-            Thorns => '\u{f0db5}', // md-cactus
-            Berserk => '\u{ee50}', // fa-face_grin_stars
-            Combust => '\u{ed78}', // fa-fire_flame_simple
-            Corruption => '\u{ee15}', // fa-skull
-            DoubleTap => '\u{f0787}', // md-sword_cross
-            Juggernaut => '\u{ef84}', // fa-helmet_safety
-            Rage => '\u{ee1f}', // fa-face_angry
-            FlameBarrier => '\u{e0c0}', // ple-flame_thick
-            Artifact => '\u{f219}', // fa-gem
-            NoBlock => '\u{f05e}', // fa-ban
-            NoDraw => '\u{eabd}', // cod-circle_slash
-            Mayhem => '\u{f074}', // fa-shuffle
-            Magnetism => '\u{f076}', // fa-magnet
-            Panache => '\u{edf7}', // fa-feather
-            SadisticNature => '\u{ee53}', // fa-face_grin_tongue_squint
-            PlatedArmor => '\u{f0ada}', // md-shield_plus
-            Constricted => '\u{f150e}', // md-snake
-            Confused => '\u{f02d7}', // md-help_circle
-            Hex => '\u{ef21}', // fa-hurricane
-            DrawReduction => '\u{f0639}', // md-cards_outline
-            Surrounded => '\u{f0849}', // md-account_group
-            Intangible => '\u{f02a0}', // md-ghost
-            Ritual => '\u{eedb}', // fa-hands_praying
-            Enrage => '\u{f0a1}', // fa-bullhorn
-            Anger => '\u{ee48}', // fa-face_grimace
-            SharpHide => '\u{eefd}', // fa-hand_fist
-            BeatOfDeath => '\u{f21e}', // fa-heartbeat
-            Curiosity => '\u{f0349}', // md-magnify
-            CurlUp => '\u{f0adb}', // md-shield_plus_outline
-            Explosive => '\u{f0691}', // md-bomb
-            Fading => '\u{f253}', // fa-hourglass_end
-            Flight => '\u{ed99}', // fa-dove
-            Invincible => '\u{f132}', // fa-shield
-            Malleable => '\u{eeb0}', // fa-shapes
-            Minion => '\u{f0c0}', // fa-users
-            MinionLeader => '\u{edeb}', // fa-crown
-            ModeShift => '\u{f2f1}', // fa-rotate
-            PainfulStabs => '\u{ed8d}', // fa-syringe
-            Reactive => '\u{f0db3}', // md-bolt
-            Regrow => '\u{eda7}', // fa-seedling
-            Shifting => '\u{f07d}', // fa-arrows_v
-            Slow => '\u{f017}', // fa-clock_o
-            SporeCloud => '\u{f0c2}', // fa-cloud
-            Split => '\u{f062c}', // md-source_branch
-            Stasis => '\u{f187}', // fa-box_archive
-            StrengthUp => '\u{f102}', // fa-angles_up
-            TimeWarp => '\u{f254}', // fa-hourglass
-            Asleep => '\u{f04b2}', // md-sleep
-            Duplication => '\u{f24d}', // fa-clone
-            LoseStrength => '\u{f063}', // fa-arrow_down
-            LoseDexterity => '\u{ea9a}', // cod-arrow_down
-            Focus => '\u{f140}', // fa-bullseye
-            Poison => '\u{ef0e}', // fa-skull_crossbones
-            Accuracy => '\u{f05b}', // fa-crosshairs
-            AfterImage => '\u{f00f}', // fa-images
-            ThousandCuts => '\u{f09fb}', // md-knife
-            Envenom => '\u{f0c3}', // fa-flask
+            Strength => '\u{1f4aa}', // emoji \U0001f4aa
+            Dexterity => '\u{1f45f}', // emoji \U0001f45f
+            Vulnerable => '\u{1f494}', // emoji \U0001f494
+            Weak => '\u{1f974}', // emoji \U0001f974
+            Frail => '\u{1f9b4}', // emoji \U0001f9b4
+            Entangled => '\u{1f9f6}', // emoji \U0001f9f6
+            DemonForm => '\u{1f608}', // emoji \U0001f608
+            Metallicize => '\u{1f529}', // emoji \U0001f529
+            FeelNoPain => '\u{1f48a}', // emoji \U0001f48a
+            DarkEmbrace => '\u{1f311}', // emoji \U0001f311
+            Evolve => '\u{1f9ec}', // emoji \U0001f9ec
+            FireBreathing => '\u{1f432}', // emoji \U0001f432
+            Barricade => '\u{1f9f1}', // emoji \U0001f9f1
+            Brutality => '\u{1f4a2}', // emoji \U0001f4a2
+            Rupture => '\u{1fa78}', // emoji \U0001fa78
+            Regenerate => '\u{1f49a}', // emoji \U0001f49a
+            Thorns => '\u{1f335}', // emoji \U0001f335
+            Berserk => '\u{1f92c}', // emoji \U0001f92c
+            Combust => '\u{1f525}', // emoji \U0001f525
+            Corruption => '\u{1f9a0}', // emoji \U0001f9a0
+            DoubleTap => '\u{1f501}', // emoji \U0001f501
+            Juggernaut => '\u{1f682}', // emoji \U0001f682
+            Rage => '\u{1f621}', // emoji \U0001f621
+            FlameBarrier => '\u{1f30b}', // emoji \U0001f30b
+            Artifact => '\u{1f48e}', // emoji \U0001f48e
+            NoBlock => '\u{1f6ab}', // emoji \U0001f6ab
+            NoDraw => '\u{26d4}', // emoji \u26d4
+            Mayhem => '\u{1f300}', // emoji \U0001f300
+            Magnetism => '\u{1f9f2}', // emoji \U0001f9f2
+            Panache => '\u{1f3a9}', // emoji \U0001f3a9
+            SadisticNature => '\u{1f60f}', // emoji \U0001f60f
+            PlatedArmor => '\u{1f9ba}', // emoji \U0001f9ba
+            Constricted => '\u{1f40d}', // emoji \U0001f40d
+            Confused => '\u{1f635}', // emoji \U0001f635
+            Hex => '\u{1f52e}', // emoji \U0001f52e
+            DrawReduction => '\u{1f53b}', // emoji \U0001f53b
+            Surrounded => '\u{1f465}', // emoji \U0001f465
+            Intangible => '\u{1f4a0}', // emoji \U0001f4a0
+            Ritual => '\u{1f9ff}', // emoji \U0001f9ff
+            Enrage => '\u{1f4e2}', // emoji \U0001f4e2
+            Anger => '\u{1f620}', // emoji \U0001f620
+            SharpHide => '\u{1f994}', // emoji \U0001f994
+            BeatOfDeath => '\u{1f493}', // emoji \U0001f493
+            Curiosity => '\u{1f50d}', // emoji \U0001f50d
+            CurlUp => '\u{1f40c}', // emoji \U0001f40c
+            Explosive => '\u{1f4a3}', // emoji \U0001f4a3
+            Fading => '\u{231b}', // emoji \u231b
+            Flight => '\u{1f985}', // emoji \U0001f985
+            Invincible => '\u{1f3f0}', // emoji \U0001f3f0
+            Malleable => '\u{1f9fd}', // emoji \U0001f9fd
+            Minion => '\u{1f47e}', // emoji \U0001f47e
+            MinionLeader => '\u{1f451}', // emoji \U0001f451
+            ModeShift => '\u{1f504}', // emoji \U0001f504
+            PainfulStabs => '\u{1f489}', // emoji \U0001f489
+            Reactive => '\u{26a1}', // emoji \u26a1
+            Regrow => '\u{1f331}', // emoji \U0001f331
+            Shifting => '\u{1f503}', // emoji \U0001f503
+            Slow => '\u{1f9a5}', // emoji \U0001f9a5
+            SporeCloud => '\u{1f344}', // emoji \U0001f344
+            Split => '\u{1f500}', // emoji \U0001f500
+            Stasis => '\u{1f512}', // emoji \U0001f512
+            StrengthUp => '\u{1f53c}', // emoji \U0001f53c
+            TimeWarp => '\u{23f0}', // emoji \u23f0
+            Asleep => '\u{1f4a4}', // emoji \U0001f4a4
+            Duplication => '\u{1f0cf}', // emoji \U0001f0cf
+            LoseStrength => '\u{1f4c9}', // emoji \U0001f4c9
+            LoseDexterity => '\u{1f53d}', // emoji \U0001f53d
+            Focus => '\u{1f3af}', // emoji \U0001f3af
+            Poison => '\u{1f922}', // emoji \U0001f922
+            Accuracy => '\u{1f3f9}', // emoji \U0001f3f9
+            AfterImage => '\u{1f4f8}', // emoji \U0001f4f8
+            ThousandCuts => '\u{1f52a}', // emoji \U0001f52a
+            Envenom => '\u{1f9ea}', // emoji \U0001f9ea
             InfiniteBlades => '\u{eecf}', // fa-khanda
-            NoxiousFumes => '\u{ef29}', // fa-smog
-            ToolsOfTheTrade => '\u{ef70}', // fa-screwdriver_wrench
-            WraithForm => '\u{eefe}', // fa-ghost
-            Blur => '\u{f070}', // fa-eye_slash
-            PhantasmalKiller => '\u{f21b}', // fa-user_secret
-            Burst => '\u{f04e}', // fa-forward
-            WellLaidPlans => '\u{eab3}', // cod-checklist
-            Choke => '\u{f0a4f}', // md-hand_front_right
-            CorpseExplosion => '\u{f1e2}', // fa-bomb
-            DoubleDamage => '\u{ee29}', // fa-check_double
+            NoxiousFumes => '\u{1f637}', // emoji \U0001f637
+            ToolsOfTheTrade => '\u{1f527}', // emoji \U0001f527
+            WraithForm => '\u{1f47b}', // emoji \U0001f47b
+            Blur => '\u{1f4a8}', // emoji \U0001f4a8
+            PhantasmalKiller => '\u{1f3ad}', // emoji \U0001f3ad
+            Burst => '\u{1f4a5}', // emoji \U0001f4a5
+            WellLaidPlans => '\u{1f9ed}', // emoji \U0001f9ed
+            Choke => '\u{1f616}', // emoji \U0001f616
+            CorpseExplosion => '\u{1f9e8}', // emoji \U0001f9e8
+            DoubleDamage => '\u{1f93a}', // emoji \U0001f93a
         }
     }
 
@@ -363,6 +369,97 @@ impl Status {
             Choke => "poison",
             CorpseExplosion => "poison",
             DoubleDamage => "fire",
+        }
+    }
+
+    /// 当前图标是不是 emoji(emoji 自带颜色,图标那一列就不再按配色键上色)
+    pub fn icon_is_emoji(self) -> bool {
+        use Status::*;
+        match self {
+            Strength => true,
+            Dexterity => true,
+            Vulnerable => true,
+            Weak => true,
+            Frail => true,
+            Entangled => true,
+            DemonForm => true,
+            Metallicize => true,
+            FeelNoPain => true,
+            DarkEmbrace => true,
+            Evolve => true,
+            FireBreathing => true,
+            Barricade => true,
+            Brutality => true,
+            Rupture => true,
+            Regenerate => true,
+            Thorns => true,
+            Berserk => true,
+            Combust => true,
+            Corruption => true,
+            DoubleTap => true,
+            Juggernaut => true,
+            Rage => true,
+            FlameBarrier => true,
+            Artifact => true,
+            NoBlock => true,
+            NoDraw => true,
+            Mayhem => true,
+            Magnetism => true,
+            Panache => true,
+            SadisticNature => true,
+            PlatedArmor => true,
+            Constricted => true,
+            Confused => true,
+            Hex => true,
+            DrawReduction => true,
+            Surrounded => true,
+            Intangible => true,
+            Ritual => true,
+            Enrage => true,
+            Anger => true,
+            SharpHide => true,
+            BeatOfDeath => true,
+            Curiosity => true,
+            CurlUp => true,
+            Explosive => true,
+            Fading => true,
+            Flight => true,
+            Invincible => true,
+            Malleable => true,
+            Minion => true,
+            MinionLeader => true,
+            ModeShift => true,
+            PainfulStabs => true,
+            Reactive => true,
+            Regrow => true,
+            Shifting => true,
+            Slow => true,
+            SporeCloud => true,
+            Split => true,
+            Stasis => true,
+            StrengthUp => true,
+            TimeWarp => true,
+            Asleep => true,
+            Duplication => true,
+            LoseStrength => true,
+            LoseDexterity => true,
+            Focus => true,
+            Poison => true,
+            Accuracy => true,
+            AfterImage => true,
+            ThousandCuts => true,
+            Envenom => true,
+            InfiniteBlades => false,
+            NoxiousFumes => true,
+            ToolsOfTheTrade => true,
+            WraithForm => true,
+            Blur => true,
+            PhantasmalKiller => true,
+            Burst => true,
+            WellLaidPlans => true,
+            Choke => true,
+            CorpseExplosion => true,
+            DoubleDamage => true,
         }
     }
 
@@ -462,90 +559,90 @@ impl Status {
     pub fn glyph_candidates(self) -> &'static [(char, &'static str)] {
         use Status::*;
         match self {
-            Strength => &[('\u{ed67}', "fa-dumbbell"), ('\u{f01e6}', "md-dumbbell"), ('\u{ee94}', "fa-weight-hanging"), ('\u{ed93}', "fa-weight-scale"), ('\u{f05c9}', "md-format-line-weight"), ('\u{f05a1}', "md-weight"), ('\u{f0d3f}', "md-weight-gram"), ('\u{f05a2}', "md-weight-kilogram"), ('\u{f115d}', "md-weight-lifter"), ('\u{f09b5}', "md-weight-pound")],
-            Dexterity => &[('\u{ee14}', "fa-shoe-prints"), ('\u{f0a58}', "md-horseshoe"), ('\u{f15ca}', "md-shoe-ballet"), ('\u{f15c7}', "md-shoe-cleat"), ('\u{f0b47}', "md-shoe-formal"), ('\u{f0b48}', "md-shoe-heel"), ('\u{f0dfa}', "md-shoe-print"), ('\u{f15c8}', "md-shoe-sneaker"), ('\u{f1a72}', "md-snowshoeing"), ('\u{eb7b}', "cod-vm-running")],
-            Vulnerable => &[('\u{ef4f}', "fa-heart-crack"), ('\u{f02d4}', "md-heart-broken"), ('\u{f0d14}', "md-heart-broken-outline"), ('\u{ed25}', "fa-shield-halved"), ('\u{ef05}', "fa-house-chimney-crack"), ('\u{f02ed}', "md-image-broken"), ('\u{f02ee}', "md-image-broken-variant"), ('\u{f0da4}', "md-trophy-broken"), ('\u{ebf8}', "cod-target"), ('\u{f04fe}', "md-target")],
-            Weak => &[('\u{f04e5}', "md-sword"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f0787}', "md-sword-cross"), ('\u{ec08}', "cod-bell-slash"), ('\u{ec09}', "cod-bell-slash-dot"), ('\u{eabd}', "cod-circle-slash"), ('\u{f1f6}', "fa-bell-slash")],
-            Frail => &[('\u{f099e}', "md-shield-off"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline")],
-            Entangled => &[('\u{ef10}', "fa-spider"), ('\u{f11ea}', "md-spider"), ('\u{f11eb}', "md-spider-thread"), ('\u{f0bca}', "md-spider-web"), ('\u{e845}', "dev-nodewebkit"), ('\u{e8e1}', "dev-webflow"), ('\u{e8e2}', "dev-weblate"), ('\u{e8e3}', "dev-webpack"), ('\u{f070f}', "md-search-web"), ('\u{f1316}', "md-semantic-web")],
-            DemonForm => &[('\u{ef76}', "fa-fire-flame-curved"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire"), ('\u{f0edd}', "md-campfire")],
-            Metallicize => &[('\u{ed25}', "fa-shield-halved"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline"), ('\u{f15a7}', "md-shield-account-variant")],
-            FeelNoPain => &[('\u{ed74}', "fa-bandage"), ('\u{f0daf}', "md-bandage"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o")],
-            DarkEmbrace => &[('\u{f186}', "fa-moon-o"), ('\u{f1829}', "md-shield-moon-outline"), ('\u{eeef}', "fa-cloud-moon"), ('\u{ef1b}', "fa-cloud-moon-rain"), ('\u{e226}', "fae-moon-cloud"), ('\u{f0f61}', "md-moon-first-quarter"), ('\u{f0f62}', "md-moon-full"), ('\u{f0f63}', "md-moon-last-quarter"), ('\u{f0f64}', "md-moon-new"), ('\u{f0f65}', "md-moon-waning-crescent")],
-            Evolve => &[('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f0639}', "md-cards-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple"), ('\u{f18a4}', "md-cards-playing-club-multiple-outline")],
-            FireBreathing => &[('\u{f06d}', "fa-fire"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire"), ('\u{f0edd}', "md-campfire")],
-            Barricade => &[('\u{f07fe}', "md-wall"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline"), ('\u{f041c}', "md-wall-sconce-flat-variant"), ('\u{f17ca}', "md-wall-sconce-flat-variant-outline")],
-            Brutality => &[('\u{f0cec}', "md-blood-bag"), ('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
-            Rupture => &[('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{f0cec}', "md-blood-bag"), ('\u{ed8d}', "fa-syringe"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline")],
-            Regenerate => &[('\u{f05f6}', "md-heart-pulse"), ('\u{f21e}', "fa-heartbeat"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o")],
-            Thorns => &[('\u{f0db5}', "md-cactus"), ('\u{e22f}', "fae-plant"), ('\u{ead2}', "cod-debug-restart"), ('\u{eb90}', "cod-debug-restart-frame"), ('\u{ead3}', "cod-debug-start"), ('\u{ea6a}', "cod-star-empty"), ('\u{eb59}', "cod-star-full"), ('\u{eb5a}', "cod-star-half"), ('\u{ee50}', "fa-face-grin-stars"), ('\u{f251}', "fa-hourglass-start")],
-            Berserk => &[('\u{ee50}', "fa-face-grin-stars"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c0}', "ple-flame-thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored"), ('\u{e787}', "dev-firebase")],
-            Combust => &[('\u{ed78}', "fa-fire-flame-simple"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire"), ('\u{f0edd}', "md-campfire")],
-            Corruption => &[('\u{ee15}', "fa-skull"), ('\u{eeeb}', "fa-book-skull"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{f1132}', "md-bottle-tonic-skull"), ('\u{f1133}', "md-bottle-tonic-skull-outline"), ('\u{f068c}', "md-skull"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{f0bc8}', "md-skull-outline"), ('\u{f14c7}', "md-skull-scan")],
-            DoubleTap => &[('\u{f0787}', "md-sword-cross"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f01e}', "fa-repeat"), ('\u{f0b6}', "fa-repeat-alt"), ('\u{f0456}', "md-repeat"), ('\u{f0457}', "md-repeat-off")],
-            Juggernaut => &[('\u{ef84}', "fa-helmet-safety"), ('\u{f0dc0}', "md-diving-helmet"), ('\u{f025f}', "md-football-helmet"), ('\u{f0d93}', "md-racing-helmet"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline")],
-            Rage => &[('\u{ee1f}', "fa-face-angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee48}', "fa-face-grimace"), ('\u{ee50}', "fa-face-grin-stars")],
-            FlameBarrier => &[('\u{e0c0}', "ple-flame-thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox")],
-            Artifact => &[('\u{f219}', "fa-gem"), ('\u{f0a81}', "md-zodiac-gemini"), ('\u{f29f}', "fa-diamond"), ('\u{eea2}', "fa-diamond-turn-right"), ('\u{f15ec}', "md-baseball-diamond"), ('\u{f15ed}', "md-baseball-diamond-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a6}', "md-cards-playing-diamond"), ('\u{f18a7}', "md-cards-playing-diamond-multiple")],
-            NoBlock => &[('\u{f05e}', "fa-ban"), ('\u{e818}', "dev-kibana"), ('\u{ee16}', "fa-ban-smoking"), ('\u{ed74}', "fa-bandage"), ('\u{f2d5}', "fa-bandcamp"), ('\u{eda3}', "fa-piggy-bank"), ('\u{e281}', "fae-banana"), ('\u{f0daf}', "md-bandage"), ('\u{f0070}', "md-bank"), ('\u{f1655}', "md-bank-check")],
-            NoDraw => &[('\u{eabd}', "cod-circle-slash"), ('\u{f468}', "oct-circle-slash"), ('\u{e818}', "dev-kibana"), ('\u{f05e}', "fa-ban"), ('\u{ee16}', "fa-ban-smoking"), ('\u{ed74}', "fa-bandage"), ('\u{f2d5}', "fa-bandcamp"), ('\u{eda3}', "fa-piggy-bank"), ('\u{e281}', "fae-banana"), ('\u{f0daf}', "md-bandage")],
-            Mayhem => &[('\u{f074}', "fa-shuffle"), ('\u{f049d}', "md-shuffle"), ('\u{f049e}', "md-shuffle-disabled"), ('\u{f049f}', "md-shuffle-variant"), ('\u{edec}', "fa-dice"), ('\u{eef5}', "fa-dice-d20"), ('\u{eef6}', "fa-dice-d6"), ('\u{eded}', "fa-dice-five"), ('\u{edee}', "fa-dice-four"), ('\u{edef}', "fa-dice-one")],
-            Magnetism => &[('\u{f076}', "fa-magnet"), ('\u{ebae}', "cod-magnet"), ('\u{f0347}', "md-magnet"), ('\u{f0348}', "md-magnet-on")],
-            Panache => &[('\u{edf7}', "fa-feather"), ('\u{e7d8}', "dev-feathersjs"), ('\u{ee34}', "fa-feather-pointed"), ('\u{f06d3}', "md-feather"), ('\u{e7f8}', "dev-hardhat"), ('\u{e7bb}', "dev-redhat"), ('\u{efb7}', "fa-hat-cowboy"), ('\u{efb8}', "fa-hat-cowboy-side"), ('\u{ef01}', "fa-hat-wizard"), ('\u{edb0}', "fa-pied-piper-hat")],
-            SadisticNature => &[('\u{ee53}', "fa-face-grin-tongue-squint"), ('\u{ee49}', "fa-face-grin"), ('\u{ee4b}', "fa-face-grin-beam"), ('\u{ee4c}', "fa-face-grin-beam-sweat"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee4e}', "fa-face-grin-squint"), ('\u{ee4f}', "fa-face-grin-squint-tears"), ('\u{ee50}', "fa-face-grin-stars"), ('\u{ee51}', "fa-face-grin-tears"), ('\u{ee52}', "fa-face-grin-tongue")],
-            PlatedArmor => &[('\u{f0ada}', "md-shield-plus"), ('\u{f0adb}', "md-shield-plus-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account")],
-            Constricted => &[('\u{f150e}', "md-snake"), ('\u{ec16}', "cod-snake"), ('\u{f1ca}', "fa-vine"), ('\u{eb8d}', "cod-symbol-string"), ('\u{e8ac}', "dev-spring"), ('\u{f2a4}', "fa-hard-of-hearing"), ('\u{ef0b}', "fa-ring"), ('\u{ed8d}', "fa-syringe"), ('\u{e23d}', "fae-ring"), ('\u{f003d}', "md-arrange-bring-forward")],
-            Confused => &[('\u{f02d7}', "md-help-circle"), ('\u{f0625}', "md-help-circle-outline"), ('\u{eb32}', "cod-question"), ('\u{f128}', "fa-question"), ('\u{f059}', "fa-question-circle"), ('\u{f29c}', "fa-question-circle-o"), ('\u{f0b59}', "md-account-question"), ('\u{f0b5a}', "md-account-question-outline"), ('\u{f1231}', "md-beaker-question"), ('\u{f1232}', "md-beaker-question-outline")],
-            Hex => &[('\u{ef21}', "fa-hurricane"), ('\u{f0898}', "md-weather-hurricane"), ('\u{e36c}', "weather-hurricane"), ('\u{e3c7}', "weather-hurricane-warning"), ('\u{e24f}', "fae-hexagon"), ('\u{f0049}', "md-arrow-down-bold-hexagon-outline"), ('\u{f0051}', "md-arrow-left-bold-hexagon-outline"), ('\u{f0058}', "md-arrow-right-bold-hexagon-outline"), ('\u{f0061}', "md-arrow-up-bold-hexagon-outline"), ('\u{f15ff}', "md-dots-hexagon")],
-            DrawReduction => &[('\u{f0639}', "md-cards-outline"), ('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple"), ('\u{f18a4}', "md-cards-playing-club-multiple-outline")],
-            Surrounded => &[('\u{f0849}', "md-account-group"), ('\u{f0b58}', "md-account-group-outline"), ('\u{f0c0}', "fa-users"), ('\u{edd3}', "fa-users-gear"), ('\u{eda2}', "fa-people-carry-box"), ('\u{f038f}', "md-nature-people"), ('\u{f4fd}', "oct-people"), ('\u{f07e}', "fa-arrows-left-right"), ('\u{f047}', "fa-arrows-up-down-left-right"), ('\u{f07d}', "fa-arrows-v")],
-            Intangible => &[('\u{f02a0}', "md-ghost"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{eefe}', "fa-ghost"), ('\u{f2ac}', "fa-snapchat-ghost"), ('\u{f09f5}', "md-ghost-off"), ('\u{f165c}', "md-ghost-off-outline"), ('\u{f165d}', "md-ghost-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield")],
-            Ritual => &[('\u{eedb}', "fa-hands-praying"), ('\u{eeda}', "fa-person-praying"), ('\u{ee84}', "fa-spray-can"), ('\u{ee97}', "fa-spray-can-sparkles"), ('\u{f0579}', "md-hands-pray"), ('\u{f0665}', "md-spray"), ('\u{f0ae0}', "md-spray-bottle"), ('\u{f1fd}', "fa-cake-candles"), ('\u{f05e2}', "md-candle"), ('\u{ede7}', "fa-church")],
-            Enrage => &[('\u{f0a1}', "fa-bullhorn"), ('\u{f00e6}', "md-bullhorn"), ('\u{f0b23}', "md-bullhorn-outline"), ('\u{f196e}', "md-bullhorn-variant"), ('\u{f196f}', "md-bullhorn-variant-outline"), ('\u{eb1e}', "cod-megaphone"), ('\u{f45f}', "oct-megaphone"), ('\u{f0bc}', "fa-angrycreative"), ('\u{ee1f}', "fa-face-angry"), ('\u{f0c69}', "md-emoticon-angry")],
-            Anger => &[('\u{ee48}', "fa-face-grimace"), ('\u{ee1f}', "fa-face-angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee43}', "fa-face-frown-open"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f0db3}', "md-bolt")],
-            SharpHide => &[('\u{eefd}', "fa-hand-fist"), ('\u{ed25}', "fa-shield-halved"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield")],
-            BeatOfDeath => &[('\u{f21e}', "fa-heartbeat"), ('\u{f05f6}', "md-heart-pulse"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack"), ('\u{f08a}', "fa-heart-o")],
-            Curiosity => &[('\u{f0349}', "md-magnify"), ('\u{eedd}', "fa-magnifying-glass-dollar"), ('\u{eede}', "fa-magnifying-glass-location"), ('\u{f0980}', "md-magnify-close"), ('\u{f1874}', "md-magnify-expand"), ('\u{f034a}', "md-magnify-minus"), ('\u{f0a62}', "md-magnify-minus-cursor"), ('\u{f06ec}', "md-magnify-minus-outline"), ('\u{f034b}', "md-magnify-plus"), ('\u{f0a63}', "md-magnify-plus-cursor")],
-            CurlUp => &[('\u{f0adb}', "md-shield-plus-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline")],
-            Explosive => &[('\u{f0691}', "md-bomb"), ('\u{f1e2}', "fa-bomb"), ('\u{f06c5}', "md-bomb-off"), ('\u{ee9f}', "fa-car-burst"), ('\u{f0693}', "md-camera-burst"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher")],
-            Fading => &[('\u{f253}', "fa-hourglass-end"), ('\u{f254}', "fa-hourglass"), ('\u{f252}', "fa-hourglass-half"), ('\u{f250}', "fa-hourglass-o"), ('\u{f251}', "fa-hourglass-start"), ('\u{f4e3}', "oct-hourglass"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{eefe}', "fa-ghost"), ('\u{f2ac}', "fa-snapchat-ghost")],
-            Flight => &[('\u{ed99}', "fa-dove"), ('\u{e7d8}', "dev-feathersjs"), ('\u{edf7}', "fa-feather"), ('\u{ee34}', "fa-feather-pointed"), ('\u{f06d3}', "md-feather"), ('\u{e201}', "fae-snowing"), ('\u{f01de}', "md-drawing"), ('\u{f01df}', "md-drawing-box"), ('\u{f0608}', "md-rowing"), ('\u{edff}', "fa-kiwi-bird")],
-            Invincible => &[('\u{f132}', "fa-shield"), ('\u{eb53}', "cod-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline"), ('\u{f15a7}', "md-shield-account-variant")],
-            Malleable => &[('\u{eeb0}', "fa-shapes"), ('\u{edec}', "fa-dice"), ('\u{eef5}', "fa-dice-d20"), ('\u{eef6}', "fa-dice-d6"), ('\u{eded}', "fa-dice-five"), ('\u{edee}', "fa-dice-four"), ('\u{edef}', "fa-dice-one"), ('\u{edf0}', "fa-dice-six"), ('\u{edf1}', "fa-dice-three"), ('\u{edf2}', "fa-dice-two")],
-            Minion => &[('\u{f0c0}', "fa-users"), ('\u{edd3}', "fa-users-gear"), ('\u{ede6}', "fa-chalkboard-user"), ('\u{ef7c}', "fa-clipboard-user"), ('\u{ef86}', "fa-hospital-user"), ('\u{f007}', "fa-user"), ('\u{edc5}', "fa-user-astronaut"), ('\u{edc6}', "fa-user-check"), ('\u{f2bd}', "fa-user-circle"), ('\u{f2be}', "fa-user-circle-o")],
-            MinionLeader => &[('\u{edeb}', "fa-crown"), ('\u{e26e}', "fae-crown"), ('\u{f01a5}', "md-crown"), ('\u{f17dc}', "md-crown-circle"), ('\u{f17dd}', "md-crown-circle-outline"), ('\u{f11d0}', "md-crown-outline"), ('\u{f18bc}', "md-shield-crown"), ('\u{f18bd}', "md-shield-crown-outline"), ('\u{ed62}', "fa-chess-king"), ('\u{e260}', "fae-chess-king")],
-            ModeShift => &[('\u{f2f1}', "fa-rotate"), ('\u{f2ea}', "fa-rotate-left"), ('\u{f2f9}', "fa-rotate-right"), ('\u{f0d4e}', "md-axis-x-rotate-clockwise"), ('\u{f0d4f}', "md-axis-x-rotate-counterclockwise"), ('\u{f0d53}', "md-axis-y-rotate-clockwise"), ('\u{f0d54}', "md-axis-y-rotate-counterclockwise"), ('\u{f0d57}', "md-axis-z-rotate-clockwise"), ('\u{f0d58}', "md-axis-z-rotate-counterclockwise"), ('\u{f0696}', "md-crop-rotate")],
-            PainfulStabs => &[('\u{ed8d}', "fa-syringe"), ('\u{e2a1}', "fae-injection"), ('\u{f0391}', "md-needle"), ('\u{f19d2}', "md-needle-off"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross")],
-            Reactive => &[('\u{f0db3}', "md-bolt"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f1903}', "md-home-lightning-bolt"), ('\u{f1904}', "md-home-lightning-bolt-outline"), ('\u{f140b}', "md-lightning-bolt"), ('\u{f0820}', "md-lightning-bolt-circle"), ('\u{f140c}', "md-lightning-bolt-outline"), ('\u{f0593}', "md-weather-lightning"), ('\u{f067e}', "md-weather-lightning-rainy"), ('\u{f0f32}', "md-weather-partly-lightning")],
-            Regrow => &[('\u{eda7}', "fa-seedling"), ('\u{e22f}', "fae-plant"), ('\u{ef39}', "fa-canadian-maple-leaf"), ('\u{f06c}', "fa-leaf"), ('\u{f032a}', "md-leaf"), ('\u{f1905}', "md-leaf-circle"), ('\u{f1906}', "md-leaf-circle-outline"), ('\u{f0c93}', "md-leaf-maple"), ('\u{f12da}', "md-leaf-maple-off"), ('\u{f12d9}', "md-leaf-off")],
-            Shifting => &[('\u{f07d}', "fa-arrows-v"), ('\u{f047}', "fa-arrows-up-down-left-right"), ('\u{f07e}', "fa-arrows-left-right"), ('\u{f0ec}', "fa-exchange"), ('\u{f18d}', "fa-stack-exchange"), ('\u{f060b}', "md-stack-exchange"), ('\u{eb37}', "cod-refresh"), ('\u{f021}', "fa-refresh"), ('\u{f1765}', "md-archive-refresh"), ('\u{f1766}', "md-archive-refresh-outline")],
-            Slow => &[('\u{f017}', "fa-clock-o"), ('\u{f0b57}', "md-account-clock-outline"), ('\u{f1750}', "md-archive-clock-outline"), ('\u{f19e6}', "md-battery-clock-outline"), ('\u{f1689}', "md-book-clock-outline"), ('\u{f10d1}', "md-briefcase-clock-outline"), ('\u{f16e1}', "md-calendar-clock-outline"), ('\u{f16e3}', "md-clipboard-clock-outline"), ('\u{f18fa}', "md-clipboard-text-clock-outline"), ('\u{f0154}', "md-clock-out")],
-            SporeCloud => &[('\u{f0c2}', "fa-cloud"), ('\u{ebaa}', "cod-cloud"), ('\u{eac2}', "cod-cloud-download"), ('\u{eac3}', "cod-cloud-upload"), ('\u{e792}', "dev-cloudflare"), ('\u{e793}', "dev-cloudflareworkers"), ('\u{e7f1}', "dev-googlecloud"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f0ed}', "fa-cloud-download"), ('\u{ef1a}', "fa-cloud-meatball")],
-            Split => &[('\u{f062c}', "md-source-branch"), ('\u{f14cf}', "md-source-branch-check"), ('\u{f14cb}', "md-source-branch-minus"), ('\u{f14ca}', "md-source-branch-plus"), ('\u{f14cd}', "md-source-branch-refresh"), ('\u{f14cc}', "md-source-branch-remove"), ('\u{f14ce}', "md-source-branch-sync"), ('\u{eb3e}', "cod-repo-clone"), ('\u{f24d}', "fa-clone"), ('\u{f43f}', "oct-repo-clone")],
-            Stasis => &[('\u{f187}', "fa-box-archive"), ('\u{f0765}', "checkbox-blank-circle"), ('\u{f043d}', "checkbox-blank-circle-outline"), ('\u{f0766}', "checkbox-blank-circle-outline.1"), ('\u{eb09}', "cod-inbox"), ('\u{e707}', "dev-dropbox"), ('\u{ed75}', "fa-box"), ('\u{ed95}', "fa-box-open"), ('\u{ed76}', "fa-boxes-stacked"), ('\u{f16b}', "fa-dropbox")],
-            StrengthUp => &[('\u{f102}', "fa-angles-up"), ('\u{eaa1}', "cod-arrow-up"), ('\u{f062}', "fa-arrow-up"), ('\u{efb2}', "fa-arrow-up-9-1"), ('\u{efb0}', "fa-arrow-up-short-wide"), ('\u{efae}', "fa-arrow-up-z-a"), ('\u{f0aa}', "fa-circle-arrow-up"), ('\u{ee3d}', "fa-file-arrow-up"), ('\u{f176}', "fa-long-arrow-up"), ('\u{f14c}', "fa-square-arrow-up-right")],
-            TimeWarp => &[('\u{f254}', "fa-hourglass"), ('\u{f253}', "fa-hourglass-end"), ('\u{f252}', "fa-hourglass-half"), ('\u{f250}', "fa-hourglass-o"), ('\u{f251}', "fa-hourglass-start"), ('\u{f4e3}', "oct-hourglass"), ('\u{f017}', "fa-clock-o"), ('\u{edc7}', "fa-user-clock"), ('\u{f0b56}', "md-account-clock"), ('\u{f0b57}', "md-account-clock-outline")],
-            Asleep => &[('\u{f04b2}', "md-sleep"), ('\u{23fe}', "iec-sleep-mode"), ('\u{f00a0}', "md-bell-sleep"), ('\u{f0a93}', "md-bell-sleep-outline"), ('\u{f12d1}', "md-chat-sleep"), ('\u{f12d2}', "md-chat-sleep-outline"), ('\u{f0904}', "md-power-sleep"), ('\u{f04b3}', "md-sleep-off"), ('\u{eeef}', "fa-cloud-moon"), ('\u{ef1b}', "fa-cloud-moon-rain")],
-            Duplication => &[('\u{f24d}', "fa-clone"), ('\u{eb3e}', "cod-repo-clone"), ('\u{f43f}', "oct-repo-clone"), ('\u{ebcc}', "cod-copy"), ('\u{f1f9}', "fa-copyright"), ('\u{f018f}', "md-content-copy"), ('\u{f1939}', "md-copyleft"), ('\u{f05e6}', "md-copyright"), ('\u{f4bb}', "oct-copy"), ('\u{f01e}', "fa-repeat")],
-            LoseStrength => &[('\u{f063}', "fa-arrow-down"), ('\u{ea9a}', "cod-arrow-down"), ('\u{efb1}', "fa-arrow-down-9-1"), ('\u{efaf}', "fa-arrow-down-short-wide"), ('\u{efad}', "fa-arrow-down-z-a"), ('\u{f218}', "fa-cart-arrow-down"), ('\u{f0ab}', "fa-circle-arrow-down"), ('\u{ee36}', "fa-file-arrow-down"), ('\u{f175}', "fa-long-arrow-down"), ('\u{f1868}', "md-account-arrow-down")],
-            LoseDexterity => &[('\u{ea9a}', "cod-arrow-down"), ('\u{f063}', "fa-arrow-down"), ('\u{efb1}', "fa-arrow-down-9-1"), ('\u{efaf}', "fa-arrow-down-short-wide"), ('\u{efad}', "fa-arrow-down-z-a"), ('\u{f218}', "fa-cart-arrow-down"), ('\u{f0ab}', "fa-circle-arrow-down"), ('\u{ee36}', "fa-file-arrow-down"), ('\u{f175}', "fa-long-arrow-down"), ('\u{f1868}', "md-account-arrow-down")],
-            Focus => &[('\u{f140}', "fa-bullseye"), ('\u{f05dd}', "md-bullseye"), ('\u{f08c9}', "md-bullseye-arrow"), ('\u{f05b}', "fa-crosshairs"), ('\u{eea9}', "fa-location-crosshairs"), ('\u{f01a3}', "md-crosshairs"), ('\u{f01a4}', "md-crosshairs-gps"), ('\u{f0f45}', "md-crosshairs-off"), ('\u{f1136}', "md-crosshairs-question"), ('\u{ebf8}', "cod-target")],
-            Poison => &[('\u{ef0e}', "fa-skull-crossbones"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline"), ('\u{f13f4}', "md-flask-empty-off")],
-            Accuracy => &[('\u{f05b}', "fa-crosshairs"), ('\u{eea9}', "fa-location-crosshairs"), ('\u{f01a3}', "md-crosshairs"), ('\u{f01a4}', "md-crosshairs-gps"), ('\u{f0f45}', "md-crosshairs-off"), ('\u{f1136}', "md-crosshairs-question"), ('\u{f140}', "fa-bullseye"), ('\u{f05dd}', "md-bullseye"), ('\u{f08c9}', "md-bullseye-arrow"), ('\u{ebf8}', "cod-target")],
-            AfterImage => &[('\u{f00f}', "fa-images"), ('\u{ed19}', "fa-image-portrait"), ('\u{f0509}', "image-filter-hdr"), ('\u{f08cc}', "md-camera-image"), ('\u{f021f}', "md-file-image"), ('\u{f1772}', "md-file-image-marker"), ('\u{f1773}', "md-file-image-marker-outline"), ('\u{f193b}', "md-file-image-minus"), ('\u{f193c}', "md-file-image-minus-outline"), ('\u{f0eb0}', "md-file-image-outline")],
-            ThousandCuts => &[('\u{f09fb}', "md-knife"), ('\u{f09fc}', "md-knife-military"), ('\u{f0a70}', "md-silverware-fork-knife"), ('\u{f0c86}', "md-fuse-blade"), ('\u{f0d2c}', "md-rollerblade"), ('\u{f002e}', "md-rollerblade-off"), ('\u{f0e61}', "md-saw-blade"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword")],
-            Envenom => &[('\u{f0c3}', "fa-flask"), ('\u{e7dc}', "dev-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline"), ('\u{f13f4}', "md-flask-empty-off"), ('\u{f13f5}', "md-flask-empty-off-outline"), ('\u{f0095}', "md-flask-empty-outline"), ('\u{f123c}', "md-flask-empty-plus")],
-            InfiniteBlades => &[('\u{eecf}', "fa-khanda"), ('\u{f10fd}', "md-khanda"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross"), ('\u{f09fb}', "md-knife"), ('\u{f09fc}', "md-knife-military")],
-            NoxiousFumes => &[('\u{ef29}', "fa-smog"), ('\u{f0a71}', "md-smog"), ('\u{e36d}', "weather-smog"), ('\u{ebaa}', "cod-cloud"), ('\u{eac2}', "cod-cloud-download"), ('\u{eac3}', "cod-cloud-upload"), ('\u{e792}', "dev-cloudflare"), ('\u{e793}', "dev-cloudflareworkers"), ('\u{e7f1}', "dev-googlecloud"), ('\u{f0c2}', "fa-cloud")],
-            ToolsOfTheTrade => &[('\u{ef70}', "fa-screwdriver-wrench"), ('\u{ee1b}', "fa-toolbox"), ('\u{f09ac}', "md-toolbox"), ('\u{f09ad}', "md-toolbox-outline"), ('\u{f0ad}', "fa-wrench"), ('\u{f189a}', "md-account-wrench"), ('\u{f189b}', "md-account-wrench-outline"), ('\u{f1814}', "md-car-wrench"), ('\u{f19fc}', "md-folder-wrench"), ('\u{f19fd}', "md-folder-wrench-outline")],
-            WraithForm => &[('\u{eefe}', "fa-ghost"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{f2ac}', "fa-snapchat-ghost"), ('\u{f02a0}', "md-ghost"), ('\u{f09f5}', "md-ghost-off"), ('\u{f165c}', "md-ghost-off-outline"), ('\u{f165d}', "md-ghost-outline"), ('\u{f14f1}', "md-spirit-level"), ('\u{eb53}', "cod-shield")],
-            Blur => &[('\u{f070}', "fa-eye-slash"), ('\u{f2a8}', "fa-low-vision"), ('\u{ea70}', "cod-eye"), ('\u{eae7}', "cod-eye-closed"), ('\u{f140}', "fa-bullseye"), ('\u{f06e}', "fa-eye"), ('\u{f1fb}', "fa-eyedropper"), ('\u{ee6e}', "fa-face-rolling-eyes"), ('\u{f0420}', "md-account-eye"), ('\u{f127b}', "md-account-eye-outline")],
-            PhantasmalKiller => &[('\u{f21b}', "fa-user-secret"), ('\u{ef07}', "fa-mask"), ('\u{eeb6}', "fa-masks-theater"), ('\u{f1023}', "md-domino-mask"), ('\u{f0d02}', "md-drama-masks"), ('\u{f1586}', "md-face-mask"), ('\u{f1587}', "md-face-mask-outline"), ('\u{f0825}', "md-guy-fawkes-mask"), ('\u{f0916}', "md-transition-masked"), ('\u{e8ae}', "dev-spyder")],
-            Burst => &[('\u{f04e}', "fa-forward"), ('\u{f050}', "fa-forward-fast"), ('\u{f051}', "fa-step-forward"), ('\u{f003d}', "md-arrange-bring-forward"), ('\u{f0211}', "md-fast-forward"), ('\u{f0d71}', "md-fast-forward-10"), ('\u{f193a}', "md-fast-forward-15"), ('\u{f0d06}', "md-fast-forward-30"), ('\u{f11f8}', "md-fast-forward-5"), ('\u{f160b}', "md-fast-forward-60")],
-            WellLaidPlans => &[('\u{eab3}', "cod-checklist"), ('\u{e29a}', "fae-checklist-o"), ('\u{f45e}', "oct-checklist"), ('\u{f096a}', "md-format-list-checkbox"), ('\u{f0756}', "md-format-list-checks"), ('\u{f05c7}', "md-playlist-check"), ('\u{f07f}', "fa-clipboard-alt"), ('\u{ed7a}', "fa-clipboard-check"), ('\u{ed7b}', "fa-clipboard-list"), ('\u{ef7c}', "fa-clipboard-user")],
-            Choke => &[('\u{f0a4f}', "md-hand-front-right"), ('\u{f182f}', "md-hand-front-right-outline"), ('\u{e7f7}', "dev-handlebars"), ('\u{ed73}', "fa-hand-dots"), ('\u{eefd}', "fa-hand-fist"), ('\u{ed9a}', "fa-hand-holding"), ('\u{ed9c}', "fa-hand-holding-dollar"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f258}', "fa-hand-lizard-o")],
-            CorpseExplosion => &[('\u{f1e2}', "fa-bomb"), ('\u{f0691}', "md-bomb"), ('\u{f06c5}', "md-bomb-off"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire")],
-            DoubleDamage => &[('\u{ee29}', "fa-check-double"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f0db3}', "md-bolt"), ('\u{f1903}', "md-home-lightning-bolt"), ('\u{f1904}', "md-home-lightning-bolt-outline"), ('\u{f140b}', "md-lightning-bolt"), ('\u{f0820}', "md-lightning-bolt-circle"), ('\u{f140c}', "md-lightning-bolt-outline"), ('\u{ed67}', "fa-dumbbell"), ('\u{f01e6}', "md-dumbbell")],
+            Strength => &[('\u{1f4aa}', "emoji U+1F4AA"), ('\u{ed67}', "fa-dumbbell"), ('\u{f01e6}', "md-dumbbell"), ('\u{ee94}', "fa-weight-hanging"), ('\u{ed93}', "fa-weight-scale"), ('\u{f05c9}', "md-format-line-weight"), ('\u{f05a1}', "md-weight"), ('\u{f0d3f}', "md-weight-gram"), ('\u{f05a2}', "md-weight-kilogram"), ('\u{f115d}', "md-weight-lifter")],
+            Dexterity => &[('\u{1f45f}', "emoji U+1F45F"), ('\u{ee14}', "fa-shoe_prints"), ('\u{f0a58}', "md-horseshoe"), ('\u{f15ca}', "md-shoe-ballet"), ('\u{f15c7}', "md-shoe-cleat"), ('\u{f0b47}', "md-shoe-formal"), ('\u{f0b48}', "md-shoe-heel"), ('\u{f0dfa}', "md-shoe-print"), ('\u{f15c8}', "md-shoe-sneaker"), ('\u{f1a72}', "md-snowshoeing")],
+            Vulnerable => &[('\u{1f494}', "emoji U+1F494"), ('\u{ef4f}', "fa-heart_crack"), ('\u{f02d4}', "md-heart-broken"), ('\u{f0d14}', "md-heart-broken-outline"), ('\u{ed25}', "fa-shield-halved"), ('\u{ef05}', "fa-house-chimney-crack"), ('\u{f02ed}', "md-image-broken"), ('\u{f02ee}', "md-image-broken-variant"), ('\u{f0da4}', "md-trophy-broken"), ('\u{ebf8}', "cod-target")],
+            Weak => &[('\u{1f974}', "emoji U+1F974"), ('\u{f04e5}', "md-sword"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f0787}', "md-sword-cross"), ('\u{ec08}', "cod-bell-slash"), ('\u{ec09}', "cod-bell-slash-dot"), ('\u{eabd}', "cod-circle-slash")],
+            Frail => &[('\u{1f9b4}', "emoji U+1F9B4"), ('\u{f099e}', "md-shield_off"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account")],
+            Entangled => &[('\u{1f9f6}', "emoji U+1F9F6"), ('\u{ef10}', "fa-spider"), ('\u{f11ea}', "md-spider"), ('\u{f11eb}', "md-spider-thread"), ('\u{f0bca}', "md-spider-web"), ('\u{e845}', "dev-nodewebkit"), ('\u{e8e1}', "dev-webflow"), ('\u{e8e2}', "dev-weblate"), ('\u{e8e3}', "dev-webpack"), ('\u{f070f}', "md-search-web")],
+            DemonForm => &[('\u{1f608}', "emoji U+1F608"), ('\u{ef76}', "fa-fire_flame_curved"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
+            Metallicize => &[('\u{1f529}', "emoji U+1F529"), ('\u{ed25}', "fa-shield_halved"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline")],
+            FeelNoPain => &[('\u{1f48a}', "emoji U+1F48A"), ('\u{ed74}', "fa-bandage"), ('\u{f0daf}', "md-bandage"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
+            DarkEmbrace => &[('\u{1f311}', "emoji U+1F311"), ('\u{f186}', "fa-moon_o"), ('\u{f1829}', "md-shield-moon-outline"), ('\u{eeef}', "fa-cloud-moon"), ('\u{ef1b}', "fa-cloud-moon-rain"), ('\u{e226}', "fae-moon-cloud"), ('\u{f0f61}', "md-moon-first-quarter"), ('\u{f0f62}', "md-moon-full"), ('\u{f0f63}', "md-moon-last-quarter"), ('\u{f0f64}', "md-moon-new")],
+            Evolve => &[('\u{1f9ec}', "emoji U+1F9EC"), ('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f0639}', "md-cards-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple")],
+            FireBreathing => &[('\u{1f432}', "emoji U+1F432"), ('\u{f06d}', "fa-fire"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
+            Barricade => &[('\u{1f9f1}', "emoji U+1F9F1"), ('\u{f07fe}', "md-wall"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline"), ('\u{f041c}', "md-wall-sconce-flat-variant")],
+            Brutality => &[('\u{1f4a2}', "emoji U+1F4A2"), ('\u{f0cec}', "md-blood_bag"), ('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart")],
+            Rupture => &[('\u{1fa78}', "emoji U+1FA78"), ('\u{ee8e}', "fa-droplet_slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{f0cec}', "md-blood-bag"), ('\u{ed8d}', "fa-syringe"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus")],
+            Regenerate => &[('\u{1f49a}', "emoji U+1F49A"), ('\u{f05f6}', "md-heart_pulse"), ('\u{f21e}', "fa-heartbeat"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
+            Thorns => &[('\u{1f335}', "emoji U+1F335"), ('\u{f0db5}', "md-cactus"), ('\u{e22f}', "fae-plant"), ('\u{ead2}', "cod-debug-restart"), ('\u{eb90}', "cod-debug-restart-frame"), ('\u{ead3}', "cod-debug-start"), ('\u{ea6a}', "cod-star-empty"), ('\u{eb59}', "cod-star-full"), ('\u{eb5a}', "cod-star-half"), ('\u{ee50}', "fa-face-grin-stars")],
+            Berserk => &[('\u{1f92c}', "emoji U+1F92C"), ('\u{ee50}', "fa-face_grin_stars"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c0}', "ple-flame-thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored")],
+            Combust => &[('\u{1f525}', "emoji U+1F525"), ('\u{ed78}', "fa-fire_flame_simple"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
+            Corruption => &[('\u{1f9a0}', "emoji U+1F9A0"), ('\u{ee15}', "fa-skull"), ('\u{eeeb}', "fa-book-skull"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{f1132}', "md-bottle-tonic-skull"), ('\u{f1133}', "md-bottle-tonic-skull-outline"), ('\u{f068c}', "md-skull"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{f0bc8}', "md-skull-outline")],
+            DoubleTap => &[('\u{1f501}', "emoji U+1F501"), ('\u{f0787}', "md-sword_cross"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f01e}', "fa-repeat"), ('\u{f0b6}', "fa-repeat-alt"), ('\u{f0456}', "md-repeat")],
+            Juggernaut => &[('\u{1f682}', "emoji U+1F682"), ('\u{ef84}', "fa-helmet_safety"), ('\u{f0dc0}', "md-diving-helmet"), ('\u{f025f}', "md-football-helmet"), ('\u{f0d93}', "md-racing-helmet"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield")],
+            Rage => &[('\u{1f621}', "emoji U+1F621"), ('\u{ee1f}', "fa-face_angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee48}', "fa-face-grimace"), ('\u{ee50}', "fa-face-grin-stars")],
+            FlameBarrier => &[('\u{1f30b}', "emoji U+1F30B"), ('\u{e0c0}', "ple-flame_thick"), ('\u{e0c2}', "ple-flame-thick-mirrored"), ('\u{eaf2}', "cod-flame"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f490}', "oct-flame"), ('\u{e0c1}', "ple-flame-thin"), ('\u{e0c3}', "ple-flame-thin-mirrored"), ('\u{e787}', "dev-firebase")],
+            Artifact => &[('\u{1f48e}', "emoji U+1F48E"), ('\u{f219}', "fa-gem"), ('\u{f0a81}', "md-zodiac-gemini"), ('\u{f29f}', "fa-diamond"), ('\u{eea2}', "fa-diamond-turn-right"), ('\u{f15ec}', "md-baseball-diamond"), ('\u{f15ed}', "md-baseball-diamond-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a6}', "md-cards-playing-diamond")],
+            NoBlock => &[('\u{1f6ab}', "emoji U+1F6AB"), ('\u{f05e}', "fa-ban"), ('\u{e818}', "dev-kibana"), ('\u{ee16}', "fa-ban-smoking"), ('\u{ed74}', "fa-bandage"), ('\u{f2d5}', "fa-bandcamp"), ('\u{eda3}', "fa-piggy-bank"), ('\u{e281}', "fae-banana"), ('\u{f0daf}', "md-bandage"), ('\u{f0070}', "md-bank")],
+            NoDraw => &[('\u{26d4}', "emoji U+26D4"), ('\u{eabd}', "cod-circle_slash"), ('\u{f468}', "oct-circle-slash"), ('\u{e818}', "dev-kibana"), ('\u{f05e}', "fa-ban"), ('\u{ee16}', "fa-ban-smoking"), ('\u{ed74}', "fa-bandage"), ('\u{f2d5}', "fa-bandcamp"), ('\u{eda3}', "fa-piggy-bank"), ('\u{e281}', "fae-banana")],
+            Mayhem => &[('\u{1f300}', "emoji U+1F300"), ('\u{f074}', "fa-shuffle"), ('\u{f049d}', "md-shuffle"), ('\u{f049e}', "md-shuffle-disabled"), ('\u{f049f}', "md-shuffle-variant"), ('\u{edec}', "fa-dice"), ('\u{eef5}', "fa-dice-d20"), ('\u{eef6}', "fa-dice-d6"), ('\u{eded}', "fa-dice-five"), ('\u{edee}', "fa-dice-four")],
+            Magnetism => &[('\u{1f9f2}', "emoji U+1F9F2"), ('\u{f076}', "fa-magnet"), ('\u{ebae}', "cod-magnet"), ('\u{f0347}', "md-magnet"), ('\u{f0348}', "md-magnet-on")],
+            Panache => &[('\u{1f3a9}', "emoji U+1F3A9"), ('\u{edf7}', "fa-feather"), ('\u{e7d8}', "dev-feathersjs"), ('\u{ee34}', "fa-feather-pointed"), ('\u{f06d3}', "md-feather"), ('\u{e7f8}', "dev-hardhat"), ('\u{e7bb}', "dev-redhat"), ('\u{efb7}', "fa-hat-cowboy"), ('\u{efb8}', "fa-hat-cowboy-side"), ('\u{ef01}', "fa-hat-wizard")],
+            SadisticNature => &[('\u{1f60f}', "emoji U+1F60F"), ('\u{ee53}', "fa-face_grin_tongue_squint"), ('\u{ee49}', "fa-face-grin"), ('\u{ee4b}', "fa-face-grin-beam"), ('\u{ee4c}', "fa-face-grin-beam-sweat"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee4e}', "fa-face-grin-squint"), ('\u{ee4f}', "fa-face-grin-squint-tears"), ('\u{ee50}', "fa-face-grin-stars"), ('\u{ee51}', "fa-face-grin-tears")],
+            PlatedArmor => &[('\u{1f9ba}', "emoji U+1F9BA"), ('\u{f0ada}', "md-shield_plus"), ('\u{f0adb}', "md-shield-plus-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield")],
+            Constricted => &[('\u{1f40d}', "emoji U+1F40D"), ('\u{f150e}', "md-snake"), ('\u{ec16}', "cod-snake"), ('\u{f1ca}', "fa-vine"), ('\u{eb8d}', "cod-symbol-string"), ('\u{e8ac}', "dev-spring"), ('\u{f2a4}', "fa-hard-of-hearing"), ('\u{ef0b}', "fa-ring"), ('\u{ed8d}', "fa-syringe"), ('\u{e23d}', "fae-ring")],
+            Confused => &[('\u{1f635}', "emoji U+1F635"), ('\u{f02d7}', "md-help_circle"), ('\u{f0625}', "md-help-circle-outline"), ('\u{eb32}', "cod-question"), ('\u{f128}', "fa-question"), ('\u{f059}', "fa-question-circle"), ('\u{f29c}', "fa-question-circle-o"), ('\u{f0b59}', "md-account-question"), ('\u{f0b5a}', "md-account-question-outline"), ('\u{f1231}', "md-beaker-question")],
+            Hex => &[('\u{1f52e}', "emoji U+1F52E"), ('\u{ef21}', "fa-hurricane"), ('\u{f0898}', "md-weather-hurricane"), ('\u{e36c}', "weather-hurricane"), ('\u{e3c7}', "weather-hurricane-warning"), ('\u{e24f}', "fae-hexagon"), ('\u{f0049}', "md-arrow-down-bold-hexagon-outline"), ('\u{f0051}', "md-arrow-left-bold-hexagon-outline"), ('\u{f0058}', "md-arrow-right-bold-hexagon-outline"), ('\u{f0061}', "md-arrow-up-bold-hexagon-outline")],
+            DrawReduction => &[('\u{1f53b}', "emoji U+1F53B"), ('\u{f0639}', "md-cards_outline"), ('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple")],
+            Surrounded => &[('\u{1f465}', "emoji U+1F465"), ('\u{f0849}', "md-account_group"), ('\u{f0b58}', "md-account-group-outline"), ('\u{f0c0}', "fa-users"), ('\u{edd3}', "fa-users-gear"), ('\u{eda2}', "fa-people-carry-box"), ('\u{f038f}', "md-nature-people"), ('\u{f4fd}', "oct-people"), ('\u{f07e}', "fa-arrows-left-right"), ('\u{f047}', "fa-arrows-up-down-left-right")],
+            Intangible => &[('\u{1f4a0}', "emoji U+1F4A0"), ('\u{f02a0}', "md-ghost"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{eefe}', "fa-ghost"), ('\u{f2ac}', "fa-snapchat-ghost"), ('\u{f09f5}', "md-ghost-off"), ('\u{f165c}', "md-ghost-off-outline"), ('\u{f165d}', "md-ghost-outline"), ('\u{eb53}', "cod-shield")],
+            Ritual => &[('\u{1f9ff}', "emoji U+1F9FF"), ('\u{eedb}', "fa-hands_praying"), ('\u{eeda}', "fa-person-praying"), ('\u{ee84}', "fa-spray-can"), ('\u{ee97}', "fa-spray-can-sparkles"), ('\u{f0579}', "md-hands-pray"), ('\u{f0665}', "md-spray"), ('\u{f0ae0}', "md-spray-bottle"), ('\u{f1fd}', "fa-cake-candles"), ('\u{f05e2}', "md-candle")],
+            Enrage => &[('\u{1f4e2}', "emoji U+1F4E2"), ('\u{f0a1}', "fa-bullhorn"), ('\u{f00e6}', "md-bullhorn"), ('\u{f0b23}', "md-bullhorn-outline"), ('\u{f196e}', "md-bullhorn-variant"), ('\u{f196f}', "md-bullhorn-variant-outline"), ('\u{eb1e}', "cod-megaphone"), ('\u{f45f}', "oct-megaphone"), ('\u{f0bc}', "fa-angrycreative"), ('\u{ee1f}', "fa-face-angry")],
+            Anger => &[('\u{1f620}', "emoji U+1F620"), ('\u{ee48}', "fa-face_grimace"), ('\u{ee1f}', "fa-face-angry"), ('\u{f0bc}', "fa-angrycreative"), ('\u{f0c69}', "md-emoticon-angry"), ('\u{f0c6a}', "md-emoticon-angry-outline"), ('\u{f169d}', "md-robot-angry"), ('\u{f169e}', "md-robot-angry-outline"), ('\u{ee43}', "fa-face-frown-open"), ('\u{ef2c}', "fa-cloud-bolt")],
+            SharpHide => &[('\u{1f994}', "emoji U+1F994"), ('\u{eefd}', "fa-hand_fist"), ('\u{ed25}', "fa-shield-halved"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross"), ('\u{eb53}', "cod-shield")],
+            BeatOfDeath => &[('\u{1f493}', "emoji U+1F493"), ('\u{f21e}', "fa-heartbeat"), ('\u{f05f6}', "md-heart-pulse"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
+            Curiosity => &[('\u{1f50d}', "emoji U+1F50D"), ('\u{f0349}', "md-magnify"), ('\u{eedd}', "fa-magnifying-glass-dollar"), ('\u{eede}', "fa-magnifying-glass-location"), ('\u{f0980}', "md-magnify-close"), ('\u{f1874}', "md-magnify-expand"), ('\u{f034a}', "md-magnify-minus"), ('\u{f0a62}', "md-magnify-minus-cursor"), ('\u{f06ec}', "md-magnify-minus-outline"), ('\u{f034b}', "md-magnify-plus")],
+            CurlUp => &[('\u{1f40c}', "emoji U+1F40C"), ('\u{f0adb}', "md-shield_plus_outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account")],
+            Explosive => &[('\u{1f4a3}', "emoji U+1F4A3"), ('\u{f0691}', "md-bomb"), ('\u{f1e2}', "fa-bomb"), ('\u{f06c5}', "md-bomb-off"), ('\u{ee9f}', "fa-car-burst"), ('\u{f0693}', "md-camera-burst"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire")],
+            Fading => &[('\u{231b}', "emoji U+231B"), ('\u{f253}', "fa-hourglass_end"), ('\u{f254}', "fa-hourglass"), ('\u{f252}', "fa-hourglass-half"), ('\u{f250}', "fa-hourglass-o"), ('\u{f251}', "fa-hourglass-start"), ('\u{f4e3}', "oct-hourglass"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{eefe}', "fa-ghost")],
+            Flight => &[('\u{1f985}', "emoji U+1F985"), ('\u{ed99}', "fa-dove"), ('\u{e7d8}', "dev-feathersjs"), ('\u{edf7}', "fa-feather"), ('\u{ee34}', "fa-feather-pointed"), ('\u{f06d3}', "md-feather"), ('\u{e201}', "fae-snowing"), ('\u{f01de}', "md-drawing"), ('\u{f01df}', "md-drawing-box"), ('\u{f0608}', "md-rowing")],
+            Invincible => &[('\u{1f3f0}', "emoji U+1F3F0"), ('\u{f132}', "fa-shield"), ('\u{eb53}', "cod-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline")],
+            Malleable => &[('\u{1f9fd}', "emoji U+1F9FD"), ('\u{eeb0}', "fa-shapes"), ('\u{edec}', "fa-dice"), ('\u{eef5}', "fa-dice-d20"), ('\u{eef6}', "fa-dice-d6"), ('\u{eded}', "fa-dice-five"), ('\u{edee}', "fa-dice-four"), ('\u{edef}', "fa-dice-one"), ('\u{edf0}', "fa-dice-six"), ('\u{edf1}', "fa-dice-three")],
+            Minion => &[('\u{1f47e}', "emoji U+1F47E"), ('\u{f0c0}', "fa-users"), ('\u{edd3}', "fa-users-gear"), ('\u{ede6}', "fa-chalkboard-user"), ('\u{ef7c}', "fa-clipboard-user"), ('\u{ef86}', "fa-hospital-user"), ('\u{f007}', "fa-user"), ('\u{edc5}', "fa-user-astronaut"), ('\u{edc6}', "fa-user-check"), ('\u{f2bd}', "fa-user-circle")],
+            MinionLeader => &[('\u{1f451}', "emoji U+1F451"), ('\u{edeb}', "fa-crown"), ('\u{e26e}', "fae-crown"), ('\u{f01a5}', "md-crown"), ('\u{f17dc}', "md-crown-circle"), ('\u{f17dd}', "md-crown-circle-outline"), ('\u{f11d0}', "md-crown-outline"), ('\u{f18bc}', "md-shield-crown"), ('\u{f18bd}', "md-shield-crown-outline"), ('\u{ed62}', "fa-chess-king")],
+            ModeShift => &[('\u{1f504}', "emoji U+1F504"), ('\u{f2f1}', "fa-rotate"), ('\u{f2ea}', "fa-rotate-left"), ('\u{f2f9}', "fa-rotate-right"), ('\u{f0d4e}', "md-axis-x-rotate-clockwise"), ('\u{f0d4f}', "md-axis-x-rotate-counterclockwise"), ('\u{f0d53}', "md-axis-y-rotate-clockwise"), ('\u{f0d54}', "md-axis-y-rotate-counterclockwise"), ('\u{f0d57}', "md-axis-z-rotate-clockwise"), ('\u{f0d58}', "md-axis-z-rotate-counterclockwise")],
+            PainfulStabs => &[('\u{1f489}', "emoji U+1F489"), ('\u{ed8d}', "fa-syringe"), ('\u{e2a1}', "fae-injection"), ('\u{f0391}', "md-needle"), ('\u{f19d2}', "md-needle-off"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword")],
+            Reactive => &[('\u{26a1}', "emoji U+26A1"), ('\u{f0db3}', "md-bolt"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f1903}', "md-home-lightning-bolt"), ('\u{f1904}', "md-home-lightning-bolt-outline"), ('\u{f140b}', "md-lightning-bolt"), ('\u{f0820}', "md-lightning-bolt-circle"), ('\u{f140c}', "md-lightning-bolt-outline"), ('\u{f0593}', "md-weather-lightning"), ('\u{f067e}', "md-weather-lightning-rainy")],
+            Regrow => &[('\u{1f331}', "emoji U+1F331"), ('\u{eda7}', "fa-seedling"), ('\u{e22f}', "fae-plant"), ('\u{ef39}', "fa-canadian-maple-leaf"), ('\u{f06c}', "fa-leaf"), ('\u{f032a}', "md-leaf"), ('\u{f1905}', "md-leaf-circle"), ('\u{f1906}', "md-leaf-circle-outline"), ('\u{f0c93}', "md-leaf-maple"), ('\u{f12da}', "md-leaf-maple-off")],
+            Shifting => &[('\u{1f503}', "emoji U+1F503"), ('\u{f07d}', "fa-arrows_v"), ('\u{f047}', "fa-arrows-up-down-left-right"), ('\u{f07e}', "fa-arrows-left-right"), ('\u{f0ec}', "fa-exchange"), ('\u{f18d}', "fa-stack-exchange"), ('\u{f060b}', "md-stack-exchange"), ('\u{eb37}', "cod-refresh"), ('\u{f021}', "fa-refresh"), ('\u{f1765}', "md-archive-refresh")],
+            Slow => &[('\u{1f9a5}', "emoji U+1F9A5"), ('\u{f017}', "fa-clock_o"), ('\u{f0b57}', "md-account-clock-outline"), ('\u{f1750}', "md-archive-clock-outline"), ('\u{f19e6}', "md-battery-clock-outline"), ('\u{f1689}', "md-book-clock-outline"), ('\u{f10d1}', "md-briefcase-clock-outline"), ('\u{f16e1}', "md-calendar-clock-outline"), ('\u{f16e3}', "md-clipboard-clock-outline"), ('\u{f18fa}', "md-clipboard-text-clock-outline")],
+            SporeCloud => &[('\u{1f344}', "emoji U+1F344"), ('\u{f0c2}', "fa-cloud"), ('\u{ebaa}', "cod-cloud"), ('\u{eac2}', "cod-cloud-download"), ('\u{eac3}', "cod-cloud-upload"), ('\u{e792}', "dev-cloudflare"), ('\u{e793}', "dev-cloudflareworkers"), ('\u{e7f1}', "dev-googlecloud"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f0ed}', "fa-cloud-download")],
+            Split => &[('\u{1f500}', "emoji U+1F500"), ('\u{f062c}', "md-source_branch"), ('\u{f14cf}', "md-source-branch-check"), ('\u{f14cb}', "md-source-branch-minus"), ('\u{f14ca}', "md-source-branch-plus"), ('\u{f14cd}', "md-source-branch-refresh"), ('\u{f14cc}', "md-source-branch-remove"), ('\u{f14ce}', "md-source-branch-sync"), ('\u{eb3e}', "cod-repo-clone"), ('\u{f24d}', "fa-clone")],
+            Stasis => &[('\u{1f512}', "emoji U+1F512"), ('\u{f187}', "fa-box_archive"), ('\u{f0765}', "checkbox-blank-circle"), ('\u{f043d}', "checkbox-blank-circle-outline"), ('\u{f0766}', "checkbox-blank-circle-outline.1"), ('\u{eb09}', "cod-inbox"), ('\u{e707}', "dev-dropbox"), ('\u{ed75}', "fa-box"), ('\u{ed95}', "fa-box-open"), ('\u{ed76}', "fa-boxes-stacked")],
+            StrengthUp => &[('\u{1f53c}', "emoji U+1F53C"), ('\u{f102}', "fa-angles_up"), ('\u{eaa1}', "cod-arrow-up"), ('\u{f062}', "fa-arrow-up"), ('\u{efb2}', "fa-arrow-up-9-1"), ('\u{efb0}', "fa-arrow-up-short-wide"), ('\u{efae}', "fa-arrow-up-z-a"), ('\u{f0aa}', "fa-circle-arrow-up"), ('\u{ee3d}', "fa-file-arrow-up"), ('\u{f176}', "fa-long-arrow-up")],
+            TimeWarp => &[('\u{23f0}', "emoji U+23F0"), ('\u{f254}', "fa-hourglass"), ('\u{f253}', "fa-hourglass-end"), ('\u{f252}', "fa-hourglass-half"), ('\u{f250}', "fa-hourglass-o"), ('\u{f251}', "fa-hourglass-start"), ('\u{f4e3}', "oct-hourglass"), ('\u{f017}', "fa-clock-o"), ('\u{edc7}', "fa-user-clock"), ('\u{f0b56}', "md-account-clock")],
+            Asleep => &[('\u{1f4a4}', "emoji U+1F4A4"), ('\u{f04b2}', "md-sleep"), ('\u{23fe}', "iec-sleep-mode"), ('\u{f00a0}', "md-bell-sleep"), ('\u{f0a93}', "md-bell-sleep-outline"), ('\u{f12d1}', "md-chat-sleep"), ('\u{f12d2}', "md-chat-sleep-outline"), ('\u{f0904}', "md-power-sleep"), ('\u{f04b3}', "md-sleep-off"), ('\u{eeef}', "fa-cloud-moon")],
+            Duplication => &[('\u{1f0cf}', "emoji U+1F0CF"), ('\u{f24d}', "fa-clone"), ('\u{eb3e}', "cod-repo-clone"), ('\u{f43f}', "oct-repo-clone"), ('\u{ebcc}', "cod-copy"), ('\u{f1f9}', "fa-copyright"), ('\u{f018f}', "md-content-copy"), ('\u{f1939}', "md-copyleft"), ('\u{f05e6}', "md-copyright"), ('\u{f4bb}', "oct-copy")],
+            LoseStrength => &[('\u{1f4c9}', "emoji U+1F4C9"), ('\u{f063}', "fa-arrow_down"), ('\u{ea9a}', "cod-arrow-down"), ('\u{efb1}', "fa-arrow-down-9-1"), ('\u{efaf}', "fa-arrow-down-short-wide"), ('\u{efad}', "fa-arrow-down-z-a"), ('\u{f218}', "fa-cart-arrow-down"), ('\u{f0ab}', "fa-circle-arrow-down"), ('\u{ee36}', "fa-file-arrow-down"), ('\u{f175}', "fa-long-arrow-down")],
+            LoseDexterity => &[('\u{1f53d}', "emoji U+1F53D"), ('\u{ea9a}', "cod-arrow_down"), ('\u{f063}', "fa-arrow-down"), ('\u{efb1}', "fa-arrow-down-9-1"), ('\u{efaf}', "fa-arrow-down-short-wide"), ('\u{efad}', "fa-arrow-down-z-a"), ('\u{f218}', "fa-cart-arrow-down"), ('\u{f0ab}', "fa-circle-arrow-down"), ('\u{ee36}', "fa-file-arrow-down"), ('\u{f175}', "fa-long-arrow-down")],
+            Focus => &[('\u{1f3af}', "emoji U+1F3AF"), ('\u{f140}', "fa-bullseye"), ('\u{f05dd}', "md-bullseye"), ('\u{f08c9}', "md-bullseye-arrow"), ('\u{f05b}', "fa-crosshairs"), ('\u{eea9}', "fa-location-crosshairs"), ('\u{f01a3}', "md-crosshairs"), ('\u{f01a4}', "md-crosshairs-gps"), ('\u{f0f45}', "md-crosshairs-off"), ('\u{f1136}', "md-crosshairs-question")],
+            Poison => &[('\u{1f922}', "emoji U+1F922"), ('\u{ef0e}', "fa-skull_crossbones"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline")],
+            Accuracy => &[('\u{1f3f9}', "emoji U+1F3F9"), ('\u{f05b}', "fa-crosshairs"), ('\u{eea9}', "fa-location-crosshairs"), ('\u{f01a3}', "md-crosshairs"), ('\u{f01a4}', "md-crosshairs-gps"), ('\u{f0f45}', "md-crosshairs-off"), ('\u{f1136}', "md-crosshairs-question"), ('\u{f140}', "fa-bullseye"), ('\u{f05dd}', "md-bullseye"), ('\u{f08c9}', "md-bullseye-arrow")],
+            AfterImage => &[('\u{1f4f8}', "emoji U+1F4F8"), ('\u{f00f}', "fa-images"), ('\u{ed19}', "fa-image-portrait"), ('\u{f0509}', "image-filter-hdr"), ('\u{f08cc}', "md-camera-image"), ('\u{f021f}', "md-file-image"), ('\u{f1772}', "md-file-image-marker"), ('\u{f1773}', "md-file-image-marker-outline"), ('\u{f193b}', "md-file-image-minus"), ('\u{f193c}', "md-file-image-minus-outline")],
+            ThousandCuts => &[('\u{1f52a}', "emoji U+1F52A"), ('\u{f09fb}', "md-knife"), ('\u{f09fc}', "md-knife-military"), ('\u{f0a70}', "md-silverware-fork-knife"), ('\u{f0c86}', "md-fuse-blade"), ('\u{f0d2c}', "md-rollerblade"), ('\u{f002e}', "md-rollerblade-off"), ('\u{f0e61}', "md-saw-blade"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword")],
+            Envenom => &[('\u{1f9ea}', "emoji U+1F9EA"), ('\u{f0c3}', "fa-flask"), ('\u{e7dc}', "dev-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus"), ('\u{f123b}', "md-flask-empty-minus-outline"), ('\u{f13f4}', "md-flask-empty-off"), ('\u{f13f5}', "md-flask-empty-off-outline"), ('\u{f0095}', "md-flask-empty-outline")],
+            InfiniteBlades => &[('\u{eecf}', "fa-khanda"), ('\u{267e}', "emoji U+267E"), ('\u{f10fd}', "md-khanda"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f04e5}', "md-sword"), ('\u{f0787}', "md-sword-cross"), ('\u{f09fb}', "md-knife")],
+            NoxiousFumes => &[('\u{1f637}', "emoji U+1F637"), ('\u{ef29}', "fa-smog"), ('\u{f0a71}', "md-smog"), ('\u{e36d}', "weather-smog"), ('\u{ebaa}', "cod-cloud"), ('\u{eac2}', "cod-cloud-download"), ('\u{eac3}', "cod-cloud-upload"), ('\u{e792}', "dev-cloudflare"), ('\u{e793}', "dev-cloudflareworkers"), ('\u{e7f1}', "dev-googlecloud")],
+            ToolsOfTheTrade => &[('\u{1f527}', "emoji U+1F527"), ('\u{ef70}', "fa-screwdriver_wrench"), ('\u{ee1b}', "fa-toolbox"), ('\u{f09ac}', "md-toolbox"), ('\u{f09ad}', "md-toolbox-outline"), ('\u{f0ad}', "fa-wrench"), ('\u{f189a}', "md-account-wrench"), ('\u{f189b}', "md-account-wrench-outline"), ('\u{f1814}', "md-car-wrench"), ('\u{f19fc}', "md-folder-wrench")],
+            WraithForm => &[('\u{1f47b}', "emoji U+1F47B"), ('\u{eefe}', "fa-ghost"), ('\u{e71f}', "dev-ghost"), ('\u{e714}', "dev-ghost-small"), ('\u{f2ac}', "fa-snapchat-ghost"), ('\u{f02a0}', "md-ghost"), ('\u{f09f5}', "md-ghost-off"), ('\u{f165c}', "md-ghost-off-outline"), ('\u{f165d}', "md-ghost-outline"), ('\u{f14f1}', "md-spirit-level")],
+            Blur => &[('\u{1f4a8}', "emoji U+1F4A8"), ('\u{f070}', "fa-eye_slash"), ('\u{f2a8}', "fa-low-vision"), ('\u{ea70}', "cod-eye"), ('\u{eae7}', "cod-eye-closed"), ('\u{f140}', "fa-bullseye"), ('\u{f06e}', "fa-eye"), ('\u{f1fb}', "fa-eyedropper"), ('\u{ee6e}', "fa-face-rolling-eyes"), ('\u{f0420}', "md-account-eye")],
+            PhantasmalKiller => &[('\u{1f3ad}', "emoji U+1F3AD"), ('\u{f21b}', "fa-user_secret"), ('\u{ef07}', "fa-mask"), ('\u{eeb6}', "fa-masks-theater"), ('\u{f1023}', "md-domino-mask"), ('\u{f0d02}', "md-drama-masks"), ('\u{f1586}', "md-face-mask"), ('\u{f1587}', "md-face-mask-outline"), ('\u{f0825}', "md-guy-fawkes-mask"), ('\u{f0916}', "md-transition-masked")],
+            Burst => &[('\u{1f4a5}', "emoji U+1F4A5"), ('\u{f04e}', "fa-forward"), ('\u{f050}', "fa-forward-fast"), ('\u{f051}', "fa-step-forward"), ('\u{f003d}', "md-arrange-bring-forward"), ('\u{f0211}', "md-fast-forward"), ('\u{f0d71}', "md-fast-forward-10"), ('\u{f193a}', "md-fast-forward-15"), ('\u{f0d06}', "md-fast-forward-30"), ('\u{f11f8}', "md-fast-forward-5")],
+            WellLaidPlans => &[('\u{1f9ed}', "emoji U+1F9ED"), ('\u{eab3}', "cod-checklist"), ('\u{e29a}', "fae-checklist-o"), ('\u{f45e}', "oct-checklist"), ('\u{f096a}', "md-format-list-checkbox"), ('\u{f0756}', "md-format-list-checks"), ('\u{f05c7}', "md-playlist-check"), ('\u{f07f}', "fa-clipboard-alt"), ('\u{ed7a}', "fa-clipboard-check"), ('\u{ed7b}', "fa-clipboard-list")],
+            Choke => &[('\u{1f616}', "emoji U+1F616"), ('\u{f0a4f}', "md-hand_front_right"), ('\u{f182f}', "md-hand-front-right-outline"), ('\u{e7f7}', "dev-handlebars"), ('\u{ed73}', "fa-hand-dots"), ('\u{eefd}', "fa-hand-fist"), ('\u{ed9a}', "fa-hand-holding"), ('\u{ed9c}', "fa-hand-holding-dollar"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{ed9b}', "fa-hand-holding-heart")],
+            CorpseExplosion => &[('\u{1f9e8}', "emoji U+1F9E8"), ('\u{f1e2}', "fa-bomb"), ('\u{f0691}', "md-bomb"), ('\u{f06c5}', "md-bomb-off"), ('\u{ef0e}', "fa-skull-crossbones"), ('\u{f0bc6}', "md-skull-crossbones"), ('\u{f0bc7}', "md-skull-crossbones-outline"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire")],
+            DoubleDamage => &[('\u{1f93a}', "emoji U+1F93A"), ('\u{ee29}', "fa-check_double"), ('\u{ef2c}', "fa-cloud-bolt"), ('\u{f0db3}', "md-bolt"), ('\u{f1903}', "md-home-lightning-bolt"), ('\u{f1904}', "md-home-lightning-bolt-outline"), ('\u{f140b}', "md-lightning-bolt"), ('\u{f0820}', "md-lightning-bolt-circle"), ('\u{f140c}', "md-lightning-bolt-outline"), ('\u{ed67}', "fa-dumbbell")],
         }
     }
 
@@ -1168,7 +1265,8 @@ mod tests {
         let mut seen: Vec<(char, &'static str)> = Vec::new();
         for &s in Status::ALL {
             let g = s.glyph();
-            assert!(g as u32 > 0xE000, "{} 没有图标", s.name());
+            // nf 字形在 PUA(>=0xE000),emoji 在更低的码位:两者都只要"非 ASCII 且非空"
+            assert!(!g.is_ascii(), "{} 没有图标", s.name());
             if let Some((_, other)) = seen.iter().find(|(c, _)| *c == g) {
                 panic!("{} 与 {} 共用同一个图标 {:?}", s.name(), other, g);
             }
@@ -1203,6 +1301,21 @@ mod tests {
                 assert!(!name.is_empty(), "{} 的候选没有字形名", s.name());
                 assert!(!seen.contains(ch), "{} 的候选 {:?} 重复", s.name(), ch);
                 seen.push(*ch);
+            }
+        }
+    }
+
+    /// 图标宽度:emoji 必须是双宽(否则列会串),nf 字形是单宽;
+    /// 顺带守住"别用 VS16 序列"——那种会被 unicode-width 当窄字符
+    #[test]
+    fn glyph_widths_match_their_kind() {
+        for &s in Status::ALL {
+            let g = s.glyph();
+            let w = crate::ui::display_width(&g.to_string());
+            if s.icon_is_emoji() {
+                assert_eq!(w, 2, "{} 的 emoji {} 宽度是 {w},应为 2", s.name(), g);
+            } else {
+                assert_eq!(w, 1, "{} 的 nf 字形 {} 宽度是 {w},应为 1", s.name(), g);
             }
         }
     }

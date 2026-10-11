@@ -314,6 +314,100 @@ ORIGINAL = {
     "Intangible": "幽魂",
 }
 
+
+# 状态 -> emoji 图标(单码点、双宽:避免 VS16 序列被 unicode-width 当成窄字符而串行)
+EMOJI = {
+    "Strength": "\U0001F4AA",
+    "Dexterity": "\U0001F45F",
+    "Vulnerable": "\U0001F494",
+    "Weak": "\U0001F974",
+    "Frail": "\U0001F9B4",
+    "Entangled": "\U0001F9F6",
+    "DemonForm": "\U0001F608",
+    "Metallicize": "\U0001F529",
+    "FeelNoPain": "\U0001F48A",
+    "DarkEmbrace": "\U0001F311",
+    "Evolve": "\U0001F9EC",
+    "FireBreathing": "\U0001F432",
+    "Barricade": "\U0001F9F1",
+    "Brutality": "\U0001F4A2",
+    "Rupture": "\U0001FA78",
+    "Regenerate": "\U0001F49A",
+    "Thorns": "\U0001F335",
+    "Berserk": "\U0001F92C",
+    "Combust": "\U0001F525",
+    "Corruption": "\U0001F9A0",
+    "DoubleTap": "\U0001F501",
+    "Juggernaut": "\U0001F682",
+    "Rage": "\U0001F621",
+    "FlameBarrier": "\U0001F30B",
+    "Artifact": "\U0001F48E",
+    "NoBlock": "\U0001F6AB",
+    "NoDraw": "\U000026D4",
+    "Mayhem": "\U0001F300",
+    "Magnetism": "\U0001F9F2",
+    "Panache": "\U0001F3A9",
+    "SadisticNature": "\U0001F60F",
+    "PlatedArmor": "\U0001F9BA",
+    "Constricted": "\U0001F40D",
+    "Ritual": "\U0001F9FF",
+    "Enrage": "\U0001F4E2",
+    "Anger": "\U0001F620",
+    "SharpHide": "\U0001F994",
+    "BeatOfDeath": "\U0001F493",
+    "Curiosity": "\U0001F50D",
+    "CurlUp": "\U0001F40C",
+    "Explosive": "\U0001F4A3",
+    "Fading": "\U0000231B",
+    "Flight": "\U0001F985",
+    "Invincible": "\U0001F3F0",
+    "Malleable": "\U0001F9FD",
+    "Minion": "\U0001F47E",
+    "MinionLeader": "\U0001F451",
+    "ModeShift": "\U0001F504",
+    "PainfulStabs": "\U0001F489",
+    "Reactive": "\U000026A1",
+    "Regrow": "\U0001F331",
+    "Shifting": "\U0001F503",
+    "Slow": "\U0001F9A5",
+    "SporeCloud": "\U0001F344",
+    "Split": "\U0001F500",
+    "Stasis": "\U0001F512",
+    "StrengthUp": "\U0001F53C",
+    "TimeWarp": "\U000023F0",
+    "Asleep": "\U0001F4A4",
+    "Duplication": "\U0001F0CF",
+    "LoseStrength": "\U0001F4C9",
+    "LoseDexterity": "\U0001F53D",
+    "Focus": "\U0001F3AF",
+    "Accuracy": "\U0001F3F9",
+    "AfterImage": "\U0001F4F8",
+    "ThousandCuts": "\U0001F52A",
+    "Envenom": "\U0001F9EA",
+    "InfiniteBlades": "\U0000267E",
+    "NoxiousFumes": "\U0001F637",
+    "ToolsOfTheTrade": "\U0001F527",
+    "WraithForm": "\U0001F47B",
+    "Blur": "\U0001F4A8",
+    "PhantasmalKiller": "\U0001F3AD",
+    "Burst": "\U0001F4A5",
+    "WellLaidPlans": "\U0001F9ED",
+    "Choke": "\U0001F616",
+    "CorpseExplosion": "\U0001F9E8",
+    "DoubleDamage": "\U0001F93A",
+    "Poison": "\U0001F922",
+    "Confused": "\U0001F635",
+    "Hex": "\U0001F52E",
+    "DrawReduction": "\U0001F53B",
+    "Surrounded": "\U0001F465",
+    "Intangible": "\U0001F4A0",
+}
+
+# 图标模式:nf = 用 Nerd Font 字形,emoji = 用 EMOJI 表里的那个(评审时逐条改)
+MODE = {k: "emoji" for k in EMOJI}
+# ♾(U+267E) 在 unicode-width 里是窄码位,会串行;这一条没有合适的双宽替代,保留 nf 字形
+MODE["InfiniteBlades"] = "nf"
+
 def variants(src: str):
     """status.rs 里 Status 枚举的变体(按声明顺序)"""
     i = src.index("pub enum Status {")
@@ -354,25 +448,60 @@ def main():
     if bad_keys:
         print(f"配色键不在 theme::icon_color 支持的集合里: {sorted(bad_keys)}", file=sys.stderr)
         return 1
+    bad_mode = [v for v in vs if MODE.get(v) not in ("nf", "emoji")]
+    if bad_mode:
+        print(f"模式不对的状态: {bad_mode}", file=sys.stderr)
+        return 1
+    missing_emoji = [v for v in vs if MODE.get(v) == "emoji" and not EMOJI.get(v)]
+    if missing_emoji:
+        print(f"选了 emoji 模式却没有 emoji: {missing_emoji}", file=sys.stderr)
+        return 1
+    import unicodedata as _ud
+
+    narrow = [
+        (v, EMOJI[v], _ud.east_asian_width(EMOJI[v]))
+        for v in vs
+        if MODE[v] == "emoji" and _ud.east_asian_width(EMOJI[v]) != "W"
+    ]
+    if narrow:
+        for v, ch, eaw in narrow:
+            print(f"emoji 不是双宽(会串行): {v} {ch!r} east_asian_width={eaw}", file=sys.stderr)
+        return 1
     unused = [v for v in MAP if v not in vs]
     if unused:
         print(f"映射表里有枚举里不存在的键: {unused}", file=sys.stderr)
         return 1
-    lines = [
-        f"            {v} => '\\u{{{byname[MAP[v].lower().replace('-', '_')]:x}}}', // {MAP[v]}"
-        for v in vs
-    ]
+    def glyph_lit(v):
+        if MODE[v] == "emoji":
+            return "'\\u{%x}', // emoji %s" % (ord(EMOJI[v]), EMOJI[v].encode("unicode_escape").decode())
+        return "'\\u{%x}', // %s" % (byname[MAP[v].lower().replace('-', '_')], MAP[v])
+
+    lines = [f"            {v} => {glyph_lit(v)}" for v in vs]
     color_lines = [f'            {v} => "{COLOR[v]}",' for v in vs]
 
     def candidates(status: str):
+        """候选:第一个是当前用的(按 MODE 决定是 emoji 还是 nf 字形),第二个是另一种,
+        其余按关键词从字形名里搜(名字排序保证稳定)."""
+        picked_nf = MAP[status].lower().replace("-", "_")
+        emoji_ch = EMOJI[status]
+
+        def emoji_label(ch):
+            return "emoji U+%X" % ord(ch)
+
         out = []
-        picked = MAP[status].lower().replace("-", "_")
-        # 当前用的排第一,其余按关键词从字形名里搜(名字排序保证稳定)
-        out.append(picked)
+        if MODE[status] == "emoji":
+            out.append((ord(emoji_ch), emoji_label(emoji_ch)))
+            out.append((byname[picked_nf], MAP[status]))
+        else:
+            out.append((byname[picked_nf], MAP[status]))
+            out.append((ord(emoji_ch), emoji_label(emoji_ch)))
+        names = {n for _, n in out}
+        names.add(picked_nf)  # 关键词搜到当前那个 nf 字形时别再列一遍
         for kw in KEYWORDS.get(status, []):
             for n in sorted(byname):
-                if kw in n and n not in out:
-                    out.append(n)
+                if kw in n and n not in names:
+                    out.append((byname[n], n.replace("_", "-")))
+                    names.add(n)
                     if len(out) >= 10:
                         break
             if len(out) >= 10:
@@ -380,11 +509,12 @@ def main():
         return out[:10]
 
     orig_lines = [f'            {v} => "{ORIGINAL.get(v, "?")}",' for v in vs]
+    emoji_flag = [f'            {v} => {"true" if MODE[v] == "emoji" else "false"},' for v in vs]
 
     cand_lines = []
     for v in vs:
         items = candidates(v)
-        pairs = ", ".join(f"('\\u{{{byname[n]:x}}}', \"{n.replace('_', '-')}\")" for n in items)
+        pairs = ", ".join(f"('\\u{{{cp:x}}}', \"{label}\")" for cp, label in items)
         cand_lines.append(f"            {v} => &[{pairs}],")
     print("\n".join(lines))
     if "--write" in sys.argv:
@@ -401,6 +531,12 @@ def main():
             "    /// 确认后再往 HUD/战斗状态行铺).\n"
             "    pub fn icon_color_key(self) -> &'static str {\n        use Status::*;\n        match self {\n"
             + "\n".join(color_lines)
+            + "\n        }\n    }\n"
+        )
+        body += (
+            "\n    /// 当前图标是不是 emoji(emoji 自带颜色,图标那一列就不再按配色键上色)\n"
+            "    pub fn icon_is_emoji(self) -> bool {\n        use Status::*;\n        match self {\n"
+            + "\n".join(emoji_flag)
             + "\n        }\n    }\n"
         )
         body += (

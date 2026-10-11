@@ -191,7 +191,12 @@ fn status_items(group: &str) -> Vec<Item> {
             // 副标题保留短标记:图标占了 tag 那一列(先在图鉴里过一遍,好看再往 HUD 铺)
             sub: format!("{}   {kind}   {}", s.short(), status_sources(s)),
             tag: s.glyph().to_string(),
-            tag_color_key: s.icon_color_key(),
+            // emoji 自带颜色:标记一下,渲染时不再按配色键上色
+            tag_color_key: if s.icon_is_emoji() {
+                "emoji"
+            } else {
+                s.icon_color_key()
+            },
             text: status_text_with_candidates(s),
             text_up: String::new(),
             done: true,

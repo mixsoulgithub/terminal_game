@@ -35,6 +35,9 @@ fn tabs(buf: &mut Buffer, row: Rect, gs: &[Group], cur: usize) {
 pub fn tag_color(item: &compendium::Item) -> ratatui::style::Color {
     if item.tag_color_key.is_empty() {
         theme::DIM
+    } else if item.tag_color_key == "emoji" {
+        // emoji 自带颜色:不要用配色键去覆盖它,保持默认前景
+        theme::FG
     } else {
         theme::icon_color(item.tag_color_key)
     }
@@ -324,18 +327,27 @@ mod tests {
             .expect("状态在册里")
     }
 
+    /// 一个 nf 模式的样例 Item(力量在原作里是火色 + 肌肉图标)
+    fn strong_with_nf() -> compendium::Item {
+        use crate::core::status::Status;
+        let mut it = item_of(Status::Strength);
+        it.tag_color_key = "fire";
+        it
+    }
+
     /// 状态册的图标走 icon_color(力量=火色、中毒=中毒绿、纯标记=暗色),
     /// 别的册(卡牌/遗物/药水/事件/怪物)仍是暗色
     #[test]
     fn status_icons_take_their_own_color() {
         use crate::core::status::Status;
+        // 切回 nf 模式的状态才走 icon_color(这里用状态自己的键断言映射)
+        assert_eq!(tag_color(&strong_with_nf()), theme::icon_color("fire"));
         let strong = item_of(Status::Strength);
-        assert_eq!(strong.tag_color_key, "fire");
-        assert_eq!(tag_color(&strong), theme::icon_color("fire"));
-        assert_eq!(item_of(Status::Poison).tag_color_key, "poison");
+        assert_eq!(strong.tag_color_key, "emoji");
+        assert_eq!(tag_color(&strong), theme::FG);
         let marker = item_of(Status::Split);
-        assert_eq!(marker.tag_color_key, "dim");
-        assert_eq!(tag_color(&marker), theme::DIM);
+        assert_eq!(marker.tag_color_key, "emoji", "emoji 图标标记成 emoji,不按配色键上色");
+        assert_eq!(tag_color(&marker), theme::FG);
 
         let card = compendium::items(compendium::Library::Cards, 0)
             .into_iter()
