@@ -17,7 +17,7 @@ STATUS_RS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"
 # 状态 -> 字形名(Nerd Fonts 的字形名,大小写与连字符标点都不计较)
 MAP = {
     "Strength": "fa-dumbbell", "Dexterity": "fa-shoe_prints", "Vulnerable": "fa-heart_crack",
-    "Weak": "md-sword", "Frail": "md-shield_off", "Entangled": "fa-spider",
+    "Weak": "md-sword", "Frail": "md-shield_alert_outline", "Entangled": "fa-spider",
     "DemonForm": "fa-fire_flame_curved", "Metallicize": "fa-shield_halved",
     "FeelNoPain": "fa-bandage", "DarkEmbrace": "fa-moon_o", "Evolve": "md-cards",
     "FireBreathing": "fa-fire", "Barricade": "md-wall", "Brutality": "md-blood_bag",
@@ -55,7 +55,7 @@ COLOR = {
     "Dexterity": "good",
     "Vulnerable": "bad",
     "Weak": "bad",
-    "Frail": "bad",
+    "Frail": "poison",
     "Entangled": "bad",
     "DemonForm": "fire",
     "Metallicize": "block",
@@ -143,7 +143,7 @@ KEYWORDS = {
     "Dexterity": ["shoe_prints", "shoe", "running", "walk", "wind", "feather"],
     "Vulnerable": ["heart_crack", "heart_broken", "shield_halved", "crack", "broken", "target"],
     "Weak": ["sword", "slash", "dagger", "knife", "face_dizzy", "face_tired"],
-    "Frail": ["shield", "crutch", "bone", "heart_broken"],
+    "Frail": ["shield_alert", "shield", "crutch", "bone", "heart_broken"],
     "Entangled": ["spider", "web", "net", "rope", "chain"],
     "DemonForm": ["fire_flame_curved", "fire", "flame", "demon", "devil", "skull"],
     "Metallicize": ["shield_halved", "shield", "metal", "gear", "cog", "anvil"],
@@ -411,6 +411,8 @@ MODE["InfiniteBlades"] = "nf"
 MODE["Weak"] = "nf"
 # 神器:原图是铜黄色的小器物,用 nf 齿轮 + 铜黄色(emoji 里对不上)
 MODE["Artifact"] = "nf"
+# 破盾:用 nf 的"带警告的盾"(md-shield_alert_outline, U+F0ECD),配减益绿
+MODE["Frail"] = "nf"
 
 # 兜底:既没有合适 emoji、也没有合适 nf 字形时用 1-2 个大写字符(占 1~2 列,徽章里右对齐)
 TEXT = {}

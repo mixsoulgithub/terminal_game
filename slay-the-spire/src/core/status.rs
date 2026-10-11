@@ -189,6 +189,7 @@ impl Status {
 
 
 
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
@@ -199,7 +200,7 @@ impl Status {
             Dexterity => "\u{1f45f}", // emoji \U0001f45f
             Vulnerable => "\u{1f494}", // emoji \U0001f494
             Weak => "\u{f04e5}", // md-sword
-            Frail => "\u{1f9b4}", // emoji \U0001f9b4
+            Frail => "\u{f0ecd}", // md-shield_alert_outline
             Entangled => "\u{1f9f6}", // emoji \U0001f9f6
             DemonForm => "\u{1f608}", // emoji \U0001f608
             Metallicize => "\u{1f529}", // emoji \U0001f529
@@ -291,7 +292,7 @@ impl Status {
             Dexterity => "good",
             Vulnerable => "bad",
             Weak => "bad",
-            Frail => "bad",
+            Frail => "poison",
             Entangled => "bad",
             DemonForm => "fire",
             Metallicize => "block",
@@ -382,7 +383,7 @@ impl Status {
             Dexterity => "emoji",
             Vulnerable => "emoji",
             Weak => "nf",
-            Frail => "emoji",
+            Frail => "nf",
             Entangled => "emoji",
             DemonForm => "emoji",
             Metallicize => "emoji",
@@ -565,7 +566,7 @@ impl Status {
             Dexterity => &[('\u{1f45f}', "emoji U+1F45F"), ('\u{ee14}', "fa-shoe_prints"), ('\u{f0a58}', "md-horseshoe"), ('\u{f15ca}', "md-shoe-ballet"), ('\u{f15c7}', "md-shoe-cleat"), ('\u{f0b47}', "md-shoe-formal"), ('\u{f0b48}', "md-shoe-heel"), ('\u{f0dfa}', "md-shoe-print"), ('\u{f15c8}', "md-shoe-sneaker"), ('\u{f1a72}', "md-snowshoeing")],
             Vulnerable => &[('\u{1f494}', "emoji U+1F494"), ('\u{ef4f}', "fa-heart_crack"), ('\u{f02d4}', "md-heart-broken"), ('\u{f0d14}', "md-heart-broken-outline"), ('\u{ed25}', "fa-shield-halved"), ('\u{ef05}', "fa-house-chimney-crack"), ('\u{f02ed}', "md-image-broken"), ('\u{f02ee}', "md-image-broken-variant"), ('\u{f0da4}', "md-trophy-broken"), ('\u{ebf8}', "cod-target")],
             Weak => &[('\u{f04e5}', "md-sword"), ('\u{1f974}', "emoji U+1F974"), ('\u{f07f5}', "md-form-textbox-password"), ('\u{f0881}', "md-onepassword"), ('\u{f18be}', "md-shield-sword"), ('\u{f18bf}', "md-shield-sword-outline"), ('\u{f0787}', "md-sword-cross"), ('\u{ec08}', "cod-bell-slash"), ('\u{ec09}', "cod-bell-slash-dot"), ('\u{eabd}', "cod-circle-slash")],
-            Frail => &[('\u{1f9b4}', "emoji U+1F9B4"), ('\u{f099e}', "md-shield_off"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account")],
+            Frail => &[('\u{f0ecd}', "md-shield_alert_outline"), ('\u{1f9b4}', "emoji U+1F9B4"), ('\u{f0ecc}', "md-shield-alert"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield")],
             Entangled => &[('\u{1f9f6}', "emoji U+1F9F6"), ('\u{ef10}', "fa-spider"), ('\u{f11ea}', "md-spider"), ('\u{f11eb}', "md-spider-thread"), ('\u{f0bca}', "md-spider-web"), ('\u{e845}', "dev-nodewebkit"), ('\u{e8e1}', "dev-webflow"), ('\u{e8e2}', "dev-weblate"), ('\u{e8e3}', "dev-webpack"), ('\u{f070f}', "md-search-web")],
             DemonForm => &[('\u{1f608}', "emoji U+1F608"), ('\u{ef76}', "fa-fire_flame_curved"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f06d}', "fa-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
             Metallicize => &[('\u{1f529}', "emoji U+1F529"), ('\u{ed25}', "fa-shield_halved"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield"), ('\u{f088f}', "md-shield-account"), ('\u{f0a12}', "md-shield-account-outline")],
