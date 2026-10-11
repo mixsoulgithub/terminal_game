@@ -144,7 +144,7 @@ fn status_sources(s: crate::core::status::Status) -> String {
 }
 
 /// 一条状态的说明:优先用参考语料的能力文案,语料里没有的那几条手写
-fn status_text(s: crate::core::status::Status) -> String {
+pub fn status_text(s: crate::core::status::Status) -> String {
     if let Some(p) = corpus::POWERS.iter().find(|p| p.id == s.power_id()) {
         return p.text.to_string();
     }

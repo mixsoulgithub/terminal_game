@@ -62,6 +62,9 @@ pub struct App {
     /// 看牌组窗口里的光标(行下标,跳过分组标题)
     pub overlay_sel: usize,
     /// 手牌光标
+    /// 战斗里 s / S 打开的增益窗口(当前选中的敌人 / 自己)
+    pub buffs_enemy: bool,
+    pub buffs_self: bool,
     pub hand_sel: usize,
     /// 敌人光标
     pub target_sel: usize,
@@ -138,6 +141,8 @@ impl App {
             overlay_scroll: 0,
             overlay_max: std::cell::Cell::new(0),
             overlay_sel: 0,
+            buffs_enemy: false,
+            buffs_self: false,
             hand_sel: 0,
             target_sel: 0,
             map_sel: 0,
@@ -1402,6 +1407,9 @@ impl App {
                 self.info("enemies act...");
                 self.clamp();
             }
+            // s / S = 开关增益窗口(小写看敌人、大写看自己)
+            KeyCode::Char('s') => self.buffs_enemy = !self.buffs_enemy,
+            KeyCode::Char('S') => self.buffs_self = !self.buffs_self,
             // 1-9 0 = 选中第 1..10 张;同一张再按一次(或空格)= 打出
             KeyCode::Char(c) => {
                 let Some(slot) = hand_slot(c) else { return };
@@ -2224,6 +2232,8 @@ impl App {
         } else {
             self.hand_sel = 0;
             self.target_sel = 0;
+            self.buffs_enemy = false;
+            self.buffs_self = false;
         }
         let reach = self.run.travel_options().len();
         if reach == 0 {
@@ -2277,6 +2287,7 @@ impl App {
                 ("1-9 0", "select card, again to play"),
                 ("space/enter", "play"),
                 ("h l j k", "card / target"),
+                ("s S", "enemy / your buffs"),
                 ("e", "end turn"),
                 ("tab", "deck"),
                 ("U D E", "undrawn/discarded/exhausted"),

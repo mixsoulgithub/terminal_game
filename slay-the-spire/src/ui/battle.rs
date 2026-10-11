@@ -197,6 +197,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     // 收尾线
     crate::ui::hline(buf, main.x, y, main.width, crate::ui::BOX_H, theme::fg(theme::BORDER));
 
+    render_buff_panels(buf, top, app, c);
     render_status(buf, status, app, c);
     // 战斗里也要有命令行补全提示
     crate::ui::command_hints(buf, status, app);
@@ -652,6 +653,102 @@ fn render_enemy_block(buf: &mut Buffer, slot: Rect, lines: &[Vec<(String, Style)
     }
 }
 
+// ---- 增益窗口(s / S) ----
+
+/// 增益窗口:自己占战斗上区的左半边,当前选中的敌人占右半边;两边可以同时开
+fn render_buff_panels(buf: &mut Buffer, area: Rect, app: &App, c: &Combat) {
+    let half = (area.width / 2).max(16).min(area.width);
+    if app.buffs_self {
+        render_buff_panel(
+            buf,
+            Rect::new(area.x, area.y, half, area.height),
+            "your buffs",
+            &c.player.statuses,
+        );
+    }
+    if app.buffs_enemy {
+        if let Some(e) = c.enemies.get(app.target_sel) {
+            render_buff_panel(
+                buf,
+                Rect::new(area.x + area.width - half, area.y, half, area.height),
+                &format!("{} buffs", e.name),
+                &e.statuses,
+            );
+        }
+    }
+}
+
+/// 一个增益窗口:标题 / 分隔线(接左右边框)/ 每条状态一行(图标 3 列 + 数值 3 列 +
+/// 名字 12 列 + 语料说明填满余下宽度).放不下的用最后一行写 "+N more".
+fn render_buff_panel(
+    buf: &mut Buffer,
+    area: Rect,
+    title: &str,
+    statuses: &crate::core::status::Statuses,
+) {
+    if area.width < 10 || area.height < 4 {
+        return;
+    }
+    let inner_w = area.width as usize - 2;
+    // 面板是不透明的:先把整块铺成背景色,免得底下的画像/怪物透上来
+    for y in area.y..area.y + area.height {
+        put_padded(buf, area.x, y, "", area.width as usize, Style::default().bg(theme::BG));
+    }
+    crate::ui::draw_box(
+        buf,
+        area,
+        title,
+        theme::fg(theme::BORDER),
+        theme::fg(theme::INFO),
+    );
+    let sep = theme::fg(theme::BORDER);
+    put(buf, area.x, area.y + 1, "├", sep);
+    crate::ui::hline(buf, area.x + 1, area.y + 1, area.width - 2, crate::ui::BOX_H, sep);
+    put(buf, area.x + area.width - 1, area.y + 1, "┤", sep);
+
+    let rows = area.height as usize - 3;
+    let items: Vec<(crate::core::status::Status, i32)> = statuses.entries().copied().collect();
+    for (i, (st, n)) in items.iter().take(rows).enumerate() {
+        let y = area.y + 2 + i as u16;
+        let line = buff_row(st, *n, inner_w);
+        let mut x = area.x + 1;
+        for (text, style) in line {
+            put(buf, x, y, &text, style.bg(theme::BG));
+            x += display_width(&text) as u16;
+        }
+    }
+    if items.is_empty() {
+        put(buf, area.x + 2, area.y + 2, "none", theme::dim());
+    } else if items.len() > rows {
+        let y = area.y + area.height - 2;
+        put(
+            buf,
+            area.x + 2,
+            y,
+            &format!("+{} more", items.len() - rows),
+            theme::dim(),
+        );
+    }
+}
+
+/// 一条状态在窗口里的一行:图标(3 列) + 数值(3 列) + 名字(12 列) + 说明,总宽正好 width
+fn buff_row(s: &crate::core::status::Status, n: i32, width: usize) -> Vec<(String, Style)> {
+    let (icon, value) = crate::ui::badge(s.glyph(), n);
+    let color = if s.is_debuff() { theme::DEBUFF } else { theme::BUFF };
+    let name_w = 12.min(width);
+    let desc_w = width.saturating_sub(3 + 1 + 3 + 1 + name_w + 1);
+    let desc = crate::core::compendium::status_text(*s);
+    vec![
+        (icon, crate::ui::status_icon_style(*s)),
+        (" ".to_string(), theme::fg(theme::FG)),
+        (value, theme::fg(color)),
+        (" ".to_string(), theme::fg(theme::FG)),
+        (format!("{:<name_w$}", truncate(s.name(), name_w)), theme::fg(color)),
+        (" ".to_string(), theme::fg(theme::FG)),
+        (truncate(&desc, desc_w), theme::dim()),
+    ]
+}
+
 // ---- 底部一行 ----
 
 /// 底部提示文字:先说打不出去的原因,再顺带一句当前操作
@@ -822,6 +919,71 @@ mod tests {
         assert_eq!(display_width("\u{1F3C3}"), 2, "🏃 是双宽,框宽才对得上");
         assert_eq!(tok(&intent_tokens(Intent::Unknown, &[], 0, 0, 0)), "?");
         assert_eq!(tok(&intent_tokens(Intent::Defend, &[], 0, 0, 0)), "?", "没数就退回 ?");
+    }
+
+    /// 把一块 buffer 读成文本(测试用)
+    fn buf_text(buf: &Buffer, area: Rect) -> String {
+        let mut s = String::new();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                s.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    /// 增益窗口的一行:图标 3 列 + 数值 3 列 + 名字 12 列 + 说明,总宽正好等于给定宽度
+    #[test]
+    fn buff_row_fills_exact_width_with_icon_value_name() {
+        let row = buff_row(&crate::core::status::Status::Strength, 2, 50);
+        let text = row_text(&row);
+        assert_eq!(display_width(&text), 50, "一行正好填满内宽:{text:?}");
+        assert!(
+            text.starts_with(" \u{1F4AA}  +2 Strength"),
+            "图标/数值/名字的顺序:{text:?}"
+        );
+    }
+
+    /// S 画在战斗区左半边(自己),s 画在右半边(当前选中的敌人),两者互不越界
+    #[test]
+    fn buff_panels_stay_in_their_own_half() {
+        let mut app = App::new(3);
+        app.run
+            .debug_start_combat(crate::core::enemies::resolve("cultist_solo"));
+        app.run
+            .combat_mut()
+            .unwrap()
+            .player
+            .statuses
+            .add(crate::core::status::Status::Strength, 2);
+        let area = Rect::new(0, 0, 100, 14);
+        let left = Rect::new(0, 0, 50, 14);
+        let right = Rect::new(50, 0, 50, 14);
+
+        // 只开自己那个:左半有窗口,右半没有
+        app.buffs_self = true;
+        let mut buf = Buffer::empty(area);
+        render_buff_panels(&mut buf, area, &app, app.run.combat().unwrap());
+        let l = buf_text(&buf, left);
+        assert!(l.contains("your buffs"), "左半是自己那半:{l}");
+        assert!(l.contains("Strength") && l.contains("+2"), "状态行:{l}");
+        assert!(
+            !buf_text(&buf, right).contains("buffs"),
+            "自己那半不许跑到右边"
+        );
+
+        // 只开敌人那个:右半有窗口,左半没有
+        app.buffs_self = false;
+        app.buffs_enemy = true;
+        let mut buf = Buffer::empty(area);
+        render_buff_panels(&mut buf, area, &app, app.run.combat().unwrap());
+        let r = buf_text(&buf, right);
+        assert!(r.contains("Cultist buffs"), "右半是敌人那半:{r}");
+        assert!(
+            !buf_text(&buf, left).contains("buffs"),
+            "敌人那半不许跑到左边"
+        );
     }
 
     /// 状态两行徽章:每格 3 列右对齐,格间 1 格,数值带符号
