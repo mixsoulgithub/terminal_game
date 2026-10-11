@@ -561,7 +561,7 @@ fn intent_tokens(
     match intent {
         Intent::Sleep => return vec![("\u{1F4A4}".to_string(), theme::DIM)],
         Intent::Stun => return vec![("\u{1F4AB}".to_string(), theme::DIM)],
-        Intent::Escape => return vec![(">>".to_string(), theme::DEBUFF)],
+        Intent::Escape => return vec!["\u{1F3C3}".to_string()].into_iter().map(|t| (t, theme::DEBUFF)).collect(),
         Intent::Unknown => return vec![("?".to_string(), theme::DIM)],
         _ => {}
     }
@@ -797,7 +797,12 @@ mod tests {
         // 特殊意图
         assert_eq!(tok(&intent_tokens(Intent::Sleep, &[], 0, 0, 0)), "\u{1F4A4}");
         assert_eq!(tok(&intent_tokens(Intent::Stun, &[], 0, 0, 0)), "\u{1F4AB}");
-        assert_eq!(tok(&intent_tokens(Intent::Escape, &[], 0, 0, 0)), ">>");
+        assert_eq!(
+            tok(&intent_tokens(Intent::Escape, &[], 0, 0, 0)),
+            "\u{1F3C3}",
+            "逃跑用跑步小人(盗贼)"
+        );
+        assert_eq!(display_width("\u{1F3C3}"), 2, "🏃 是双宽,框宽才对得上");
         assert_eq!(tok(&intent_tokens(Intent::Unknown, &[], 0, 0, 0)), "?");
         assert_eq!(tok(&intent_tokens(Intent::Defend, &[], 0, 0, 0)), "?", "没数就退回 ?");
     }
