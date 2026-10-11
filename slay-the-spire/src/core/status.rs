@@ -178,6 +178,7 @@ impl Status {
 
 
 
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
@@ -268,6 +269,98 @@ impl Status {
             Choke => '\u{f0a4f}', // md-hand_front_right
             CorpseExplosion => '\u{f1e2}', // fa-bomb
             DoubleDamage => '\u{ee29}', // fa-check_double
+        }
+    }
+
+    /// 图标配色键:键到颜色的映射在 theme::icon_color(先在 compendium 里审,
+    /// 确认后再往 HUD/战斗状态行铺).
+    pub fn icon_color_key(self) -> &'static str {
+        use Status::*;
+        match self {
+            Strength => "fire",
+            Dexterity => "good",
+            Vulnerable => "bad",
+            Weak => "bad",
+            Frail => "bad",
+            Entangled => "bad",
+            DemonForm => "fire",
+            Metallicize => "block",
+            FeelNoPain => "good",
+            DarkEmbrace => "good",
+            Evolve => "good",
+            FireBreathing => "fire",
+            Barricade => "block",
+            Brutality => "blood",
+            Rupture => "blood",
+            Regenerate => "good",
+            Thorns => "fire",
+            Berserk => "fire",
+            Combust => "fire",
+            Corruption => "arcane",
+            DoubleTap => "energy",
+            Juggernaut => "fire",
+            Rage => "block",
+            FlameBarrier => "block",
+            Artifact => "good",
+            NoBlock => "bad",
+            NoDraw => "energy",
+            Mayhem => "energy",
+            Magnetism => "good",
+            Panache => "good",
+            SadisticNature => "fire",
+            PlatedArmor => "block",
+            Constricted => "bad",
+            Confused => "arcane",
+            Hex => "arcane",
+            DrawReduction => "energy",
+            Surrounded => "arcane",
+            Intangible => "block",
+            Ritual => "arcane",
+            Enrage => "arcane",
+            Anger => "arcane",
+            SharpHide => "block",
+            BeatOfDeath => "blood",
+            Curiosity => "arcane",
+            CurlUp => "good",
+            Explosive => "fire",
+            Fading => "ghost",
+            Flight => "block",
+            Invincible => "block",
+            Malleable => "block",
+            Minion => "plain",
+            MinionLeader => "plain",
+            ModeShift => "arcane",
+            PainfulStabs => "blood",
+            Reactive => "ghost",
+            Regrow => "good",
+            Shifting => "arcane",
+            Slow => "ghost",
+            SporeCloud => "block",
+            Split => "dim",
+            Stasis => "dim",
+            StrengthUp => "arcane",
+            TimeWarp => "ghost",
+            Asleep => "ghost",
+            Duplication => "energy",
+            LoseStrength => "blood",
+            LoseDexterity => "blood",
+            Focus => "good",
+            Poison => "poison",
+            Accuracy => "good",
+            AfterImage => "good",
+            ThousandCuts => "fire",
+            Envenom => "poison",
+            InfiniteBlades => "good",
+            NoxiousFumes => "poison",
+            ToolsOfTheTrade => "good",
+            WraithForm => "ghost",
+            Blur => "block",
+            PhantasmalKiller => "fire",
+            Burst => "energy",
+            WellLaidPlans => "good",
+            Choke => "poison",
+            CorpseExplosion => "poison",
+            DoubleDamage => "fire",
         }
     }
 
@@ -897,6 +990,20 @@ mod tests {
             seen.push((g, s.name()));
         }
         assert_eq!(seen.len(), Status::ALL.len());
+    }
+
+    /// 图标配色键必须是 theme::icon_color 认得的那些(不认得就退回普通前景色,
+    /// 这里直接判失败,免得"看着像上了色其实是灰的")
+    #[test]
+    fn icon_color_keys_are_supported() {
+        const KEYS: &[&str] = &[
+            "good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "dim",
+            "plain",
+        ];
+        for &s in Status::ALL {
+            let k = s.icon_color_key();
+            assert!(KEYS.contains(&k), "{} 的配色键 {k} 不在支持列表里", s.name());
+        }
     }
 
 }

@@ -164,6 +164,24 @@ pub fn corpus_color(rarity: &str) -> Color {
     }
 }
 
+/// 状态图标配色键(Status::icon_color_key 用):按语义挑一个已有的主题色,
+/// 不新增颜色,免得图鉴/战斗/HUD 三处配色各走各的
+pub fn icon_color(key: &str) -> Color {
+    match key {
+        "good" => GOOD,
+        "bad" => BAD,
+        "block" => BLOCK,
+        "fire" => WARN,
+        "poison" => DEBUFF,
+        "energy" => GOLD,
+        "ghost" => INFO,
+        "arcane" => BUFF,
+        "blood" => BLOOD,
+        "dim" => DIM,
+        _ => FG,
+    }
+}
+
 /// 角色主色(语料 color 字段)
 pub fn role_color(color: &str) -> Color {
     match color {

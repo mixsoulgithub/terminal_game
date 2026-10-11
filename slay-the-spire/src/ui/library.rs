@@ -31,6 +31,15 @@ fn tabs(buf: &mut Buffer, row: Rect, gs: &[Group], cur: usize) {
     }
 }
 
+/// 列表左边那一列(费用/图标)的配色:状态册按图标的配色键,别的册是暗色
+pub fn tag_color(item: &compendium::Item) -> ratatui::style::Color {
+    if item.tag_color_key.is_empty() {
+        theme::DIM
+    } else {
+        theme::icon_color(item.tag_color_key)
+    }
+}
+
 pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
     let lib = app.library;
     if area.width < 40 || area.height < 6 {
@@ -141,7 +150,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
         let mut x = list.x;
         if !item.show_cost {
             let tag = format!("{:>2} ", item.tag);
-            put(buf, x, y, &tag, style.fg(theme::DIM));
+            put(buf, x, y, &tag, style.fg(tag_color(item)));
             x += display_width(&tag) as u16;
         } else {
             x = crate::ui::put_cost_token(
@@ -286,5 +295,53 @@ fn put_card_block(buf: &mut Buffer, rect: Rect, item: &Item, upgraded: bool) {
             crate::ui::put_centered_words(buf, rect.x, y, w, &line);
             y += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 某个状态在 buff 册的第几个标签页
+    fn tab_of(s: crate::core::status::Status) -> usize {
+        let want = if s.is_marker() {
+            "Markers"
+        } else if s.is_debuff() {
+            "Debuffs"
+        } else {
+            "Buffs"
+        };
+        compendium::groups(compendium::Library::Buffs)
+            .iter()
+            .position(|g| g.name == want)
+            .expect("分组存在")
+    }
+
+    fn item_of(s: crate::core::status::Status) -> compendium::Item {
+        compendium::items(compendium::Library::Buffs, tab_of(s))
+            .into_iter()
+            .find(|i| i.name == s.name())
+            .expect("状态在册里")
+    }
+
+    /// 状态册的图标走 icon_color(力量=火色、中毒=中毒绿、纯标记=暗色),
+    /// 别的册(卡牌/遗物/药水/事件/怪物)仍是暗色
+    #[test]
+    fn status_icons_take_their_own_color() {
+        use crate::core::status::Status;
+        let strong = item_of(Status::Strength);
+        assert_eq!(strong.tag_color_key, "fire");
+        assert_eq!(tag_color(&strong), theme::icon_color("fire"));
+        assert_eq!(item_of(Status::Poison).tag_color_key, "poison");
+        let marker = item_of(Status::Split);
+        assert_eq!(marker.tag_color_key, "dim");
+        assert_eq!(tag_color(&marker), theme::DIM);
+
+        let card = compendium::items(compendium::Library::Cards, 0)
+            .into_iter()
+            .next()
+            .expect("卡牌册有条目");
+        assert!(card.tag_color_key.is_empty());
+        assert_eq!(tag_color(&card), theme::DIM);
     }
 }

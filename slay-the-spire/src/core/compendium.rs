@@ -57,8 +57,10 @@ pub struct Item {
     pub name: &'static str,
     /// 副标题(类型/稀有度/职业)
     pub sub: String,
-    /// 左边的短标记(费/阶/瓶)
+    /// 左边的短标记(费/阶/瓶);状态册里放的是 Nerd Font 图标
     pub tag: String,
+    /// tag 的配色键(空 = 用默认暗色);状态册里是 Status::icon_color_key
+    pub tag_color_key: &'static str,
     /// 正文
     pub text: String,
     /// 升级后的正文(卡牌才有)
@@ -168,6 +170,7 @@ fn status_items(group: &str) -> Vec<Item> {
             // 副标题保留短标记:图标占了 tag 那一列(先在图鉴里过一遍,好看再往 HUD 铺)
             sub: format!("{}   {kind}   {}", s.short(), status_sources(s)),
             tag: s.glyph().to_string(),
+            tag_color_key: s.icon_color_key(),
             text: status_text(s),
             text_up: String::new(),
             done: true,
@@ -383,6 +386,7 @@ fn card_items(tab: &str) -> Vec<Item> {
                 name: c.name,
                 sub: format!("{} / {}", kind, title_case(c.rarity)),
                 tag: c.cost.to_string(),
+                tag_color_key: "",
                 tag_up: if c.cost_up.is_empty() { c.cost.to_string() } else { c.cost_up.to_string() },
                 kind: c.kind,
                 target_tag: target_tag(c.target).to_string(),
@@ -413,6 +417,7 @@ fn relic_items(tab: &str) -> Vec<Item> {
             name: r.name,
             sub: format!("{} / {} pool", tier_title(r.tier), r.pool),
             tag: tier_tag(r.tier).to_string(),
+            tag_color_key: "",
             text: r.text.to_string(),
             text_up: String::new(),
             done: relics::relic_def(r.id).is_some() || events::event_relic(r.id).is_some(),
@@ -444,6 +449,7 @@ fn potion_items(tab: &str) -> Vec<Item> {
                 }
             ),
             tag: "o".to_string(),
+            tag_color_key: "",
             text: p.text.to_string(),
             text_up: String::new(),
             done: potions::POTIONS.iter().any(|d| d.id == p.id),
@@ -479,6 +485,7 @@ fn event_items(tab: &str) -> Vec<Item> {
                 name: e.name,
                 sub: format!("acts {} / {} pool", e.acts, e.pool),
                 tag: String::new(),
+                tag_color_key: "",
                 text,
                 text_up: String::new(),
                 done: here,
@@ -546,6 +553,7 @@ fn monster_items(tab: &str) -> Vec<Item> {
                 name: m.name,
                 sub: format!("{} / acts {}", category_title(m.category), m.acts),
                 tag: category_tag(m.category).to_string(),
+                tag_color_key: "",
                 text,
                 text_up: String::new(),
                 done: here,
@@ -999,6 +1007,8 @@ mod tests {
             assert!(!rows.is_empty(), "分组 {} 没有条目", g.name);
             for r in &rows {
                 assert!(!r.text.is_empty(), "{} 没有说明", r.name);
+                assert!(!r.tag.is_empty(), "{} 没有图标", r.name);
+                assert!(!r.tag_color_key.is_empty(), "{} 的图标没配色", r.name);
                 assert!(!r.sub.is_empty(), "{} 没有副标题", r.name);
                 assert_eq!(r.kind.is_empty(), false);
             }

@@ -48,6 +48,95 @@ MAP = {
 }
 
 
+
+# 状态 -> 图标配色键(键到具体颜色的映射在 src/ui/theme.rs 的 icon_color)
+COLOR = {
+    "Strength": "fire",
+    "Dexterity": "good",
+    "Vulnerable": "bad",
+    "Weak": "bad",
+    "Frail": "bad",
+    "Entangled": "bad",
+    "DemonForm": "fire",
+    "Metallicize": "block",
+    "FeelNoPain": "good",
+    "DarkEmbrace": "good",
+    "Evolve": "good",
+    "FireBreathing": "fire",
+    "Barricade": "block",
+    "Brutality": "blood",
+    "Rupture": "blood",
+    "Regenerate": "good",
+    "Thorns": "fire",
+    "Berserk": "fire",
+    "Combust": "fire",
+    "Corruption": "arcane",
+    "DoubleTap": "energy",
+    "Juggernaut": "fire",
+    "Rage": "block",
+    "FlameBarrier": "block",
+    "Artifact": "good",
+    "NoBlock": "bad",
+    "NoDraw": "energy",
+    "Mayhem": "energy",
+    "Magnetism": "good",
+    "Panache": "good",
+    "SadisticNature": "fire",
+    "PlatedArmor": "block",
+    "Constricted": "bad",
+    "Ritual": "arcane",
+    "Enrage": "arcane",
+    "Anger": "arcane",
+    "SharpHide": "block",
+    "BeatOfDeath": "blood",
+    "Curiosity": "arcane",
+    "CurlUp": "good",
+    "Explosive": "fire",
+    "Fading": "ghost",
+    "Flight": "block",
+    "Invincible": "block",
+    "Malleable": "block",
+    "Minion": "plain",
+    "MinionLeader": "plain",
+    "ModeShift": "arcane",
+    "PainfulStabs": "blood",
+    "Reactive": "ghost",
+    "Regrow": "good",
+    "Shifting": "arcane",
+    "Slow": "ghost",
+    "SporeCloud": "block",
+    "Split": "dim",
+    "Stasis": "dim",
+    "StrengthUp": "arcane",
+    "TimeWarp": "ghost",
+    "Asleep": "ghost",
+    "Duplication": "energy",
+    "LoseStrength": "blood",
+    "LoseDexterity": "blood",
+    "Focus": "good",
+    "Accuracy": "good",
+    "AfterImage": "good",
+    "ThousandCuts": "fire",
+    "Envenom": "poison",
+    "InfiniteBlades": "good",
+    "NoxiousFumes": "poison",
+    "ToolsOfTheTrade": "good",
+    "WraithForm": "ghost",
+    "Blur": "block",
+    "PhantasmalKiller": "fire",
+    "Burst": "energy",
+    "WellLaidPlans": "good",
+    "Choke": "poison",
+    "CorpseExplosion": "poison",
+    "DoubleDamage": "fire",
+    "Poison": "poison",
+    "Confused": "arcane",
+    "Hex": "arcane",
+    "DrawReduction": "energy",
+    "Surrounded": "arcane",
+    "Intangible": "block",
+}
+
 def variants(src: str):
     """status.rs 里 Status 枚举的变体(按声明顺序)"""
     i = src.index("pub enum Status {")
@@ -78,6 +167,16 @@ def main():
         for v, n in miss:
             print(f"字形名挑不到: {v} -> {n}", file=sys.stderr)
         return 1
+    miss_c = [v for v in vs if v not in COLOR]
+    if miss_c:
+        print(f"没配颜色的状态: {miss_c}", file=sys.stderr)
+        return 1
+    used_keys = set(COLOR.values())
+    known_keys = {"good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "dim", "plain"}
+    bad_keys = used_keys - known_keys
+    if bad_keys:
+        print(f"配色键不在 theme::icon_color 支持的集合里: {sorted(bad_keys)}", file=sys.stderr)
+        return 1
     unused = [v for v in MAP if v not in vs]
     if unused:
         print(f"映射表里有枚举里不存在的键: {unused}", file=sys.stderr)
@@ -86,6 +185,7 @@ def main():
         f"            {v} => '\\u{{{byname[MAP[v].lower().replace('-', '_')]:x}}}', // {MAP[v]}"
         for v in vs
     ]
+    color_lines = [f'            {v} => "{COLOR[v]}",' for v in vs]
     print("\n".join(lines))
     if "--write" in sys.argv:
         body = (
@@ -94,6 +194,13 @@ def main():
             "    /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.\n"
             "    pub fn glyph(self) -> char {\n        use Status::*;\n        match self {\n"
             + "\n".join(lines)
+            + "\n        }\n    }\n"
+        )
+        body += (
+            "\n    /// 图标配色键:键到颜色的映射在 theme::icon_color(先在 compendium 里审,\n"
+            "    /// 确认后再往 HUD/战斗状态行铺).\n"
+            "    pub fn icon_color_key(self) -> &'static str {\n        use Status::*;\n        match self {\n"
+            + "\n".join(color_lines)
             + "\n        }\n    }\n"
         )
         start = src.index("    /// 图鉴里每条状态前显示一个 Nerd Font 图标")
