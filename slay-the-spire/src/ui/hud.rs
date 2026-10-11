@@ -27,7 +27,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
     let limit = area.x + area.width;
     let dim = theme::dim();
 
-    // 三把钥匙:拿到的用对应颜色的 ↑,没拿到的是暗色 ↑(不写 K:,也不用 - 占位)
+    // 三把钥匙:拿到的用对应颜色的 ↑,没拿到的是暗灰 ↑(占位,不写 K: 也不用 -)
     let key = |owned: bool, c| {
         if owned {
             theme::fg(c)
@@ -107,4 +107,43 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) -> Rect {
 
     let _ = seg(buf, rx, y, limit, &right, dim);
     potion_rect
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use ratatui::style::Color;
+
+    /// 顶栏第一行的文本和每格前景色
+    fn top_row(app: &App) -> (String, Vec<Option<Color>>) {
+        let area = Rect::new(0, 0, 60, 1);
+        let mut buf = Buffer::empty(area);
+        render(&mut buf, area, app);
+        let text: String = (0..area.width)
+            .map(|x| buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        let fgs: Vec<Option<Color>> = (0..area.width)
+            .map(|x| buf.cell((x, 0)).and_then(|c| c.style().fg))
+            .collect();
+        (text, fgs)
+    }
+
+    /// 钥匙:没拿到的是暗灰 ↑ 占位,拿到的那把换成自己的颜色(绿/红/蓝)
+    #[test]
+    fn hud_keys_are_gray_until_owned() {
+        let (text, fgs) = top_row(&App::new(3));
+        assert_eq!(text.matches('\u{2191}').count(), 3, "三把都占位:{text:?}");
+        for i in 2..5 {
+            assert_eq!(fgs[i], Some(theme::DIM), "第 {} 格是暗灰:{text:?}", i);
+        }
+
+        let mut app = App::new(3);
+        app.run.keys.ruby = true;
+        let (text, fgs) = top_row(&app);
+        assert_eq!(text.matches('\u{2191}').count(), 3, "还是三个位:{text:?}");
+        assert_eq!(fgs[3], Some(theme::BAD), "中间那把(红)亮了:{text:?}");
+        assert_eq!(fgs[2], Some(theme::DIM), "绿钥匙还是灰的");
+        assert_eq!(fgs[4], Some(theme::DIM), "蓝钥匙还是灰的");
+    }
 }

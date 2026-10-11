@@ -190,6 +190,7 @@ impl Status {
 
 
 
+
     /// 图鉴里每条状态前显示一个 Nerd Font 图标.图标按**字形名**从字体 cmap 里挑
     /// (映射表见 tools/nf_status_glyphs.py),源码里一律写 \u{...} 转义,文件保持 ASCII.
     /// 换图标只改那张表再重跑;先在 compendium 里看效果,确认后再往 HUD/战斗界面铺.
@@ -208,7 +209,7 @@ impl Status {
             DarkEmbrace => "\u{1f311}", // emoji \U0001f311
             Evolve => "\u{1f9ec}", // emoji \U0001f9ec
             FireBreathing => "\u{1f432}", // emoji \U0001f432
-            Barricade => "\u{1f9f1}", // emoji \U0001f9f1
+            Barricade => "\u{ed25}", // fa-shield_halved
             Brutality => "\u{1f4a2}", // emoji \U0001f4a2
             Rupture => "\u{1fa78}", // emoji \U0001fa78
             Regenerate => "\u{1f49a}", // emoji \U0001f49a
@@ -227,7 +228,7 @@ impl Status {
             Magnetism => "\u{1f9f2}", // emoji \U0001f9f2
             Panache => "\u{1f3a9}", // emoji \U0001f3a9
             SadisticNature => "\u{1f60f}", // emoji \U0001f60f
-            PlatedArmor => "\u{1f9ba}", // emoji \U0001f9ba
+            PlatedArmor => "\u{f11a2}", // md-shield_sync
             Constricted => "\u{1f40d}", // emoji \U0001f40d
             Confused => "\u{1f635}", // emoji \U0001f635
             Hex => "\u{1f52e}", // emoji \U0001f52e
@@ -300,7 +301,7 @@ impl Status {
             DarkEmbrace => "good",
             Evolve => "good",
             FireBreathing => "fire",
-            Barricade => "block",
+            Barricade => "silver",
             Brutality => "blood",
             Rupture => "blood",
             Regenerate => "good",
@@ -391,7 +392,7 @@ impl Status {
             DarkEmbrace => "emoji",
             Evolve => "emoji",
             FireBreathing => "emoji",
-            Barricade => "emoji",
+            Barricade => "nf",
             Brutality => "emoji",
             Rupture => "emoji",
             Regenerate => "emoji",
@@ -410,7 +411,7 @@ impl Status {
             Magnetism => "emoji",
             Panache => "emoji",
             SadisticNature => "emoji",
-            PlatedArmor => "emoji",
+            PlatedArmor => "nf",
             Constricted => "emoji",
             Confused => "emoji",
             Hex => "emoji",
@@ -574,7 +575,7 @@ impl Status {
             DarkEmbrace => &[('\u{1f311}', "emoji U+1F311"), ('\u{f186}', "fa-moon_o"), ('\u{f1829}', "md-shield-moon-outline"), ('\u{eeef}', "fa-cloud-moon"), ('\u{ef1b}', "fa-cloud-moon-rain"), ('\u{e226}', "fae-moon-cloud"), ('\u{f0f61}', "md-moon-first-quarter"), ('\u{f0f62}', "md-moon-full"), ('\u{f0f63}', "md-moon-last-quarter"), ('\u{f0f64}', "md-moon-new")],
             Evolve => &[('\u{1f9ec}', "emoji U+1F9EC"), ('\u{f0638}', "md-cards"), ('\u{f08ce}', "md-cards-club"), ('\u{f189f}', "md-cards-club-outline"), ('\u{f08cf}', "md-cards-diamond"), ('\u{f101d}', "md-cards-diamond-outline"), ('\u{f0639}', "md-cards-outline"), ('\u{f18a1}', "md-cards-playing"), ('\u{f18a2}', "md-cards-playing-club"), ('\u{f18a3}', "md-cards-playing-club-multiple")],
             FireBreathing => &[('\u{1f432}', "emoji U+1F432"), ('\u{f06d}', "fa-fire"), ('\u{e787}', "dev-firebase"), ('\u{e745}', "dev-firefox"), ('\u{ef43}', "fa-dumpster-fire"), ('\u{f134}', "fa-fire-extinguisher"), ('\u{ef76}', "fa-fire-flame-curved"), ('\u{ed78}', "fa-fire-flame-simple"), ('\u{f269}', "fa-firefox"), ('\u{f2e2}', "fa-gripfire")],
-            Barricade => &[('\u{1f9f1}', "emoji U+1F9F1"), ('\u{f07fe}', "md-wall"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline"), ('\u{f041c}', "md-wall-sconce-flat-variant")],
+            Barricade => &[('\u{ed25}', "fa-shield_halved"), ('\u{1f9f1}', "emoji U+1F9F1"), ('\u{f1ee}', "fa-google-wallet"), ('\u{ee1e}', "fa-wallet"), ('\u{e25e}', "fae-wallet"), ('\u{f07fe}', "md-wall"), ('\u{f1a11}', "md-wall-fire"), ('\u{f091c}', "md-wall-sconce"), ('\u{f091d}', "md-wall-sconce-flat"), ('\u{f17c9}', "md-wall-sconce-flat-outline")],
             Brutality => &[('\u{1f4a2}', "emoji U+1F4A2"), ('\u{f0cec}', "md-blood_bag"), ('\u{ee8e}', "fa-droplet-slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart")],
             Rupture => &[('\u{1fa78}', "emoji U+1FA78"), ('\u{ee8e}', "fa-droplet_slash"), ('\u{ed9d}', "fa-hand-holding-droplet"), ('\u{f0cec}', "md-blood-bag"), ('\u{ed8d}', "fa-syringe"), ('\u{e7dc}', "dev-flask"), ('\u{f0c3}', "fa-flask"), ('\u{f0093}', "md-flask"), ('\u{f0094}', "md-flask-empty"), ('\u{f123a}', "md-flask-empty-minus")],
             Regenerate => &[('\u{1f49a}', "emoji U+1F49A"), ('\u{f05f6}', "md-heart_pulse"), ('\u{f21e}', "fa-heartbeat"), ('\u{eb05}', "cod-heart"), ('\u{ec04}', "cod-heart-filled"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee61}', "fa-face-kiss-wink-heart"), ('\u{ed9b}', "fa-hand-holding-heart"), ('\u{f004}', "fa-heart"), ('\u{ef4f}', "fa-heart-crack")],
@@ -593,7 +594,7 @@ impl Status {
             Magnetism => &[('\u{1f9f2}', "emoji U+1F9F2"), ('\u{f076}', "fa-magnet"), ('\u{ebae}', "cod-magnet"), ('\u{f0347}', "md-magnet"), ('\u{f0348}', "md-magnet-on")],
             Panache => &[('\u{1f3a9}', "emoji U+1F3A9"), ('\u{edf7}', "fa-feather"), ('\u{e7d8}', "dev-feathersjs"), ('\u{ee34}', "fa-feather-pointed"), ('\u{f06d3}', "md-feather"), ('\u{e7f8}', "dev-hardhat"), ('\u{e7bb}', "dev-redhat"), ('\u{efb7}', "fa-hat-cowboy"), ('\u{efb8}', "fa-hat-cowboy-side"), ('\u{ef01}', "fa-hat-wizard")],
             SadisticNature => &[('\u{1f60f}', "emoji U+1F60F"), ('\u{ee53}', "fa-face_grin_tongue_squint"), ('\u{ee49}', "fa-face-grin"), ('\u{ee4b}', "fa-face-grin-beam"), ('\u{ee4c}', "fa-face-grin-beam-sweat"), ('\u{ee4d}', "fa-face-grin-hearts"), ('\u{ee4e}', "fa-face-grin-squint"), ('\u{ee4f}', "fa-face-grin-squint-tears"), ('\u{ee50}', "fa-face-grin-stars"), ('\u{ee51}', "fa-face-grin-tears")],
-            PlatedArmor => &[('\u{1f9ba}', "emoji U+1F9BA"), ('\u{f0ada}', "md-shield_plus"), ('\u{f0adb}', "md-shield-plus-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline"), ('\u{f0498}', "md-shield")],
+            PlatedArmor => &[('\u{f11a2}', "md-shield_sync"), ('\u{1f9ba}', "emoji U+1F9BA"), ('\u{f0ada}', "md-shield-plus"), ('\u{f0adb}', "md-shield-plus-outline"), ('\u{eb53}', "cod-shield"), ('\u{f132}', "fa-shield"), ('\u{ed25}', "fa-shield-halved"), ('\u{edcf}', "fa-user-shield"), ('\u{f101b}', "md-car-windshield"), ('\u{f101c}', "md-car-windshield-outline")],
             Constricted => &[('\u{1f40d}', "emoji U+1F40D"), ('\u{f150e}', "md-snake"), ('\u{ec16}', "cod-snake"), ('\u{f1ca}', "fa-vine"), ('\u{eb8d}', "cod-symbol-string"), ('\u{e8ac}', "dev-spring"), ('\u{f2a4}', "fa-hard-of-hearing"), ('\u{ef0b}', "fa-ring"), ('\u{ed8d}', "fa-syringe"), ('\u{e23d}', "fae-ring")],
             Confused => &[('\u{1f635}', "emoji U+1F635"), ('\u{f02d7}', "md-help_circle"), ('\u{f0625}', "md-help-circle-outline"), ('\u{eb32}', "cod-question"), ('\u{f128}', "fa-question"), ('\u{f059}', "fa-question-circle"), ('\u{f29c}', "fa-question-circle-o"), ('\u{f0b59}', "md-account-question"), ('\u{f0b5a}', "md-account-question-outline"), ('\u{f1231}', "md-beaker-question")],
             Hex => &[('\u{1f52e}', "emoji U+1F52E"), ('\u{ef21}', "fa-hurricane"), ('\u{f0898}', "md-weather-hurricane"), ('\u{e36c}', "weather-hurricane"), ('\u{e3c7}', "weather-hurricane-warning"), ('\u{e24f}', "fae-hexagon"), ('\u{f0049}', "md-arrow-down-bold-hexagon-outline"), ('\u{f0051}', "md-arrow-left-bold-hexagon-outline"), ('\u{f0058}', "md-arrow-right-bold-hexagon-outline"), ('\u{f0061}', "md-arrow-up-bold-hexagon-outline")],

@@ -20,14 +20,14 @@ MAP = {
     "Weak": "md-sword", "Frail": "md-shield_alert_outline", "Entangled": "fa-spider",
     "DemonForm": "fa-fire_flame_curved", "Metallicize": "fa-shield_halved",
     "FeelNoPain": "fa-bandage", "DarkEmbrace": "fa-moon_o", "Evolve": "md-cards",
-    "FireBreathing": "fa-fire", "Barricade": "md-wall", "Brutality": "md-blood_bag",
+    "FireBreathing": "fa-fire", "Barricade": "fa-shield_halved", "Brutality": "md-blood_bag",
     "Rupture": "fa-droplet_slash", "Regenerate": "md-heart_pulse", "Thorns": "md-cactus",
     "Berserk": "fa-face_grin_stars", "Combust": "fa-fire_flame_simple", "Corruption": "fa-skull",
     "DoubleTap": "md-sword_cross", "Juggernaut": "fa-helmet_safety", "Rage": "fa-face_angry",
     "FlameBarrier": "ple-flame_thick", "Artifact": "fa-gear", "NoBlock": "fa-ban",
     "NoDraw": "cod-circle_slash", "Mayhem": "fa-shuffle", "Magnetism": "fa-magnet",
     "Panache": "fa-feather", "SadisticNature": "fa-face_grin_tongue_squint",
-    "PlatedArmor": "md-shield_plus", "Constricted": "md-snake", "Ritual": "fa-hands_praying",
+    "PlatedArmor": "md-shield_sync", "Constricted": "md-snake", "Ritual": "fa-hands_praying",
     "Enrage": "fa-bullhorn", "Anger": "fa-face_grimace", "SharpHide": "fa-hand_fist",
     "BeatOfDeath": "fa-heartbeat", "Curiosity": "md-magnify", "CurlUp": "md-shield_plus_outline",
     "Explosive": "md-bomb", "Fading": "fa-hourglass_end", "Flight": "fa-dove", "Invincible": "fa-shield",
@@ -63,7 +63,7 @@ COLOR = {
     "DarkEmbrace": "good",
     "Evolve": "good",
     "FireBreathing": "fire",
-    "Barricade": "block",
+    "Barricade": "silver",
     "Brutality": "blood",
     "Rupture": "blood",
     "Regenerate": "good",
@@ -413,6 +413,9 @@ MODE["Weak"] = "nf"
 MODE["Artifact"] = "nf"
 # 破盾:用 nf 的"带警告的盾"(md-shield_alert_outline, U+F0ECD),配减益绿
 MODE["Frail"] = "nf"
+# 铁壁:半截盾(fa-shield_halved, U+ED25)配银色;板甲:盾+同步箭头(md-shield_sync, U+F11A2)
+MODE["Barricade"] = "nf"
+MODE["PlatedArmor"] = "nf"
 
 # 兜底:既没有合适 emoji、也没有合适 nf 字形时用 1-2 个大写字符(占 1~2 列,徽章里右对齐)
 TEXT = {}
@@ -452,7 +455,7 @@ def main():
         print(f"没配颜色的状态: {miss_c}", file=sys.stderr)
         return 1
     used_keys = set(COLOR.values())
-    known_keys = {"good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "copper", "dim", "plain"}
+    known_keys = {"good", "bad", "block", "fire", "poison", "energy", "ghost", "arcane", "blood", "copper", "silver", "dim", "plain"}
     bad_keys = used_keys - known_keys
     if bad_keys:
         print(f"配色键不在 theme::icon_color 支持的集合里: {sorted(bad_keys)}", file=sys.stderr)
