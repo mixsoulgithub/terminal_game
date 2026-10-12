@@ -21,13 +21,23 @@
     —— 与参照实现 refs/slay-the-cli 的 rewards.ts:195-208 一致, 与原版不同.
     修之前必须给 tools/replay_ref.ts 加驱动侧补偿(把参考侧的奖励也重排成两遍制),
     否则 e2e 对拍表会从第一处卡牌奖励起全面分家(实测 act2 差异 9 -> 11748 处).
-    补偿已原型验证过一轮: 驱动侧用参考导出的 rollCardRarity / classCardPool /
-    CARD_REWARD 重建"两遍制 + 无条件掷", 配合本作改成两遍制之后, 三张牌那一档
-    两边逐字段完全一致(tools/e2e_diff.ts 2 --script a20.script: 14/14 步, 0 差异).
-    剩下的活: (1) tools/golden/e2e 下 277 个 .ref.jsonl 是按旧参考行为录的, 要逐表
-    重录(--tables 模式不落盘, 得用 --all --script <表>.script --write); (2) 重录后
-    仍有残余分叉(act2 3363 处), 需要逐颗诊断(已看到 seed 7 第 18 步是第 4 张牌不同);
-    (3) 残余清干净后再改 run.rs 并重铺 replay.rs 的 *​_CASES 基线.
+    补偿试过两轮, 配方已经摸清(下一轮照着做就能收口):
+      a. 快照要取"把奖励屏拉起来的那一次 advance 之前"的 cardRng —— 在驱动唯一的推进
+         漏斗 advanceWithEggs 里记, 且只在"这次推进把房间变成 rewards"时记. 取战斗
+         开始前那种更早的快照会丢掉整场战斗消耗掉的掷点(实测 seed 7 第 3 张牌就分家).
+      b. 只还原 cardRng 不够, 还要还原 run.blizzard.cardRarityFactor(奖励生成会改保底),
+         否则重跑出来的稀有度分档和原来那次不一样.
+      c. 稀有度档位要按真实房间来源传("monster"/"elite"/"boss"/"event"); 一律按 monster
+         会让 act3 很多种子在第 5-9 步就分叉.
+      d. 换掉的那组卡牌要沿用原来的 group 号(参考的"拿奖励"按 group 分组).
+    做到 a+b+c+d 并配合本作改成两遍制之后: a20(46 颗)与 act4(16 颗)完全 0 差异,
+    a20a4 1 处, act1 差异 50 -> 14; 但 act3 还有第二处残留(40 颗里对齐前缀 20 颗变差,
+    如 seed 43 由 44 掉到 8、2 颗好转), 未查清 —— act3 特有(升级概率 0.5/A12+ 0.25,
+    boss 是觉醒者). 所以本轮仍整体回退, 留下的活:
+      (1) 查清 act3 那处残留: 先把 act3 各种子"改前/改后"的对齐前缀逐颗打出来定位第一颗;
+      (2) 逐表重录 tools/golden/e2e/*.ref.jsonl(277 个) —— --tables 模式不落盘,
+          得用 --all --script <表>.script --write;
+      (3) 重铺 replay.rs 的 CASE 表基线与 check_all 的 E2E_BASELINE.
 """
 import json
 import os
