@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""从 refs/slay-the-cli 的语料生成 src/core/corpus.rs.
+"""从 tools/import_official.py 抽出的中间语料生成 src/core/corpus.rs.
 
-用法: python3 tools/gen_corpus.py [语料目录] [输出文件]
-默认语料目录 ../refs/slay-the-cli/data/corpus, 默认输出 src/core/corpus.rs.
+来源(权威顺序): 原版游戏 desktop-1.0.jar 的官方 localization + CFR 反编译出的类.
+中间文件默认在 ~/projects/sts-golden/out/corpus_src.json(游戏文件不进仓库).
 
-生成的是纯展示数据(名字/类型/稀有度/费用/描述文本), 供图鉴和角色选择读取;
-可玩逻辑仍然在 cards.rs / relics.rs / potions.rs / events.rs 里手写.
+设计:
+  - id / corpus_id 完全沿用现有 corpus.rs 里的值, 只刷新文案与可核对的元数据.
+    这样 compendium / 各处按 id 查语料的地方不受影响.
+  - 中间语料里找不到的条目(改名卡/内部能力/已删内容)保留旧文案, 并在报告里列出.
+  - EVENTS / MONSTERS / CHARACTERS 三段暂时原样保留(官方事件文案是按阶段分片的,
+    要按事件类的代码拼, 还没做).
+
+用法:
+  python3 tools/gen_corpus.py [--src 中间json] [--out corpus.rs] [--report]
 """
 import json
 import os
@@ -13,369 +20,256 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_SRC = os.path.join(HERE, "..", "..", "refs", "slay-the-cli", "data", "corpus")
+DEFAULT_SRC = os.path.expanduser("~/projects/sts-golden/out/corpus_src.json")
 DEFAULT_OUT = os.path.join(HERE, "..", "src", "core", "corpus.rs")
 
-# 语料里的角色后缀 -> 本游戏 id 前缀(去掉后缀后就是本游戏的基础牌 id)
-SUFFIXES = ("_red", "_green", "_blue", "_purple")
+# struct 字段顺序(与现有文件一致)
+FIELDS = {
+    "CardInfo": ["id", "corpus_id", "name", "color", "kind", "rarity", "pool", "cost", "cost_up", "target", "text", "text_up"],
+    "RelicInfo": ["id", "corpus_id", "name", "tier", "pool", "text"],
+    "PotionInfo": ["id", "corpus_id", "name", "color", "rarity", "targeted", "text"],
+    "PowerInfo": ["id", "corpus_id", "name", "kind", "text"],
+}
+
+# 各段起止标记
+SECTIONS = ["CARDS", "POWERS", "RELICS", "POTIONS"]
 
 
-def game_id(corpus_id: str) -> str:
-    """语料 id 转成本游戏 id: STRIKE_RED -> strike, BASH -> bash.
-
-    只有基础牌才去掉颜色后缀(STRIKE_RED/DEFEND_GREEN...);
-    SEEING_RED 这种名字里带 _RED 的不能动.
-    """
-    s = corpus_id.lower()
-    for suf in SUFFIXES:
-        if s.endswith(suf) and s[: -len(suf)] in ("strike", "defend"):
-            s = s[: -len(suf)]
-            break
-    return s
-
-
-def pick_upgrade(text: str, upgraded: bool) -> str:
-    """wiki 链接和 [base|upgraded] 两级选择, 保留 $Keyword."""
-    s = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
-    s = re.sub(r"\[\[([^\[\]]*)\]\]", lambda m: m.group(1).split("|")[-1], s)
-    return re.sub(
-        r"\[([^\[\]|]*)\|([^\[\]]*)\]",
-        lambda m: m.group(2) if upgraded else m.group(1),
-        s,
-    )
-
-
-def resolve_markup(text: str, upgraded: bool) -> str:
-    """按参考实现 src/cli/text/markup.ts 把标记解析成纯文本."""
-    s = pick_upgrade(text, upgraded)
-    s = re.sub(r"\{\{([^{}]*)\}\}", lambda m: m.group(1).split("|")[-1], s)
-    s = re.sub(r"\$([A-Za-z-]+)", r"\1", s)
-    # 连续的 @XX(@RE/@GE...)是能量符号, 合并成 (N): 得到几点能量就写几
-    s = re.sub(
-        r"@[A-Z]+(?:\s*@[A-Z]+)*",
-        lambda m: "(%d)" % len(re.findall(r"@[A-Z]+", m.group(0))),
-        s,
-    )
-    lines = [re.sub(r"\s+", " ", ln).strip() for ln in s.split("\n")]
-    return "\n".join(ln for ln in lines if ln)
-
-
-def rs(s) -> str:
-    """Rust 字符串字面量."""
-    if s is None:
-        s = ""
-    s = str(s).replace("\\", "\\\\").replace('"', '\\"')
-    s = s.replace("\n", "\\n").replace("\t", " ")
-    # 非 ascii 一律转义, 保证生成文件可读且不会被编码搞坏
+def rs(s: str) -> str:
     out = []
     for ch in s:
-        out.append(ch if 32 <= ord(ch) < 127 else "\\u{%x}" % ord(ch))
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        else:
+            out.append(ch)
     return '"' + "".join(out) + '"'
 
 
-def load(src: str, name: str):
-    with open(os.path.join(src, name + ".json"), encoding="utf-8") as f:
-        return json.load(f)
+def split_top(s: str):
+    """按顶层逗号切分(忽略引号/括号内部)."""
+    out, cur, depth, instr = [], "", 0, False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if instr:
+            cur += ch
+            if ch == "\\":
+                cur += s[i + 1]
+                i += 2
+                continue
+            if ch == '"':
+                instr = False
+        elif ch == '"':
+            instr = True
+            cur += ch
+        elif ch in "[{(":
+            depth += 1
+            cur += ch
+        elif ch in "]})":
+            depth -= 1
+            cur += ch
+        elif ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+        i += 1
+    if cur.strip():
+        out.append(cur.strip())
+    return out
 
 
-def cost_str(c) -> str:
-    if c is None:
-        return "-"
-    if isinstance(c, str):
-        return c
-    if isinstance(c, (int, float)):
-        n = int(c)
-        if n == -1:
-            return "X"
-        if n < 0:
-            return "-"
-        return str(n)
-    return str(c)
-
-
-def gen_cards(src: str) -> str:
+def parse_rows(text: str):
+    """把一段 `Type { ... },` 解析成 [dict], 顺序保留(每行一条, 末行没有换行也要收)."""
     rows = []
-    for c in load(src, "cards"):
-        up = c.get("upgrade") or {}
-        text_up = resolve_markup(c.get("text", ""), True) if c.get("upgrade") else ""
-        rows.append(
-            "    CardInfo {{ id: {}, corpus_id: {}, name: {}, color: {}, kind: {}, "
-            "rarity: {}, pool: {}, cost: {}, cost_up: {}, target: {}, text: {}, text_up: {} }},".format(
-                rs(game_id(c["id"])),
-                rs(c["id"]),
-                rs(c["name"]),
-                rs(c.get("color", "")),
-                rs(c.get("type", "")),
-                rs(c.get("rarity", "")),
-                rs(c.get("pool", "")),
-                rs(cost_str(c.get("cost"))),
-                rs(cost_str(up.get("cost", c.get("cost"))) if up else "-"),
-                rs(c.get("target", "")),
-                rs(resolve_markup(c.get("text", ""), False)),
-                rs(text_up),
-            )
+    for line in text.split("\n"):
+        m = re.match(r"\s*(\w+Info) \{ (.*) \},?$", line.rstrip())
+        if not m:
+            continue
+        fields = {}
+        for kv in split_top(m.group(2)):
+            k, _, v = kv.partition(":")
+            fields[k.strip()] = v.strip()
+        rows.append((m.group(1), fields))
+    return rows
+
+
+def nk(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+SUF = {"RED": "R", "GREEN": "G", "BLUE": "B", "PURPLE": "P"}
+
+
+def corpus_key(cid: str) -> str:
+    """语料 id(如 STRIKE_RED) -> 官方键的归一形式(如 striker)."""
+    s = cid.lower()
+    for k, v in SUF.items():
+        if s.endswith("_" + k.lower()):
+            s = s[: -len(k) - 1] + "_" + v
+    return nk(s)
+
+
+def load_src(path):
+    if not os.path.exists(path):
+        sys.exit(
+            "缺少中间语料 %s\n先跑: python3 tools/import_official.py (需要 ~/projects/sts-golden 里的游戏文件)" % path
         )
-    return "\n".join(rows)
+    d = json.load(open(path, encoding="utf-8"))
+    out = {}
+    for name in ("cards", "relics", "powers", "potions", "events"):
+        by_key, by_name = {}, {}
+        for e in d[name]:
+            by_key.setdefault(nk(e["key"]), e)
+            by_name.setdefault(nk(e.get("name", "")), e)
+        out[name] = (by_key, by_name)
+    return out
 
 
-def gen_powers(src: str) -> str:
-    rows = []
-    for p in load(src, "powers"):
-        rows.append(
-            "    PowerInfo {{ id: {}, corpus_id: {}, name: {}, kind: {}, text: {} }},".format(
-                rs(game_id(p["id"])),
-                rs(p["id"]),
-                rs(p["name"]),
-                rs(p.get("kind", "")),
-                rs(resolve_markup(p.get("text", ""), False)),
-            )
-        )
-    return "\n".join(rows)
+def join(entry_lists, fields):
+    """按 corpus_id 或旧显示名找对应的官方条目."""
+    by_key, by_name = entry_lists
+    cid = unquote(fields["corpus_id"])
+    e = by_key.get(corpus_key(cid))
+    if e:
+        return e
+    return by_name.get(nk(unquote(fields["name"])))
 
 
-def gen_relics(src: str) -> str:
-    rows = []
-    for r in load(src, "relics"):
-        pool = r.get("pool", "")
-        rows.append(
-            "    RelicInfo {{ id: {}, corpus_id: {}, name: {}, tier: {}, pool: {}, text: {} }},".format(
-                rs(game_id(r["id"])),
-                rs(r["id"]),
-                rs(r["name"]),
-                rs(r.get("tier", "")),
-                rs(pool),
-                rs(resolve_markup(r.get("text", ""), False)),
-            )
-        )
-    return "\n".join(rows)
+def unquote(v: str) -> str:
+    v = v.strip()
+    if v.startswith('"'):
+        return json.loads(v)
+    return v
 
 
-def gen_potions(src: str) -> str:
-    rows = []
-    for p in load(src, "potions"):
-        rows.append(
-            "    PotionInfo {{ id: {}, corpus_id: {}, name: {}, color: {}, rarity: {}, targeted: {}, text: {} }},".format(
-                rs(game_id(p["id"])),
-                rs(p["id"]),
-                rs(p["name"]),
-                rs(p.get("class", "")),
-                rs(p.get("rarity", "")),
-                "true" if p.get("targeted") else "false",
-                rs(resolve_markup(p.get("text", ""), False)),
-            )
-        )
-    return "\n".join(rows)
-
-
-def gen_events(src: str) -> str:
-    rows = []
-    for e in load(src, "events")["events"]:
-        opts = [
-            resolve_markup(o.get("label", ""), False)
-            for o in e.get("options", [])
-        ]
-        opt_lit = "&[{}]".format(", ".join(rs(o) for o in opts))
-        acts = e.get("acts") or []
-        rows.append(
-            "    EventInfo {{ id: {}, name: {}, acts: {}, pool: {}, options: {}, text: {} }},".format(
-                rs(game_id(e["id"])),
-                rs(e["name"]),
-                rs(",".join(str(a) for a in acts)),
-                rs(e.get("pool", "")),
-                opt_lit,
-                rs(resolve_markup(e.get("summary", ""), False)),
-            )
-        )
-    return "\n".join(rows)
-
-
-# 语料里的史莱姆用 _S/_M/_L 表示小/中/大型, 本游戏的敌人 id 写全
-SLIME_SIZES = {"_S": "_small", "_M": "_medium", "_L": "_large"}
-
-
-def monster_id(corpus_id: str) -> str:
-    """语料怪物 id 转成本游戏敌人 id: CULTIST -> cultist, ACID_SLIME_S -> acid_slime_small.
-
-    只有史莱姆的体型后缀要展开, 和 enemies.rs 里的 id 对齐.
-    """
-    s = corpus_id.lower()
-    if s.startswith(("acid_slime_", "spike_slime_")):
-        for suf, full in SLIME_SIZES.items():
-            if s.endswith(suf.lower()):
-                s = s[: -len(suf)] + full
-                break
-    return s
-
-
-def gen_monsters(src: str) -> str:
-    ms = load(src, "monsters-act1") + load(src, "monsters-act2")
-    ms += load(src, "monsters-act34")["monsters"]
-    rows = []
-    for m in ms:
-        hp = m.get("hp") or {}
-        base = hp.get("base") or [0, 0]
-        asc = hp.get("asc") or base
-        moves = list((m.get("moves") or {}).keys())
-        mv = "&[{}]".format(", ".join(rs(k) for k in moves))
-        rows.append(
-            "    MonsterInfo {{ id: {}, corpus_id: {}, name: {}, category: {}, acts: {}, "
-            "hp_lo: {}, hp_hi: {}, hp_asc_lo: {}, hp_asc_hi: {}, moves: {} }},".format(
-                rs(monster_id(m["id"])),
-                rs(m["id"]),
-                rs(m["name"]),
-                rs(m.get("category", "")),
-                rs(",".join(str(a) for a in (m.get("acts") or []))),
-                int(base[0]),
-                int(base[1]),
-                int(asc[0]),
-                int(asc[1]),
-                mv,
-            )
-        )
-    return "\n".join(rows)
-
-
-def gen_characters(src: str) -> str:
-    rows = []
-    for c in load(src, "characters"):
-        deck = ", ".join(
-            "({}, {})".format(rs(game_id(d["card"])), int(d.get("count", 1)))
-            for d in c.get("startingDeck", [])
-        )
-        rel = (c.get("startingRelic") or {}).get("id", "")
-        rows.append(
-            "    CharacterInfo {{ id: {}, color: {}, name: {}, max_hp: {}, gold: {}, "
-            "orb_slots: {}, relic: {}, relic_name: {}, deck: &[{}] }},".format(
-                rs(game_id(c["id"])),
-                rs(c.get("color", "")),
-                rs(c["name"]),
-                int(c.get("maxHp", 0)),
-                int(c.get("startingGold", 0)),
-                int(c.get("orbSlots", 0)),
-                rs(game_id(rel) if rel else ""),
-                rs((c.get("startingRelic") or {}).get("name", "")),
-                deck,
-            )
-        )
-    return "\n".join(rows)
-
-
-HEADER = '''#![allow(dead_code)]
-// 全量语料(卡牌/遗物/药水/事件/怪物/角色), 由 tools/gen_corpus.py 从
-// refs/slay-the-cli/data/corpus/*.json 生成, 不要手改.
-// 这里只有展示数据; 能不能打/能不能用由 cards.rs relics.rs potions.rs events.rs 决定.
-
-pub struct CardInfo {
-    /// 本游戏的 id(语料 id 去掉 _RED/_GREEN/_BLUE/_PURPLE 后缀并转小写)
-    pub id: &\'static str,
-    pub corpus_id: &\'static str,
-    pub name: &\'static str,
-    /// red / green / blue / purple / colorless / curse ...
-    pub color: &\'static str,
-    /// attack / skill / power / status / curse
-    pub kind: &\'static str,
-    pub rarity: &\'static str,
-    /// class / colorless / curse / basic / special
-    pub pool: &\'static str,
-    pub cost: &\'static str,
-    pub cost_up: &\'static str,
-    pub target: &\'static str,
-    pub text: &\'static str,
-    pub text_up: &\'static str,
-}
-
-pub struct RelicInfo {
-    pub id: &\'static str,
-    pub corpus_id: &\'static str,
-    pub name: &\'static str,
-    pub tier: &\'static str,
-    pub pool: &\'static str,
-    pub text: &\'static str,
-}
-
-pub struct PotionInfo {
-    pub id: &\'static str,
-    pub corpus_id: &\'static str,
-    pub name: &\'static str,
-    pub color: &\'static str,
-    pub rarity: &\'static str,
-    pub targeted: bool,
-    pub text: &\'static str,
-}
-
-pub struct EventInfo {
-    pub id: &\'static str,
-    pub name: &\'static str,
-    pub acts: &\'static str,
-    pub pool: &\'static str,
-    pub options: &\'static [&\'static str],
-    pub text: &\'static str,
-}
-
-pub struct PowerInfo {
-    /// 本游戏的 id(语料 id 转小写)
-    pub id: &\'static str,
-    pub corpus_id: &\'static str,
-    pub name: &\'static str,
-    /// buff / debuff
-    pub kind: &\'static str,
-    pub text: &\'static str,
-}
-
-pub struct MonsterInfo {
-    /// 本游戏的敌人 id(语料 id 转小写, 史莱姆的 _S/_M/_L 展开成 _small/_medium/_large)
-    pub id: &\'static str,
-    pub corpus_id: &\'static str,
-    pub name: &\'static str,
-    /// normal / elite / boss / minion / event
-    pub category: &\'static str,
-    /// 出现的层, 逗号分隔(如 "1,2,3")
-    pub acts: &\'static str,
-    pub hp_lo: i32,
-    pub hp_hi: i32,
-    pub hp_asc_lo: i32,
-    pub hp_asc_hi: i32,
-    /// 招式 id(名字里带怪物 id 前缀, 展示时再裁)
-    pub moves: &\'static [&\'static str],
-}
-
-pub struct CharacterInfo {
-    pub id: &\'static str,
-    /// red / green / blue / purple
-    pub color: &\'static str,
-    pub name: &\'static str,
-    pub max_hp: i32,
-    pub gold: i32,
-    pub orb_slots: i32,
-    pub relic: &\'static str,
-    pub relic_name: &\'static str,
-    /// 起始牌组: (本游戏卡牌 id, 张数)
-    pub deck: &\'static [(&\'static str, u8)],
-}
-
-'''
+def emit(name, fields):
+    parts = []
+    for f in FIELDS[name]:
+        parts.append("%s: %s" % (f, fields[f]))
+    return "    %s { %s }," % (name, ", ".join(parts))
 
 
 def main():
-    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
-    out = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_OUT
-    parts = [HEADER]
-    for name, ty, fn in [
-        ("cards", "CardInfo", gen_cards),
-        ("powers", "PowerInfo", gen_powers),
-        ("relics", "RelicInfo", gen_relics),
-        ("potions", "PotionInfo", gen_potions),
-        ("events", "EventInfo", gen_events),
-        ("monsters", "MonsterInfo", gen_monsters),
-        ("characters", "CharacterInfo", gen_characters),
-    ]:
-        body = fn(src)
-        n = body.count("\n") + 1
-        parts.append(f"pub static {name.upper()}: &[{ty}] = &[\n{body}\n];\n")
-        print(f"{name}: {n} 条", file=sys.stderr)
-    with open(out, "w", encoding="utf-8") as f:
-        f.write("\n".join(parts))
-    print(f"wrote {out}", file=sys.stderr)
+    args = sys.argv[1:]
+    report_only = "--report" in args
+    src = DEFAULT_SRC
+    out = DEFAULT_OUT
+    if "--src" in args:
+        src = os.path.expanduser(args[args.index("--src") + 1])
+    if "--out" in args:
+        out = os.path.expanduser(args[args.index("--out") + 1])
+    data = load_src(src)
+    cur = open(DEFAULT_OUT, encoding="utf-8").read()
+    # 定位各段
+    spans = {}
+    TYPE_OF = {s: s[:-1].title() + "Info" for s in SECTIONS + ["EVENTS", "MONSTERS", "CHARACTERS"]}
+    for s in SECTIONS + ["EVENTS", "MONSTERS", "CHARACTERS"]:
+        m = re.search(r"pub static %s: &\[%s\] = &\[\n(.*?)\n\];" % (s, TYPE_OF[s]), cur, re.S)
+        if m:
+            spans[s] = m.span(1)
+    missing_sections = [s for s in SECTIONS + ["EVENTS", "MONSTERS", "CHARACTERS"] if s not in spans]
+    if missing_sections:
+        sys.exit("找不到这些段: %s" % missing_sections)
+
+    stats = {}
+    new_sections = {}
+    # 事件: 只对齐官方标题, 机制摘要/选项保持我们自己写的
+    ev_by_key, ev_by_name = data.get("events", ({}, {}))
+    ev = {k: v["name"] for k, v in ev_by_key.items()}
+    evn = {k: v["name"] for k, v in ev_by_name.items()}
+    seg = cur[spans["EVENTS"][0] : spans["EVENTS"][1]].rstrip("\n")
+    lines, renamed, evmiss = [], [], []
+    for line in seg.split("\n"):
+        m = re.match(r'\s*EventInfo \{ id: "([^"]+)", name: "([^"]+)"(.*)', line, re.S)
+        if not m:
+            lines.append(line)
+            continue
+        nk_id = re.sub(r"[^a-z0-9]", "", m.group(1).lower())
+        nk_nm = re.sub(r"[^a-z0-9]", "", m.group(2).lower())
+        new_name = ev.get(nk_id) or evn.get(nk_nm)
+        if not new_name:
+            evmiss.append(m.group(1))
+            lines.append(line)
+            continue
+        if new_name != m.group(2):
+            renamed.append((m.group(1), m.group(2), new_name))
+        lines.append('    EventInfo { id: "%s", name: %s%s' % (m.group(1), rs(new_name), m.group(3)))
+    new_sections["EVENTS"] = "\n".join(lines)
+    print("EVENTS   %3d 行 | 名字对齐 %d %s | 官方无 %d %s" % (
+        len(lines) and sum(1 for l in lines if "EventInfo {" in l), len(renamed),
+        ("(" + ", ".join("%s -> %s" % (a, c) for a, b, c in renamed) + ")") if renamed else "",
+        len(evmiss), ("(" + ", ".join(evmiss) + ")") if evmiss else ""), file=sys.stderr)
+    for sec, srcname, type_ in (
+        ("CARDS", "cards", "CardInfo"),
+        ("POWERS", "powers", "PowerInfo"),
+        ("RELICS", "relics", "RelicInfo"),
+        ("POTIONS", "potions", "PotionInfo"),
+    ):
+        seg = cur[spans[sec][0] : spans[sec][1]]
+        rows = parse_rows(seg)
+        kept, refreshed, miss = 0, 0, []
+        lines = []
+        for typename, fields in rows:
+            assert typename == type_, (typename, type_)
+            e = join(data[srcname], fields)
+            if not e:
+                miss.append(unquote(fields["name"]))
+                lines.append(emit(typename, fields))
+                kept += 1
+                continue
+            before = dict(fields)
+            if type_ == "CardInfo":
+                fields["name"] = rs(e["name"])
+                fields["kind"] = rs(e["kind"])
+                fields["rarity"] = rs(e["rarity"])
+                fields["color"] = rs(e["color"])
+                fields["target"] = rs(e["target"])
+                fields["cost"] = rs(e["cost"])
+                fields["cost_up"] = rs(e["cost_up"])
+                fields["text"] = rs(e["text"])
+                fields["text_up"] = rs(e["text_up"])
+            elif type_ == "RelicInfo":
+                fields["name"] = rs(e["name"])
+                fields["text"] = rs(e["text"])
+            elif type_ == "PowerInfo":
+                fields["name"] = rs(e["name"])
+                fields["kind"] = rs(e["kind"])
+                fields["text"] = rs(e["text"])
+            else:
+                fields["name"] = rs(e["name"])
+                fields["text"] = rs(e["text"])
+            if fields != before:
+                refreshed += 1
+            lines.append(emit(typename, fields))
+        stats[sec] = (len(rows), refreshed, miss)
+        new_sections[sec] = "\n".join(lines)
+
+    # 报告
+    for sec, (n, ch, miss) in stats.items():
+        print(
+            "%-8s %3d 行 | 更新 %3d | 保留旧文案 %2d%s"
+            % (sec, n, ch, len(miss), (" : " + ", ".join(miss[:12])) if miss else ""),
+            file=sys.stderr,
+        )
+    if report_only:
+        return
+    # 拼回整份文件
+    pieces = []
+    last = 0
+    for sec in SECTIONS + ["EVENTS"]:
+        a, b = spans[sec]
+        pieces.append(cur[last:a])
+        pieces.append(new_sections[sec] + "\n")
+        last = b
+    pieces.append(cur[last:])
+    text = "".join(pieces)
+    open(out, "w", encoding="utf-8").write(text)
+    print("wrote " + out, file=sys.stderr)
 
 
 if __name__ == "__main__":

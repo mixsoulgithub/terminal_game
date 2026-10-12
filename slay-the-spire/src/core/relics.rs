@@ -2381,7 +2381,7 @@ pub static RELICS: &[RelicDef] = &[
     },
     RelicDef {
         id: "face_of_cleric",
-        name: "Face of Cleric",
+        name: "Face Of Cleric",
         desc: "At the end of combat, raise your Max HP by 1.",
         tier: RelicTier::Event,
         pool: "shared",

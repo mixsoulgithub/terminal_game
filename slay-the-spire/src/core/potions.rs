@@ -318,7 +318,7 @@ pub static POTIONS: &[PotionDef] = &[
     },
     PotionDef {
         id: "essence_of_darkness",
-        name: "Essence of Darkness",
+        name: "Essence Of Darkness",
         desc: "Channel 1 Dark for each orb slot.",
         rarity: Rarity::Rare,
         class: "blue",
@@ -472,7 +472,7 @@ pub static POTIONS: &[PotionDef] = &[
     },
     PotionDef {
         id: "potion_of_capacity",
-        name: "Potion of Capacity",
+        name: "Potion Of Capacity",
         desc: "Gain 2 Orb slots.",
         rarity: Rarity::Uncommon,
         class: "blue",
