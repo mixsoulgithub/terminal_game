@@ -7,7 +7,8 @@
 //   bun tools/audit_monsters.ts --src <目录>    # 换实现源码目录(默认 src/core/enemies,自检用)
 //   bun tools/audit_monsters.ts --list-ai       # 只列"没解析也没登记"的 AI 规则(维护登记表用)
 //
-// 语料侧(refs/slay-the-cli/data/corpus/monsters-*.json)是权威:每个怪的
+// 血量/飞升血量以 src/core/corpus.rs(官方 jar 反编译)为准,其余
+// (招式名/效果段/AI)仍用 refs/slay-the-cli/data/corpus/monsters-*.json 对账:每个怪的
 // 血量基础区间 + 飞升换档、每个招式的意图/伤害/段数/格挡/效果(含飞升覆盖),
 // 以及开局预置(prebattle)。实现侧走 `spire --dump monsters`(见
 // src/core/enemies.rs 的 dump_json):每只怪只在"分辨率变化"的飞升档打一个快照,
@@ -706,12 +707,34 @@ const AI_ASC_EXTRA: Record<string, Record<number, string>> = {
 
 // ---- 载入 ----
 
+/** 血量与飞升血量的权威来源: 生成好的 src/core/corpus.rs(从原版 jar 反编译得来).
+ *  refs 那份语料是第三方的, 血量已被官方数据取代; 招式/效果段仍沿用 refs 对账. */
+function loadHpFromCorpus(): Map<string, { base: [number, number]; asc: [number, number] }> {
+  const file = join(REPO, "slay-the-spire", "src", "core", "corpus.rs");
+  const text = readFileSync(file, "utf8");
+  const out = new Map<string, { base: [number, number]; asc: [number, number] }>();
+  const re =
+    /MonsterInfo \{ id: "([^"]+)", corpus_id: "[^"]*", name: "[^"]*", category: "[^"]*", acts: "[^"]*", hp_lo: (\d+), hp_hi: (\d+), hp_asc_lo: (\d+), hp_asc_hi: (\d+)/g;
+  for (const m of text.matchAll(re)) {
+    out.set(m[1]!, {
+      base: [Number(m[2]), Number(m[3])],
+      asc: [Number(m[4]), Number(m[5])],
+    });
+  }
+  return out;
+}
+
 function loadCorpus(dir: string): CorpusMonster[] {
   const out: CorpusMonster[] = [];
   for (const f of readdirSync(dir).filter((f) => /^monsters-.*\.json$/.test(f)).sort()) {
     const data = JSON.parse(readFileSync(join(dir, f), "utf8")) as unknown;
     const list = Array.isArray(data) ? data : (data as { monsters: unknown[] }).monsters;
     out.push(...(list as CorpusMonster[]));
+  }
+  const official = loadHpFromCorpus();
+  for (const m of out) {
+    const o = official.get(ID_ALIAS[m.id] ?? m.id.toLowerCase());
+    if (o) m.hp = { base: o.base, asc: o.asc, ascLevel: m.hp.ascLevel };
   }
   return out;
 }

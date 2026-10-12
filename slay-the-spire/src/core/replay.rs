@@ -2666,12 +2666,19 @@ mod e2e {
     ///   想补得让参考的怪物阶段也放半死怪进去(引擎内部,驱动侧够不着),故只登记不补偿.
     const ASC3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    // seed 30:觉醒者一阶段血量.原版 AwakenedOne 构造器里飞升 9+ 是单参 setHp(320),
+    //   也就是 setHp(320, 320):照样掷点, 只是区间塌成一点恒为 320.本作原先按第三方
+    //   实现的 300..320 区间掷, 与原版不符;改成恒 320 后与参考实现分家(参考仍是旧
+    //   行为), 故对齐前缀 45 -> 43.依据:反编译 monsters/beyond/AwakenedOne.java 的
+    //   构造函数, 以及 tools/audit_original.py monsters 的机械比对.
+    Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 43, diff_steps: &[43, 44], diff_digest: 0x8728edd19799514c },
     Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 44, 45], diff_digest: 0xb463229127031499 },
-    Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39], diff_digest: 0xd031f152ee8f5222 },
+    // seed 284/494/510 也随觉醒者血量那条改动一起偏移(参考仍是旧的 300..320 区间):
+    //   284 多出第 42 步, 494 对齐前缀 42 -> 38, 510 多出第 41-44 步.
+    Expected { seed: 284, lines: 46, ref_lines: 46, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 42, 44, 45], diff_digest: 0x8143d276e89df973 },
+    Expected { seed: 494, lines: 42, ref_lines: 42, aligned: 38, diff_steps: &[38], diff_digest: 0x6979333d8ab8209e },
+    Expected { seed: 510, lines: 45, ref_lines: 45, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39, 41, 42, 43, 44], diff_digest: 0xcaead906b8851b1 },
 ];
 
     /// 飞升 20 第二幕:a20a2.script = act2.script + `asc 20`(路径/策略同第二幕那张

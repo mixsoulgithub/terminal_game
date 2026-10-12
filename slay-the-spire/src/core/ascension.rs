@@ -126,9 +126,9 @@ static HP_ASC: &[(&str, u32, (i32, i32))] = &[
     ("giant_head", 8, (520, 520)),
     ("nemesis", 8, (200, 200)),
     ("reptomancer", 8, (190, 200)),
-    // 觉醒者的飞升档是"开局掷一次"的区间:飞升 9+ 是 300..320(照语料,掷点
-    // 要消耗一次 monsterHpRng);一阶段重伤复活时 REBIRTH 再把上限盖成定值 320.
-    ("awakened_one", 9, (300, 320)),
+    // 觉醒者:飞升 9+ 一阶段 320(原版 AwakenedOne 构造器里的单参 setHp(320),
+    // 定值不掷点),二阶段复活的血量另见 awakened_phase2_hp
+    ("awakened_one", 9, (320, 320)),
     ("time_eater", 9, (480, 480)),
     ("donu", 9, (265, 265)),
     ("deca", 9, (265, 265)),
@@ -740,9 +740,12 @@ pub fn hp_range(def: &EnemyDef, asc: u32) -> (i32, i32) {
     def.hp
 }
 
-/// 原版里"血量固定、连一次掷点都不消耗"的怪(反编译 MonsterSpecific.cpp 的
-/// initHp 直接 curHp = maxHp = 固定值):球形守卫 / 巨口 / 闪现者
+/// 原版里"血量固定、连一次掷点都不消耗"的怪(构造器用单参 setHp(N))
 pub fn hp_fixed_no_roll(def_id: &str) -> bool {
+    // 这三只的血量是从 AbstractMonster 构造器的第三个参数进来的(super(NAME, ID, N, ...)),
+    // 原版压根没调 setHp, 所以不消耗 monsterHpRng 的掷点.
+    // 注意: 单参 setHp(N) 在原版里转发成 setHp(N, N), 而 setHp(min, max) 是无条件
+    // monsterHpRng.random(min, max) 的 —— 定值怪照样掷一次, 只是区间塌成一点.
     matches!(def_id, "spheric_guardian" | "the_maw" | "transient")
 }
 
@@ -1276,6 +1279,11 @@ mod tests {
         let guardian = enemies::enemy_def("the_guardian").unwrap();
         assert_eq!(hp_range(guardian, 8), (240, 240));
         assert_eq!(hp_range(guardian, 9), (250, 250));
+        // 觉醒者一阶段血量:原版 AwakenedOne 构造器里飞升 9+ 是单参 setHp(320),
+        // 而 setHp(min, max) 是无条件掷点(区间塌成一点也不省), 所以是恒 320
+        let awakened = enemies::enemy_def("awakened_one").unwrap();
+        assert_eq!(hp_range(awakened, 8), (300, 300));
+        assert_eq!(hp_range(awakened, 9), (320, 320));
         // A19 Boss 招式
         let heart = enemies::enemy_def("corrupt_heart").unwrap();
         let echo = heart.moves.iter().find(|m| m.name == "Echo").unwrap();

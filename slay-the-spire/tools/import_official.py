@@ -717,6 +717,72 @@ def potency_of(src):
     return None
 
 
+
+# ---------------------------------------------------------------- 怪物
+def _asc_chain(body):
+    """把 if (asc>=N) {...} / else if / else 链摊成 [(门槛, 代码块)] + else 块."""
+    marks = []
+    for m in re.finditer(r"(?:else\s+)?if \(AbstractDungeon\.ascensionLevel >= (\d+)\)\s*\{", body):
+        marks.append((int(m.group(1)), body.find("{", m.end() - 1)))
+    out = []
+    for lvl, pos in marks:
+        seg = body_at(body, pos)
+        if seg is not None:
+            out.append((lvl, seg))
+    tail = None
+    m = re.search(r"\}\s*else\s*\{", body)
+    if m:
+        tail = body_at(body, body.find("{", m.end() - 1))
+    return out, tail
+
+
+def _hp_in(text):
+    """(下限, 上限). 原版 setHp(min, max) 一律掷一次 monsterHpRng."""
+    m = re.search(r"setHp\((\d+)(?:,\s*(\d+))?\)", text or "")
+    if not m:
+        return None
+    lo = int(m.group(1))
+    return (lo, int(m.group(2)) if m.group(2) else lo)
+
+
+def monster_data(root):
+    """反编译类 -> 每只怪的常规血量/飞升档血量/是否走 setHp(掷点)."""
+    out = {}
+    for dirpath, _, files in os.walk(root):
+        for f in files:
+            if not f.endswith(".java") or f.startswith("Abstract"):
+                continue
+            src = open(os.path.join(dirpath, f), encoding="utf-8").read()
+            key = re.search(r'public static final String ID = "([^"]+)"', src)
+            if not key:
+                continue
+            cls = f[:-5]
+            bodies = []
+            for m in re.finditer(r"(?:public|private|protected)\s+%s\s*\([^)]*\)\s*\{" % re.escape(cls), src):
+                b = body_at(src, m.start())
+                if b:
+                    bodies.append(b)
+            body = "\n".join(bodies) if bodies else src
+            chain, tail = _asc_chain(body)
+            asc = []
+            for lvl, seg in chain:
+                hp = _hp_in(seg)
+                if hp:
+                    asc.append((lvl, hp[0], hp[1]))
+            base = _hp_in(tail) if tail else None
+            if base is None:
+                for m in re.finditer(r"setHp\((\d+)(?:,\s*(\d+))?\)", body):
+                    lo = int(m.group(1))
+                    base = (lo, int(m.group(2)) if m.group(2) else lo)
+                    break
+            out[key.group(1)] = {
+                "hp": base,
+                "asc": sorted(asc),
+                "draws": bool(re.search(r"setHp\(", body)),
+            }
+    return out
+
+
 # ---------------------------------------------------------------- 主流程
 
 def main():
@@ -740,7 +806,22 @@ def main():
     for k, v in classes.items():
         log("%-8s 类 %d 个, 官方条目 %d 个" % (k, len(v), len(official[k])))
 
-    out = {"cards": [], "relics": [], "powers": [], "potions": [], "events": [], "missing": []}
+    out = {"cards": [], "relics": [], "powers": [], "potions": [], "events": [], "monsters": [], "missing": []}
+    # 怪物: 官方名字 + 常规血量 + 飞升档血量(招式的名字/效果本作自己有一套, 不动)
+    mon_data = monster_data(os.path.join(decomp, "monsters"))
+    for key, entry in json.load(open(os.path.join(loc, "monsters.json"), encoding="utf-8")).items():
+        d = mon_data.get(key)
+        if not d or not d["hp"]:
+            continue
+        out["monsters"].append(
+            {
+                "key": key,
+                "name": entry.get("NAME", key),
+                "hp": list(d["hp"]),
+                "asc": [list(a) for a in d["asc"]],
+                "draws": d["draws"],
+            }
+        )
     # 事件: 只用官方标题. 正文是按阶段分片的旁白, 我们的语料是机制摘要, 不能覆盖
     for key, entry in official["events"].items():
         out["events"].append({"key": key, "name": entry.get("NAME", key)})

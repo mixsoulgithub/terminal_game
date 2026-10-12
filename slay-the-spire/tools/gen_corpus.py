@@ -121,7 +121,7 @@ def load_src(path):
         )
     d = json.load(open(path, encoding="utf-8"))
     out = {}
-    for name in ("cards", "relics", "powers", "potions", "events"):
+    for name in ("cards", "relics", "powers", "potions", "events", "monsters"):
         by_key, by_name = {}, {}
         for e in d[name]:
             by_key.setdefault(nk(e["key"]), e)
@@ -182,9 +182,45 @@ def main():
     ev_by_key, ev_by_name = data.get("events", ({}, {}))
     ev = {k: v["name"] for k, v in ev_by_key.items()}
     evn = {k: v["name"] for k, v in ev_by_name.items()}
-    seg = cur[spans["EVENTS"][0] : spans["EVENTS"][1]].rstrip("\n")
-    lines, renamed, evmiss = [], [], []
+    # 怪物: 名字/常规血量/飞升档血量对齐官方(招式的名字与效果本作自己有一套, 不动)
+    mo_by_key, mo_by_name = data.get("monsters", ({}, {}))
+    seg = cur[spans["MONSTERS"][0] : spans["MONSTERS"][1]].rstrip("\n")
+    mlines, mupd, mmiss = [], [], []
     for line in seg.split("\n"):
+        m = re.match(r'\s*MonsterInfo \{ id: "([^"]+)", corpus_id: "([^"]+)", name: "([^"]+)"', line)
+        if not m:
+            mlines.append(line)
+            continue
+        e = mo_by_key.get(corpus_key(m.group(2))) or mo_by_name.get(nk(m.group(3))) or mo_by_key.get(nk(m.group(1)))
+        if not e:
+            mmiss.append(m.group(1))
+            mlines.append(line)
+            continue
+        asc = e["asc"][0] if e["asc"] else None
+        fields = dict(re.findall(r'(\w+): ("(?:[^"\\]|\\.)*"|&\[[^\]]*\]|-?\d+)', line))
+        if not fields:
+            mlines.append(line)
+            continue
+        fields["name"] = rs(e["name"])
+        fields["hp_lo"] = str(e["hp"][0])
+        fields["hp_hi"] = str(e["hp"][1])
+        fields["hp_asc_lo"] = str(asc[1] if asc else e["hp"][0])
+        fields["hp_asc_hi"] = str(asc[2] if asc else e["hp"][1])
+        keys = ["id", "corpus_id", "name", "category", "acts", "hp_lo", "hp_hi", "hp_asc_lo", "hp_asc_hi", "moves"]
+        if all(k in fields for k in keys):
+            before = line
+            line = "    MonsterInfo { %s }," % ", ".join(
+                "%s: %s" % (k, fields[k]) for k in keys
+            )
+            if line != before:
+                mupd.append(m.group(1))
+        mlines.append(line)
+    new_sections["MONSTERS"] = "\n".join(mlines)
+    print("MONSTERS %3d 行 | 更新 %d | 官方无 %d" % (len(mlines), len(mupd), len(mmiss)), file=sys.stderr)
+
+    ev_seg = cur[spans["EVENTS"][0] : spans["EVENTS"][1]].rstrip("\n")
+    lines, renamed, evmiss = [], [], []
+    for line in ev_seg.split("\n"):
         m = re.match(r'\s*EventInfo \{ id: "([^"]+)", name: "([^"]+)"(.*)', line, re.S)
         if not m:
             lines.append(line)
@@ -261,7 +297,7 @@ def main():
     # 拼回整份文件
     pieces = []
     last = 0
-    for sec in SECTIONS + ["EVENTS"]:
+    for sec in SECTIONS + ["EVENTS", "MONSTERS"]:
         a, b = spans[sec]
         pieces.append(cur[last:a])
         pieces.append(new_sections[sec] + "\n")
