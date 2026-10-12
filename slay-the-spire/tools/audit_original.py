@@ -1202,6 +1202,18 @@ def audit_monster_ai():
 #   遗物/药水抖动 ShopScreen.java:393/405  random(0.95f, 1.05f)
 #   无色稀有概率  Exordium.java:116        colorlessRareChance = 0.3f
 #   打折位        ShopScreen.java:297      coloredCards.get(merchantRng.random(0, 4)) / 2
+# 遗物/药水档位掷点(与原版逐条对过):
+#   遗物  AbstractDungeon.java:871-880  relicRng.random(0, 99), <commonRelicChance(50) 普通,
+#         <50+uncommonRelicChance(33)=83 罕见, 其余稀有
+#   药水  AbstractDungeon.java:890-895  potionRng.random(0, 99), <POTION_COMMON_CHANCE(65) 普通,
+#         <65+POTION_UNCOMMON_CHANCE(25)=90 罕见, 其余稀有(PotionHelper.java:114-115)
+TIER_CHECKS = [
+    ("run.rs", "RELIC_TIER_COMMON_BELOW", 50),
+    ("run.rs", "RELIC_TIER_UNCOMMON_BELOW", 83),
+    ("potions.rs", "COMMON_BELOW", 65),
+    ("potions.rs", "UNCOMMON_BELOW", 90),
+]
+
 SHOP_CHECKS = [
     ("SHOP_RELIC_TIER_COMMON", 48),
     ("SHOP_RELIC_TIER_UNCOMMON", 82),
@@ -1209,6 +1221,30 @@ SHOP_CHECKS = [
     ("SHOP_COLORLESS_FACTOR", 1.2),
     ("SHOP_SALE_SLOTS", 5),
 ]
+
+
+def audit_draw_tiers():
+    rows = []
+    for fname, name, want in TIER_CHECKS:
+        src = open(os.path.join(OURS, fname), encoding="utf-8").read()
+        m = re.search(r"const %s: [a-z0-9]+ = ([0-9.]+)" % name, src)
+        if not m:
+            rows.append((name, "缺常量", str(want), "本作没有这个常量"))
+            continue
+        if abs(float(m.group(1)) - want) > 1e-9:
+            rows.append((name, m.group(1), str(want), "与原版不一致"))
+    run_src = open(os.path.join(OURS, "run.rs"), encoding="utf-8").read()
+    if "RunStream::RelicRng).random_range(0, 99)" not in run_src:
+        rows.append(("遗物档掷点", "没掷 relicRng.random_range(0,99)", "relicRng.random(0,99)", "掷点不对"))
+    pot_src = open(os.path.join(OURS, "potions.rs"), encoding="utf-8").read()
+    if "random_range(0, 99)" not in pot_src:
+        rows.append(("药水档掷点", "没掷 random_range(0,99)", "potionRng.random(0,99)", "掷点不对"))
+    print("=== 档位掷点审计: 对上 %d 项, 不符 %d 条" % (len(TIER_CHECKS) + 2, len(rows)))
+    if rows:
+        print("项,本作,原版,判定")
+        for r in rows:
+            print("%s,%s,%s,%s" % r)
+    return rows
 
 
 def audit_shop():
@@ -1255,6 +1291,7 @@ def main():
         audit_move_damage()
     if what in ("shop", "all"):
         audit_shop()
+        audit_draw_tiers()
     if what in ("events", "all"):
         audit_event_pct()
         audit_event_anchors()

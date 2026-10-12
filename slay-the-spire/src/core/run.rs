@@ -49,6 +49,11 @@ const LIBRARY_CARD_COUNT: usize = 20;
 /// 药水掉落的基础概率与保底步长
 const POTION_DROP_BASE_CHANCE: i32 = 40;
 const POTION_PITY_STEP: i32 = 10;
+/// 遗物档次掷点的分界: relicRng.random(0, 99) < 50 普通, < 83 罕见, 否则稀有
+/// (原版 AbstractDungeon.java:871-880: commonRelicChance = 50, uncommonRelicChance = 33)
+const RELIC_TIER_COMMON_BELOW: i32 = 50;
+const RELIC_TIER_UNCOMMON_BELOW: i32 = 83;
+
 /// 精英掉遗物的稀有度分界(参考实现 returnRandomRelicTierElite)
 const ELITE_RELIC_COMMON_BELOW: u32 = 50;
 const ELITE_RELIC_RARE_ABOVE: u32 = 82;
@@ -6479,9 +6484,9 @@ impl Run {
     /// 战斗奖励的遗物档次:<50 普通,<83 罕见,其余稀有(都走 relicRng)
     fn roll_combat_relic_tier(&mut self) -> RelicTier {
         let roll = self.streams.run(RunStream::RelicRng).random_range(0, 99);
-        if roll < 50 {
+        if roll < RELIC_TIER_COMMON_BELOW {
             RelicTier::Common
-        } else if roll < 83 {
+        } else if roll < RELIC_TIER_UNCOMMON_BELOW {
             RelicTier::Uncommon
         } else {
             RelicTier::Rare
