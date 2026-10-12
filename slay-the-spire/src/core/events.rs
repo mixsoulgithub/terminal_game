@@ -3538,6 +3538,32 @@ mod tests {
     }
 
     #[test]
+    fn transmorgrifier_turns_a_curse_into_another_curse() {
+        // 原版 AbstractDungeon.transformCard 里 CURSE 走 CardLibrary.getCurse: 变成另一张诅咒
+        // (不是变成普通职业牌), 而且用的还是传进来的 rng(miscRng).
+        let mut r = Run::new(43);
+        r.player.deck.push(crate::core::cards::card("injury"));
+        let def = event_def("transmorgrifier").unwrap();
+        open(&mut r, def);
+        r.choose_event(0).unwrap();
+        let cands = r.picker_candidates();
+        let idx = cands
+            .iter()
+            .position(|&d| r.player.deck[d].def.id == "injury")
+            .expect("刚塞进去的诅咒要在候选里");
+        r.picker.as_mut().unwrap().index = idx;
+        r.picker_confirm().unwrap();
+        assert!(
+            !r.player.deck.iter().any(|c| c.def.id == "injury"),
+            "原诅咒被换掉了"
+        );
+        assert!(
+            r.player.deck.iter().any(|c| c.kind() == CardType::Curse),
+            "换来的还是诅咒"
+        );
+    }
+
+    #[test]
     fn transmorgrifier_transforms_a_card() {
         let mut r = Run::new(25);
         let def = event_def("transmorgrifier").unwrap();

@@ -5026,6 +5026,16 @@ impl Run {
 
     /// 随机一张本职业牌(不限稀有度时从三档里挑)
     fn random_class_card(&mut self, rarity: Option<Rarity>) -> Option<&'static CardDef> {
+        self.random_class_card_excluding(rarity, None)
+    }
+
+    /// 同 random_class_card, 但把某张牌排除在外(原版 returnTrulyRandomCardFromAvailable
+    /// 会跳过被变的那张牌本身)
+    fn random_class_card_excluding(
+        &mut self,
+        rarity: Option<Rarity>,
+        banned: Option<&str>,
+    ) -> Option<&'static CardDef> {
         let mut pool: Vec<&'static CardDef> = match rarity {
             Some(r) => cards::reward_pool(r, self.character),
             None => {
@@ -5035,6 +5045,9 @@ impl Run {
                 v
             }
         };
+        if let Some(banned) = banned {
+            pool.retain(|d| d.id != banned);
+        }
         if pool.is_empty() {
             return None;
         }
@@ -5073,7 +5086,23 @@ impl Run {
         }
         let card = self.player.deck.remove(idx);
         self.pay_deck_leave_cost(&card);
-        if let Some(def) = self.random_class_card(None) {
+        // 原版 AbstractDungeon.transformCard 是按**颜色**分: CURSES 走 CardLibrary.getCurse
+        // (变成另一张诅咒, 用传进来的 rng), 其余走 returnTrulyRandomCardFromAvailable =
+        // 本职业 common+uncommon+rare 池里抽一张并排除被变的那张本身.
+        // 注: 按稀有度分池的是另一条 srcTransformCard 路径, 别混.
+        if card.kind() == CardType::Curse {
+            let banned = card.def.id;
+            let mut pool: Vec<&'static CardDef> =
+                cards::curses().into_iter().filter(|d| d.id != banned).collect();
+            if pool.is_empty() {
+                return;
+            }
+            let pick = self.streams.floor(FloorStream::MiscRng).random(pool.len() as u32 - 1) as usize;
+            let id = pool.swap_remove(pick).id;
+            self.add_card_id(id, 1);
+            return;
+        }
+        if let Some(def) = self.random_class_card_excluding(None, Some(card.def.id)) {
             self.player.deck.push(CardInstance::new(def));
         }
     }

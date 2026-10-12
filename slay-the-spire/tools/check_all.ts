@@ -75,10 +75,11 @@ const START = performance.now();
 // 基线抬高的三处原因, 都是"本作按原版改对了、参考实现写错" -> 离参考更远、离原版更近:
 //   1 大鱼 Banana 回血是整数除法 maxHealth/3(不是参考的 floor(0.3333)) -> a20 0->32
 //   2 篝火精灵烧罕见牌是回满(不是参考的固定 10 点) -> act2 9->45
+//   4 transform 按原版改齐(普通牌排除自身、诅咒变另一张诅咒) -> act2/act3/a20a2 一起抬高
 //   3 War Paint/Whetstone 是 miscRng.randomLong() 当种子洗牌再取前 n 张
 //     (Whetstone.java:43), 参考是逐张 random(n-1) -> act1/act2/acts/a20 一起抬高
 // 判据是"不高于基线", 所以这里是记下新基线而不是放宽判据.
-const E2E_BASELINE: Record<string, number> = { act1: 310, act2: 171, act3: 272, acts: 36, a20: 196, a20a2: 3, a20a3: 60, a20a4: 1, act4: 0 };
+const E2E_BASELINE: Record<string, number> = { act1: 310, act2: 199, act3: 366, acts: 36, a20: 196, a20a2: 84, a20a3: 60, a20a4: 1, act4: 0 };
 
 interface Step {
   name: string;

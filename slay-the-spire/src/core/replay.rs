@@ -2059,6 +2059,9 @@ mod e2e {
     // 注: 这几颗的对齐前缀比参考实现短 —— War Paint/Whetstone 按原版是 miscRng.randomLong() 当种子洗牌
     // 再取前 n 张(Whetstone.java:43 / WarPaint.java:43), 参考实现是逐张 random(candidates.length - 1)
     // (refs/slay-the-cli/src/content/relics/common.ts:495). 权威顺序原版 > 参考实现.
+    // 注: 这几颗的对齐前缀比参考短 —— transform 按原版改对了: 普通牌在本职业 common+
+    // uncommon+rare 池里抽一张并排除被变的那张(returnTrulyRandomCardFromAvailable),
+    // 诅咒走 CardLibrary.getCurse 变另一张诅咒(用 miscRng); 参考实现不是这么写的.
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
@@ -2091,7 +2094,7 @@ mod e2e {
     Expected { seed: 40, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 41, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 43, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 79, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 79, lines: 45, ref_lines: 45, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0x82cc2ad51ef2eca5 },
     Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 28, diff_steps: &[28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x1887ddb137acdbb6 },
     Expected { seed: 110, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 141, lines: 50, ref_lines: 50, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xa657647101aeb5bd },
@@ -2301,6 +2304,9 @@ mod e2e {
     // 注: 这几颗的对齐前缀比参考实现短 —— 坠落(Falling)按原版在进房时重掷定"要丢的那张"
     // (牌组非空才掷, 掷法=rng.randomLong 当种子再 new Random(种子).nextInt(n); Falling.setCards
     // + CardHelper.returnCardOfType), 参考实现是选项时现掷一张同类型牌. 权威: 原版 > 参考.
+    // 注: 这几颗的对齐前缀比参考短 —— transform 按原版改对了: 普通牌在本职业 common+
+    // uncommon+rare 池里抽一张并排除被变的那张(returnTrulyRandomCardFromAvailable),
+    // 诅咒走 CardLibrary.getCurse 变另一张诅咒(用 miscRng); 参考实现不是这么写的.
     const ACT3_CASES: &[Expected] = &[
     Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 27, lines: 43, ref_lines: 43, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42], diff_digest: 0x44590893267a563b },
@@ -2333,7 +2339,7 @@ mod e2e {
     Expected { seed: 244, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 252, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 263, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 284, lines: 44, ref_lines: 44, aligned: 29, diff_steps: &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39], diff_digest: 0x6d06df7ccc4c7f06 },
+    Expected { seed: 284, lines: 44, ref_lines: 44, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43], diff_digest: 0x6d06df7ccc4c7f06 },
     Expected { seed: 296, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 328, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 337, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2948,10 +2954,13 @@ mod e2e {
     /// 至此 12 颗 seed 只剩 seed 4 一条未折:Battle Trance 的"本回合不能再抽牌"(c)8.
     /// 折掉 designer/shrine 选牌口径(seed 19/25,44 处)与铜制自动机(seed 3/13/33,槽位缺口 +
     /// 引擎的飞升 19 分支)后,全表 50 -> 3 处.
+    // 注: 这几颗的对齐前缀比参考短 —— transform 按原版改对了: 普通牌在本职业 common+
+    // uncommon+rare 池里抽一张并排除被变的那张(returnTrulyRandomCardFromAvailable),
+    // 诅咒走 CardLibrary.getCurse 变另一张诅咒(用 miscRng); 参考实现不是这么写的.
     const ASC2_CASES: &[Expected] = &[
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 50, ref_lines: 50, aligned: 47, diff_steps: &[47, 48, 49], diff_digest: 0x701c37bace05e1a2 },
-    Expected { seed: 6, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 6, lines: 53, ref_lines: 53, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52], diff_digest: 0x9935b7bcf5529bab },
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 15, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
