@@ -1056,12 +1056,89 @@ def audit_event_pct():
     return rows
 
 
+# ---------------------------------------------------------------- 遗物数值锚点
+# 遗物类里的 `this.<字段> = <字面量>` 与 setCounter(<字面量>) 是本作 fx 里必须能对上的参数
+# (计数器/回合数/张数这些). 原版用 -2 当"未启用/未设置"的哨兵(如 LizardTail 的 counter),
+# 那种不算参数, 豁免. 另外原版遗物里只有两处"按上限比例"的算术(MeatOnTheBone 的
+# `(float)maxHealth / 2.0f` 比较与 LizardTail 的 `maxHealth / 2`), 本作分别是整数比较与
+# `max_hp * pct / 100`, 对整数上限取值等价, 这里不重复断言.
+def _relic_fx_numbers():
+    src = open(os.path.join(OURS, "relics.rs"), encoding="utf-8").read()
+    out = {}
+    for blk in re.split(r'\n        id: "', src)[1:]:
+        rid = blk.split('"')[0]
+        body = blk[:blk.find('\n        id: "')]
+        fx = re.search(r"fx: RelicFx \{(.*?)\n        \}", body, re.S)
+        nums = set()
+        if fx:
+            clean = re.sub(r"//.*", "", fx.group(1))
+            nums = {int(x) for x in re.findall(r":\s*(-?\d+)", clean)}
+        out[rid] = nums
+    return out
+
+
+def _snake(name):
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+def audit_relic_numbers():
+    dec = os.path.join(DECOMP, "relics")
+    if not os.path.isdir(dec):
+        print("=== 遗物数值审计: 跳过(没有 %s)" % dec)
+        return []
+    ours = _relic_fx_numbers()
+    assign = re.compile(r"this\.(\w+)\s*=\s*(-?\d+)\s*;")
+    counter = re.compile(r"setCounter\(\s*(-?\d+)\s*\)")
+    # 比较类锚点(如 `this.counter == 10`)不进断言: 本作把这些阈值写在 fx 字段名里
+    # (damage_all_turn7 / draw_per_10_cards / energy_per_3_shuffles)或代码常量里
+    # (`rs.pen_nib >= 10`, `rs.sundial >= 3`), 是表示差异. 逐个手核过:
+    #   Sundial counter==3 <-> rs.sundial >= 3
+    #   StoneCalendar counter==7 <-> damage_all_turn7(伤害 52 与原版 damageAll(52) 一致)
+    #   PenNib counter==10/9 <-> rs.pen_nib >= 10 与 rs.pen_nib == 9
+    #   InkBottle counter==10/9 <-> draw_per_10_cards: 1
+    #   Inserter counter==2 <-> 蓝职专属, 不进本作池子
+    rows = []
+    checked = 0
+    for dirpath, _d, files in os.walk(dec):
+        for f in sorted(files):
+            if not f.endswith(".java"):
+                continue
+            src = open(os.path.join(dirpath, f), encoding="utf-8", errors="replace").read()
+            if "extends AbstractRelic" not in src:
+                continue
+            rid = _snake(os.path.basename(f)[:-5])
+            if rid not in ours:
+                continue
+            hits = []
+            for line in src.split("\n"):
+                if "Settings" in line or "WIDTH" in line:
+                    continue
+                for m in assign.finditer(line):
+                    hits.append((m.group(1), int(m.group(2))))
+                for m in counter.finditer(line):
+                    hits.append(("counter", int(m.group(1))))
+            if not hits:
+                continue
+            checked += 1
+            for k, v in hits:
+                if v == -2 or abs(v) <= 1 or v in ours[rid]:
+                    continue
+                rows.append((rid, "%s=%d" % (k, v), "", "本作 fx 里没有这个数字"))
+    print("=== 遗物数值审计: 对上 %d 件, 不符 %d 条" % (checked, len(rows)))
+    if rows:
+        print("遗物,原版锚点,本作,判定")
+        for r in rows:
+            print("%s,%s,%s,%s" % r)
+    return rows
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("cards", "all"):
         audit_cards()
     if what in ("relics", "all"):
         audit_relics()
+        audit_relic_numbers()
     if what in ("monsters", "all"):
         audit_monsters()
     if what in ("moves", "all"):
