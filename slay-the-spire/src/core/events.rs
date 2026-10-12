@@ -53,13 +53,6 @@ pub const DEAD_ADVENTURER_ENCOUNTERS: [&str; 3] =
 /// dead_adventurer:伏击胜利后的金币区间(每份没领到的金币奖再加 30)
 pub const DEAD_ADVENTURER_AMBUSH_GOLD: (i32, i32) = (25, 35);
 
-/// 随机移除牌组里的牌时的筛选规则
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum RemoveRule {
-    /// 随机移除一张该类型的牌(坠落)
-    OfType(CardType),
-}
-
 /// 事件战斗胜利后的奖励方案:覆盖 run.rs 平时按遭遇等级发的奖励
 #[derive(Clone, Copy, Debug)]
 pub struct CombatReward {
@@ -173,7 +166,8 @@ pub struct Outcome {
     /// 移除全部可移除的诅咒
     pub remove_curses: bool,
     /// 按规则随机移除一张牌
-    pub remove_random: Option<RemoveRule>,
+    /// 坠落:丢掉进房时掷定的那张牌(按类型取;见 run.rs 的 FilingData/roll_falling)
+    pub remove_falling: Option<CardType>,
     /// 打开选牌界面:变形一张牌(移除后换成随机本职业牌)
     pub transform_card: bool,
     /// 随机变形 n 张牌
@@ -276,7 +270,7 @@ impl Outcome {
         note_swap: false,
         remove_base_strikes: false,
         remove_curses: false,
-        remove_random: None,
+        remove_falling: None,
         transform_card: false,
         transform_random_n: 0,
         transform_choose_n: 0,
@@ -1521,7 +1515,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Land: lose the shown skill card",
                 req_card_type: Some(CardType::Skill),
                 outcome: outcome!(
-                    remove_random: Some(RemoveRule::OfType(CardType::Skill)),
+                    remove_falling: Some(CardType::Skill),
                     text: "A skill slips out of your hands."
                 )
             ),
@@ -1529,7 +1523,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Channel: lose the shown power card",
                 req_card_type: Some(CardType::Power),
                 outcome: outcome!(
-                    remove_random: Some(RemoveRule::OfType(CardType::Power)),
+                    remove_falling: Some(CardType::Power),
                     text: "A power slips out of your hands."
                 )
             ),
@@ -1537,7 +1531,7 @@ pub static EVENTS: &[EventDef] = &[
                 label: "Strike: lose the shown attack card",
                 req_card_type: Some(CardType::Attack),
                 outcome: outcome!(
-                    remove_random: Some(RemoveRule::OfType(CardType::Attack)),
+                    remove_falling: Some(CardType::Attack),
                     text: "An attack slips out of your hands."
                 )
             ),
@@ -2685,11 +2679,8 @@ fn outcome_json(o: &Outcome, order: &[&'static EventDef]) -> String {
     if o.remove_curses {
         kv!("remove_curses", o.remove_curses);
     }
-    if let Some(rule) = o.remove_random {
-        let v = match rule {
-            RemoveRule::OfType(t) => format!("{{\"of_type\":{}}}", jstr(t.name())),
-        };
-        kv!("remove_random", v);
+    if let Some(t) = o.remove_falling {
+        kv!("remove_falling", jstr(t.name()));
     }
     if o.transform_card {
         kv!("transform_card", o.transform_card);
@@ -4048,8 +4039,8 @@ mod tests {
     fn falling_land_removes_a_skill() {
         let mut r = Run::new(42);
         r.player.deck.push(crate::core::cards::card("inflame"));
-        let def = event_def("falling").unwrap();
-        open(&mut r, def);
+        // 坠落的三张候选在进房时(Run::open_event_def 的 roll_falling)就掷定, 所以要走真实进房路径
+        r.debug_open_event("falling").unwrap();
         let skills = r
             .player
             .deck
@@ -5148,12 +5139,37 @@ mod event_audit_fix_tests {
     /// (反编译 GameAction.cpp:786-794 的 power 位 `if (info.powerCardDeckIdx != -1) bits |= 2`;
     /// 移除走 GameContext.cpp:890-895 对能力类型置 -1 的语义).
     #[test]
+    fn falling_removes_the_card_it_rolled_at_entry() {
+        // 进房掷定三张候选(randomLong 当种子 + 在那个新 Random 上抽一张), 选项丢的就是那张;
+        // 不是"选项时现掷一张同类型的牌".
+        // 用唯一技能牌的小牌组, 这样"丢的是哪张"能直接断言
+        let mut r = Run::new(42);
+        r.player.deck = vec![
+            crate::core::cards::card("strike"),
+            crate::core::cards::card("inflame"),
+            crate::core::cards::card("shrug_it_off"),
+        ];
+        r.debug_open_event("falling").unwrap();
+        let d = r.event.as_ref().unwrap().falling.expect("进房应掷好候选");
+        let idx = d.skill.expect("有技能牌就该掷出技能候选");
+        let want = r.player.deck[idx].def.id;
+        assert_eq!(want, "shrug_it_off", "唯一的技能牌就是候选");
+        r.choose_event(0).unwrap();
+        assert!(
+            !r.player.deck.iter().any(|c| c.def.id == want),
+            "丢的是进房掷定的那张技能牌({want})"
+        );
+    }
+
+    #[test]
     fn falling_channel_removes_a_power_card() {
-        let mut r = open_id("falling", 42);
+        // 先把牌组摆好再进房: 三张候选是进房掷定的, 进房后再换牌组就对不上了
+        let mut r = Run::new(42);
         r.player.deck = vec![
             crate::core::cards::card("strike"),
             crate::core::cards::card("inflame"),
         ];
+        r.debug_open_event("falling").unwrap();
         assert!(r.event_choice_available(1), "有能移除的能力牌时 Channel 可选");
         r.choose_event(1).unwrap();
         assert!(

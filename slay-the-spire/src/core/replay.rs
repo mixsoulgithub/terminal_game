@@ -2298,6 +2298,9 @@ mod e2e {
     ///   `throw new Error("unknown monster DONU_AND_DECA")`(setup.ts:110),整局崩掉、
     ///   落不了 fixture,故不进这张表.工具侧已给 tools/e2e_diff.ts 加 --seed-timeout(默认
     ///   单侧 60s),这一颗是快崩、不是卡死,超时用来兜其它卡死的种子.
+    // 注: 这几颗的对齐前缀比参考实现短 —— 坠落(Falling)按原版在进房时重掷定"要丢的那张"
+    // (牌组非空才掷, 掷法=rng.randomLong 当种子再 new Random(种子).nextInt(n); Falling.setCards
+    // + CardHelper.returnCardOfType), 参考实现是选项时现掷一张同类型牌. 权威: 原版 > 参考.
     const ACT3_CASES: &[Expected] = &[
     Expected { seed: 19, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 27, lines: 43, ref_lines: 43, aligned: 30, diff_steps: &[30, 31, 32, 33, 34, 35, 36, 37, 38, 41, 42], diff_digest: 0x44590893267a563b },
@@ -2319,7 +2322,7 @@ mod e2e {
     Expected { seed: 141, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 155, lines: 43, ref_lines: 43, aligned: 2, diff_steps: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0xa9e166c3adbc89ac },
     Expected { seed: 185, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 186, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 186, lines: 45, ref_lines: 45, aligned: 39, diff_steps: &[39, 40, 41, 42, 43, 44], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 187, lines: 43, ref_lines: 43, aligned: 41, diff_steps: &[41, 42], diff_digest: 0x662f9e084650a91a },
     Expected { seed: 197, lines: 45, ref_lines: 45, aligned: 32, diff_steps: &[32, 33, 34, 35, 36, 37, 38, 39, 40], diff_digest: 0xe63100661d33042c },
     Expected { seed: 219, lines: 40, ref_lines: 40, aligned: 20, diff_steps: &[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33], diff_digest: 0x3f7fc7c95ddeeb39 },
@@ -2687,6 +2690,9 @@ mod e2e {
     ///   第 3 只怪的 rollMove r0..99、参考是第 2 只怪的补掷 rr40..99,从这一刻起 move 分家,
     ///   t8 的意图一个 Nip 一个 Chomp、来袭 28 vs 35).这是参考自己声明的 ENGINE-GAP,
     ///   想补得让参考的怪物阶段也放半死怪进去(引擎内部,驱动侧够不着),故只登记不补偿.
+    // 注: 这几颗的对齐前缀比参考实现短 —— 坠落(Falling)按原版在进房时重掷定"要丢的那张"
+    // (牌组非空才掷, 掷法=rng.randomLong 当种子再 new Random(种子).nextInt(n); Falling.setCards
+    // + CardHelper.returnCardOfType), 参考实现是选项时现掷一张同类型牌. 权威: 原版 > 参考.
     const ASC3_CASES: &[Expected] = &[
     Expected { seed: 29, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     // seed 30:觉醒者一阶段血量.原版 AwakenedOne 构造器里飞升 9+ 是单参 setHp(320),
@@ -2695,7 +2701,7 @@ mod e2e {
     //   行为), 故对齐前缀 45 -> 43.依据:反编译 monsters/beyond/AwakenedOne.java 的
     //   构造函数, 以及 tools/audit_original.py monsters 的机械比对.
     Expected { seed: 30, lines: 45, ref_lines: 45, aligned: 43, diff_steps: &[43, 44], diff_digest: 0x8728edd19799514c },
-    Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 121, lines: 43, ref_lines: 43, aligned: 27, diff_steps: &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x5e0f0580303f5d67 },
     Expected { seed: 237, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     // seed 284/494/510 也随觉醒者血量那条改动一起偏移(参考仍是旧的 300..320 区间):
     //   284 多出第 42 步, 494 对齐前缀 42 -> 38, 510 多出第 41-44 步.

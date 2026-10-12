@@ -7,7 +7,7 @@ use crate::core::corpus;
 use crate::core::enemies;
 use crate::core::enemy::{EnemyKind, Encounter};
 use crate::core::events::{
-    CombatReward, EventDef, FlipResult, MatchKeep, NeowOption, Outcome, RemoveRule,
+    CombatReward, EventDef, FlipResult, MatchKeep, NeowOption, Outcome,
 };
 use crate::core::map::{ActMap, NodeKind};
 use crate::core::potions::{self, PotionDef, PotionFx};
@@ -545,6 +545,8 @@ pub struct EventState {
     pub nloth: Option<NlothData>,
     /// Designer In-Spire 进房时掷好的服务变体(参考实现 onEnter);其它事件是 None
     pub designer: Option<DesignerData>,
+    /// 坠落:进房掷定的三张候选(其它事件是 None)
+    pub falling: Option<FallingData>,
     /// 会说话的骷髅:三个购买项各自已经买过几次(涨价步数)
     pub skull: [u32; 3],
 }
@@ -573,6 +575,7 @@ impl EventState {
             wma: None,
             nloth: None,
             designer: None,
+            falling: None,
             skull: [0; 3],
         }
     }
@@ -610,6 +613,16 @@ pub struct NlothData {
 pub struct DesignerData {
     pub upgrade_choice: bool,
     pub cleanup_choice: bool,
+}
+
+/// 坠落(Falling)进房时掷定的三张"要丢的牌"(原版 Falling.setCards): 按 attack -> skill ->
+/// power 的顺序, 每种类型先掷一次 miscRng.randomLong() 当种子, 再在那个新 Random 上
+/// random(n-1) 挑一张(CardHelper.returnCardOfType), 候选只算没瓶装的牌, 身上没有该类型就不掷.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FallingData {
+    pub attack: Option<usize>,
+    pub skill: Option<usize>,
+    pub power: Option<usize>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -3517,6 +3530,11 @@ impl Run {
             None
         };
         // 参考实现 designer_in_spire.onEnter:掷两个布尔决定两个服务的变体
+        let falling = if def.id == "falling" {
+            Some(self.roll_falling())
+        } else {
+            None
+        };
         let designer = if def.id == "designer_in_spire" {
             Some(self.roll_designer())
         } else {
@@ -3528,6 +3546,7 @@ impl Run {
         st.wma = wma;
         st.nloth = nloth;
         st.designer = designer;
+        st.falling = falling;
         self.event = Some(st);
         self.screen = Screen::Event;
     }
@@ -3607,6 +3626,36 @@ impl Run {
             upgrade_choice: self.streams.floor(FloorStream::MiscRng).random_boolean(),
             cleanup_choice: self.streams.floor(FloorStream::MiscRng).random_boolean(),
         }
+    }
+
+    /// 坠落:进房掷定三种类型各自"要丢的那张牌"(原版 Falling.setCards).
+    /// CardHelper.returnCardOfType 是 `cards.remove(new Random(miscRng.randomLong()).random(n-1))`,
+    /// 不是洗牌; 候选取没瓶装的牌(hasCardWithType 也是这个口径), 没有该类型就不掷.
+    fn roll_falling(&mut self) -> FallingData {
+        let mut out = FallingData::default();
+        for want in [CardType::Attack, CardType::Skill, CardType::Power] {
+            let cands: Vec<usize> = self
+                .player
+                .deck
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.kind() == want && !c.bottled)
+                .map(|(i, _)| i)
+                .collect();
+            if cands.is_empty() {
+                continue;
+            }
+            let seed = self.streams.floor(FloorStream::MiscRng).random_long();
+            // Java 的 rng.random(n-1) 就是 nextInt(n)
+            let pick = JavaRandom::new(seed).next_int(cands.len() as u32) as usize;
+            match want {
+                CardType::Attack => out.attack = Some(cands[pick]),
+                CardType::Skill => out.skill = Some(cands[pick]),
+                CardType::Power => out.power = Some(cands[pick]),
+                _ => {}
+            }
+        }
+        out
     }
 
     /// 选项当前是否可选(钱够、血够、该有的遗物/药水/牌都有);
@@ -4415,33 +4464,26 @@ impl Run {
                 }
             }
         }
-        if let Some(rule) = o.remove_random {
-            // "坠落"随机夺走的那张牌:原版会把封进瓶子的牌排除在外.
-            // 反编译 Event::FALLING 自标 `// todo test and CANNOT BE BOTTLED`
-            // (refs/sts_lightspeed/src/game/GameContext.cpp:886)且实现仍按"全部牌"计数
-            // (890-895),即它自己知道该排除、但没做;参考实现同样没做(它自认的 TODO).
-            // 本作按原版/反编译注释排除瓶装牌.
-            let cands: Vec<usize> = self
-                .player
-                .deck
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| {
-                    if c.def.unremovable || c.bottled {
-                        return false;
-                    }
-                    match rule {
-                        RemoveRule::OfType(kind) => c.kind() == kind,
-                    }
-                })
-                .map(|(i, _)| i)
-                .collect();
-            if !cands.is_empty() {
-                let idx = cands[self.streams.floor(FloorStream::MiscRng).below(cands.len() as u32) as usize];
-                let card = self.player.deck.remove(idx);
-                let name = card.label();
-                self.pay_deck_leave_cost(&card);
-                self.say(format!("{name} is lost"));
+        if let Some(want) = o.remove_falling {
+            // 坠落:丢的是进房时掷定的那一张(原版 Falling.setCards 用
+            // CardHelper.returnCardOfType 挑好并显示的那张), 不是选项时现掷.
+            let idx = self
+                .event
+                .as_ref()
+                .and_then(|st| st.falling.as_ref())
+                .and_then(|d| match want {
+                    CardType::Attack => d.attack,
+                    CardType::Skill => d.skill,
+                    CardType::Power => d.power,
+                    _ => None,
+                });
+            if let Some(i) = idx {
+                if i < self.player.deck.len() {
+                    let card = self.player.deck.remove(i);
+                    let name = card.label();
+                    self.pay_deck_leave_cost(&card);
+                    self.say(format!("{name} is lost"));
+                }
             }
         }
         for _ in 0..o.transform_random_n {

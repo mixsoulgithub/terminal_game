@@ -383,9 +383,9 @@ function implOutcomeFacts(o: ImplOutcome, s: Sig): void {
     used.add("remove_base_strikes");
     f(`remove_strikes`);
   }
-  if (o.remove_random) {
-    used.add("remove_random");
-    f(`remove_random:${(o.remove_random as { of_type: string }).of_type}`);
+  if (o.remove_falling) {
+    used.add("remove_falling");
+    f(`remove_random:${String(o.remove_falling)}`);
   }
   if (o.offer_card) {
     used.add("offer_card");
