@@ -6633,8 +6633,13 @@ impl Run {
             // (AbstractDungeon.getRewardCards 的两个循环, sts_lightspeed
             // GameContext.cpp:1827 一致), 且 randomBoolean 无条件消耗一次掷点(概率 0 也掷);
             // 本作这里与参照实现(refs/slay-the-cli)保持一致: 每张牌跟着掷, 概率 0 不掷.
-            // 要改成原版口径得先给 tools/replay_ref.ts 加驱动侧补偿(把参考侧也重排成
-            // 两遍制), 否则 e2e 对拍表会从第一处卡牌奖励起全面分家、失去分辨力.
+            // 改之前要先给 tools/replay_ref.ts 加驱动侧补偿(把参考侧也重排成两遍制),
+            // 否则 e2e 对拍表会从第一处卡牌奖励起全面分家(实测 act2 差异 9 -> 11748).
+            // 补偿已经试过一轮(用参考导出的 rollCardRarity/classCardPool/CARD_REWARD
+            // 在驱动侧重建两遍制): 三张牌那一档两边逐字段完全一致(a20 seed 2: 14/14),
+            // 但全量仍有残余分叉, 且 tools/golden/e2e 下 277 个 .ref.jsonl fixture 是按
+            // 旧的参考行为录的、必须重录(--write 只能逐颗种子), 所以这一轮先回退.
+            // 下一轮的顺序: 加补偿 -> 逐表重录 fixture -> 诊断残余 -> 再改这里.
             let chance = reward_upgrade_chance(self.act, self.ascension);
             if rarity != Rarity::Rare && chance > 0.0 {
                 let roll = self

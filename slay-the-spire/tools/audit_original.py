@@ -21,6 +21,13 @@
     —— 与参照实现 refs/slay-the-cli 的 rewards.ts:195-208 一致, 与原版不同.
     修之前必须给 tools/replay_ref.ts 加驱动侧补偿(把参考侧的奖励也重排成两遍制),
     否则 e2e 对拍表会从第一处卡牌奖励起全面分家(实测 act2 差异 9 -> 11748 处).
+    补偿已原型验证过一轮: 驱动侧用参考导出的 rollCardRarity / classCardPool /
+    CARD_REWARD 重建"两遍制 + 无条件掷", 配合本作改成两遍制之后, 三张牌那一档
+    两边逐字段完全一致(tools/e2e_diff.ts 2 --script a20.script: 14/14 步, 0 差异).
+    剩下的活: (1) tools/golden/e2e 下 277 个 .ref.jsonl 是按旧参考行为录的, 要逐表
+    重录(--tables 模式不落盘, 得用 --all --script <表>.script --write); (2) 重录后
+    仍有残余分叉(act2 3363 处), 需要逐颗诊断(已看到 seed 7 第 18 步是第 4 张牌不同);
+    (3) 残余清干净后再改 run.rs 并重铺 replay.rs 的 *​_CASES 基线.
 """
 import json
 import os
