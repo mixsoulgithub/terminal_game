@@ -5805,18 +5805,23 @@ impl Run {
 
     /// 随机升级牌组里 n 张指定类型的牌(参考实现走 miscRng)
     fn upgrade_random_deck(&mut self, want: CardType, n: i32) {
-        for _ in 0..n {
-            let idxs: Vec<usize> = self
-                .player
-                .deck
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.kind() == want && c.can_upgrade())
-                .map(|(i, _)| i)
-                .collect();
-            let Some(i) = self.random_index(&idxs) else {
-                return;
-            };
+        // 原版 Whetstone.java:43 / WarPaint.java:43 是: 先把可升级的候选收集起来,
+        // 用 miscRng.randomLong() 掷一个种子新建 Random 来 Collections.shuffle, 再升级
+        // 洗出来的前 n 张(候选只有 1 张时升级那 1 张). 掷种子在前、且候选为空也照掷.
+        let mut idxs: Vec<usize> = self
+            .player
+            .deck
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.kind() == want && c.can_upgrade())
+            .map(|(i, _)| i)
+            .collect();
+        let seed = self.streams.floor(FloorStream::MiscRng).random_long();
+        if idxs.is_empty() {
+            return;
+        }
+        java_shuffle(&mut idxs, &mut JavaRandom::new(seed));
+        for i in idxs.into_iter().take(n as usize) {
             self.player.deck[i].upgrade();
         }
     }
@@ -5840,15 +5845,6 @@ impl Run {
             java_shuffle(&mut idxs, &mut JavaRandom::new(seed));
             self.player.deck[idxs[0]].upgrade();
         }
-    }
-
-    /// 从下标表里随机挑一个(miscRng)
-    fn random_index(&mut self, idxs: &[usize]) -> Option<usize> {
-        if idxs.is_empty() {
-            return None;
-        }
-        let pick = self.streams.floor(FloorStream::MiscRng).random(idxs.len() as u32 - 1) as usize;
-        Some(idxs[pick])
     }
 
     /// 潘多拉魔盒:把牌组里的打击与防御全部变形

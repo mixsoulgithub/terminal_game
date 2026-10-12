@@ -1378,19 +1378,22 @@ mod e2e {
     ///     (+ run.rs lizard_tail_stays_consumed_across_combats_and_saves:整局一次,
     ///     用掉状态入档)
     /// 全表合计差异 50 处(193 的 23 + 286 的 27)。SWEEP(seed 1..40)不变,仍是 0 处。
+    // 注: 这几颗的对齐前缀比参考实现短 —— War Paint/Whetstone 按原版是 miscRng.randomLong() 当种子洗牌
+    // 再取前 n 张(Whetstone.java:43 / WarPaint.java:43), 参考实现是逐张 random(candidates.length - 1)
+    // (refs/slay-the-cli/src/content/relics/common.ts:495). 权威顺序原版 > 参考实现.
     const CASES: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 5, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 25, diff_steps: &[25, 26, 27, 28], diff_digest: 0x4cb8d55fb2b73e99 },
     Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 9, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 10, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 1, diff_steps: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53], diff_digest: 0x118148f37ca44da2 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 14, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 15, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1406,7 +1409,7 @@ mod e2e {
     Expected { seed: 25, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 28, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 28, lines: 20, ref_lines: 20, aligned: 1, diff_steps: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19], diff_digest: 0x159b74130b2b23b9 },
     Expected { seed: 29, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 31, lines: 38, ref_lines: 38, aligned: 38, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1447,19 +1450,22 @@ mod e2e {
     /// 数字沿革:上一轮(退赃 + 瓶装牌折掉后)SWEEP 40 颗共 104 处 = seed 9/10/24 的
     /// 仙女瓶 51 处 + seed 40 的套娃 53 处。本轮 (a) 修套娃 104 -> 51(seed 40 归零),
     /// (c) 折仙女 51 -> 0(seed 9/10/24 归零)。
+    // 注: 这几颗的对齐前缀比参考实现短 —— War Paint/Whetstone 按原版是 miscRng.randomLong() 当种子洗牌
+    // 再取前 n 张(Whetstone.java:43 / WarPaint.java:43), 参考实现是逐张 random(candidates.length - 1)
+    // (refs/slay-the-cli/src/content/relics/common.ts:495). 权威顺序原版 > 参考实现.
     const SWEEP: &[Expected] = &[
     Expected { seed: 1, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 4, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 5, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 6, lines: 29, ref_lines: 29, aligned: 25, diff_steps: &[25, 26, 27, 28], diff_digest: 0x4cb8d55fb2b73e99 },
     Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 9, lines: 34, ref_lines: 34, aligned: 34, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 10, lines: 41, ref_lines: 41, aligned: 41, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 54, ref_lines: 54, aligned: 1, diff_steps: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53], diff_digest: 0x118148f37ca44da2 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 14, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 15, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1475,7 +1481,7 @@ mod e2e {
     Expected { seed: 25, lines: 33, ref_lines: 33, aligned: 33, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 27, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 28, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 28, lines: 20, ref_lines: 20, aligned: 1, diff_steps: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19], diff_digest: 0x159b74130b2b23b9 },
     Expected { seed: 29, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 30, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 31, lines: 38, ref_lines: 38, aligned: 38, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1833,6 +1839,9 @@ mod e2e {
     ///      BetterDiscardPileToHandAction 是"必须拿 1 张",于是一局战斗内手牌流向短暂不同;
     ///      战斗收尾两边局面又合回来,fixture 与各张表都没被它影响到(seed 4327 的 trace 里
     ///      能看到),本作不改.
+    // 注: 这几颗的对齐前缀比参考实现短 —— War Paint/Whetstone 按原版是 miscRng.randomLong() 当种子洗牌
+    // 再取前 n 张(Whetstone.java:43 / WarPaint.java:43), 参考实现是逐张 random(candidates.length - 1)
+    // (refs/slay-the-cli/src/content/relics/common.ts:495). 权威顺序原版 > 参考实现.
     const ACTS_CASES: &[Expected] = &[
     Expected { seed: 8, lines: 52, ref_lines: 52, aligned: 52, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 1815, lines: 52, ref_lines: 52, aligned: 52, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -1850,7 +1859,7 @@ mod e2e {
     Expected { seed: 23808, lines: 55, ref_lines: 55, aligned: 55, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 24873, lines: 53, ref_lines: 53, aligned: 53, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25365, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 26848, lines: 58, ref_lines: 58, aligned: 58, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 26848, lines: 58, ref_lines: 58, aligned: 41, diff_steps: &[41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57], diff_digest: 0x2e3cca6b0b409482 },
     Expected { seed: 26951, lines: 63, ref_lines: 63, aligned: 63, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 28104, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
 ];
@@ -2047,6 +2056,9 @@ mod e2e {
     // 回满血(Bonfire.java:79-81: heal = maxHealth - currentHealth), 参考实现是固定 10 点
     // (slay-the-cli oneTime.ts:94). 权威顺序原版 > 参考实现.
 
+    // 注: 这几颗的对齐前缀比参考实现短 —— War Paint/Whetstone 按原版是 miscRng.randomLong() 当种子洗牌
+    // 再取前 n 张(Whetstone.java:43 / WarPaint.java:43), 参考实现是逐张 random(candidates.length - 1)
+    // (refs/slay-the-cli/src/content/relics/common.ts:495). 权威顺序原版 > 参考实现.
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
@@ -2057,7 +2069,7 @@ mod e2e {
     Expected { seed: 9, lines: 55, ref_lines: 55, aligned: 55, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 10, lines: 47, ref_lines: 47, aligned: 47, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 11, lines: 48, ref_lines: 48, aligned: 48, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 12, lines: 46, ref_lines: 46, aligned: 46, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 46, ref_lines: 46, aligned: 23, diff_steps: &[23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45], diff_digest: 0x47d2ffca45301b81 },
     Expected { seed: 13, lines: 44, ref_lines: 44, aligned: 33, diff_steps: &[33], diff_digest: 0x1f0000150cee864d },
     Expected { seed: 15, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 16, lines: 44, ref_lines: 44, aligned: 41, diff_steps: &[41, 42, 43], diff_digest: 0x613321b605962808 },
@@ -2080,7 +2092,7 @@ mod e2e {
     Expected { seed: 41, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 43, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 79, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 28, diff_steps: &[28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42], diff_digest: 0x1887ddb137acdbb6 },
     Expected { seed: 110, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 141, lines: 50, ref_lines: 50, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xa657647101aeb5bd },
     Expected { seed: 166, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2555,6 +2567,9 @@ mod e2e {
     // 改成了整数除法 `maxHealth / 3`(原版反编译就是整数除法, 上限 72 给 24),
     // 而参考实现仍用 0.3333 的 floor(给 23): 一颗心的差别经策略放大成走法分叉.
     // 权威顺序是原版 > 参考实现, 所以这里钉的是"离参考更远、离原版更近"的基线.
+    // 注: 这几颗的对齐前缀比参考实现短 —— War Paint/Whetstone 按原版是 miscRng.randomLong() 当种子洗牌
+    // 再取前 n 张(Whetstone.java:43 / WarPaint.java:43), 参考实现是逐张 random(candidates.length - 1)
+    // (refs/slay-the-cli/src/content/relics/common.ts:495). 权威顺序原版 > 参考实现.
     const ASC_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2565,7 +2580,7 @@ mod e2e {
     Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 9, lines: 16, ref_lines: 16, aligned: 12, diff_steps: &[12, 13], diff_digest: 0xd5bb6e303d8534 },
     Expected { seed: 11, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 12, lines: 30, ref_lines: 30, aligned: 30, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 12, lines: 30, ref_lines: 30, aligned: 1, diff_steps: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], diff_digest: 0x5350a76e08a34484 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 14, lines: 15, ref_lines: 15, aligned: 15, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 15, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2575,7 +2590,7 @@ mod e2e {
     Expected { seed: 24, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 25, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 26, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 28, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 28, lines: 17, ref_lines: 17, aligned: 1, diff_steps: &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], diff_digest: 0xd0cc67db8bf24df2 },
     Expected { seed: 30, lines: 23, ref_lines: 23, aligned: 23, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 33, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 34, lines: 31, ref_lines: 31, aligned: 31, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2590,7 +2605,7 @@ mod e2e {
     Expected { seed: 46, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 47, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 48, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 49, lines: 26, ref_lines: 26, aligned: 26, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 49, lines: 26, ref_lines: 26, aligned: 22, diff_steps: &[22, 23, 24, 25], diff_digest: 0x5775fe82379c94a5 },
     Expected { seed: 50, lines: 13, ref_lines: 13, aligned: 13, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 51, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 52, lines: 19, ref_lines: 19, aligned: 12, diff_steps: &[12, 13, 14, 15, 16], diff_digest: 0x3396e299b29c554d },

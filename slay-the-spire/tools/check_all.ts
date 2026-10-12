@@ -72,11 +72,13 @@ const START = performance.now();
 /** 九张 e2e 表的基线"总差异 N 处"(见 src/core/replay.rs 的登记表) */
 // a20a3 从 25 涨到 36:觉醒者一阶段血量按原版改成恒 320(原版是单参 setHp(320),
 // 参考实现仍掷 300..320), 属于"跟原版走、与参考分家"的那一类差异。
-// a20 的基线从 0 升到 32、act2 从 9 升到 45: 本作按原版改了两处参考实现写错的地方
-// (大鱼 Banana 回血是整数除法 maxHealth/3, 不是 floor(0.3333); 篝火精灵烧罕见牌是回满,
-// 不是固定 10 点), 于是本作离参考更远、离原版更近. 判据是"不高于基线", 所以这里是
-// 记下新基线而不是放宽判据.
-const E2E_BASELINE: Record<string, number> = { act1: 50, act2: 45, act3: 257, acts: 0, a20: 32, a20a2: 3, a20a3: 36, a20a4: 1, act4: 0 };
+// 基线抬高的三处原因, 都是"本作按原版改对了、参考实现写错" -> 离参考更远、离原版更近:
+//   1 大鱼 Banana 回血是整数除法 maxHealth/3(不是参考的 floor(0.3333)) -> a20 0->32
+//   2 篝火精灵烧罕见牌是回满(不是参考的固定 10 点) -> act2 9->45
+//   3 War Paint/Whetstone 是 miscRng.randomLong() 当种子洗牌再取前 n 张
+//     (Whetstone.java:43), 参考是逐张 random(n-1) -> act1/act2/acts/a20 一起抬高
+// 判据是"不高于基线", 所以这里是记下新基线而不是放宽判据.
+const E2E_BASELINE: Record<string, number> = { act1: 310, act2: 171, act3: 257, acts: 36, a20: 196, a20a2: 3, a20a3: 36, a20a4: 1, act4: 0 };
 
 interface Step {
   name: string;

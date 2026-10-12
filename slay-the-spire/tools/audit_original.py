@@ -1056,6 +1056,14 @@ def audit_event_pct():
     return rows
 
 
+# 已知条目(RNG 调用点轴 / 商店与遗物):
+#   War Paint/Whetstone 的随机升级: 原版 Whetstone.java:43 / WarPaint.java:43 是
+#   `Collections.shuffle(upgradableCards, new Random(miscRng.randomLong()))` 再升级前 n 张,
+#   即先掷一次 randomLong() 当种子. 参考实现(slay-the-cli common.ts:495)是逐张
+#   `rng.random(candidates.length - 1)`. 本作原先跟参考实现, 已按原版改成"掷种子 + java 洗牌
+#   + 取前 n"(且候选为空也照掷那一次). 代价: act1/act2/acts/a20 四张表的对齐前缀一起变短
+#   (参考侧还是逐张掷), 已重钉 CASE 与 E2E_BASELINE.
+#
 # ---------------------------------------------------------------- 遗物数值锚点
 # 遗物类里的 `this.<字段> = <字面量>` 与 setCounter(<字面量>) 是本作 fx 里必须能对上的参数
 # (计数器/回合数/张数这些). 原版用 -2 当"未启用/未设置"的哨兵(如 LizardTail 的 counter),
