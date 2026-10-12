@@ -3734,6 +3734,22 @@ mod tests {
         assert_eq!(r.player.max_hp, 90, "稀有牌给 10 点上限");
         assert_eq!(r.player.hp, 90, "并且回满");
 
+        // 罕见牌:按原版回满(Bonfire.java:79-81 的 heal = maxHealth - currentHealth),
+        // 不是参考实现 slay-the-cli(oneTime.ts:94)写的固定 10 点
+        let mut r4 = Run::new(50);
+        r4.player.deck.push(crate::core::cards::card("inflame"));
+        r4.player.hp = 12;
+        open(&mut r4, def);
+        r4.choose_event(0).unwrap();
+        let cands = r4.picker_candidates();
+        let idx = cands
+            .iter()
+            .position(|&d| r4.player.deck[d].def.id == "inflame")
+            .expect("刚塞进去的罕见牌要在候选里");
+        r4.picker.as_mut().unwrap().index = idx;
+        r4.picker_confirm().unwrap();
+        assert_eq!(r4.player.hp, r4.player.max_hp, "罕见牌按原版回满");
+
         // 诅咒:给灵便便遗物
         let mut r2 = Run::new(48);
         r2.player.deck.push(crate::core::cards::card("injury"));
@@ -4036,7 +4052,7 @@ mod tests {
     #[test]
     fn falling_land_removes_a_skill() {
         let mut r = Run::new(42);
-        r.player.deck.push(crate::core::cards::card("shrug_it_off"));
+        r.player.deck.push(crate::core::cards::card("inflame"));
         let def = event_def("falling").unwrap();
         open(&mut r, def);
         let skills = r

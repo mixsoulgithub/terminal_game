@@ -2043,6 +2043,10 @@ mod e2e {
     ///       本作原先不推进([a] 本作缺).处理 = run.rs resolve_victory 的 back 分支补上
     ///       (plan.nothing 即斗兽场第一场),断言见 events.rs::colosseum_first_fight_returns_to_the_event.
     /// 全表合计差异 9 处(原 9 处:3 的 5 + 13 的 1 + 16 的 3;92 与 110 本轮归零).
+    // 注: seed 141 的对齐前缀比参考实现短, 因为本作按原版把篝火精灵送罕见牌的赏赐改成
+    // 回满血(Bonfire.java:79-81: heal = maxHealth - currentHealth), 参考实现是固定 10 点
+    // (slay-the-cli oneTime.ts:94). 权威顺序原版 > 参考实现.
+
     const ACT2_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 3, lines: 46, ref_lines: 46, aligned: 36, diff_steps: &[36, 37, 38, 39, 40], diff_digest: 0x147de7f187ab3f55 },
@@ -2078,7 +2082,7 @@ mod e2e {
     Expected { seed: 79, lines: 45, ref_lines: 45, aligned: 45, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 92, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 110, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 141, lines: 50, ref_lines: 50, aligned: 50, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 141, lines: 50, ref_lines: 50, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44], diff_digest: 0xa657647101aeb5bd },
     Expected { seed: 166, lines: 54, ref_lines: 54, aligned: 54, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 187, lines: 44, ref_lines: 44, aligned: 44, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 253, lines: 43, ref_lines: 43, aligned: 43, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },

@@ -315,9 +315,11 @@ add({
   check: (r) => wantRelic(r, "spirit_poop"),
 });
 add({
-  event: "bonfire_spirits", choice: 0, option: "Offer(uncommon)", expected: "烧罕见牌:回 10 血",
+  // 原版 Bonfire.java:79-81: UNCOMMON 是把血回满(heal = maxHealth - currentHealth),
+  // 不是固定 10 点(那是参考实现 slay-the-cli oneTime.ts:94 的写法)
+  event: "bonfire_spirits", choice: 0, option: "Offer(uncommon)", expected: "烧罕见牌:回满",
   scenario: base({ hp: 30, deck: ["strike", "defend", "spot_weakness"], actions: [{ op: "choose", i: 0 }, { op: "pick", i: 2 }] }),
-  check: (r) => eq(lastSt(r).hp - openSt(r).hp, 10, "回血"),
+  check: (r) => eq(lastSt(r).hp, lastSt(r).max_hp, "回满"),
 });
 add({
   event: "bonfire_spirits", choice: 0, option: "Offer(basic)", expected: "烧基础牌:无补偿",

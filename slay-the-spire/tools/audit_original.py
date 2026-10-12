@@ -788,7 +788,12 @@ def audit_move_damage():
     return rows
 
 
-# 已知条目(事件百分比轴):
+# 已知条目(事件百分比轴 / 锚点数值轴):
+#   篝火精灵 Bonfire 烧罕见牌: 原版 Bonfire.java:79-81 是"回满"(heal = maxHealth - currentHealth),
+#   参考实现 slay-the-cli oneTime.ts:94 写的是 healHp(ctx, 10), 本作原先跟着参考实现回 10 点.
+#   已按原版改成回满. 代价: act2 表 seed 141 的对齐前缀变短(参考侧仍回 10), 已重钉,
+#   E2E_BASELINE.act2 由 9 记成 45; 参考侧同一处要在补偿工程里一起改.
+#
 #   大鱼 BigFish 的香蕉回血: 原版反编译是 `this.healAmt = player.maxHealth / 3`(整数除法),
 #   本作原先写成 `heal_frac: 0.3333`(参考实现 slay-the-cli 的 fractionMaxHp floor), 上限是
 #   3 的倍数时少 1(72 -> 23 而非 24). 已按原版改成 `heal_div: 3`.
@@ -849,6 +854,11 @@ OUR_PCT_FIELDS = (
 )
 
 
+def _norm_name(nm):
+    """事件名匹配用: 去掉非字母数字并小写, 免得 Mind Bloom / Mindbloom 这种空格差异漏匹配."""
+    return re.sub(r"[^a-z0-9]", "", nm.lower())
+
+
 def _java_event_pcts(src):
     out = []
     for line in src.split("\n"):
@@ -876,6 +886,99 @@ def _our_event_pcts(block):
     return out
 
 
+# ------------------------------------------------------- 事件锚点数值(非百分比)
+# 只抽"有语义锚点"的数字: `this.xxxAmt = <字面量>;` 与 loseGold/gainGold/heal/damage(<字面量>).
+# 事件类里大量布局数字(2.0 / 5 / 7 这些)不进比较, 否则噪声淹没信号.
+ANCHOR_ASSIGN = re.compile(
+    r"this\.(\w*(?:Amt|Amount|damage|Damage|hpLoss|HpLoss|gold|Gold|calls|Cards|numCards)\w*)"
+    r"\s*=\s*(-?\d+)\s*;"
+)
+ANCHOR_CALL = re.compile(r"(loseGold|gainGold|obtainGold|heal|damage)\(\s*(-?\d+)\s*[,)]")
+
+
+def _java_anchors(src):
+    out = set()
+    for line in src.split("\n"):
+        if "Settings" in line or "WIDTH" in line or "HEIGHT" in line:
+            continue
+        for m in ANCHOR_ASSIGN.finditer(line):
+            out.add((m.group(1), int(m.group(2))))
+        for m in ANCHOR_CALL.finditer(line):
+            out.add((m.group(1), int(m.group(2))))
+    return out
+
+
+# 登记: 锚点换了表达方式、或换到别处实现(附依据)的等价写法, 不算缺口
+ANCHOR_KNOWN = {
+    ("wheel_of_change", "goldAmount"): "原版按章给 100/200/300(shrines/GremlinWheelGame.java:120-124), 本作用 gold_per_act: 100(act*100)一条覆盖",
+    ("bonfire_spirits", "heal"): "按牌稀有度给赏赐, 实现在 run.rs::offer_card_bonus(COMMON/SPECIAL 回 5 点, UNCOMMON 回满, RARE 上限 +10 并回满)",
+}
+
+
+def audit_event_anchors():
+    dec = os.path.join(DECOMP, "events")
+    if not os.path.isdir(dec):
+        print("=== 事件锚点数值审计: 跳过(没有 %s)" % dec)
+        return []
+    ours_src = open(os.path.join(OURS, "events.rs"), encoding="utf-8").read()
+    ours = {}
+    for blk in ours_src.split('\n        id: "')[1:]:
+        eid = blk.split('"')[0]
+        body = blk[:blk.find('\n        id: "')]
+        nm = re.search(r'name: "([^"]*)"', body)
+        text = re.sub(r"//.*", "", body)
+        text = re.sub(r'"(\\.|[^"\\])*"', '""', text)
+        ours[eid] = (nm.group(1) if nm else None, {int(x) for x in re.findall(r"\b(\d+)\b", text)})
+    by_name = {}
+    for eid, (nm, _n) in ours.items():
+        if nm:
+            by_name.setdefault(_norm_name(nm), eid)
+    loc = {}
+    loc_path = os.path.join(GOLDEN, "out", "localization", "eng", "events.json")
+    if os.path.isfile(loc_path):
+        with open(loc_path, encoding="utf-8") as fh:
+            for k, v in json.load(fh).items():
+                if isinstance(v, dict) and v.get("NAME"):
+                    loc[k] = v["NAME"]
+    rows = []
+    checked = 0
+    nodes = {}
+    for dirpath, _d, files in os.walk(dec):
+        for f in sorted(files):
+            if not f.endswith(".java"):
+                continue
+            src = open(os.path.join(dirpath, f), encoding="utf-8", errors="replace").read()
+            mm = re.search(r'public static final String ID = "([^"]+)"', src)
+            if not mm:
+                continue
+            anchors = _java_anchors(src)
+            if not anchors:
+                continue
+            jid = mm.group(1)
+            eid = by_name.get(_norm_name(loc.get(jid, jid))) or by_name.get(_norm_name(jid))
+            if eid is None:
+                rows.append((jid, "无对应事件", "", ""))
+                continue
+            _nm, nums = ours[eid]
+            checked += 1
+            by_field = {}
+            for k, v in anchors:
+                by_field.setdefault(k, []).append(v)
+            for k, vs in sorted(by_field.items()):
+                if (eid, k) in ANCHOR_KNOWN:
+                    continue
+                for v in sorted(set(vs)):
+                    if abs(v) <= 2 or v in nums:
+                        continue
+                    rows.append((eid, "%s=%d" % (k, v), "", "本作没有这个数字"))
+    print("=== 事件锚点数值审计: 对上 %d 个事件, 不符 %d 条" % (checked, len(rows)))
+    if rows:
+        print("事件,原版锚点,本作,判定")
+        for r in rows:
+            print("%s,%s,%s,%s" % r)
+    return rows
+
+
 def audit_event_pct():
     dec = os.path.join(DECOMP, "events")
     if not os.path.isdir(dec):
@@ -891,7 +994,7 @@ def audit_event_pct():
     by_name = {}
     for eid, (nm, _b) in ours.items():
         if nm:
-            by_name.setdefault(nm, eid)
+            by_name.setdefault(_norm_name(nm), eid)
     # 原版类里的 ID 是内部名(如 "Cleric"), 显示名在官方本地化 events.json 里(键就是内部名)
     loc = {}
     loc_path = os.path.join(GOLDEN, "out", "localization", "eng", "events.json")
@@ -917,7 +1020,11 @@ def audit_event_pct():
                 continue
             # 少数事件的显示名和内部名差得多(蘑菇: 内部名 Mushrooms, 游戏里叫 Hypnotizing Colored Mushrooms)
             ALIAS = {"Mushrooms": "Hypnotizing Colored Mushrooms"}
-            eid = by_name.get(loc.get(jid, jid)) or by_name.get(jid) or by_name.get(ALIAS.get(jid, ""))
+            eid = (
+                by_name.get(_norm_name(loc.get(jid, jid)))
+                or by_name.get(_norm_name(jid))
+                or by_name.get(_norm_name(ALIAS.get(jid, "")))
+            )
             if eid is None:
                 rows.append((jid, "无对应事件", "", ""))
                 continue
@@ -961,6 +1068,7 @@ def main():
         audit_move_damage()
     if what in ("events", "all"):
         audit_event_pct()
+        audit_event_anchors()
 
 
 if __name__ == "__main__":

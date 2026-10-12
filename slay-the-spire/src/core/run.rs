@@ -5447,8 +5447,12 @@ impl Run {
                 format!("{name} is devoured; you heal 5 HP")
             }
             Rarity::Uncommon => {
-                self.heal(10);
-                format!("{name} is devoured; you heal 10 HP")
+                // 原版 Bonfire.java:79-81 是"回满"(heal = maxHealth - currentHealth),
+                // 不是固定 10 点; 参考实现 slay-the-cli(oneTime.ts:94)写的是 healHp(ctx, 10),
+                // 本作原先跟着参考实现, 这里按原版改成回满.
+                let full = self.player.max_hp;
+                self.heal(full);
+                format!("{name} is devoured; you are healed to full")
             }
             Rarity::Rare => {
                 // 加上限会顺带回等量的血,再照参考实现 healToFull 回满
