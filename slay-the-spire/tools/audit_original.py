@@ -21,23 +21,31 @@
     —— 与参照实现 refs/slay-the-cli 的 rewards.ts:195-208 一致, 与原版不同.
     修之前必须给 tools/replay_ref.ts 加驱动侧补偿(把参考侧的奖励也重排成两遍制),
     否则 e2e 对拍表会从第一处卡牌奖励起全面分家(实测 act2 差异 9 -> 11748 处).
-    补偿试过两轮, 配方已经摸清(下一轮照着做就能收口):
-      a. 快照要取"把奖励屏拉起来的那一次 advance 之前"的 cardRng —— 在驱动唯一的推进
-         漏斗 advanceWithEggs 里记, 且只在"这次推进把房间变成 rewards"时记. 取战斗
-         开始前那种更早的快照会丢掉整场战斗消耗掉的掷点(实测 seed 7 第 3 张牌就分家).
-      b. 只还原 cardRng 不够, 还要还原 run.blizzard.cardRarityFactor(奖励生成会改保底),
-         否则重跑出来的稀有度分档和原来那次不一样.
-      c. 稀有度档位要按真实房间来源传("monster"/"elite"/"boss"/"event"); 一律按 monster
-         会让 act3 很多种子在第 5-9 步就分叉.
-      d. 换掉的那组卡牌要沿用原来的 group 号(参考的"拿奖励"按 group 分组).
-    做到 a+b+c+d 并配合本作改成两遍制之后: a20(46 颗)与 act4(16 颗)完全 0 差异,
-    a20a4 1 处, act1 差异 50 -> 14; 但 act3 还有第二处残留(40 颗里对齐前缀 20 颗变差,
-    如 seed 43 由 44 掉到 8、2 颗好转), 未查清 —— act3 特有(升级概率 0.5/A12+ 0.25,
-    boss 是觉醒者). 所以本轮仍整体回退, 留下的活:
-      (1) 查清 act3 那处残留: 先把 act3 各种子"改前/改后"的对齐前缀逐颗打出来定位第一颗;
-      (2) 逐表重录 tools/golden/e2e/*.ref.jsonl(277 个) —— --tables 模式不落盘,
-          得用 --all --script <表>.script --write;
-      (3) 重铺 replay.rs 的 CASE 表基线与 check_all 的 E2E_BASELINE.
+    补偿试过三轮(第三轮把配方全做齐了). 配方(四条, 缺一条就会分家):
+      a. 快照取"把奖励屏拉起来的那一次 advance 之前"的 cardRng(在推进漏斗里记);
+         取战斗开始前的更早快照会丢掉整场战斗消耗的掷点;
+      b. 还要还原 run.blizzard.cardRarityFactor(奖励生成会改保底);
+      c. 稀有度档位按真实房间来源传("monster"/"elite"/"boss"/"event");
+      d. 换掉的那组卡牌沿用原 group 号.
+    按用户口径"只看 a20"用现场参照做同基准 A/B(逐颗对齐前缀, 合计):
+      a20    46 颗: 好转 6 / 不变 37 / 变差 3,  908 -> 927
+      a20a2  12 颗: 好转 1 / 不变  9 / 变差 2,  553 -> 551
+      a20a3   7 颗: 好转 2 / 不变  4 / 变差 1,  251 -> 282(seed 510: 11 -> 41)
+      a20a4  45 颗: 全不变 492;  act4 16 颗: 全不变 176
+      五表合计 2380 -> 2428(+48, 净收益)
+    而 A0 的 act1/act2/act3 是净负(前缀和 +32 / -22 / -326), 用户已明确只管 a20.
+    之所以还没落定: 改成两遍制会同时动到 A0 那几张表的 fixture 与基线 —— 重录 fixture
+    之后 cargo test 有 12 项要重钉(9 张 CASE 表 + fixtures_cover_the_whole_first_act /
+    the_walk_crosses_into_the_second_act / act4_walk_covers_the_whole_fourth_act 三个
+    不变量测试), 属于纯机械但不能半途的活. 落定顺序:
+      (1) 重新加补偿(replay_ref.ts)+ 本作改两遍制(run.rs) —— 配方见上四条;
+      (2) 逐表重录 fixture: --all --script <表>.script --write;
+      (3) cargo test 列出需重钉的 12 项, 逐张 --all --script <表>.script --pin 后按种子集
+          替换 replay.rs 里的 CASE 表(三个不变量测试也要看它断言的是结构还是写死的步号);
+      (4) 用 --tables --json 更新 check_all 的 E2E_BASELINE, 再跑 cargo test + check_all.
+    方法学提醒(踩过的坑): tools/golden/e2e/*.ref.jsonl 这些 fixture 与"现场跑参照"不是
+    同一份(同种子两边 md5 不同) —— cargo test 比冻结 fixture, tools/e2e_diff.ts /
+    check_all 比现场参照, 两者不能混着做 A/B, 否则结论会反.
 """
 import json
 import os
