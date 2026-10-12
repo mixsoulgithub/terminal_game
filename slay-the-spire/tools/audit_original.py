@@ -1183,6 +1183,56 @@ def audit_monster_ai():
     return rows
 
 
+# ---------------------------------------------------------------- 商店掷点
+# 商店的 merchantRng 掷点顺序与取值全部对着原版 ShopScreen.java 核过一遍, 这里把
+# "数字"钉住防止退化(顺序与物品数写在 run.rs 的注释里: 5 张有色牌各自抖动 -> 2 张无色牌
+# 抖动并 x1.2 -> 打折位 random(0,4) -> 遗物 2 件掷档 + 1 件商店档, 每件掷完档才掷价格
+# -> 药水; 池子空了也把那一掷走掉). 原文出处:
+#   档位阈值      ShopScreen.java:484-490  rollRelicTier() 的 random(99): <48 普通 / <82 罕见 / 否则稀有
+#   卡价格抖动    ShopScreen.java:686      setPrice(): random(0.9f, 1.1f)
+#   无色加成      ShopScreen.java:688      color == COLORLESS 时 *= 1.2f
+#   遗物/药水抖动 ShopScreen.java:393/405  random(0.95f, 1.05f)
+#   无色稀有概率  Exordium.java:116        colorlessRareChance = 0.3f
+#   打折位        ShopScreen.java:297      coloredCards.get(merchantRng.random(0, 4)) / 2
+SHOP_CHECKS = [
+    ("SHOP_RELIC_TIER_COMMON", 48),
+    ("SHOP_RELIC_TIER_UNCOMMON", 82),
+    ("SHOP_COLORLESS_RARE_CHANCE", 0.3),
+    ("SHOP_COLORLESS_FACTOR", 1.2),
+    ("SHOP_SALE_SLOTS", 5),
+]
+
+
+def audit_shop():
+    src = open(os.path.join(OURS, "run.rs"), encoding="utf-8").read()
+    rows = []
+    for name, want in SHOP_CHECKS:
+        m = re.search(r"const %s: [a-z0-9]+ = ([0-9.]+)" % name, src)
+        if not m:
+            rows.append((name, "缺常量", str(want), "本作没有这个常量"))
+            continue
+        got = float(m.group(1))
+        if abs(got - want) > 1e-9:
+            rows.append((name, str(got), str(want), "与原版不一致"))
+    for name, want in (("SHOP_CARD_JITTER", (0.9, 1.1)), ("SHOP_OTHER_JITTER", (0.95, 1.05))):
+        m = re.search(r"const %s: \(f32, f32\) = \(([0-9.]+), ([0-9.]+)\)" % name, src)
+        if not m:
+            rows.append((name, "缺常量", str(want), "本作没有这个常量"))
+            continue
+        got = (float(m.group(1)), float(m.group(2)))
+        if abs(got[0] - want[0]) > 1e-9 or abs(got[1] - want[1]) > 1e-9:
+            rows.append((name, str(got), str(want), "与原版不一致"))
+    # 档位阈值必须真的来自 merchantRng.random(99) 且分档方式一致
+    if "RunStream::MerchantRng).random(99)" not in src:
+        rows.append(("roll_shop_relic_tier", "没掷 merchantRng.random(99)", "random(99)", "掷点不对"))
+    print("=== 商店掷点审计: 对上 %d 项, 不符 %d 条" % (len(SHOP_CHECKS) + 2 + 1, len(rows)))
+    if rows:
+        print("项,本作,原版,判定")
+        for r in rows:
+            print("%s,%s,%s,%s" % r)
+    return rows
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("cards", "all"):
@@ -1195,6 +1245,8 @@ def main():
         audit_monster_ai()
     if what in ("moves", "all"):
         audit_move_damage()
+    if what in ("shop", "all"):
+        audit_shop()
     if what in ("events", "all"):
         audit_event_pct()
         audit_event_anchors()

@@ -79,6 +79,10 @@ const SHOP_COLORLESS_FACTOR: f32 = 1.2;
 const SHOP_COLORLESS_RARE_CHANCE: f32 = 0.30;
 /// 七张牌里只有一格打折(掷 merchantRng.random(4))
 const SHOP_SALE_SLOTS: u32 = 5;
+/// 商店遗物档位阈值: merchantRng.random(99) < 48 普通, < 82 罕见, 否则稀有
+/// (原版 ShopScreen.java:484-490 的 rollRelicTier)
+const SHOP_RELIC_TIER_COMMON: u32 = 48;
+const SHOP_RELIC_TIER_UNCOMMON: u32 = 82;
 /// 删牌服务:底价 75,本局每买过一次涨 25
 const SHOP_REMOVAL_BASE: i32 = 75;
 const SHOP_REMOVAL_STEP: i32 = 25;
@@ -3108,9 +3112,9 @@ impl Run {
     /// 商店遗物的档次(merchantRng:<48 普通,<82 罕见,其余稀有)
     fn roll_shop_relic_tier(&mut self) -> ShopTier {
         let roll = self.streams.run(RunStream::MerchantRng).random(99);
-        if roll < 48 {
+        if roll < SHOP_RELIC_TIER_COMMON {
             ShopTier::Common
-        } else if roll < 82 {
+        } else if roll < SHOP_RELIC_TIER_UNCOMMON {
             ShopTier::Uncommon
         } else {
             ShopTier::Rare
