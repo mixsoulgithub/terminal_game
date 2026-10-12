@@ -4379,30 +4379,15 @@ impl Run {
                 .filter(|(_, c)| c.can_upgrade())
                 .map(|(i, _)| i)
                 .collect();
+            // 掷种子在前: 原版把候选收好就 Collections.shuffle(.., new Random(miscRng.randomLong())),
+            // 候选为空也照样掷那一次(Designer.java:101 / Whetstone.java:43 / WarPaint.java:43)
+            let seed = self.streams.floor(FloorStream::MiscRng).random_long();
             if !cands.is_empty() {
-                let seed = self.streams.floor(FloorStream::MiscRng).random_long();
                 java_shuffle(&mut cands, &mut JavaRandom::new(seed));
                 for &i in cands.iter().take(o.upgrade_random_shuffle as usize) {
                     self.player.deck[i].upgrade();
                 }
             }
-        }
-        for _ in 0..o.upgrade_random_n {
-            let cands: Vec<usize> = self
-                .player
-                .deck
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.can_upgrade())
-                .map(|(i, _)| i)
-                .collect();
-            if cands.is_empty() {
-                break;
-            }
-            let pick = cands[self.streams.floor(FloorStream::MiscRng).below(cands.len() as u32) as usize];
-            self.player.deck[pick].upgrade();
-            let name = self.player.deck[pick].label();
-            self.say(format!("{name} is upgraded"));
         }
         if o.remove_base_strikes {
             let mut i = 0;
@@ -4623,7 +4608,7 @@ impl Run {
                     self.open_picker(PickPurpose::Upgrade, Screen::Event, 0, None);
                 }
                 1 => {
-                    self.apply_outcome(&crate::outcome!(upgrade_random_n: 2, text: ""));
+                    self.apply_outcome(&crate::outcome!(upgrade_random_shuffle: 2, text: ""));
                 }
                 2 if d.cleanup_choice => {
                     self.open_picker(PickPurpose::Remove, Screen::Event, 0, None);

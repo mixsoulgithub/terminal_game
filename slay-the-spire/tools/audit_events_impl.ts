@@ -416,10 +416,6 @@ function implOutcomeFacts(o: ImplOutcome, s: Sig): void {
     used.add("upgrade_card");
     f(`upgrade_one`);
   }
-  if (num("upgrade_random_n")) {
-    used.add("upgrade_random_n");
-    f(`upgrade_random_x${num("upgrade_random_n")}`);
-  }
   if (num("upgrade_random_shuffle")) {
     used.add("upgrade_random_shuffle");
     f(`upgrade_random_shuffle_x${num("upgrade_random_shuffle")}`);
@@ -944,6 +940,10 @@ const NOTED: { item: string; why: string }[] = [
     why: "反编译 BigFish.java:46 `this.healAmt = AbstractDungeon.player.maxHealth / 3` 是整数除法(上限 72 给 24);语料来自参考实现 slay-the-cli 的 fractionMaxHp(..,floor)(给 23)。权威顺序原版 > 参考实现,实现改成 heal_div: 3。代价: A20 第一幕 seed 9/42/44/52 离参考实现更远, 已重钉",
   },
   {
+    item: "随机升级牌按原版的'掷种子洗牌取前 n', 语料记的是逐张 random",
+    why: "反编译 Whetstone.java:43 / WarPaint.java:43 / Designer.java:101 都是 Collections.shuffle(cards, new Random(miscRng.randomLong())) 再取前 n; 语料来自参考实现 slay-the-cli(common.ts:495 的逐张 rng.random(candidates.length-1)). 权威顺序原版 > 参考, 实现统一走升级随机洗牌那条路(候选为空也照掷一次). 代价: act1/act2/acts/a20 四张表的对齐前缀一起变短, 已重钉",
+  },
+  {
     item: "FALLING 排除瓶装牌",
     why: "反编译自标 todo(GameContext.cpp:886);实现按真机(deck_has_removable_of_type 排 bottled)",
   },
@@ -954,6 +954,13 @@ const NOTED: { item: string; why: string }[] = [
 const ACCEPTED_DIFFS: string[] = [
   "BIG_FISH[0] 效果: 语料有而实现没有/不符 -> heal_frac:+0.3333:floor",
   "BIG_FISH[0] 效果: 实现多出/不符 -> heal_frac:+0.333333:div",
+  // Designer 的付费服务("删一张再随机升一张"): 原版 Designer.java:101-104 是
+  // Collections.shuffle(upgradableCards, new Random(miscRng.randomLong())) 再取第一张,
+  // 语料(记自参考实现 slay-the-cli)记的是逐张 random 的 upgrade_random_x1.
+  "DESIGNER_IN_SPIRE[2] 效果: 语料有而实现没有/不符 -> upgrade_random_x1",
+  "DESIGNER_IN_SPIRE[2] 效果: 实现多出/不符 -> upgrade_random_shuffle_x1",
+  "DESIGNER_IN_SPIRE[2]@a15 效果: 语料有而实现没有/不符 -> upgrade_random_x1",
+  "DESIGNER_IN_SPIRE[2]@a15 效果: 实现多出/不符 -> upgrade_random_shuffle_x1",
 ];
 
 /** 把登记差异从 diffs 里摘出来: 摘掉的必须"恰好出现", 消失了同样算退化 */

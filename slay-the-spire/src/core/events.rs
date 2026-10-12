@@ -157,7 +157,6 @@ pub struct Outcome {
     /// 打开选牌界面升级一张牌
     pub upgrade_card: bool,
     /// 随机升级 n 张牌(逐张独立掷点,可重复选到同一张)
-    pub upgrade_random_n: u8,
     /// 随机升级 n 张牌:把可升级的牌洗一遍再取前 n 张(参考实现 shining_light 的 javaShuffle 写法)
     pub upgrade_random_shuffle: u8,
     /// 升级全部可升级的牌
@@ -270,7 +269,6 @@ impl Outcome {
         add_random_colorless: None,
         colorless_card_rewards: 0,
         upgrade_card: false,
-        upgrade_random_n: 0,
         upgrade_random_shuffle: 0,
         upgrade_all: false,
         upgrade_starters: false,
@@ -1916,7 +1914,7 @@ pub static EVENTS: &[EventDef] = &[
                 req_removable: true,
                 outcome: outcome!(
                     remove_card: true,
-                    upgrade_random_n: 1,
+                    upgrade_random_shuffle: 1,
                     text: "The designer trims one card and sharpens another."
                 )
             ),
@@ -2665,9 +2663,6 @@ fn outcome_json(o: &Outcome, order: &[&'static EventDef]) -> String {
     }
     if o.upgrade_card {
         kv!("upgrade_card", o.upgrade_card);
-    }
-    if o.upgrade_random_n != 0 {
-        kv!("upgrade_random_n", o.upgrade_random_n);
     }
     if o.upgrade_random_shuffle != 0 {
         kv!("upgrade_random_shuffle", o.upgrade_random_shuffle);
