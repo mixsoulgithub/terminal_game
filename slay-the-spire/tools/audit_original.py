@@ -43,7 +43,13 @@
       (3) cargo test 列出需重钉的 12 项, 逐张 --all --script <表>.script --pin 后按种子集
           替换 replay.rs 里的 CASE 表(三个不变量测试也要看它断言的是结构还是写死的步号);
       (4) 用 --tables --json 更新 check_all 的 E2E_BASELINE, 再跑 cargo test + check_all.
-    落定时还撞到一条结构性问题(必须先弄明白再落): 重录 fixture 之后,
+    落定时撞到的结构性问题, 定性了(下轮第一件事): 覆盖测试 the_walk_crosses_into_the_second_act
+    断言 `crossed >= 15`(参考侧要有足够多种子切进第二幕), 而补偿之后只剩 4 —— 不是"少一颗",
+    是参考侧的走法被截断了. 最可疑的是 fixRewardCards 里 `s.run.room = { ...room, entries }`
+    这个整体替换: 参考后续某个 advance 可能按房间对象的形态/身份走了另一条分支而提前收尾.
+    下轮先做: 施加补偿后单颗种子跑 acts.script, 看参考侧 JSONL 最后停在哪一步、停在哪里,
+    把根因找出来再谈落定(而不是去调测试阈值 —— 阈值 15 是"尺子还在量东西"的守卫).
+ 重录 fixture 之后,
     `the_walk_crosses_into_the_second_act` 报"只有 4 个种子参考走到了第二幕, 切幕没被
     量到" —— 也就是补偿改变了参考侧走法的长度(不是只改奖励内容), 而该测试要求"有足
     够多的种子切到第二幕". 另一条 `fixtures_cover_the_whole_first_act` 报的是覆盖计数
