@@ -8,7 +8,19 @@
 比对的是"能机械对上"的东西: 费用/类型/稀有度/目标/标签/伤害/格挡/命中次数/血量/
 招式伤害与升升值. 语义对不上的地方(效果顺序、随机调用次数)在这里只能提示, 要人看.
 
-用法: python3 tools/audit_original.py [cards|monsters|all]
+用法: python3 tools/audit_original.py [cards|relics|monsters|moves|all]
+
+已知"本作与参照一致、但与原版不同"的一处(这一轮查实, 还没改, 改之前要先动对拍器):
+  - 卡牌奖励的升级掷点顺序. 原版 AbstractDungeon.getRewardCards 是两遍制: 先把
+    numCards 张(稀有度 + 抽牌)全定下来, 之后单独一轮跑
+    `c.rarity != RARE && cardRng.randomBoolean(cardUpgradedChance) && c.canUpgrade()`;
+    randomBoolean 无条件 ++counter, 所以第一幕(概率 0)也要吃这 numCards 次.
+    独立佐证: refs/sts_lightspeed/src/game/GameContext.cpp:1805-1831(先有 rewardRarities[]
+    再统一掷升级).
+    本作 src/core/run.rs 的 create_card_reward 目前是"每张牌跟着掷 + 概率 0 不掷"
+    —— 与参照实现 refs/slay-the-cli 的 rewards.ts:195-208 一致, 与原版不同.
+    修之前必须给 tools/replay_ref.ts 加驱动侧补偿(把参考侧的奖励也重排成两遍制),
+    否则 e2e 对拍表会从第一处卡牌奖励起全面分家(实测 act2 差异 9 -> 11748 处).
 """
 import json
 import os
@@ -468,6 +480,7 @@ def original_monsters():
                     break
             moves = sorted(set(re.findall(r'moveName = "([^"]+)"', src)))
             out[mid.group(1)] = {
+                "src": src,
                 "hp": base_hp,
                 "draws": bool(re.search(r"setHp\(", body)),
                 "rolled": rolled_base,
@@ -579,6 +592,159 @@ def audit_monsters():
     return rows
 
 
+# ---------------------------------------------------------------- 招式伤害
+def _resolve_int(src, expr):
+    """把构造函数里的数值参数解析成 (常规值, 飞升档, 飞升值).
+
+    支持: 字面量 / this.字段(字段可能是 asc 三元).
+    """
+    expr = (expr or "").strip()
+    m = re.fullmatch(r"-?\d+", expr)
+    if m:
+        return int(expr), None, None
+    m = re.fullmatch(r"this\.(\w+)", expr)
+    if m:
+        f = m.group(1)
+        fm = re.search(r"this\.%s = ([^;]+);" % f, src)
+        if fm:
+            body = fm.group(1)
+            tm = re.search(r"ascensionLevel >= (\d+)\s*\?\s*(\d+)\s*:\s*(\d+)", body)
+            if tm:
+                return int(tm.group(3)), int(tm.group(1)), int(tm.group(2))
+            nm = re.search(r"-?\d+", body)
+            if nm:
+                return int(nm.group(0)), None, None
+    return None, None, None
+
+
+def original_move_damage(src):
+    """原版一只怪的攻击招式集合: {(伤害, 命中次数)}.
+
+    写法: setMove([名字,] (byte)k, Intent.ATTACK[_XXX], 伤害[, 命中次数[, true]])
+    伤害可能是字面量、this.字段(还可能是 asc 三元), 同一招常在不同分支里重复设置, 去重.
+    """
+    out = set()
+    for m in re.finditer(r"setMove\(((?:[^()]|\([^()]*\))*)\)", src):
+        args = [a.strip() for a in _split_args(m.group(1))]
+        idx = next((i for i, a in enumerate(args) if "Intent.ATTACK" in a), None)
+        if idx is None or idx + 1 >= len(args):
+            continue
+        base, _lvl, _ascv = _resolve_int(src, args[idx + 1])
+        if base is None:
+            continue
+        hits = 1
+        if idx + 2 < len(args):
+            hm = re.fullmatch(r"(\d+)", args[idx + 2])
+            if hm:
+                hits = int(hm.group(1))
+        out.add((base, hits))
+    return sorted(out)
+
+
+def _split_args(s):
+    out, cur, depth = [], "", 0
+    for ch in s:
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+            continue
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        cur += ch
+    out.append(cur)
+    return [x for x in out if x.strip()]
+
+
+def our_monster_dump():
+    import subprocess
+
+    bin_path = os.path.join(HERE, "..", "target", "debug", "spire")
+    r = subprocess.run([bin_path, "--dump", "monsters"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return {}
+    return {m["id"]: m for m in json.loads(r.stdout)["monsters"]}
+
+
+def _orig_move_raw(src):
+    """带飞升信息的原始版本(上面那个去重集合丢了档位)."""
+    out = []
+    for m in re.finditer(r"setMove\(((?:[^()]|\([^()]*\))*)\)", src):
+        args = [a.strip() for a in _split_args(m.group(1))]
+        idx = next((i for i, a in enumerate(args) if "Intent.ATTACK" in a), None)
+        if idx is None or idx + 1 >= len(args):
+            continue
+        base, lvl, ascv = _resolve_int(src, args[idx + 1])
+        if base is not None:
+            out.append((base, 1, lvl, ascv))
+    return out
+
+
+# 招式伤害的"表示不同"登记: ids -> 原因(不参与机械比对)
+MOVE_REP_DIFF = {
+    # 越拖越痛: 原版在构造器里排了 startingDeathDmg+{0,5,...,30} 一整张表,
+    # 本作建成 AttackScaling(每回合 +5, 上限 30), 两者的取值序列一致但形状不同
+    "giant_head": "成长型伤害: 表 vs AttackScaling",
+}
+
+
+def audit_move_damage():
+    ours = our_monster_dump()
+    if not ours:
+        print("=== 招式伤害审计: 先 cargo build(要 target/debug/spire)")
+        return []
+    cids = corpus_monster_ids()
+    orig = original_monsters()
+    by_nk = {nk(k): (k, v) for k, v in orig.items()}
+    rows = []
+    checked = 0
+    for rid, dump in sorted(ours.items()):
+        hit = None
+        cands = [cids.get(rid), rid]
+        if cands[0]:
+            cands.append(cands[0].replace("_S", "_small").replace("_M", "_medium").replace("_L", "_large"))
+        for cand in cands:
+            if cand and nk(cand) in by_nk:
+                hit = by_nk[nk(cand)]
+                break
+        if not hit:
+            continue
+        src = hit[1]["src"]
+        want = original_move_damage(src)
+        got = sorted(
+            set(
+                (m["base"]["damage"], m["base"]["times"] or 1)
+                for m in dump["moves"]
+                if m["base"].get("damage") is not None
+            )
+        )
+        checked += 1
+        if rid in MOVE_REP_DIFF:
+            continue
+        if want and got != want:
+            rows.append((rid, "招伤", " ".join("%dx%d" % g for g in got), " ".join("%dx%d" % w for w in want)))
+        # 原版飞升会改伤害的, 本作也必须有一档变化
+        asc_want = sorted(
+            set((lvl, ascv) for _d, _t, lvl, ascv in _orig_move_raw(src) if lvl and ascv is not None)
+        )
+        asc_got = sorted(set(
+            (c["asc"], c["damage"])
+            for m in dump["moves"]
+            for c in m.get("changes", [])
+            if c.get("damage") is not None
+        ))
+        if asc_want and not asc_got:
+            rows.append((rid, "招伤飞升档", "无", str(asc_want)))
+        elif asc_want and asc_got and [d for _, d in asc_got] != [d for _, d in asc_want]:
+            rows.append((rid, "招伤飞升档", str(asc_got), str(asc_want)))
+    print("=== 招式伤害审计: 对上 %d 只, 提示 %d 条" % (checked, len(rows)))
+    print("怪物,字段,本作,原版")
+    for r in rows:
+        print("%s,%s,%s,%s" % r)
+    return rows
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("cards", "all"):
@@ -587,6 +753,8 @@ def main():
         audit_relics()
     if what in ("monsters", "all"):
         audit_monsters()
+    if what in ("moves", "all"):
+        audit_move_damage()
 
 
 if __name__ == "__main__":

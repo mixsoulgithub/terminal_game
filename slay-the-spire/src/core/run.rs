@@ -6628,8 +6628,13 @@ impl Run {
                 }
             }
             out.push(CardInstance::new(cards::card_def_or_panic(id)));
-            // 非稀有牌按幕数掷一次升级(第一幕 0%,第二幕 25%,第三幕起 50%);
-            // 这一掷无论成败都要消耗(只有概率为 0 或稀有牌才不掷)
+            // 非稀有牌按幕数掷一次升级(第一幕 0%,第二幕 25%,第三幕起 50%).
+            // 注意: 原版 getRewardCards 是"三张牌先全定下来, 再单独一轮掷升级"
+            // (AbstractDungeon.getRewardCards 的两个循环, sts_lightspeed
+            // GameContext.cpp:1827 一致), 且 randomBoolean 无条件消耗一次掷点(概率 0 也掷);
+            // 本作这里与参照实现(refs/slay-the-cli)保持一致: 每张牌跟着掷, 概率 0 不掷.
+            // 要改成原版口径得先给 tools/replay_ref.ts 加驱动侧补偿(把参考侧也重排成
+            // 两遍制), 否则 e2e 对拍表会从第一处卡牌奖励起全面分家、失去分辨力.
             let chance = reward_upgrade_chance(self.act, self.ascension);
             if rarity != Rarity::Rare && chance > 0.0 {
                 let roll = self

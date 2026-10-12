@@ -1,6 +1,6 @@
 // 全量回归总入口:一条命令跑齐本项目的所有检查,最后打印汇总 PASS/FAIL。
 //
-//   bun tools/check_all.ts                       # 全跑 23 项(build + test + 9 张 e2e 表 + 全部审计 + smoke)
+//   bun tools/check_all.ts                       # 全跑 24 项(build + test + 9 张 e2e 表 + 全部审计 + 对原版审计 + smoke)
 //                                                #   实测约 74s;临界路径 = smoke(单颗种子一分多钟,
 //                                                #   其余 22 项都塞在它这段时间里并发跑完)
 //   bun tools/check_all.ts --quick                # 日常快速验证:跳过 smoke(最长的临界路径),其余
@@ -29,13 +29,15 @@
 //   relics        tools/sandbox_relics.ts 遗物沙盒
 //   potions       sandbox_diff --only potions 药水沙盒
 //   smoke         python3 tools/smoke.py <少量种子>(要求全 PASS,不卡死)
+//   original      python3 tools/audit_original.py all(对反编译出的原版类: 卡牌/遗物/怪物/招式伤害
+//                 四个轴, 没有 ~/projects/sts-golden 就跳过)
 //
 // 基线数字是本轮记录下来的实际值:判据一律"不高于基线"(修好一处就变绿,退化就 FAIL)。
 
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { availableParallelism } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
+import { availableParallelism, homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
@@ -338,6 +340,25 @@ function stepRelics(): Step {
   };
 }
 
+/** 对原版(反编译产出的类)的那套审计: 卡牌/遗物/怪物/招式伤害四个轴.
+ *  需要 ~/projects/sts-golden 里的反编译产物, 不在仓库里 -> 没有就跳过. */
+function stepOriginal(): Step {
+  if (!existsSync(join(homedir(), "projects", "sts-golden", "decomp"))) {
+    return { name: "original", ok: true, detail: "跳过(没有 ~/projects/sts-golden 的反编译产物)" };
+  }
+  const { status, out } = sh(["python3", join(HERE, "audit_original.py"), "all"], ROOT);
+  const nums = [...out.matchAll(/对不上 (\d+) 处|提示 (\d+) 条|什么都没写 (\d+) 件/g)].map((m) =>
+    Number(m[1] ?? m[2] ?? m[3]),
+  );
+  const bad = nums.filter((n) => n > 0).length;
+  return {
+    name: "original",
+    ok: status === 0 && bad === 0,
+    detail: `四个轴 ${nums.length} 项, 不符 ${bad}`,
+    fail: interesting(out, ["===", "对不上", "提示", "什么都没写"], 16),
+  };
+}
+
 function stepPotions(): Step {
   const { status, out } = sh(["bun", join(HERE, "sandbox_diff.ts"), "--only", "potions"], ROOT);
   const m = out.match(/通过 (\d+)\/(\d+), 不一致 (\d+)/);
@@ -421,6 +442,7 @@ addStep("evself", stepEventsImplSelftest);
 addStep("axes", stepAxes);
 addStep("relics", stepRelics);
 addStep("potions", stepPotions);
+addStep("original", stepOriginal);
 
 // 每一批自己的墙钟(并发下会重叠;--timing 时单独列出来看临界路径在哪)
 const jobWalls: { name: string; ms: number }[] = [];
