@@ -64,8 +64,10 @@
     check_all 比现场参照, 两者不能混着做 A/B, 否则结论会反.
 """
 import json
+import math
 import os
 import re
+import struct
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -786,6 +788,167 @@ def audit_move_damage():
     return rows
 
 
+# 已知条目(事件百分比轴):
+#   大鱼 BigFish 的香蕉回血: 原版反编译是 `this.healAmt = player.maxHealth / 3`(整数除法),
+#   本作原先写成 `heal_frac: 0.3333`(参考实现 slay-the-cli 的 fractionMaxHp floor), 上限是
+#   3 的倍数时少 1(72 -> 23 而非 24). 已按原版改成 `heal_div: 3`.
+#   代价: 本作因此离"参考实现"更远 -> A20 第一幕 ASC_CASES 里 seed 9/42/44/52 的对齐前缀
+#   变短(参考侧仍用 0.3333), 已按原版优先的权威顺序重钉. 参考侧同一处要在补偿工程里一起改.
+#
+# ---------------------------------------------------------------- 事件百分比
+# 原版事件的"按上限比例"效果只有四种取整模式: MathUtils.round(即 Math.round(float)),
+# (int) 强转(截断), MathUtils.ceil, 以及整数除法 maxHealth / N. 本作用 *_pct(千分比 +
+# 整数 half-up)/ *_frac(f32 乘后截断)/ *_frac_ceil(f32 乘后向上)/ *_div(整数除法)四种字段
+# 对应. 这里不比字段名, 只比"取值函数": 对 maxHp = 1..999 各算一遍, 两个函数取值完全一致
+# 才算对上 —— 这样表示差异(0.5 写成 ceil 还是 500 千分比)不会误报, 真正的取整错会露出来.
+def _f32(x):
+    return struct.unpack("f", struct.pack("f", x))[0]
+
+
+def ev_pct_of(mh, pm):
+    return (mh * pm + 500) // 1000
+
+
+def ev_frac_floor(mh, f):
+    return int(_f32(_f32(mh) * _f32(f)))
+
+
+def ev_frac_ceil(mh, f):
+    return math.ceil(_f32(_f32(mh) * _f32(f)))
+
+
+def _java_fn(mode, value):
+    if mode == "round":
+        return lambda mh, v=float(value): math.floor(_f32(_f32(mh) * _f32(v)) + 0.5)
+    if mode == "cast":
+        return lambda mh, v=float(value): int(_f32(_f32(mh) * _f32(v)))
+    if mode == "ceil":
+        return lambda mh, v=float(value): math.ceil(_f32(_f32(mh) * _f32(v)))
+    if mode == "div":
+        return lambda mh, v=value: mh // int(v)
+    raise AssertionError(mode)
+
+
+def _our_fn(field_name, value):
+    if field_name.endswith("_pct"):
+        return lambda mh, v=value: ev_pct_of(mh, int(v))
+    if field_name.endswith("_frac_ceil"):
+        return lambda mh, v=value: ev_frac_ceil(mh, float(v))
+    if field_name.endswith("_frac"):
+        return lambda mh, v=value: ev_frac_floor(mh, float(v))
+    if field_name.endswith("_div"):
+        return lambda mh, v=value: mh // int(v)
+    raise AssertionError(field_name)
+
+
+OUR_PCT_FIELDS = (
+    ("hp_pct", 1), ("heal_pct", 1), ("max_hp_pct", 1),
+    ("hp_frac", 0), ("heal_frac", 0), ("max_hp_frac", 0),
+    ("hp_frac_ceil", 0), ("max_hp_frac_ceil", 0),
+    ("hp_div", 1), ("heal_div", 1),
+)
+
+
+def _java_event_pcts(src):
+    out = []
+    for line in src.split("\n"):
+        if "Settings" in line or "WIDTH" in line:
+            continue
+        for m in re.finditer(r"(?:maxHealth|currentHealth) */ *(\d+)", line):
+            out.append(("div", m.group(1)))
+        for m in re.finditer(r"(?:maxHealth|currentHealth) *\* *(0?\.\d+)f", line):
+            seg = line[:m.start()]  # 取整模式在同一行前面(如 MathUtils.round(... maxHealth * 0.2f))
+            mode = "cast" if "(int)" in seg else None
+            for k in ("round", "ceil"):
+                if "MathUtils." + k in seg:
+                    mode = k
+            if mode:
+                out.append((mode, m.group(1)))
+    return out
+
+
+def _our_event_pcts(block):
+    out = []
+    for name, is_int in OUR_PCT_FIELDS:
+        for m in re.finditer(r"\b%s: *([0-9.]+)" % name, block):
+            v = int(float(m.group(1))) if is_int else float(m.group(1))
+            out.append((name, v))
+    return out
+
+
+def audit_event_pct():
+    dec = os.path.join(DECOMP, "events")
+    if not os.path.isdir(dec):
+        print("=== 事件百分比审计: 跳过(没有 %s)" % dec)
+        return []
+    ours_src = open(os.path.join(OURS, "events.rs"), encoding="utf-8").read()
+    ours = {}
+    for blk in ours_src.split('\n        id: "')[1:]:
+        eid = blk.split('"')[0]
+        nm = re.search(r'name: "([^"]*)"', blk)
+        ours[eid] = (nm.group(1) if nm else None, blk[:blk.find('\n        id: "')])
+    # 本作内部 id -> 显示名; 原版类 ID 一般就是显示名
+    by_name = {}
+    for eid, (nm, _b) in ours.items():
+        if nm:
+            by_name.setdefault(nm, eid)
+    # 原版类里的 ID 是内部名(如 "Cleric"), 显示名在官方本地化 events.json 里(键就是内部名)
+    loc = {}
+    loc_path = os.path.join(GOLDEN, "out", "localization", "eng", "events.json")
+    if os.path.isfile(loc_path):
+        with open(loc_path, encoding="utf-8") as fh:
+            for k, v in json.load(fh).items():
+                if isinstance(v, dict) and v.get("NAME"):
+                    loc[k] = v["NAME"]
+    rows = []
+    checked = 0
+    seen = set()
+    for dirpath, _d, files in os.walk(dec):
+        for f in sorted(files):
+            if not f.endswith(".java"):
+                continue
+            src = open(os.path.join(dirpath, f), encoding="utf-8", errors="replace").read()
+            mm = re.search(r'public static final String ID = "([^"]+)"', src)
+            if not mm:
+                continue
+            jid = mm.group(1)
+            effects = _java_event_pcts(src)
+            if not effects:
+                continue
+            # 少数事件的显示名和内部名差得多(蘑菇: 内部名 Mushrooms, 游戏里叫 Hypnotizing Colored Mushrooms)
+            ALIAS = {"Mushrooms": "Hypnotizing Colored Mushrooms"}
+            eid = by_name.get(loc.get(jid, jid)) or by_name.get(jid) or by_name.get(ALIAS.get(jid, ""))
+            if eid is None:
+                rows.append((jid, "无对应事件", "", ""))
+                continue
+            _nm, blk = ours[eid]
+            mine = _our_event_pcts(blk)
+            # 用集合比: 同一个比例效果可能出现在两个选项里(原版只算一次), 重复不算错
+            want = sorted({
+                tuple(_java_fn(m, v)(mh) for mh in range(1, 1000)) for m, v in effects
+            })
+            got = sorted({
+                tuple(_our_fn(n, v)(mh) for mh in range(1, 1000)) for n, v in mine
+            })
+            checked += 1
+            seen.add(eid)
+            if want != got:
+                rows.append(
+                    (
+                        eid,
+                        " / ".join("%s(%s)" % (m, v) for m, v in effects),
+                        " / ".join("%s: %s" % (n, v) for n, v in mine) or "无",
+                        "取值不一致" if got else "本作没有该效果",
+                    )
+                )
+    print("=== 事件百分比审计: 对上 %d 个事件, 不符 %d 条" % (checked, len(rows)))
+    if rows:
+        print("事件,原版表达式,本作字段,判定")
+        for r in rows:
+            print("%s,%s,%s,%s" % r)
+    return rows
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("cards", "all"):
@@ -796,6 +959,8 @@ def main():
         audit_monsters()
     if what in ("moves", "all"):
         audit_move_damage()
+    if what in ("events", "all"):
+        audit_event_pct()
 
 
 if __name__ == "__main__":

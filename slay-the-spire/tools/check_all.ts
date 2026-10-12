@@ -29,8 +29,8 @@
 //   relics        tools/sandbox_relics.ts 遗物沙盒
 //   potions       sandbox_diff --only potions 药水沙盒
 //   smoke         python3 tools/smoke.py <少量种子>(要求全 PASS,不卡死)
-//   original      python3 tools/audit_original.py all(对反编译出的原版类: 卡牌/遗物/怪物/招式伤害
-//                 四个轴, 没有 ~/projects/sts-golden 就跳过)
+//   original      python3 tools/audit_original.py all(对反编译出的原版类: 卡牌/遗物/怪物/招式伤害/
+//                 事件百分比 五个轴, 没有 ~/projects/sts-golden 就跳过)
 //
 // 基线数字是本轮记录下来的实际值:判据一律"不高于基线"(修好一处就变绿,退化就 FAIL)。
 
@@ -72,7 +72,10 @@ const START = performance.now();
 /** 九张 e2e 表的基线"总差异 N 处"(见 src/core/replay.rs 的登记表) */
 // a20a3 从 25 涨到 36:觉醒者一阶段血量按原版改成恒 320(原版是单参 setHp(320),
 // 参考实现仍掷 300..320), 属于"跟原版走、与参考分家"的那一类差异。
-const E2E_BASELINE: Record<string, number> = { act1: 50, act2: 9, act3: 257, acts: 0, a20: 0, a20a2: 3, a20a3: 36, a20a4: 1, act4: 0 };
+// a20 的基线从 0 升到 32: 本作按原版把大鱼回血改成整数除法 maxHealth/3, 参考实现仍是
+// floor(0.3333)(上限是 3 的倍数时差 1 点血), 于是本作离参考更远、离原版更近. 判据是
+// "不高于基线", 所以这里是记下新基线而不是放宽判据.
+const E2E_BASELINE: Record<string, number> = { act1: 50, act2: 9, act3: 257, acts: 0, a20: 32, a20a2: 3, a20a3: 36, a20a4: 1, act4: 0 };
 
 interface Step {
   name: string;
@@ -347,14 +350,14 @@ function stepOriginal(): Step {
     return { name: "original", ok: true, detail: "跳过(没有 ~/projects/sts-golden 的反编译产物)" };
   }
   const { status, out } = sh(["python3", join(HERE, "audit_original.py"), "all"], ROOT);
-  const nums = [...out.matchAll(/对不上 (\d+) 处|提示 (\d+) 条|什么都没写 (\d+) 件/g)].map((m) =>
-    Number(m[1] ?? m[2] ?? m[3]),
-  );
+  const nums = [
+    ...out.matchAll(/对不上 (\d+) 处|提示 (\d+) 条|什么都没写 (\d+) 件|不符 (\d+) 条/g),
+  ].map((m) => Number(m[1] ?? m[2] ?? m[3] ?? m[4]));
   const bad = nums.filter((n) => n > 0).length;
   return {
     name: "original",
     ok: status === 0 && bad === 0,
-    detail: `四个轴 ${nums.length} 项, 不符 ${bad}`,
+    detail: `五个轴 ${nums.length} 项, 不符 ${bad}`,
     fail: interesting(out, ["===", "对不上", "提示", "什么都没写"], 16),
   };
 }

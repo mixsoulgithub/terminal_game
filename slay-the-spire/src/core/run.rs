@@ -4184,6 +4184,10 @@ impl Run {
             let pct = crate::core::events::pct_of(max_hp0, o.hp_pct).max(o.hp_pct_min.max(1));
             delta -= pct;
         }
+        if o.hp_div > 0 {
+            let loss = max_hp0 / o.hp_div;
+            delta -= if o.hp_pct_min > 0 { loss.max(o.hp_pct_min) } else { loss };
+        }
         if o.hp_frac > 0.0 {
             let loss = crate::core::events::frac_floor_of(max_hp0, o.hp_frac);
             // 有的调用点给 frac 也带下限(脸商人的"至少 1 点");下限为 0 就不设
@@ -4199,6 +4203,9 @@ impl Run {
         }
         if o.heal_pct > 0 {
             self.heal(crate::core::events::pct_of(max_hp0, o.heal_pct));
+        }
+        if o.heal_div > 0 {
+            self.heal(max_hp0 / o.heal_div);
         }
         if o.heal_frac > 0.0 {
             self.heal(crate::core::events::frac_floor_of(max_hp0, o.heal_frac));

@@ -96,11 +96,17 @@ pub struct Outcome {
     pub heal_pct: i32,
     /// 按生命上限比例扣血(参考实现 fractionMaxHp(.., "floor"),和 hp 叠加)
     pub hp_frac: f32,
+    /// 按生命上限整数除法扣血(原版 maxHealth / n,整数除法;n = 0 表示不用)
+    pub hp_div: i32,
     /// 按生命上限比例扣血(参考实现 fractionMaxHp(.., "ceil"),和 hp 叠加;
     /// 蓝衣女子 A15+ 的"离开"扣的是 5% 血,取 ceil)
     pub hp_frac_ceil: f32,
     /// 按生命上限比例回血(同上,floor)
     pub heal_frac: f32,
+    /// 按生命上限整数除法回血(原版 maxHealth / n,整数除法;n = 0 表示不用)。
+    /// 大小鱼:原版 `this.healAmt = player.maxHealth / 3` 是整数除法,不是 0.3333 的 floor
+    /// (上限 72 时整数除法给 24,0.3333 的 floor 给 23)
+    pub heal_div: i32,
     /// 按生命上限比例永久降低上限(同上,floor;至少留 1 点)
     pub max_hp_frac: f32,
     /// 按生命上限比例永久降低上限(同上,ceil;吸血鬼扣除 30% 上限取 ceil)
@@ -236,8 +242,10 @@ impl Outcome {
         hp_pct_min: 0,
         heal_pct: 0,
         hp_frac: 0.0,
+        hp_div: 0,
         hp_frac_ceil: 0.0,
         heal_frac: 0.0,
+        heal_div: 0,
         max_hp_frac: 0.0,
         max_hp_frac_ceil: 0.0,
         max_hp: 0,
@@ -782,7 +790,7 @@ pub static EVENTS: &[EventDef] = &[
                 req_floor_min: 0,
                 outcome_a15: None,
                 cost_gold_a15: 0,
-                outcome: outcome!(heal_frac: 0.3333, text: "You eat well and feel restored."),
+                outcome: outcome!(heal_div: 3, text: "You eat well and feel restored."),
             },
             EventChoice {
                 label: "Donut: raise max HP by 5",
@@ -1942,14 +1950,14 @@ pub static EVENTS: &[EventDef] = &[
             choice!(
                 label: "Touch: take damage equal to 10% of max HP (min 1), gain 75 gold (50 at A15+)",
                 outcome: outcome!(
-                    hp_frac: 0.1,
+                    hp_div: 10,
                     hp_pct_min: 1,
                     gold: 75,
                     gold_first: true,
                     text: "The peddler's touch stings, but the gold is real."
                 ),
                 outcome_a15: Some(outcome!(
-                    hp_frac: 0.1,
+                    hp_div: 10,
                     hp_pct_min: 1,
                     gold: 50,
                     gold_first: true,
@@ -2570,11 +2578,17 @@ fn outcome_json(o: &Outcome, order: &[&'static EventDef]) -> String {
     if o.heal_pct != 0 {
         kv!("heal_pct", o.heal_pct);
     }
+    if o.hp_div != 0 {
+        kv!("hp_div", o.hp_div);
+    }
     if o.hp_frac != 0.0 {
         kv!("hp_frac", o.hp_frac);
     }
     if o.hp_frac_ceil != 0.0 {
         kv!("hp_frac_ceil", o.hp_frac_ceil);
+    }
+    if o.heal_div != 0 {
+        kv!("heal_div", o.heal_div);
     }
     if o.heal_frac != 0.0 {
         kv!("heal_frac", o.heal_frac);
@@ -3619,7 +3633,16 @@ mod tests {
         let def = event_def("big_fish").unwrap();
         open(&mut r, def);
         r.choose_event(0).unwrap();
-        assert_eq!(r.player.hp, 40 + 26, "按上限的 1/3 回血(floor)");
+        assert_eq!(r.player.hp, 40 + 26, "按上限的 1/3 回血(80 -> 26)");
+
+        // 原版是 `player.maxHealth / 3` 整数除法,不是 0.3333 的 floor:
+        // 上限是 3 的倍数时整数除法正好整除,0.3333 的 floor 会少 1(72 -> 24 而非 23).
+        let mut r = Run::new(43);
+        r.player.max_hp = 72;
+        r.player.hp = 40;
+        open(&mut r, event_def("big_fish").unwrap());
+        r.choose_event(0).unwrap();
+        assert_eq!(r.player.hp, 40 + 24, "上限 72 时整数除法给 24");
     }
 
     #[test]

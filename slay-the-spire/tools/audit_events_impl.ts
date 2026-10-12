@@ -195,6 +195,8 @@ function roundingEq(f: number, a: string, b: string): boolean {
   const perMille = Math.round(f * 1000);
   const method = (x: number, m: string): number => {
     if (m === "round") return ((x * perMille + 500) / 1000) | 0;
+    // div: 原版的整数除法 `maxHealth / n`(正数上就是 floor(x/n)), n 由 f=1/n 反推
+    if (m === "div") return Math.floor(x / Math.round(1 / f));
     const prod = Math.fround(Math.fround(x) * Math.fround(f));
     return m === "floor" ? Math.floor(prod) : Math.ceil(prod);
   };
@@ -252,6 +254,10 @@ function implOutcomeFacts(o: ImplOutcome, s: Sig): void {
     used.add("cost_hp");
     f(`hp:-${num("cost_hp")}`);
   }
+  if (num("hp_div")) {
+    used.add("hp_div");
+    f(`hp_frac:-${fr(1 / num("hp_div")!)}:div`);
+  }
   if (num("hp_frac")) {
     used.add("hp_frac");
     f(`hp_frac:-${fr(num("hp_frac")!)}:floor`);
@@ -266,6 +272,10 @@ function implOutcomeFacts(o: ImplOutcome, s: Sig): void {
   }
   if (num("hp_pct_min")) used.add("hp_pct_min");
 
+  if (num("heal_div")) {
+    used.add("heal_div");
+    f(`heal_frac:+${fr(1 / num("heal_div")!)}:div`);
+  }
   if (num("heal_frac")) {
     used.add("heal_frac");
     f(`heal_frac:+${fr(num("heal_frac")!)}:floor`);
@@ -930,10 +940,29 @@ const NOTED: { item: string; why: string }[] = [
     why: "语料取反编译(addPotionRewards 在该场省略);实现 REWARD_BANDITS potion_pct = 0",
   },
   {
+    item: "BIG_FISH 香蕉回血按原版的整数除法 maxHealth/3,语料记的是 floor(0.3333)",
+    why: "反编译 BigFish.java:46 `this.healAmt = AbstractDungeon.player.maxHealth / 3` 是整数除法(上限 72 给 24);语料来自参考实现 slay-the-cli 的 fractionMaxHp(..,floor)(给 23)。权威顺序原版 > 参考实现,实现改成 heal_div: 3。代价: A20 第一幕 seed 9/42/44/52 离参考实现更远, 已重钉",
+  },
+  {
     item: "FALLING 排除瓶装牌",
     why: "反编译自标 todo(GameContext.cpp:886);实现按真机(deck_has_removable_of_type 排 bottled)",
   },
 ];
+
+// 登记差异: 语料(记自参考实现 slay-the-cli)与原版冲突、而实现按原版走的地方.
+// 这些差异必须"恰好出现": 消失了同样算退化(实现偏回去了, 或者登记过期了).
+const ACCEPTED_DIFFS: string[] = [
+  "BIG_FISH[0] 效果: 语料有而实现没有/不符 -> heal_frac:+0.3333:floor",
+  "BIG_FISH[0] 效果: 实现多出/不符 -> heal_frac:+0.333333:div",
+];
+
+/** 把登记差异从 diffs 里摘出来: 摘掉的必须"恰好出现", 消失了同样算退化 */
+function applyAcceptedDiffs(r: Report): void {
+  for (const a of ACCEPTED_DIFFS) {
+    if (!r.diffs.includes(a)) r.guards.push(`登记差异已消失(过期): ${a}`);
+  }
+  r.diffs = r.diffs.filter((d) => !ACCEPTED_DIFFS.includes(d));
+}
 
 export interface Report {
   diffs: string[];
@@ -1391,6 +1420,12 @@ function printReport(r: Report, title: string): void {
     console.log(`覆盖守卫 FAIL(${r.guards.length}):`);
     for (const g of r.guards) console.log(`  [GUARD] ${g}`);
   } else console.log("覆盖守卫 PASS");
+  const accepted = ACCEPTED_DIFFS.filter((a) => r.diffs.includes(a));
+  applyAcceptedDiffs(r);
+  if (accepted.length) {
+    console.log(`登记差异 ${accepted.length} 条(原版优先, 见报告末尾登记表):`);
+    for (const d of accepted) console.log(`  [ACCEPTED] ${d}`);
+  }
   if (r.diffs.length) {
     console.log(`不一致 ${r.diffs.length}:`);
     for (const d of r.diffs) console.log(`  [DIFF] ${d}`);
@@ -1536,6 +1571,7 @@ function selftest(): void {
   const defs = loadImpl();
   const src = loadSources();
   const base = audit(corpus, defs, src);
+  applyAcceptedDiffs(base);
   if (base.diffs.length || base.guards.length) {
     console.log("自检基准不干净:先让全量审计通过再跑 --selftest");
     printReport(base, "基准");
@@ -1560,6 +1596,7 @@ function selftest(): void {
     }
   }
   const restore = audit(corpus, defs, src);
+  applyAcceptedDiffs(restore);
   if (restore.diffs.length || restore.guards.length) {
     console.log("[FAIL] 恢复后不干净");
     missed++;

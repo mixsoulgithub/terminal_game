@@ -2547,6 +2547,10 @@ mod e2e {
     // `bun tools/e2e_diff.ts <seed> --script <脚本> --pin`.
     // 第四幕(A20)45 颗种子(见 ASC4_CASES 上方):44 颗逐字节全对齐,seed 33 只差进入
     // Boss 房那一行的回血时点(终局一致,不修,归类见上).
+    // 注: seed 9 / 42 / 44 / 52 的对齐前缀比"参考实现"短, 是因为本作按原版把大鱼(BigFish)的回血
+    // 改成了整数除法 `maxHealth / 3`(原版反编译就是整数除法, 上限 72 给 24),
+    // 而参考实现仍用 0.3333 的 floor(给 23): 一颗心的差别经策略放大成走法分叉.
+    // 权威顺序是原版 > 参考实现, 所以这里钉的是"离参考更远、离原版更近"的基线.
     const ASC_CASES: &[Expected] = &[
     Expected { seed: 1, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 2, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2555,7 +2559,7 @@ mod e2e {
     Expected { seed: 6, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 7, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 8, lines: 17, ref_lines: 17, aligned: 17, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 9, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 9, lines: 16, ref_lines: 16, aligned: 12, diff_steps: &[12, 13], diff_digest: 0xd5bb6e303d8534 },
     Expected { seed: 11, lines: 16, ref_lines: 16, aligned: 16, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 12, lines: 30, ref_lines: 30, aligned: 30, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 13, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2575,9 +2579,9 @@ mod e2e {
     Expected { seed: 39, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 40, lines: 20, ref_lines: 20, aligned: 20, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 41, lines: 15, ref_lines: 15, aligned: 15, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 42, lines: 29, ref_lines: 29, aligned: 29, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 42, lines: 29, ref_lines: 29, aligned: 9, diff_steps: &[9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26], diff_digest: 0x598428f291c96fc1 },
     Expected { seed: 43, lines: 28, ref_lines: 28, aligned: 28, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 44, lines: 28, ref_lines: 28, aligned: 28, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 44, lines: 28, ref_lines: 28, aligned: 11, diff_steps: &[11, 12, 13, 14, 15, 16, 17], diff_digest: 0x3be0bcaa588f75f7 },
     Expected { seed: 45, lines: 28, ref_lines: 28, aligned: 28, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 46, lines: 14, ref_lines: 14, aligned: 14, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 47, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
@@ -2585,7 +2589,7 @@ mod e2e {
     Expected { seed: 49, lines: 26, ref_lines: 26, aligned: 26, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 50, lines: 13, ref_lines: 13, aligned: 13, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 51, lines: 42, ref_lines: 42, aligned: 42, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
-    Expected { seed: 52, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
+    Expected { seed: 52, lines: 19, ref_lines: 19, aligned: 12, diff_steps: &[12, 13, 14, 15, 16], diff_digest: 0x3396e299b29c554d },
     Expected { seed: 53, lines: 21, ref_lines: 21, aligned: 21, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 54, lines: 18, ref_lines: 18, aligned: 18, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
     Expected { seed: 55, lines: 19, ref_lines: 19, aligned: 19, diff_steps: &[], diff_digest: 0xcbf29ce484222325 },
