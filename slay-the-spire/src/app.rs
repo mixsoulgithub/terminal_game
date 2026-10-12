@@ -36,7 +36,7 @@ pub struct BattleShake {
 
 /// 命令名(第一层补全用),按字典序不排序也行,补全时会排
 const COMMANDS: &[&str] = &[
-    "card", "help", "q", "quit", "relic", "restart", "room", "run", "save", "seed", "win",
+    "card", "help", "import", "q", "quit", "relic", "restart", "room", "run", "save", "seed", "win",
 ];
 /// :room / :relic / :card 的参数
 const ROOM_ARGS: &[&str] = &["battle", "boss", "elite", "enemy", "event", "shop"];
@@ -419,6 +419,41 @@ impl App {
         self.overlay = None;
         self.choice_sel.clear();
         self.battle_shakes.clear();
+    }
+
+    /// :import [路径] 读一份原版 Slay the Spire 存档(不给路径就扫常见位置)
+    fn import_original(&mut self, arg: &str) -> Result<String, String> {
+        let paths = if arg.is_empty() {
+            crate::core::sts_save::default_paths()
+        } else {
+            vec![std::path::PathBuf::from(arg)]
+        };
+        let path = match paths.len() {
+            0 => {
+                return Err(
+                    "没找到原版存档: 用法 import <文件路径>; 常见位置是 \
+                     ~/.steam/steam/steamapps/common/Slay the Spire/saves"
+                        .to_string(),
+                )
+            }
+            1 => paths[0].clone(),
+            _ => {
+                let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+                return Err(format!(
+                    "找到多份原版存档, 请指定一份: {}",
+                    list.join("  ")
+                ));
+            }
+        };
+        let (text, warn) = crate::core::sts_save::import_file(&path)?;
+        let run = Run::from_save(&text)?;
+        self.adopt_run(run);
+        let mut msg = format!("imported {}", path.display());
+        if !warn.is_empty() {
+            msg.push_str(" | ");
+            msg.push_str(&warn.join(" | "));
+        }
+        Ok(msg)
     }
 
     fn load_save(&mut self) {
@@ -2246,6 +2281,12 @@ impl App {
                 self.ok(r);
                 self.clamp();
             }
+            // :import [路径] 读原版 Slay the Spire 的存档(.save/.autosave)
+            "import" => {
+                let r = self.import_original(rest.trim());
+                self.ok(r);
+                self.clamp();
+            }
             // :save [名字] 另存一份(不给名字就用 角色-层数-ISO时间)
             "save" => {
                 let name = if rest.trim().is_empty() {
@@ -2470,6 +2511,10 @@ impl App {
             (":run", "run the current seed from the beginning"),
             (":run seed [n]", "start a new run (random seed if omitted; also saves it)"),
             (":run save <name>", "load a save from the save directory"),
+            (
+                ":import [path]",
+                "import a Slay the Spire .save/.autosave (scans common Steam paths if omitted)",
+            ),
             (":save [name]", "save the current run (auto-named if omitted)"),
 
             ("ctrl-c", "quit at any time"),

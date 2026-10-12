@@ -20,6 +20,7 @@ pub mod roster;
 pub mod run;
 pub mod save;
 pub mod status;
+pub mod sts_save;
 
 #[cfg(test)]
 mod content_tests {

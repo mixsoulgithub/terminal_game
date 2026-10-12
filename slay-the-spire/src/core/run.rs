@@ -1324,8 +1324,11 @@ impl Run {
             );
         }
         // 具名流必须 15 条一条不缺:少一条就说明文件被截断,不能拿种子重种的状态接着跑
-        if let Some(name) = RngRegistry::missing_stream(text) {
-            return Err(format!("存档缺少随机流 {name},文件可能被截断"));
+        // (原版存档导入走的是 rng_counters=, 只有计数器, 流本身按种子新建)
+        if get("rng_counters").is_none() {
+            if let Some(name) = RngRegistry::missing_stream(text) {
+                return Err(format!("存档缺少随机流 {name},文件可能被截断"));
+            }
         }
         let ch = roster::find(&char_id).ok_or_else(|| format!("存档里的角色 {char_id} 不认识"))?;
         let mut run = Run::new_for_asc(seed, ch, ascension)?;
@@ -1390,6 +1393,10 @@ impl Run {
             if crate::rng::is_stream_key(k) {
                 run.streams.load_line(k, v)?;
             }
+        }
+        // 原版导入: 只有计数器, 每层的流按当前层重开之后再设回去
+        if let Some(v) = get("rng_counters") {
+            run.streams.apply_imported_counters(run.floor_num, v)?;
         }
         run.potion_chance = int("potion_pity", 0);
         run.card_rarity_factor = int("card_factor", CARD_RARITY_PITY_START);
@@ -1607,6 +1614,44 @@ impl Run {
                 .filter(|s| !s.is_empty())
                 .filter_map(|x| x.trim().parse().ok())
                 .collect();
+        }
+        // 原版存档导入: 那边存的是地图坐标(列:行), 地图按种子重建之后翻译成节点下标
+        if let Some(v) = get("path_xy") {
+            run.path.clear();
+            for pair in v.split(',').filter(|s| !s.is_empty()) {
+                let (x, y) = match pair.trim().split_once(':') {
+                    Some((x, y)) => (x.trim().parse::<i64>(), y.trim().parse::<i64>()),
+                    None => continue,
+                };
+                let (Ok(x), Ok(y)) = (x, y) else { continue };
+                let at = run
+                    .map
+                    .nodes
+                    .iter()
+                    .position(|n| n.col as i64 == x && n.floor as i64 == y);
+                // 列对不上时(两边的地图版式差一格)退一步取同一行里最近的节点:
+                // 层数至少要准, 位置不准则整段跳过
+                let at = at.or_else(|| {
+                    run.map
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, n)| n.floor as i64 == y)
+                        .min_by_key(|(_, n)| (n.col as i64 - x).abs())
+                        .map(|(i, _)| i)
+                });
+                if let Some(i) = at {
+                    run.path.push(i);
+                }
+            }
+            if run.path.is_empty() {
+                return Err("导入的存档: 地图坐标对不上这一章的地图(种子或章节可能不支持)".to_string());
+            }
+            // 原版存档里的"当前房间"就是路径的最后一段: 位置标记要跟着走,
+            // 否则 HUD 上的层数会显示成 0
+            if let Some(last) = run.path.last().copied() {
+                run.pos = Some(last);
+            }
         }
         // 测试存档:带战斗现场就照原样恢复(不用从种子重放)
         if let Some(enc_id) = get("combat_encounter") {

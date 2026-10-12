@@ -512,6 +512,29 @@ impl RngRegistry {
         self.map = Rng::new(self.seed.wrapping_add(offset));
     }
 
+    /// 原版存档导入: 原版只存每条流的计数器(不存状态), 这里在"按种子新建的流"上设回去.
+    /// 每层的流(aiRng 之类)是按 seed+层号重开的, 所以必须带上当前层号.
+    pub fn apply_imported_counters(&mut self, floor: u32, text: &str) -> Result<(), String> {
+        self.reseed_floor_streams(floor);
+        for pair in text.split(',').filter(|s| !s.is_empty()) {
+            let (name, n) = pair
+                .split_once(':')
+                .ok_or_else(|| format!("导入的随机数计数器 {pair} 坏了"))?;
+            let n: u32 = n
+                .trim()
+                .parse()
+                .map_err(|_| format!("导入的随机数计数器 {pair} 坏了"))?;
+            if let Some(s) = RunStream::from_name(name) {
+                self.run(s).set_counter(n);
+            } else if let Some(s) = FloorStream::from_name(name) {
+                self.floor(s).set_counter(n);
+            } else {
+                return Err(format!("导入的随机数计数器里有不认识的流 {name}"));
+            }
+        }
+        Ok(())
+    }
+
     /// 存档:每条流一行`名字=seed0,seed1,counter`
     pub fn save_text(&self) -> String {
         let mut out = String::new();
