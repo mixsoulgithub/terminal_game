@@ -625,6 +625,15 @@ pub fn import(text: &str, file_name: &str) -> Result<(String, Vec<String>), Stri
     if !xy.is_empty() {
         out.push_str(&format!("path_xy={}\n", xy.join(",")));
     }
+    // 原版的"打完还没领奖励"状态不导: 房间要重进, 奖励会按本作规则重发
+    let pending = root
+        .get("combat_rewards")
+        .map(|v| !v.as_arr().is_empty())
+        .unwrap_or(false)
+        || root.get("post_combat").is_some_and(|v| v.as_bool(false));
+    if pending {
+        warn.push("原版存档里有还没领的战斗奖励, 这里按重打这一场处理".to_string());
+    }
     warn.push("导入的存档恢复到地图上, 需要重新进入当前房间".to_string());
     Ok((out, warn))
 }
