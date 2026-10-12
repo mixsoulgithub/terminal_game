@@ -1132,6 +1132,57 @@ def audit_relic_numbers():
     return rows
 
 
+# ---------------------------------------------------------------- 怪物 AI 掷点阈值
+# 原版每只怪物的 getMove(int num) 拿的是 `aiRng.random(99)`(AbstractMonster.java:504),
+# 里面按 num 的分档决定出招(如 SnakePlant 的 `num < 65`). 本作把 aiRng 掷点与"选了不用
+# 也照掷"的队形都实现了(combat.rs, FloorStream::AiRng), 这里只机械核一件事: 原版各怪物
+# 用到的 num 阈值数字, 在本作的怪物实现里要能找到(整支没实现的话就会露出来).
+# 扫描范围必须含 src/core/enemies/*.rs 与 enemy.rs(招式表在那里), 只看 combat.rs 会误报.
+def audit_monster_ai():
+    dec = os.path.join(DECOMP, "monsters")
+    if not os.path.isdir(dec):
+        print("=== 怪物 AI 掷点审计: 跳过(没有 %s)" % dec)
+        return []
+    targets = [os.path.join(OURS, "combat.rs"), os.path.join(OURS, "enemy.rs")]
+    enemies_dir = os.path.join(OURS, "enemies")
+    if os.path.isdir(enemies_dir):
+        targets += sorted(
+            os.path.join(enemies_dir, f) for f in os.listdir(enemies_dir) if f.endswith(".rs")
+        )
+    ours = set()
+    for t in targets:
+        if os.path.isfile(t):
+            ours |= {int(x) for x in re.findall(r"\b(\d+)\b", open(t, encoding="utf-8").read())}
+    pat = re.compile(r"\bnum\s*(?:<|<=|>|>=|==)\s*(\d+)")
+    rows = []
+    checked = 0
+    for dirpath, _d, files in os.walk(dec):
+        for f in sorted(files):
+            if not f.endswith(".java"):
+                continue
+            src = open(os.path.join(dirpath, f), encoding="utf-8", errors="replace").read()
+            head = src.find("getMove(int num)")
+            if head < 0:
+                continue
+            body = src[head:]
+            end = body.find("\n    }")
+            if end > 0:
+                body = body[:end]
+            ns = {int(x) for x in pat.findall(body)}
+            if not ns:
+                continue
+            checked += 1
+            miss = sorted(n for n in ns if n not in ours)
+            if miss:
+                rows.append((os.path.basename(f)[:-5], "num 阈值 %s" % miss, "", "本作怪物实现里没有这些数字"))
+    print("=== 怪物 AI 掷点审计: 对上 %d 只, 不符 %d 条" % (checked, len(rows)))
+    if rows:
+        print("怪物,原版,本作,判定")
+        for r in rows:
+            print("%s,%s,%s,%s" % r)
+    return rows
+
+
 def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     if what in ("cards", "all"):
@@ -1141,6 +1192,7 @@ def main():
         audit_relic_numbers()
     if what in ("monsters", "all"):
         audit_monsters()
+        audit_monster_ai()
     if what in ("moves", "all"):
         audit_move_damage()
     if what in ("events", "all"):
