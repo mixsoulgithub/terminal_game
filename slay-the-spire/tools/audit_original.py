@@ -1191,6 +1191,17 @@ def audit_monster_ai():
     return rows
 
 
+# 已知条目(事件的 transform 语义, 待整块重做):
+#   AbstractDungeon.transformCard(反编译 dungeons/AbstractDungeon.java:917 起)是按"被变那张牌的
+#   稀有度"分池抽: BASIC/COMMON/UNCOMMON/RARE 各自池, CURSE 走 CardLibrary.getCurse(变成另一张
+#   诅咒), 其余才走 returnTrulyRandomCardFromAvailable(不分档); srcTransformCard 还带"先把这张
+#   从池里摘掉、抽完再放回"的语义(所以不会变成同一张).
+#   本作 run.rs::transform_deck_card 目前一律 random_class_card(None)(不分档). 本轮试过只把
+#   None 改成"按稀有度取 reward_pool", 基础牌变形后会直接消失(BASIC 不在 reward_pool 里),
+#   9 项测试立刻失败 -> 说明必须连池子语义一起做, 于是整块回退, 未落定.
+#   影响面: Pandora's Box / Astrolabe / 变形神龛(Transmogrifier) / 设计师的 clean up / 若干多屏事件,
+#   做完要重钉相关 E2E 表.
+#
 # ---------------------------------------------------------------- 商店掷点
 # 商店的 merchantRng 掷点顺序与取值全部对着原版 ShopScreen.java 核过一遍, 这里把
 # "数字"钉住防止退化(顺序与物品数写在 run.rs 的注释里: 5 张有色牌各自抖动 -> 2 张无色牌
