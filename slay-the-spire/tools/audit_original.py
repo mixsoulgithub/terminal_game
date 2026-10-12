@@ -43,6 +43,13 @@
       (3) cargo test 列出需重钉的 12 项, 逐张 --all --script <表>.script --pin 后按种子集
           替换 replay.rs 里的 CASE 表(三个不变量测试也要看它断言的是结构还是写死的步号);
       (4) 用 --tables --json 更新 check_all 的 E2E_BASELINE, 再跑 cargo test + check_all.
+    落定时还撞到一条结构性问题(必须先弄明白再落): 重录 fixture 之后,
+    `the_walk_crosses_into_the_second_act` 报"只有 4 个种子参考走到了第二幕, 切幕没被
+    量到" —— 也就是补偿改变了参考侧走法的长度(不是只改奖励内容), 而该测试要求"有足
+    够多的种子切到第二幕". 另一条 `fixtures_cover_the_whole_first_act` 报的是覆盖计数
+    36 vs 16(纯数字可更新). 下次落定前先查: 补偿之后参考侧为什么走得短了(怀疑点: 重排
+    奖励时改了 s.run.room / rng 的形态, 让参考后续某些分支提前结束; 或重录时的步数上限
+    与原来不同).
     方法学提醒(踩过的坑): tools/golden/e2e/*.ref.jsonl 这些 fixture 与"现场跑参照"不是
     同一份(同种子两边 md5 不同) —— cargo test 比冻结 fixture, tools/e2e_diff.ts /
     check_all 比现场参照, 两者不能混着做 A/B, 否则结论会反.
