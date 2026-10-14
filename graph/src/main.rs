@@ -1129,3 +1129,43 @@ mod tests {
 
 
 
+
+#[cfg(test)]
+mod audit_gaps {
+    use super::*;
+    #[test]
+    fn 大图在小终端里的站距() {
+        for c in city::CITIES {
+            let m = Map::from_dot(c.dot).unwrap();
+            let sc = crate::map::Scene::schematic(&m);
+            for (w, h) in [(120u16, 40u16), (200, 50), (300, 70)] {
+                let lay = ui::layout(&m, &sc, ratatui::layout::Rect::new(0, 0, w, h), &View::default());
+                let cells: Vec<(i32, i32)> = sc.pos.iter().map(|p| lay.proj.cell(*p)).collect();
+                let mut nn: Vec<f64> = (0..cells.len())
+                    .map(|i| {
+                        (0..cells.len())
+                            .filter(|&j| j != i)
+                            .map(|j| {
+                                let (dx, dy) = (cells[i].0 - cells[j].0, cells[i].1 - cells[j].1);
+                                ((dx * dx + dy * dy) as f64).sqrt()
+                            })
+                            .fold(f64::INFINITY, f64::min)
+                    })
+                    .collect();
+                nn.sort_by(f64::total_cmp);
+                let tight = nn.iter().filter(|d| **d <= 1.0).count();
+                let overlap = {
+                    let mut s = cells.clone();
+                    s.sort();
+                    s.windows(2).filter(|w| w[0] == w[1]).count()
+                };
+                println!("{:<4} {:>3}x{:<3} 站距中位 {:.1} 格,<=1 格的 {} 站,同格 {} 处",
+                    c.name, w, h, nn[nn.len() / 2], tight, overlap);
+                // 200x50 是常用尺寸:这里不许有站叠在同一格(小终端挤是必然的,只用来看趋势)
+                if (w, h) == (200, 50) {
+                    assert_eq!(overlap, 0, "{} 在 200x50 下有站叠在同一格", c.name);
+                }
+            }
+        }
+    }
+}
