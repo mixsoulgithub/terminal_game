@@ -13,64 +13,25 @@
 import argparse, heapq, json, math, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from metro_osm import (M_PER_DEG_LAT, build_refs, dedup_edges, dist_m, load_pinyin,
+                       m_per_deg_lon, named_stations, norm, pinyin_variants, write_dot)
 MD = os.path.join(ROOT, "docs", "hangzhou-subway.md")
 STATIONS = os.path.join(ROOT, "data", "osm_stations.json")
 ROUTES = os.path.join(ROOT, "data", "osm_routes.json")
 PINYIN = os.path.join(ROOT, "data", "pinyin_chars.txt")
 OUT = os.path.join(ROOT, "docs", "hangzhou-subway.dot")
-
-M_PER_DEG_LAT = 111320.0
-CLUSTER_M = 150.0     # 同一个物理站点的 stop 点合并半径
-NAME_M = 300.0        # stop 与命名站点节点的配对半径
 GAP_M = 3000.0        # 文档里相邻两站超过这个距离就记一笔
 TRACK_M = 400.0       # 站点节点离轨道这么近才认它是这条线上的一站
 
+HEADER = [
+    "杭州地铁线路图:节点是站点(pos 单位米,x 向东 y 向北),",
+    "边是同一线路上相邻的两站,color/line 就是线路色与线路名.",
+    "站点坐标与线路色来自 OpenStreetMap(ODbL),拼音来自 pypinyin 的字典,",
+    "由 tools/md2dot.py 从 docs/hangzhou-subway.md + data/*.json 生成.",
+]
+
 Pt = tuple  # (lat, lon)
-
-
-def m_per_deg_lon(lat=30.25):
-    return M_PER_DEG_LAT * math.cos(math.radians(lat))
-
-
-def dist_m(a, b):
-    dy = (a[0] - b[0]) * M_PER_DEG_LAT
-    dx = (a[1] - b[1]) * m_per_deg_lon()
-    return math.hypot(dx, dy)
-
-
-def load_pinyin(path):
-    """字 -> [读音...](去声调、小写)"""
-    table = {}
-    if not os.path.exists(path):
-        return table
-    for line in open(path, encoding="utf-8"):
-        if "\t" in line:
-            ch, readings = line.rstrip("\n").split("\t", 1)
-            table[ch] = [r for r in readings.split(",") if r]
-    return table
-
-
-def pinyin_variants(name, table, limit=12):
-    """站名的拼音写法.第一个是首选读音(每个字取第一读音),后面是别的读法组合.
-
-    多音字(行/长/大...)都列出来,搜索时命中哪个都算.
-    """
-    chars = [c for c in name if c in table]
-    if not chars:
-        return []
-    combos = [[]]
-    for ch in chars:
-        combos = [pre + [r] for pre in combos for r in table[ch]][:limit * 4]
-    out = []
-    for combo in combos[:limit]:
-        s = " ".join(combo)
-        if s not in out:
-            out.append(s)
-    return out
-
-
-def norm(name):
-    return re.sub(r"[\s（）()·、]", "", name)
 
 
 def parse_md(path):
@@ -93,117 +54,6 @@ def parse_md(path):
         names = [s.strip() for s in body.split("–") if s.strip()]
         segs.append((cur + "支线" if branch else cur, names))
     return segs
-
-
-class RefData:
-    """一条线路(ref)的 stop 图"""
-
-    def __init__(self, colour):
-        self.colour = colour
-        self.coord = []
-        self.name = []
-        self.adj = []
-        self.seqs = []          # 每条关系的 stop 节点序列(用来补端点站、判断方向)
-        self.track = []         # 轨道上的点(way 几何),用来判断某站是不是在这条线上
-        self._grid = {}
-
-    def _key(self, p):
-        return (round(p[0] / 0.002), round(p[1] / 0.002))
-
-    def node_of(self, p):
-        best = None
-        k0, k1 = self._key(p)
-        for di in (-1, 0, 1):
-            for dj in (-1, 0, 1):
-                for k in self._grid.get((k0 + di, k1 + dj), []):
-                    d = dist_m(p, self.coord[k])
-                    if d < CLUSTER_M and (best is None or d < best[0]):
-                        best = (d, k)
-        if best is not None:
-            return best[1]
-        self.coord.append(p)
-        self.name.append(None)
-        self.adj.append([])
-        k = len(self.coord) - 1
-        self._grid.setdefault(self._key(p), []).append(k)
-        return k
-
-    def link(self, a, b):
-        if a == b:
-            return
-        for n, _ in self.adj[a]:
-            if n == b:
-                return
-        d = dist_m(self.coord[a], self.coord[b])
-        self.adj[a].append((b, d))
-        self.adj[b].append((a, d))
-
-    def nearest(self, p, radius=NAME_M):
-        best = None
-        for k in range(len(self.coord)):
-            d = dist_m(p, self.coord[k])
-            if d < radius and (best is None or d < best[0]):
-                best = (d, k)
-        return best[1] if best else None
-
-    def path(self, a, b):
-        """最短路(按米),返回节点序号列表(含首尾)"""
-        if a == b:
-            return [a]
-        dist = {a: 0.0}
-        prev = {}
-        pq = [(0.0, a)]
-        while pq:
-            d, u = heapq.heappop(pq)
-            if u == b:
-                break
-            if d > dist.get(u, math.inf):
-                continue
-            for v, w in self.adj[u]:
-                nd = d + w
-                if nd < dist.get(v, math.inf):
-                    dist[v] = nd
-                    prev[v] = u
-                    heapq.heappush(pq, (nd, v))
-        if b not in dist:
-            return [a, b]
-        out = [b]
-        while out[-1] != a:
-            out.append(prev[out[-1]])
-        return out[::-1]
-
-
-def build_refs(routes, named):
-    refs = {}
-    for r in routes:
-        t = r.get("tags") or {}
-        if t.get("network") != "杭州地铁":
-            continue
-        stops = [(m["lat"], m["lon"]) for m in r["members"]
-                 if m["type"] == "node" and m.get("role") == "stop"]
-        if len(stops) < 2:
-            continue
-        rd = refs.get(t["ref"])
-        if rd is None:
-            rd = refs[t["ref"]] = RefData(t.get("colour", "#888888"))
-        ids = [rd.node_of(p) for p in stops]
-        rd.seqs.append(ids)
-        for m in r["members"]:
-            if m["type"] == "way":
-                rd.track.extend((p["lat"], p["lon"]) for p in m.get("geometry") or [])
-        for a, b in zip(ids, ids[1:]):
-            rd.link(a, b)
-    for rd in refs.values():
-        for k in range(len(rd.coord)):
-            best = None
-            for name, plist in named.items():
-                for lat, lon, _ in plist:
-                    d = dist_m(rd.coord[k], (lat, lon))
-                    if d < NAME_M and (best is None or d < best[0]):
-                        best = (d, name)
-            if best:
-                rd.name[k] = best[1]
-    return refs
 
 
 def along(rd, a, b, count):
@@ -261,16 +111,8 @@ def main():
     segs = parse_md(args.md)
     nodes = json.load(open(STATIONS, encoding="utf-8"))["elements"]
     routes = json.load(open(ROUTES, encoding="utf-8"))["elements"]
-    named = {}
-    for n in nodes:
-        t = n.get("tags") or {}
-        name = t.get("name") or t.get("name:zh")
-        if not name:
-            continue
-        # 同名节点可能有多个(不同线路各有一个站体),全都留着,匹配时取最近的
-        rank = 1 if t.get("railway") == "station" else 0
-        named.setdefault(norm(name), []).append((n["lat"], n["lon"], rank))
-    refs = build_refs(routes, named)
+    named = named_stations(nodes)
+    refs = build_refs(routes, named, ["杭州地铁"])
     pinyin = load_pinyin(PINYIN)
 
     out_nodes = {}
@@ -408,35 +250,8 @@ def main():
         print("没有可用数据", file=sys.stderr)
         report()
         return 1
-    x0 = min(c[1] for c in out_nodes.values())
-    y0 = min(c[0] for c in out_nodes.values())
-    edges = []
-    seen = set()
-    for a, b, colour, label in out_edges:
-        if a == b:
-            continue
-        key = (min(a, b), max(a, b), label)
-        if key in seen:
-            continue
-        seen.add(key)
-        edges.append((a, b, colour, label))
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.write("// 杭州地铁线路图:节点是站点(pos 单位米,x 向东 y 向北),\n")
-        f.write("// 边是同一线路上相邻的两站,color/line 就是线路色与线路名.\n")
-        f.write("// 站点坐标与线路色来自 OpenStreetMap(ODbL),拼音来自 pypinyin 的字典,\n")
-        f.write("// 由 tools/md2dot.py 从 docs/hangzhou-subway.md + data/*.json 生成.\n")
-        f.write("graph hangzhou_metro {\n")
-        for nm, (lat, lon) in out_nodes.items():
-            attrs = 'pos="%.0f,%.0f"' % ((lon - x0) * m_per_deg_lon(), (lat - y0) * M_PER_DEG_LAT)
-            py = pinyin_variants(nm, pinyin)
-            if py:
-                attrs += ', pinyin="%s"' % py[0]
-                if len(py) > 1:
-                    attrs += ', pinyin2="%s"' % "|".join(py[1:])
-            f.write('  "%s" [%s];\n' % (nm, attrs))
-        for a, b, colour, label in edges:
-            f.write('  "%s" -- "%s" [color="%s", line="%s"];\n' % (a, b, colour, label))
-        f.write("}\n")
+    edges = dedup_edges(out_edges)
+    write_dot(args.out, HEADER, "hangzhou_metro", out_nodes, edges, pinyin)
     used = {n for e in edges for n in e[:2]}
     alone = [n for n in out_nodes if n not in used]
     if alone:

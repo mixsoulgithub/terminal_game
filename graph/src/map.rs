@@ -30,6 +30,8 @@ pub struct Map {
     pub adj: Vec<Vec<(usize, usize)>>,
     /// 全域包围盒 (x0, y0, x1, y1)
     pub bbox: (f64, f64, f64, f64),
+    /// 每条线走一遍的站点序列(解析时算好,见 line_paths)
+    paths: Vec<(usize, Vec<usize>)>,
 }
 
 impl Map {
@@ -105,7 +107,7 @@ impl Map {
             x1 = x1.max(p.0);
             y1 = y1.max(p.1);
         }
-        Ok(Map {
+        let mut map = Map {
             names,
             pinyin,
             pos,
@@ -114,7 +116,10 @@ impl Map {
             station_lines,
             adj,
             bbox: (x0, y0, x1, y1),
-        })
+            paths: Vec::new(),
+        };
+        map.paths = map.build_paths();
+        Ok(map)
     }
 
     /// 换乘站:经过两条及以上线路
@@ -125,7 +130,13 @@ impl Map {
     /// 每条线的站点序列(有分叉就分成几条),带上线路号.
     /// 画线时按这个顺序走,好让同一条线在拐弯处接着上一段的方向走;
     /// `>` `<` 沿线走一站也用它
-    pub fn line_paths(&self) -> Vec<(usize, Vec<usize>)> {
+    /// 每条线走一遍的站点序列:(线路号, 站点序列).
+    /// 解析时算一次就存下来:渲染每帧都要用,500 站的图重建一次不划算
+    pub fn line_paths(&self) -> &[(usize, Vec<usize>)] {
+        &self.paths
+    }
+
+    fn build_paths(&self) -> Vec<(usize, Vec<usize>)> {
         let mut out = Vec::new();
         for l in 0..self.lines.len() {
             let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -172,6 +183,13 @@ impl Map {
 /// 而不是被压着塞进去 —— 压着塞会四舍五入把两站并到相邻格
 pub const NOMINAL: (f64, f64) = (184.0, 45.0);
 
+/// 画布规格:按站数开方放大,让"每个站分到多少格子"和杭州基准差不多.
+/// 站多了画布不放大,后处理(docs 里 layout.rs)在密集区就找不到空位,站会叠在一起
+pub fn nominal_for(n: usize) -> (f64, f64) {
+    let k = (n as f64 / 262.0).sqrt().max(1.0);
+    (NOMINAL.0 * k, NOMINAL.1 * k)
+}
+
 /// 一套"画布坐标":同一张图可以按真实地理画,也可以按示意图画.
 #[derive(Clone, Debug)]
 pub struct Scene {
@@ -214,7 +232,8 @@ impl Scene {
     /// 松开用的规格是固定的 —— 换窗口只是把同一张图放大缩小,
     /// 图本身不会跳;窗口大到站距拉开 4 格以上时,站名会自动标出来.
     pub fn schematic(map: &Map) -> Scene {
-        Scene::from_pos(crate::layout::schematic(map, NOMINAL.0, NOMINAL.1), 1.0, false)
+        let (w, h) = nominal_for(map.pos.len());
+        Scene::from_pos(crate::layout::schematic(map, w, h), 1.0, false)
     }
 
     /// 测试用:直接拿一组坐标当画布坐标(不翻转、不压扁)

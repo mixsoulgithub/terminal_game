@@ -13,6 +13,36 @@ const STEP: f64 = 2.6;
 /// 任意两站的最小间距(格)
 const MIN_GAP: f64 = 2.6;
 const ITERS: usize = 600;
+
+/// 规模参数:站一多,画布、搜索半径、迭代轮数都要跟着放大 ——
+/// 不然后处理在密集区找不到空位,站会叠在一起(杭州是基准,k = 1)
+struct Cfg {
+    k: f64,
+}
+
+impl Cfg {
+    fn of(n: usize) -> Cfg {
+        Cfg {
+            k: (n as f64 / 262.0).sqrt().max(1.0),
+        }
+    }
+    /// 同心环往外找空位的上限
+    fn rings(&self) -> i32 {
+        (64.0 * self.k) as i32
+    }
+    /// best_cell 的搜索半径(杭州 3,也就是 7x7)
+    fn radius(&self) -> i32 {
+        (3.0 * self.k).round() as i32
+    }
+    /// clean_cell 允许挪动的格数(杭州 2)
+    fn nudge(&self) -> i32 {
+        (2.0 * self.k).round() as i32
+    }
+    /// 迭代轮数:约束多了要更多轮才磨得平(循环里没人动就提前退出,k = 1 时行为不变)
+    fn rounds(&self, base: usize) -> usize {
+        (base as f64 * self.k).round() as usize
+    }
+}
 /// 拉直力:让一条线连着三站尽量共线,画出来才有长长的直走廊
 const K_STRAIGHT: f64 = 0.06;
 /// 锚的力度:越小越不理会地理上的疏密,越往站距均匀那边靠
@@ -76,7 +106,7 @@ fn repel(p: &[(f64, f64)], f: &mut [(f64, f64)], k: f64) {
 }
 
 /// 取整去重叠:一格一站,占了就按同心环往外找最近的空格
-fn snap_to_grid(p: &[(f64, f64)]) -> Vec<(f64, f64)> {
+fn snap_to_grid(p: &[(f64, f64)], cfg: &Cfg) -> Vec<(f64, f64)> {
     let mut taken: Vec<(i32, i32)> = Vec::with_capacity(p.len());
     let mut out = vec![(0.0, 0.0); p.len()];
     let mut order: Vec<usize> = (0..p.len()).collect();
@@ -89,7 +119,7 @@ fn snap_to_grid(p: &[(f64, f64)]) -> Vec<(f64, f64)> {
     for i in order {
         let (x0, y0) = (p[i].0.round() as i32, p[i].1.round() as i32);
         let mut spot = (x0, y0);
-        'grow: for r in 0..64i32 {
+        'grow: for r in 0..cfg.rings() {
             for dy in -r..=r {
                 for dx in -r..=r {
                     if dx.abs() != r && dy.abs() != r {
@@ -122,8 +152,8 @@ const DIRS8: [(i32, i32); 8] = [
 
 /// 把边的走向整成横、竖或 45 度:让端点挪到同一个方向上最近的空格.
 /// 这样画出来才是干净的一笔,而不是一格一格爬的阶梯.
-fn octilinear(p: &mut [(f64, f64)], edges: &[(usize, usize)]) {
-    for _ in 0..24 {
+fn octilinear(p: &mut [(f64, f64)], edges: &[(usize, usize)], cfg: &Cfg) {
+    for _ in 0..cfg.rounds(24) {
         let mut taken: std::collections::HashSet<(i32, i32)> =
             p.iter().map(|q| (q.0 as i32, q.1 as i32)).collect();
         let mut moved = false;
@@ -135,9 +165,9 @@ fn octilinear(p: &mut [(f64, f64)], edges: &[(usize, usize)]) {
                 continue;
             }
             // 先试挪 b;b 周围满了就把 a 挪到以 b 为中心的同方向格子上
-            let spot = clean_cell((ax, ay), (bx, by), &taken)
+            let spot = clean_cell((ax, ay), (bx, by), &taken, cfg.nudge())
                 .map(|c| (b, c))
-                .or_else(|| clean_cell((bx, by), (ax, ay), &taken).map(|c| (a, c)));
+                .or_else(|| clean_cell((bx, by), (ax, ay), &taken, cfg.nudge()).map(|c| (a, c)));
             let Some((who, c)) = spot else { continue };
             let old = (p[who].0 as i32, p[who].1 as i32);
             taken.remove(&old);
@@ -156,6 +186,7 @@ fn clean_cell(
     base: (i32, i32),
     want: (i32, i32),
     taken: &std::collections::HashSet<(i32, i32)>,
+    nudge: i32,
 ) -> Option<(i32, i32)> {
     let l = (want.0 - base.0).abs().max((want.1 - base.1).abs());
     let mut best: Option<(i64, (i32, i32))> = None;
@@ -165,8 +196,8 @@ fn clean_cell(
         }
         for (ux, uy) in DIRS8 {
             let c = (base.0 + ux * len, base.1 + uy * len);
-            // 只许就近挪一两格:不然节点会被越推越远,整幅图炸开
-            if (c.0 - want.0).abs().max((c.1 - want.1).abs()) > 2 {
+            // 只许就近挪几格:不然节点会被越推越远,整幅图炸开
+            if (c.0 - want.0).abs().max((c.1 - want.1).abs()) > nudge {
                 continue;
             }
             if !room_at(c, taken, want) {
@@ -183,14 +214,14 @@ fn clean_cell(
 
 /// 任意两站都不能挨在一起(不只是线路上的相邻站):
 /// 挨着画出来就是两个点糊在一块,市中心最容易这样
-fn spread_all(p: &mut [(f64, f64)]) {
-    for _ in 0..40 {
+fn spread_all(p: &mut [(f64, f64)], cfg: &Cfg) {
+    for _ in 0..cfg.rounds(40) {
         // 一格可能摞了不止一站(前面的收尾偶尔会撞上),所以这里用多重映射
         let mut grid: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
         for (i, q) in p.iter().enumerate() {
             grid.entry((q.0 as i32, q.1 as i32)).or_default().push(i);
         }
-        let taken: std::collections::HashSet<(i32, i32)> = grid.keys().copied().collect();
+        let mut taken: std::collections::HashSet<(i32, i32)> = grid.keys().copied().collect();
         let mut moved = false;
         for i in 0..p.len() {
             let (x, y) = (p[i].0 as i32, p[i].1 as i32);
@@ -216,17 +247,22 @@ fn spread_all(p: &mut [(f64, f64)]) {
             let Some(j) = close else { continue };
             // 谁挪都行:先试 i,再试 j;每种先找"周围八格也空着"的位子,
             // 实在没有才退一步只要求这一格空
-            let spot = best_cell(p[j], p[i], &taken, true)
+            let r = cfg.radius();
+            let spot = best_cell(p[j], p[i], &taken, true, r)
                 .map(|c| (i, c))
-                .or_else(|| best_cell(p[i], p[j], &taken, true).map(|c| (j, c)))
-                .or_else(|| best_cell(p[j], p[i], &taken, false).map(|c| (i, c)))
-                .or_else(|| best_cell(p[i], p[j], &taken, false).map(|c| (j, c)));
+                .or_else(|| best_cell(p[i], p[j], &taken, true, r).map(|c| (j, c)))
+                .or_else(|| best_cell(p[j], p[i], &taken, false, r).map(|c| (i, c)))
+                .or_else(|| best_cell(p[i], p[j], &taken, false, r).map(|c| (j, c)));
             if let Some((who, c)) = spot {
                 let old = (p[who].0 as i32, p[who].1 as i32);
                 if let Some(cell) = grid.get_mut(&old) {
                     cell.retain(|&k| k != who);
                 }
                 grid.entry(c).or_default().push(who);
+                // taken 也要跟着改:不然它还以为旧格占着、新格空着,
+                // 后面就会把别的站搬进刚占上的这一格(格子少的时候必撞)
+                taken.remove(&old);
+                taken.insert(c);
                 p[who] = (c.0 as f64, c.1 as f64);
                 moved = true;
             }
@@ -238,8 +274,8 @@ fn spread_all(p: &mut [(f64, f64)]) {
 }
 
 /// 相邻两站至少要隔一格:不然中间那截线会被两个站点字符吃掉,线看起来是断的
-fn separate(p: &mut [(f64, f64)], edges: &[(usize, usize)]) {
-    for _ in 0..60 {
+fn separate(p: &mut [(f64, f64)], edges: &[(usize, usize)], cfg: &Cfg) {
+    for _ in 0..cfg.rounds(60) {
         let mut taken: std::collections::HashSet<(i32, i32)> =
             p.iter().map(|q| (q.0 as i32, q.1 as i32)).collect();
         let mut moved = false;
@@ -250,11 +286,12 @@ fn separate(p: &mut [(f64, f64)], edges: &[(usize, usize)]) {
             }
             // 先挪 b:在附近找一个离 a 更远的空格,挪不动就反过来挪 a.
             // 先找"周围也空着"的位子,实在没有才退而求其次只要求这一格空
-            let spot = best_cell(p[a], p[b], &taken, true)
+            let r = cfg.radius();
+            let spot = best_cell(p[a], p[b], &taken, true, r)
                 .map(|c| (b, c))
-                .or_else(|| best_cell(p[b], p[a], &taken, true).map(|c| (a, c)))
-                .or_else(|| best_cell(p[a], p[b], &taken, false).map(|c| (b, c)))
-                .or_else(|| best_cell(p[b], p[a], &taken, false).map(|c| (a, c)));
+                .or_else(|| best_cell(p[b], p[a], &taken, true, r).map(|c| (a, c)))
+                .or_else(|| best_cell(p[a], p[b], &taken, false, r).map(|c| (b, c)))
+                .or_else(|| best_cell(p[b], p[a], &taken, false, r).map(|c| (a, c)));
             let Some((who, c)) = spot else { continue };
             taken.remove(&(p[who].0 as i32, p[who].1 as i32));
             taken.insert(c);
@@ -284,13 +321,14 @@ fn best_cell(
     keep: (f64, f64),
     taken: &std::collections::HashSet<(i32, i32)>,
     strict: bool,
+    radius: i32,
 ) -> Option<(i32, i32)> {
     let (kx, ky) = (keep.0 as i32, keep.1 as i32);
     let own = (kx, ky);
     let mut best: Option<(f64, (i32, i32))> = None;
-    // 找 7x7:挤成一坨的地方(换乘站扎堆)近处常常一个空位都没有
-    for dy in -3..=3i32 {
-        for dx in -3..=3i32 {
+    // 杭州是 7x7:挤成一坨的地方(换乘站扎堆)近处常常一个空位都没有,站多了还要更大
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
             if dx == 0 && dy == 0 {
                 continue;
             }
@@ -314,6 +352,7 @@ fn best_cell(
 /// 把地理坐标松开成示意图坐标(单位是字符格,x 向右、y 向下)
 pub fn schematic(map: &Map, w: f64, h: f64) -> Vec<(f64, f64)> {
     let n = map.pos.len();
+    let cfg = Cfg::of(n);
     let (x0, y0, x1, y1) = map.bbox;
     let (gw, gh) = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
     // 起点:地理坐标铺进 w x h 的格子(y 翻转成屏幕方向)
@@ -397,15 +436,15 @@ pub fn schematic(map: &Map, w: f64, h: f64) -> Vec<(f64, f64)> {
             p[i].1 += f[i].1.clamp(-1.2, 1.2);
         }
     }
-    let mut out = snap_to_grid(&p);
+    let mut out = snap_to_grid(&p, &cfg);
     // 拉直、拉开、分开,三件事互相会打断对方.挑位子时都尽量选"周围也空着"的格子,
     // 来回几轮磨到互相让步;最后再兜一次底,保证线路上的相邻站一定隔开一格
     for _ in 0..6 {
-        separate(&mut out, &edges);
-        spread_all(&mut out);
-        octilinear(&mut out, &edges);
+        separate(&mut out, &edges, &cfg);
+        spread_all(&mut out, &cfg);
+        octilinear(&mut out, &edges, &cfg);
     }
-    separate(&mut out, &edges);
+    separate(&mut out, &edges, &cfg);
     out
 }
 
@@ -464,7 +503,8 @@ mod shape_tests {
     fn 边的方向大多是干净的() {
         let text = include_str!("../docs/hangzhou-subway.dot");
         let map = Map::from_dot(text).expect("内嵌线路图");
-        let p = schematic(&map, crate::map::NOMINAL.0, crate::map::NOMINAL.1);
+        let (nw, nh) = crate::map::nominal_for(map.pos.len());
+        let p = schematic(&map, nw, nh);
         let mut dirty = 0;
         let mut long = 0;
         for e in &map.edges {
@@ -555,13 +595,73 @@ mod density {
         out
     }
 
+    /// 站一多,画布/搜索半径/迭代轮数要跟着放大,不然后处理找不到空位,站会摞在一格.
+    /// 这里用生成的 600 站大图当探针(上海那个量级)
+    #[test]
+    fn 大图也不会把站摞在一起() {
+        let (cols, rows) = (30usize, 20usize);
+        let mut dot = String::from("graph g {\n");
+        for r in 0..rows {
+            for c in 0..cols {
+                dot += &format!(
+                    "  \"s{}\" [pos=\"{},{}\"];\n",
+                    r * cols + c,
+                    c * 1000,
+                    r * 1000
+                );
+            }
+        }
+        for r in 0..rows {
+            for c in 0..cols {
+                let i = r * cols + c;
+                if c + 1 < cols {
+                    dot += &format!(
+                        "  \"s{i}\" -- \"s{}\" [color=\"#112233\", line=\"{}号线\"];\n",
+                        i + 1,
+                        r + 1
+                    );
+                }
+                if r + 1 < rows {
+                    dot += &format!(
+                        "  \"s{i}\" -- \"s{}\" [color=\"#112233\", line=\"{}号线\"];\n",
+                        i + cols,
+                        r + 1
+                    );
+                }
+            }
+        }
+        dot += "}\n";
+        let m = Map::from_dot(&dot).expect("合成图");
+        let (w, h) = crate::map::nominal_for(m.pos.len());
+        let t0 = std::time::Instant::now();
+        let p = schematic(&m, w, h);
+        let mut cells: Vec<(i64, i64)> = p
+            .iter()
+            .map(|q| (q.0.round() as i64, q.1.round() as i64))
+            .collect();
+        cells.sort();
+        let dup = cells.windows(2).filter(|w| w[0] == w[1]).count();
+        println!(
+            "{} 站:画布 {}x{},布局 {:?},摞在同一格的 {} 对",
+            m.pos.len(),
+            w as i64,
+            h as i64,
+            t0.elapsed(),
+            dup
+        );
+        assert_eq!(dup, 0, "有站摞在同一格");
+    }
+
     #[test]
     fn 屏幕上不该有挨着的站() {
         let text = include_str!("../docs/hangzhou-subway.dot");
         let map = Map::from_dot(text).unwrap();
         let mut counts = Vec::new();
         for (name, p) in [
-            ("示意", schematic(&map, crate::map::NOMINAL.0, crate::map::NOMINAL.1)),
+            ("示意", {
+                let (nw, nh) = crate::map::nominal_for(map.pos.len());
+                schematic(&map, nw, nh)
+            }),
             ("地理", map.pos.clone()),
         ] {
             let nn = screen_nn(&map, &p);

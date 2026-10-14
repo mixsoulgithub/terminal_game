@@ -1,6 +1,7 @@
 # metro
 
-终端里的杭州地铁线路图:`ratatui` + ASCII,一条线路一种颜色。
+终端里的地铁线路图(杭州 / 上海 / 成都 / 深圳):`ratatui` + ASCII,一条线路一种颜色。
+不带参数启动时先出选城市的界面;`--city shanghai` 可以直接进某个城市。
 
 同一套技术栈和 `slay-the-spire/` 一样(ratatui 0.30 + crossterm 0.29 + 24 位真彩)。
 
@@ -39,7 +40,8 @@
 ```bash
 cd graph
 cargo build --release
-./target/release/metro
+./target/release/metro              # 先选城市
+./target/release/metro --city chengdu
 ```
 
 建议终端别太小:整幅图 97 km x 51.5 km,200x50 左右正好用满;
@@ -66,7 +68,7 @@ metro [options]
 
 | 键 | 作用 |
 | --- | --- |
-| `h` `j` `k` `l` / 方向键 | 朝那个方向挑最近的一站,**距离和方向都按屏幕格子算** —— 眼睛看到哪站在那个方向、哪站近就走哪站,所以换个终端尺寸、或者切到示意图/真实视图,答案都可能不同。那个方向 45 度锥形以外的站不算。分档:聚焦那条线上的站 > 和当前站共线的站 > 其它站,档内才比距离,每档带一个"容忍倍数"(2 / 1.67 倍),同线的站要是比别人远太多就让位给近的,免得仗着同线跨半个城。聚焦某条线时(`/1`),方向键基本就在沿那条线走(自动跟着平移视图) |
+| `h` `j` `k` `l` / 方向键 | 朝那个方向挑**离得近、而且方向正对着的那一站**(分数 = 屏幕距离 + 2 倍横向偏斜,所以不会挑到斜着挨着的那一站):距离和方向都按屏幕格子算 —— 眼睛看到哪站在那个方向、哪站近就走哪站,所以换个终端尺寸、或者切到示意图/真实视图,答案都可能不同;那个方向 45 度锥形以外的站不算。唯一的例外是聚焦某条线时(`/1` 或 `V`):那条线上的站容忍 2 倍距离优先,于是方向键基本就在沿那条线走(自动跟着平移视图) |
 | `H` `J` `K` `L` | 同样是那个方向,但**强制走图上相邻的那一站**(这条线的下一站):方向和距离都按真实经纬坐标(米)算,不看屏幕、也不看 45 度锥形 —— 线路拐弯把它画到一边去也认;多条线的相邻站都在这个方向时取真实距离最近的;那个方向上没有相邻站就不动 |
 | `+` `-` | 放大 / 缩小 |
 | `0` | 复位成整幅图(缩放和位置一起复位) |
@@ -74,8 +76,15 @@ metro [options]
 | `b` | 开关站名标注 |
 | `/` | 搜站名 / 拼音 / 首字母(比如 `wulin`、`wlgc`);输入纯数字则高亮那条线的全部车站 |
 | `n` | 跳到下一个命中的站 |
+| `V` | 聚焦当前站所在的线路(换乘站一次聚焦几条,和搜这几条线的线路号一个效果,之后按 `n` 能一站站看过去);这一站的线已经在聚焦里,这一下就是取消 |
 | `r` | 在示意图与真实地理之间切换 |
 | `q` / `esc` | 退出 |
+| 鼠标左键 | **单击**就生效:地图区里点哪儿,光标就跳到离点击点最近的那一站(图例和状态行上的点击不算,点它们不会乱跳)。选城市界面:点一下选中某城,点已选中的那行就进去。在 tmux 里跑要 `set -g mouse on`,不然鼠标事件到不了程序 |
+
+当前那一站是**实心**的(普通站 `●`、换乘站 `◉` —— 图上其它站是空心 `○` `◎`),
+颜色还在平时那个亮白和红色之间来回闪:曲线是**正弦**(0 起、1 顶、平滑停住,不生硬),
+**节奏按心跳的频率** —— 一个来回 0.8 秒(约 75 下/分),所以一眼就能找到"我在这儿"。
+闲着的时候按 ~30fps 重画(移动中 60fps),上海那张图实测 4.7% CPU。
 
 移动是平滑的:视图中心每帧朝目标挪掉剩余距离的 22%(约 60fps 重画,到位后吸附到不足半格),
 所以方向键把光标带出视野、或者按 `空格` 居中时,画面是滑过去的,不是硬跳。
@@ -109,7 +118,7 @@ metro [options]
 文档里只有"线路 + 站点顺序",没有坐标。整条链路:
 
 ```
-docs/hangzhou-subway.md        线路与站点顺序(人工整理)
+docs/hangzhou-subway.md        线路与站点顺序(人工整理,杭州)
         |
         |  tools/md2dot.py      站名去 OSM 找真实坐标,缺失的按线路顺序插值
         v
@@ -172,14 +181,49 @@ cargo build --release                 # 重新编译(dot 是 include_str! 进来
 
 想单独细看某一站:按 `空格` 把它挪到画面正中,再按 `+` 放大。
 
-拼音表是 pypinyin 的字典筛出来的(只留站名用到的 353 个字),落在
-`data/pinyin_chars.txt`,要重新生成跑 `tools/fetch_pinyin.py`。
+上海 / 成都 / 深圳是"几号线,名称,经度,纬度"的 csv(一行一站,一条线路一个块),
+一个命令就出图:
+
+```
+tools/csv2dot.py --city shanghai     docs/shanghai-subway.md -> docs/shanghai-subway.dot
+tools/csv2dot.py --city chengdu      docs/chengdu.md
+tools/csv2dot.py --city shenzhen     docs/shenzhen.md
+tools/csv2dot.py --all               三个一起
+```
+
+块里的站序就是在线路上的顺序;换乘站在多块里重复出现,按站名并成一个节点。
+线路颜色能从 `data/osm/<slug>_routes.json` 的 `colour` 标签拿到就用真的(上海有),
+没有就按序号取调色板(成都 / 深圳)。
+
+支线有三种写法,csv2dot 都认,而且每一处都会打印出来:
+
+- **单独成块**(推荐,深圳 `6号线支线`、上海 `11号线支线`、成都 `1号线支线` 都这么写):
+  块的第一行写枢纽站,支线块里的坐标可以空着 —— 同名站会从别的块里取坐标,
+  同名站还会并成同一个节点,于是枢纽自动接上;
+- **写在主线块里**(上海 `5号线` 东川路 那头、`10号线` 龙溪路 那头):枢纽没有重复写,
+  按几何认出岔口把那一跳接回去,并打印"接回 xx";
+- 认不出来又长得离谱的(超过中位站距 12 倍)会**丢掉那条边并打印出来**,那一段先单放成一块 ——
+  与其画一条横贯全图的假线,不如留个缺口让人去核对文件。机场快线那种十几公里没站的真长区间
+  不够这个倍数,不会误伤。
+
+也可以完全靠 OSM 关系生成(需要能连上 Overpass):
+
+```
+tools/fetch_city.py --city shanghai   抓 data/osm/shanghai_*.json
+tools/osm2dot.py    --city shanghai   关系里 stop 成员的顺序就是站序 -> dot
+```
+
+加一个新城市:脚本里的 `CITIES` 表各加一行,再在 `src/city.rs` 里加一行 `include_str!`。
+
+拼音表是 pypinyin 的字典筛出来的(只留 `docs/*.dot` 里用到的字),落在
+`data/pinyin_chars.txt`,改了城市之后跑 `tools/fetch_pinyin.py` 重新生成。
 
 ## 数据来源
 
 - 站点坐标、线路颜色:OpenStreetMap 的 `route=subway` 关系与 `station=subway` 节点,
   (c) OpenStreetMap contributors,ODbL 许可。
-- 线路与站点顺序:`docs/hangzhou-subway.md`。
+- 线路与站点顺序:杭州来自 `docs/hangzhou-subway.md`(人工整理),
+  上海 / 成都 / 深圳 来自同一批 OSM 关系里 stop 成员的顺序。
 
 ## 已知取舍
 
@@ -190,13 +234,19 @@ cargo build --release                 # 重新编译(dot 是 include_str! 进来
 ## 文件
 
 ```
-src/main.rs     命令行、终端进出、按键
+src/main.rs     命令行、终端进出(含选城市界面)、按键
+src/city.rs     内嵌的城市表(加城市在这里加一行)
 src/dot.rs      .dot 子集解析
 src/map.rs      站点/线路/边的模型,以及"真实地理/示意图"两套画布坐标
 src/layout.rs   示意图布局(放松)
 src/ui.rs       投影与 ASCII 绘制
-tools/fetch_osm.py  从 OSM 抓数据
-tools/md2dot.py     md -> dot
-data/           fetch_osm.py 的输出
+tools/fetch_osm.py  杭州:从 OSM 抓数据
+tools/md2dot.py     杭州:站序文档 + OSM 坐标 -> dot
+tools/csv2dot.py    上海/成都/深圳:站序 csv -> dot
+tools/fetch_city.py 备选:从 OSM 抓数据(整城一次查,失败退到分格;Overpass 常 504)
+tools/osm2dot.py    备选:OSM 关系 -> dot
+tools/metro_osm.py  上面两个 dot 生成脚本共用的零件
+data/           杭州的 fetch_osm.py 输出
+data/osm/       各城市的 fetch_city.py 输出
 docs/           人工整理的站点顺序 + 生成的 .dot
 ```

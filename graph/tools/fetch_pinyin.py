@@ -10,7 +10,6 @@ import argparse, io, json, os, re, subprocess, sys, unicodedata, zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WHEEL_CACHE = os.path.join(ROOT, ".cache", "pypinyin")
 OUT = os.path.join(ROOT, "data", "pinyin_chars.txt")
-MD = os.path.join(ROOT, "docs", "hangzhou-subway.md")
 
 
 def tones_off(s: str) -> str:
@@ -42,11 +41,13 @@ def get_dict_json() -> dict:
 
 
 def wanted_chars() -> set:
-    text = open(MD, encoding="utf-8").read()
-    dot = os.path.join(ROOT, "docs", "hangzhou-subway.dot")
-    if os.path.exists(dot):
-        text += open(dot, encoding="utf-8").read()
-    return {c for c in text if "\u4e00" <= c <= "\u9fff"}
+    """docs 下所有 .md/.dot 里出现过的汉字(所有城市的站名都算上)"""
+    text = []
+    docs = os.path.join(ROOT, "docs")
+    for name in sorted(os.listdir(docs)):
+        if name.endswith((".md", ".dot")):
+            text.append(open(os.path.join(docs, name), encoding="utf-8").read())
+    return {c for c in "".join(text) if "\u4e00" <= c <= "\u9fff"}
 
 
 def main():

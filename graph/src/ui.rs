@@ -40,6 +40,8 @@ pub struct View {
     pub cursor: usize,
     /// 是否画出所有站名
     pub labels: bool,
+    /// 光标站"呼吸"的相位:0 = 本站原色,1 = 纯红(主循环按时间算出来)
+    pub pulse: f64,
 }
 
 impl Default for View {
@@ -55,6 +57,7 @@ impl Default for View {
             target: None,
             cursor: 0,
             labels: false,
+            pulse: 0.0,
         }
     }
 }
@@ -112,10 +115,10 @@ const RIGHT: u8 = 2;
 const UP: u8 = 4;
 const DOWN: u8 = 8;
 
-/// 小写方向键三档优先级的"容忍倍数":这一档里挑出来的站,只要没有比别的候选远这么多倍,就用它.
-/// 分档看的是**和当前站的关系**(聚焦那条线 > 同一条线 > 其它),档内才比屏幕距离;
-/// 倍数上限是避免"仗着同线跨半个城".
-const TIER_BOUND: [f64; 3] = [2.0, 1.67, f64::INFINITY];
+/// 小写方向键的分档"容忍倍数":聚焦那条线上的站(远 2 倍以内都算它)优先于别的站.
+/// 同一条线**不再**额外优先 —— 挑的就是那个方向上屏幕上最近的一站,
+/// 免得"同线但偏出去两格"的站把正对着的那一站顶掉.
+const TIER_BOUND: [f64; 2] = [2.0, f64::INFINITY];
 
 /// a 和 c 相对 b 在同一侧(都偏北/南/东/西)时,线在 b 这里应该是"竖着进"或"横着进";
 /// 一进一出(正常穿过)就交给主方向自己定.返回 true 表示要求横着进站
@@ -133,6 +136,30 @@ fn arrive_hor(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> Option<bool> {
 
 /// 压暗用的灰
 const DIM_COLOR: Color = Color::Rgb(66, 74, 96);
+
+/// 当前那一站画成实心的,一眼就能认出"我在这儿"
+const GLYPH_STATION_CURSOR: char = '●';
+const GLYPH_INTERCHANGE_CURSOR: char = '◉';
+
+/// 光标那一站:在平时那个亮白和红色之间按心跳节奏来回插值
+const CURSOR_WHITE: (u8, u8, u8) = (246, 248, 252);
+const BLINK_RED: (u8, u8, u8) = (255, 62, 56);
+
+/// 闪的强度曲线:一个正弦,phase 是 0..1 的循环位置.
+/// 0 -> 1 -> 0,两头平滑停住(正弦的斜率在端点本来就是 0),所以闪起来不生硬
+pub fn pulse_at(phase: f64) -> f64 {
+    0.5 - 0.5 * (phase * std::f64::consts::TAU).cos()
+}
+
+/// 按强度把颜色往红色拉:t = 0 是原色,t = 1 是纯红
+fn pulse_color(c: Color, t: f64) -> Color {
+    let Color::Rgb(r, g, b) = c else {
+        return c; // 具名色不动
+    };
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round() as u8;
+    Color::Rgb(mix(r, BLINK_RED.0), mix(g, BLINK_RED.1), mix(b, BLINK_RED.2))
+}
 
 /// 站点字形:换乘站是靶心,普通站是空心圆
 const GLYPH_INTERCHANGE: char = '◎';
@@ -374,7 +401,13 @@ impl Canvas {
     }
 }
 
-fn blit(buf: &mut Buffer, cv: &Canvas, bright: Style, cursor: Option<(i32, i32)>) {
+fn blit(
+    buf: &mut Buffer,
+    cv: &Canvas,
+    bright: Style,
+    cursor: Option<(i32, i32)>,
+    pulse: f64,
+) {
     for y in cv.y0..cv.y0 + cv.h {
         for x in cv.x0..cv.x0 + cv.w {
             let Some(i) = cv.idx(x, y) else { continue };
@@ -410,9 +443,18 @@ fn blit(buf: &mut Buffer, cv: &Canvas, bright: Style, cursor: Option<(i32, i32)>
             if dimmed {
                 style = Style::default().fg(DIM_COLOR);
             }
+            let mut ch = ch;
             if cursor == Some((x, y)) {
+                // 当前站:实心字形 + 平时那个亮白 <-> 红色,按心跳节奏插值.
+                // 背景高亮和加粗保持不变,这样闪到哪一档都看得见它在哪
+                ch = match cv.station[i] {
+                    2 => GLYPH_INTERCHANGE_CURSOR,
+                    1 => GLYPH_STATION_CURSOR,
+                    _ => ch,
+                };
+                let white = Color::Rgb(CURSOR_WHITE.0, CURSOR_WHITE.1, CURSOR_WHITE.2);
                 style = Style::default()
-                    .fg(Color::Rgb(246, 248, 252))
+                    .fg(pulse_color(white, pulse))
                     .bg(Color::Rgb(46, 56, 96))
                     .add_modifier(Modifier::BOLD);
             }
@@ -425,9 +467,9 @@ fn blit(buf: &mut Buffer, cv: &Canvas, bright: Style, cursor: Option<(i32, i32)>
 
 /// 光标朝 dir 方向走一站.
 ///
-/// 小写 `h j k l` / 方向键:按**屏幕格子**上的距离挑 —— 眼睛看到那个方向哪一站近就走哪个,
-/// 分档是 聚焦那条线上的站(容忍 2 倍)> 和当前站共线的站(1.67 倍)> 其它站,档内才比距离,
-/// 免得仗着同线跨半个城.
+/// 小写 `h j k l` / 方向键:那个方向的 45 度锥形里,**屏幕上最近的一站**就是它.
+/// 唯一的例外是聚焦某条线时(见下面 focus):那条线上的站容忍 2 倍距离优先,
+/// 于是 /1 之后方向键基本就是沿着 1 号线走.
 ///
 /// 大写 `H J K L`:`force_adjacent` 为真,强制走图上和当前站相邻的那一站(这条线的下一站),
 /// 方向和距离都用**真实经纬坐标**(米)算 —— 线路怎么拐都认,不看屏幕;
@@ -446,9 +488,8 @@ pub fn step(
     }
     let cur = lay.proj.cell(scene.pos[cursor]);
     let (dc, dr) = (dir.0 as f64, dir.1 as f64);
-    let here = &map.station_lines[cursor];
-    // 三档各自的最优:0 聚焦线 / 1 共线 / 2 其它
-    let mut best: [Option<(f64, usize)>; 3] = [None; 3];
+    // 两档各自的最优:0 聚焦线 / 1 其它
+    let mut best: [Option<(f64, usize)>; 2] = [None; 2];
     for (i, p) in scene.pos.iter().enumerate() {
         if i == cursor {
             continue;
@@ -465,14 +506,10 @@ pub fn step(
         }
         let focused =
             !focus.is_empty() && map.station_lines[i].iter().any(|l| focus.contains(l));
-        let tier = if focused {
-            0
-        } else if map.station_lines[i].iter().any(|l| here.contains(l)) {
-            1
-        } else {
-            2
-        };
-        let score = (dx * dx + dy * dy).sqrt() + side * 0.5;
+        let tier = if focused { 0 } else { 1 };
+        // 分数:距离 + 2 倍的横向偏斜.偏斜权重要压得住"斜着挨着"的站 ——
+        // 不然按 k 会挑右上/左上挨着的那一站,而不是正上方那一站
+        let score = (dx * dx + dy * dy).sqrt() + side * 2.0;
         let slot = &mut best[tier];
         if slot.map(|(s, _)| score < s).unwrap_or(true) {
             *slot = Some((score, i));
@@ -575,26 +612,16 @@ pub fn render(buf: &mut Buffer, area: Rect, map: &Map, scene: &Scene, view: &Vie
         .fold(0u64, |m, l| m | (1 << l));
     let mut cv = Canvas::new(map_area, priority, focus);
     // 1. 连线:按线路一条条走,拐弯由方向位合成 ╭╮╯╰
-    for (_line, path) in map.line_paths() {
+    for (line, path) in map.line_paths().iter() {
         let cells: Vec<(i32, i32)> = path.iter().map(|&s| lay.proj.cell(scene.pos[s])).collect();
         for k in 0..cells.len() - 1 {
-            let line = map.edges.iter().find(|e| {
-                (e.a == path[k] && e.b == path[k + 1]) || (e.a == path[k + 1] && e.b == path[k])
-            });
-            let Some(e) = line else { continue };
             // 下一站决定这一段该"竖着进"还是"横着进"
             let arrive = if k + 2 < cells.len() {
                 arrive_hor(cells[k], cells[k + 1], cells[k + 2])
             } else {
                 None
             };
-            cv.edge(
-                cells[k],
-                cells[k + 1],
-                e.line,
-                map.line_color(e.line),
-                arrive,
-            );
+            cv.edge(cells[k], cells[k + 1], *line, map.line_color(*line), arrive);
         }
     }
     // 2. 站点:一站也只有一种颜色,同样让光标那条线先挑
@@ -616,7 +643,7 @@ pub fn render(buf: &mut Buffer, area: Rect, map: &Map, scene: &Scene, view: &Vie
         .fg(Color::Rgb(246, 248, 252))
         .add_modifier(Modifier::BOLD);
     let dark = Style::default().fg(Color::Rgb(70, 78, 100));
-    blit(buf, &cv, bright, Some(cursor_cell));
+    blit(buf, &cv, bright, Some(cursor_cell), view.pulse);
     // 窗口够大(站距拉开到 4 格以上)就自动把站名标出来,不然图上一堆点看不出是哪站
     let labels = view.labels || median_edge_cells(map, scene, &lay.proj) >= 4.5;
     // 3. 站名标注(画在最上层,只写在空位上):端点站一直标,站距宽了或按了 b 就全标.
@@ -867,6 +894,92 @@ fn draw(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) -> u16 {
     w
 }
 
+/// 选城市界面里每一行的矩形(画和"鼠标点哪一行"都用它,免得两处各算一套)
+pub fn chooser_rows(area: Rect, rows: &[(&str, &str)]) -> Vec<Rect> {
+    let texts = chooser_texts(rows, 0); // 宽高只跟行数、文字长度有关,跟选中哪行无关
+    let w = texts
+        .iter()
+        .map(|t| width(t))
+        .chain([width(CHOOSER_TITLE), width(CHOOSER_HINT)])
+        .max()
+        .unwrap_or(0) as u16;
+    let h = texts.len() as u16 + 4;
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    (0..texts.len() as u16)
+        .map(|i| Rect::new(x, y + 2 + i, w, 1))
+        .collect()
+}
+
+/// 鼠标点到第几行(没点到行上就是 None)
+pub fn chooser_row_at(area: Rect, rows: &[(&str, &str)], col: u16, row: u16) -> Option<usize> {
+    chooser_rows(area, rows)
+        .iter()
+        .position(|r| col >= r.x && col < r.x + r.width && row == r.y)
+}
+
+const CHOOSER_TITLE: &str = "metro - 选一个城市";
+const CHOOSER_HINT: &str = "j k / 方向键 选择,回车打开,q 退出";
+
+fn chooser_texts(rows: &[(&str, &str)], sel: usize) -> Vec<String> {
+    rows.iter()
+        .enumerate()
+        .map(|(i, (name, desc))| {
+            let mark = if i == sel { ">" } else { " " };
+            format!("{mark} {name}  {desc}")
+        })
+        .collect()
+}
+
+/// 启动时的选城市界面:居中一列,选中的那行亮起来,底下是操作提示
+pub fn render_chooser(buf: &mut Buffer, area: Rect, rows: &[(&str, &str)], sel: usize) {
+    let texts = chooser_texts(rows, sel);
+    let rects = chooser_rows(area, rows);
+    let bright = Style::default()
+        .fg(Color::Rgb(246, 248, 252))
+        .add_modifier(Modifier::BOLD);
+    let Some(first) = rects.first() else { return };
+    let (x, y) = (first.x, first.y.saturating_sub(2));
+    put(buf, x, y, CHOOSER_TITLE, bright);
+    for (i, t) in texts.iter().enumerate() {
+        let style = if i == sel {
+            bright
+        } else {
+            Style::default().fg(Color::Rgb(150, 158, 180))
+        };
+        put(buf, x, rects[i].y, t, style);
+    }
+    put(
+        buf,
+        x,
+        rects.last().map(|r| r.y + 2).unwrap_or(y),
+        CHOOSER_HINT,
+        Style::default().fg(DIM_COLOR),
+    );
+}
+
+/// 鼠标点在哪个站上:地图区里取离点击点最近的那一站.
+/// 不设"最大距离":点哪儿都会把光标挪过去,单击必定有反应(鼠标手感要的就是这个).
+pub fn station_at(scene: &Scene, lay: &Layout, area: Rect, col: u16, row: u16) -> Option<usize> {
+    let (c, r) = (col as i32, row as i32);
+    if c < area.x as i32
+        || c >= (area.x + area.width) as i32
+        || r < area.y as i32
+        || r >= (area.y + area.height) as i32
+    {
+        return None; // 图例 / 状态行上的点击不算
+    }
+    let mut best: Option<(i64, usize)> = None;
+    for (i, p) in scene.pos.iter().enumerate() {
+        let (x, y) = lay.proj.cell(*p);
+        let d = ((x - c) as i64).pow(2) + ((y - r) as i64).pow(2);
+        if best.map(|(bd, _)| d < bd).unwrap_or(true) {
+            best = Some((d, i));
+        }
+    }
+    best.map(|(_, i)| i)
+}
+
 fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) {
     if x >= buf.area.width || y >= buf.area.height {
         return;
@@ -993,15 +1106,157 @@ mod tests {
         let from = at("甲");
         // h/l/k/j 是 (列, 行):往西、往东、往北、往南(真实坐标里 y 向北,函数内部已经翻过)
         assert_eq!(step(&m, &sc, &lay, from, (-1, 0), &[], false), at("丁"), "h 该往西");
-        assert_eq!(step(&m, &sc, &lay, from, (1, 0), &[], false), at("乙"), "l 该往东");
         assert_eq!(step(&m, &sc, &lay, from, (0, -1), &[], false), at("丙"), "k 该往北");
         assert_eq!(step(&m, &sc, &lay, from, (0, 1), &[], false), at("戊"), "j 该往南");
-        // 东南那站(己,2 号线)虽然也不远,但正东的 乙 更近更正,不该被选走
+        // 往东:庚(900)比同线的 乙(1000)近,挑最近的那个
+        assert_eq!(
+            step(&m, &sc, &lay, from, (1, 0), &[], false),
+            at("庚"),
+            "l 该往东,挑那个方向上最近的一站"
+        );
+        // 东南那站(己)偏出去超过 45 度,不算"东",不该被选走
         assert_ne!(step(&m, &sc, &lay, from, (1, 0), &[], false), at("己"));
-        // 正东方向 庚 比 乙 更近,但 庚 和 甲 不共线、也不相邻:先走图上相邻的 乙
-        assert_eq!(step(&m, &sc, &lay, from, (1, 0), &[], false), at("乙"), "图上相邻的站优先");
-        // 真实坐标:甲 往东在屏幕上画成什么样都不影响这里
-        assert_eq!(step(&m, &sc, &lay, from, (1, 0), &[], false), at("乙"));
+    }
+
+    /// 选城市界面:城市都列出来,选中的那行带标记,底下有提示
+    #[test]
+    fn 选城市界面列出所有城市() {
+        let rows = [("杭州", "13 条线,262 站"), ("上海", "20 条线,508 站")];
+        let mut buf = Buffer::empty(Rect::new(0, 0, 40, 12));
+        render_chooser(&mut buf, Rect::new(0, 0, 40, 12), &rows, 1);
+        // 中日韩字占两格,后一格是空的,拼的时候要跨过去
+        let joined = (0..12)
+            .map(|y| {
+                let mut line = String::new();
+                let mut x = 0;
+                while x < 40 {
+                    let sym = buf[(x, y)].symbol();
+                    line.push_str(sym);
+                    // 宽字(中日韩)后面那一格是占位,跨过去
+                    x += unicode_width::UnicodeWidthStr::width(sym).max(1) as u16;
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("杭州"), "该列出杭州");
+        assert!(joined.contains("上海"), "该列出上海");
+        assert!(joined.contains("> 上海"), "选中的那行要有标记");
+        assert!(!joined.contains("> 杭州"), "没选中的不该有标记");
+        assert!(joined.contains("回车打开"), "要有操作提示");
+    }
+
+    /// 鼠标点站:点在自己格子上就是它,离得远的格子/地图区外的格子都不认
+    #[test]
+    fn 鼠标点哪一站() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let sc = Scene::schematic(&m);
+        let view = View::default();
+        let area = Rect::new(0, 0, 200, 50);
+        let lay = layout(&m, &sc, area, &view);
+        let at = |n: &str| m.names.iter().position(|x| x == n).unwrap();
+        for name in ["武林广场", "湘湖", "萧山国际机场", "火车东站"] {
+            let i = at(name);
+            let (x, y) = lay.proj.cell(sc.pos[i]);
+            assert!(
+                x >= lay.area.x as i32 && x < (lay.area.x + lay.area.width) as i32,
+                "{name} 不在画面里,换个站试"
+            );
+            assert_eq!(
+                station_at(&sc, &lay, lay.area, x as u16, y as u16),
+                Some(i),
+                "点在 {name} 自己的格子上该选它"
+            );
+        }
+        // 空白角落:仍旧有反应,选的是离它最近的那一站
+        let corner = (1u16, 1u16);
+        let near = station_at(&sc, &lay, lay.area, corner.0, corner.1).expect("点哪儿都该有站");
+        let (nx, ny) = lay.proj.cell(sc.pos[near]);
+        let nearest = (0..sc.pos.len())
+            .map(|i| {
+                let (x, y) = lay.proj.cell(sc.pos[i]);
+                (((x - 1) as i64).pow(2) + ((y - 1) as i64).pow(2), i)
+            })
+            .min()
+            .unwrap()
+            .1;
+        assert_eq!(near, nearest, "该选离点击点最近的那一站,实际选了 ({nx},{ny})");
+        // 地图区外面(比如状态行)一律不认
+        assert_eq!(
+            station_at(&sc, &lay, lay.area, 5, area.height - 1),
+            None,
+            "状态行上的点击该忽略"
+        );
+    }
+
+    /// 选城市界面的行命中:行矩形和画出来的一致
+    #[test]
+    fn 选城市界面点行() {
+        let rows = [("杭州", "13 条线,262 站"), ("上海", "21 条线,418 站")];
+        let area = Rect::new(0, 0, 40, 12);
+        let rects = chooser_rows(area, &rows);
+        assert_eq!(rects.len(), 2);
+        for (i, r) in rects.iter().enumerate() {
+            assert_eq!(chooser_row_at(area, &rows, r.x + 2, r.y), Some(i));
+        }
+        assert_eq!(chooser_row_at(area, &rows, 1, 1), None, "标题那行不算");
+        let last_y = rects.last().unwrap().y;
+        assert_eq!(chooser_row_at(area, &rows, 2, last_y + 3), None, "提示那行不算");
+    }
+
+    /// 当前站画成实心,并按正弦在亮白和红之间闪
+    #[test]
+    fn 当前站实心又按心跳闪红() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let sc = Scene::schematic(&m);
+        let area = Rect::new(0, 0, 200, 50);
+        let cell_at = |name: &str, pulse: f64| {
+            let want = m.names.iter().position(|n| n == name).unwrap();
+            let mut view = View::default();
+            view.cursor = want;
+            view.pulse = pulse;
+            let mut buf = Buffer::empty(area);
+            let lay = render(&mut buf, area, &m, &sc, &view);
+            let (x, y) = lay.proj.cell(sc.pos[want]);
+            (buf[(x as u16, y as u16)].fg, buf[(x as u16, y as u16)].symbol().to_string())
+        };
+        // 实心:换乘站 ◉、普通站 ●(不闪的时候也照样是实心)
+        let (_, ch) = cell_at("武林广场", 0.0);
+        assert_eq!(ch, GLYPH_INTERCHANGE_CURSOR.to_string(), "换乘站该画成实心");
+        let (_, ch2) = cell_at("湘湖", 0.0);
+        assert_eq!(ch2, GLYPH_STATION_CURSOR.to_string(), "普通站该画成实心");
+        // 颜色:两端 + 中间
+        let (white, _) = cell_at("武林广场", 0.0);
+        let (half, _) = cell_at("武林广场", 0.5);
+        let (red, _) = cell_at("武林广场", 1.0);
+        assert_eq!(white, Color::Rgb(CURSOR_WHITE.0, CURSOR_WHITE.1, CURSOR_WHITE.2));
+        assert_eq!(red, Color::Rgb(BLINK_RED.0, BLINK_RED.1, BLINK_RED.2));
+        let chan = |c: Color| match c {
+            Color::Rgb(r, _, _) => r as i32,
+            _ => -1,
+        };
+        assert!(chan(half) > chan(white) && chan(half) < chan(red), "中间该在两端之间");
+    }
+
+    /// 闪的曲线是正弦:0 起、1 顶、0 收,而且平滑(相邻取样不会跳变)
+    #[test]
+    fn 闪烁曲线是正弦() {
+        let at = |p: f64| pulse_at(p);
+        assert!((at(0.0) - 0.0).abs() < 1e-9, "从 0 起");
+        assert!((at(0.25) - 0.5).abs() < 1e-9, "四分之一处到一半");
+        assert!((at(0.5) - 1.0).abs() < 1e-9, "半周期到顶");
+        assert!((at(0.75) - 0.5).abs() < 1e-9, "对称地回落");
+        // 0..0.5 单调上升
+        let up: Vec<f64> = (0..50).map(|i| at(i as f64 / 100.0)).collect();
+        assert!(up.windows(2).all(|w| w[1] >= w[0]), "前半程该一直变红");
+        // 平滑:取样够密时,相邻差值很小(不是方波/硬闪)
+        let dense: Vec<f64> = (0..400).map(|i| at(i as f64 / 400.0)).collect();
+        let jump = dense
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f64, f64::max);
+        println!("最陡一档 Δ={jump:.4}(正弦该很小)");
+        assert!(jump < 0.02, "该是平滑正弦,实际最大跳变 {jump}");
     }
 
     #[test]
@@ -1355,60 +1610,7 @@ mod real_map {
 }
 
 
-#[cfg(test)]
-mod same_line_effect {
-    use super::*;
 
-    /// 分档得真的在改变结果,不然它就是写着好看的(哪天被谁顺手去掉,这里会红)
-    #[test]
-    fn 同线折扣确实在起作用() {
-        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
-        let sc = Scene::schematic(&m);
-        let lay = layout(&m, &sc, Rect::new(0, 0, 200, 50), &View::default());
-        let mut changed = 0;
-        let mut examples = Vec::new();
-        for cur in 0..sc.pos.len() {
-            for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let pick = step(&m, &sc, &lay, cur, dir, &[], false);
-                // 纯按屏幕距离(不分档)会选谁
-                let here = lay.proj.cell(sc.pos[cur]);
-                let (dc, dr) = (dir.0 as f64, dir.1 as f64);
-                let mut plain = None::<(f64, usize)>;
-                for (i, p) in sc.pos.iter().enumerate() {
-                    if i == cur {
-                        continue;
-                    }
-                    let c = lay.proj.cell(*p);
-                    let (dx, dy) = ((c.0 - here.0) as f64, (c.1 - here.1) as f64);
-                    let along = dx * dc + dy * dr;
-                    let side = (dx * dr - dy * dc).abs();
-                    if along <= 0.0 || side > along {
-                        continue;
-                    }
-                    let sc_score = (dx * dx + dy * dy).sqrt() + side * 0.5;
-                    if plain.map(|(x, _)| sc_score < x).unwrap_or(true) {
-                        plain = Some((sc_score, i));
-                    }
-                }
-                if let Some((_, p)) = plain {
-                    if p != pick {
-                        changed += 1;
-                        if examples.len() < 5 {
-                            examples.push(format!(
-                                "{} --{:?}--> 分档后:{}(纯距离会给 {})",
-                                m.names[cur], dir, m.names[pick], m.names[p]
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        for e in &examples {
-            println!("{e}");
-        }
-        assert!(changed > 20, "同线/聚焦分档该改变不少选择,实际只有 {changed}");
-    }
-}
 
 #[cfg(test)]
 mod near {
@@ -1505,6 +1707,7 @@ mod spur {
         }
     }
 }
+
 
 
 

@@ -1,6 +1,7 @@
 // metro:终端里的杭州地铁线路图.
 // 本文件只负责命令行、终端进出与按键;图数据在 docs/hangzhou-subway.dot(可 --file 换),
 // 解析在 dot.rs,模型在 map.rs,绘制在 ui.rs.
+mod city;
 mod dot;
 mod layout;
 mod map;
@@ -12,7 +13,10 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseButton, MouseEventKind,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::style::{Color, Modifier};
 use ratatui::{Terminal, TerminalOptions, Viewport};
@@ -58,16 +62,16 @@ fn refresh(map: &Map, view: &mut View) {
 }
 
 
-/// 内嵌的线路图:docs/hangzhou-subway.dot
-const EMBEDDED: &str = include_str!("../docs/hangzhou-subway.dot");
-
 const USAGE: &str = "\
-metro - 终端里的杭州地铁线路图(ASCII,一条线路一种颜色)
+metro - 终端里的地铁线路图(ASCII,一条线路一种颜色)
 
 usage: metro [options]
 
+不带参数时先出一个选城市的界面(杭州 / 上海 / 成都 / 深圳)。
+
 options:
-  --file <path>  读取线路图 .dot(默认内嵌 docs/hangzhou-subway.dot)
+  --city <slug>  直接看某个城市:hangzhou / shanghai / chengdu / shenzhen
+  --file <path>  读取线路图 .dot(比 --city 优先)
   --dump         渲染一帧到 stdout(真彩 ANSI)后退出,可配合 --size
   --size <WxH>   --dump 的画布大小(默认 200x50)
   --labels       一上来就把所有站名标出来(等于按 b)
@@ -88,12 +92,18 @@ keys:
   b                开关站名标注
   /                搜站名或拼音(首字母也行);输入纯数字则聚焦那条线
   n                跳到下一个命中的站
+  V                聚焦当前站所在的线路(换乘站会一次聚焦几条),再按一次取消;
+                   效果和搜这条线的线路号一样,之后按 n 能一站站看过去
   r                在示意图与真实地理之间切换
+  鼠标左键          单击即可:地图区里点哪儿就跳到离点击点最近的那一站
+                    (tmux 里要 set -g mouse on 才能收到鼠标事件)
   q / esc          退出
 ";
 
 struct Args {
     file: Option<String>,
+    /// 直接指定城市(不弹选城市界面)
+    city: Option<String>,
     dump: bool,
     size: Option<(u16, u16)>,
     labels: bool,
@@ -109,6 +119,7 @@ struct Args {
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut args = Args {
         file: None,
+        city: None,
         dump: false,
         size: None,
         labels: false,
@@ -123,6 +134,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--file" => {
                 i += 1;
                 args.file = Some(argv.get(i).ok_or("--file 缺少路径")?.clone());
+            }
+            "--city" => {
+                i += 1;
+                args.city = Some(argv.get(i).ok_or("--city 缺少城市名")?.clone());
             }
             "--dump" => args.dump = true,
             "--labels" => args.labels = true,
@@ -209,6 +224,129 @@ fn dump(buf: &ratatui::buffer::Buffer) {
     let _ = io::stdout().flush();
 }
 
+/// 把当前站所在的线路聚焦起来(换乘站会有好几条),再按一次取消.
+/// 效果和"搜这几条线的线路号"一样:其余线全部压暗,而且 n 能在这几条线的站之间跳
+fn focus_lines_of(map: &Map, view: &mut View) {
+    let lines = map.station_lines[view.cursor].clone();
+    // 这一站的线已经在聚焦里了(比如刚才就是按 V 聚焦的),那这一下就是取消
+    if !lines.is_empty() && lines.iter().all(|l| view.focus.contains(l)) {
+        view.focus.clear();
+        view.hits.clear();
+        view.hit_at = 0;
+        return;
+    }
+    view.focus = lines;
+    view.hits = (0..map.names.len())
+        .filter(|&i| {
+            map.station_lines[i]
+                .iter()
+                .any(|l| view.focus.contains(l))
+        })
+        .collect();
+    view.hit_at = 0;
+}
+
+/// 看哪个城市:--file > --city > 选城市界面 >(非交互时)第一个城市.
+/// 返回 None 表示用户在选城市界面里退出
+fn source_text(args: &Args) -> Result<Option<String>, String> {
+    if let Some(path) = &args.file {
+        return std::fs::read_to_string(path)
+            .map(Some)
+            .map_err(|e| format!("读不到 {path}: {e}"));
+    }
+    if let Some(slug) = &args.city {
+        return Ok(Some(city::by_slug(slug)?.dot.to_string()));
+    }
+    let interactive = !args.dump && io::stdin().is_terminal() && io::stdout().is_terminal();
+    if !interactive {
+        return Ok(Some(city::CITIES[0].dot.to_string()));
+    }
+    match choose_city() {
+        Ok(Some(c)) => Ok(Some(c.dot.to_string())),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// 启动界面:选城市(None 表示用户按 q 退出)
+fn choose_city() -> io::Result<Option<&'static city::City>> {
+    let rows: Vec<(&str, String)> = city::CITIES
+        .iter()
+        .map(|c| {
+            let desc = match Map::from_dot(c.dot) {
+                Ok(m) => format!("{} 条线,{} 站", m.lines.len(), m.names.len()),
+                Err(e) => format!("读不了:{e}"),
+            };
+            (c.name, desc)
+        })
+        .collect();
+    let mut stdout = io::stdout();
+    crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(
+        stdout,
+        crossterm::terminal::EnterAlternateScreen,
+        EnableMouseCapture
+    )?;
+    let mut term = Terminal::with_options(
+        CrosstermBackend::new(stdout),
+        TerminalOptions {
+            viewport: Viewport::Fullscreen,
+        },
+    )?;
+    let mut sel = 0usize;
+    let picked = loop {
+        term.draw(|f| {
+            let area = f.area();
+            let refs: Vec<(&str, &str)> = rows.iter().map(|(n, d)| (*n, d.as_str())).collect();
+            ui::render_chooser(f.buffer_mut(), area, &refs, sel);
+        })?;
+        if !event::poll(Duration::from_millis(200))? {
+            continue;
+        }
+        let ev = event::read()?;
+        if let Event::Mouse(me) = ev {
+            // 点一行就是选它;点在已选中的那一行上就打开它
+            if let MouseEventKind::Down(MouseButton::Left) = me.kind {
+                let refs: Vec<(&str, &str)> = rows.iter().map(|(n, d)| (*n, d.as_str())).collect();
+                if let Some(i) =
+                    ui::chooser_row_at(term.size()?.into(), &refs, me.column, me.row)
+                {
+                    if i == sel {
+                        break Some(&city::CITIES[i]);
+                    }
+                    sel = i;
+                }
+            }
+            continue;
+        }
+        let Event::Key(KeyEvent { code, .. }) = ev else {
+            continue;
+        };
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc => break None,
+            KeyCode::Char('j') | KeyCode::Down => sel = (sel + 1).min(rows.len() - 1),
+            KeyCode::Char('k') | KeyCode::Up => sel = sel.saturating_sub(1),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
+                break Some(&city::CITIES[sel])
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let i = (c as u8 - b'1') as usize;
+                if i < rows.len() {
+                    break Some(&city::CITIES[i]);
+                }
+            }
+            _ => {}
+        }
+    };
+    crossterm::terminal::disable_raw_mode()?;
+    crossterm::execute!(
+        term.backend_mut(),
+        crossterm::terminal::LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    Ok(picked)
+}
+
 fn main() -> ExitCode {
     let argv: Vec<String> = env::args().skip(1).collect();
     let args = match parse_args(&argv) {
@@ -222,15 +360,13 @@ fn main() -> ExitCode {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
     }
-    let text = match &args.file {
-        Some(path) => match std::fs::read_to_string(path) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("metro: 读不到 {path}: {e}");
-                return ExitCode::from(1);
-            }
-        },
-        None => EMBEDDED.to_string(),
+    let text = match source_text(&args) {
+        Ok(Some(t)) => t,
+        Ok(None) => return ExitCode::SUCCESS, // 在选城市界面里退了
+        Err(e) => {
+            eprintln!("metro: {e}");
+            return ExitCode::from(1);
+        }
     };
     let map = match Map::from_dot(&text) {
         Ok(m) => m,
@@ -337,7 +473,11 @@ fn scene_of<'a>(view: &View, real: &'a Scene, schematic: &'a Scene) -> &'a Scene
 fn run(view: &mut View, map: &Map, real: &Scene, schematic: &Scene) -> io::Result<()> {
     let mut stdout = io::stdout();
     crossterm::terminal::enable_raw_mode()?;
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
+    crossterm::execute!(
+        stdout,
+        crossterm::terminal::EnterAlternateScreen,
+        EnableMouseCapture
+    )?;
     let mut term = Terminal::with_options(
         CrosstermBackend::new(stdout),
         TerminalOptions {
@@ -346,7 +486,11 @@ fn run(view: &mut View, map: &Map, real: &Scene, schematic: &Scene) -> io::Resul
     )?;
     let result = event_loop(&mut term, view, map, real, schematic);
     crossterm::terminal::disable_raw_mode()?;
-    crossterm::execute!(term.backend_mut(), crossterm::terminal::LeaveAlternateScreen)?;
+    crossterm::execute!(
+        term.backend_mut(),
+        crossterm::terminal::LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     result
 }
 
@@ -358,8 +502,13 @@ fn event_loop(
     schematic: &Scene,
 ) -> io::Result<()> {
     let mut search_from = view.cursor;
+    // 当前站闪烁一个来回的时长:0.8 秒,差不多是心跳的频率(约 75 下/分)
+    const BEAT: f64 = 0.8;
+    let started = std::time::Instant::now();
     loop {
-        // 移动动画:还在动就按 ~60fps 重画,停了就慢慢等按键
+        // 按心跳的频率走一条正弦,渲染时拿这个强度在平时那个亮白和红色之间插值
+        view.pulse = ui::pulse_at(started.elapsed().as_secs_f64() / BEAT);
+        // 移动动画:还在动就按 ~60fps 重画,停了也要 ~30fps(闪烁要连贯)
         let moving = {
             let sc = scene_of(view, real, schematic);
             let lay = ui::layout(map, sc, term.size()?.into(), view);
@@ -372,14 +521,29 @@ fn event_loop(
         let wait = if moving {
             Duration::from_millis(16)
         } else {
-            Duration::from_millis(200)
+            Duration::from_millis(33)
         };
         if !event::poll(wait)? {
             continue;
         }
+        let ev = event::read()?;
+        if let Event::Mouse(me) = ev {
+            // 左键按一下(或者只报了抬起)就把光标挪到点的那一站
+            if matches!(
+                me.kind,
+                MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+            ) {
+                let sc = scene_of(view, real, schematic);
+                let lay = ui::layout(map, sc, term.size()?.into(), view);
+                if let Some(i) = ui::station_at(sc, &lay, lay.area, me.column, me.row) {
+                    view.cursor = i;
+                }
+            }
+            continue;
+        }
         let Event::Key(KeyEvent {
             code, modifiers, ..
-        }) = event::read()?
+        }) = ev
         else {
             continue;
         };
@@ -433,6 +597,8 @@ fn event_loop(
                 view.target = None;
             }
             KeyCode::Char('b') => view.labels = !view.labels,
+            // V:聚焦当前站所在的线路(换乘站是好几条),再按一次取消
+            KeyCode::Char('V') => focus_lines_of(map, view),
             KeyCode::Char('/') => {
                 search_from = view.cursor;
                 view.query = Some(String::new());
@@ -480,7 +646,6 @@ fn event_loop(
 mod tests {
     use super::*;
 
-    #[test]
     /// 平滑移动:一帧挪一段(指数逼近),不是一步到位;方向不变,最后吸附到目标
     #[test]
     fn 平滑移动是逐步逼近的() {
@@ -507,6 +672,125 @@ mod tests {
         assert!(!animate(&mut view, &sc, 1.0));
     }
 
+    /// 内嵌的每个城市都要能解析、能布局:数据坏了这里先红
+    #[test]
+    fn 内嵌城市都能解析() {
+        let mut seen = Vec::new();
+        for c in city::CITIES {
+            let m = Map::from_dot(c.dot).unwrap_or_else(|e| panic!("{}: {e}", c.name));
+            let stat = (m.lines.len(), m.names.len());
+            println!("{}: {} 条线,{} 站", c.name, stat.0, stat.1);
+            assert!(
+                !seen.contains(&stat),
+                "{} 的数据和别的城市一模一样({:?}),多半是把同一个 dot 复制过来了",
+                c.name,
+                stat
+            );
+            seen.push(stat);
+            assert!(m.names.len() > 80, "{} 只有 {} 站", c.name, m.names.len());
+            assert!(m.lines.len() >= 3, "{} 只有 {} 条线", c.name, m.lines.len());
+            // 重名会让解析端把两个站合成一个,数据里不该有
+            let mut names: Vec<&String> = m.names.iter().collect();
+            names.sort();
+            let dup = names.windows(2).find(|w| w[0] == w[1]);
+            assert!(dup.is_none(), "{} 里有重名站: {:?}", c.name, dup);
+            // 示意布局里不能有两站摞在同一格(站一多最容易出这个)
+            let t0 = std::time::Instant::now();
+            let sc = crate::map::Scene::schematic(&m);
+            let (bw, bh) = crate::map::nominal_for(m.pos.len());
+            let mut cells: Vec<(i64, i64)> = sc
+                .pos
+                .iter()
+                .map(|p| (p.0.round() as i64, p.1.round() as i64))
+                .collect();
+            cells.sort();
+            let dup = cells.windows(2).find(|w| w[0] == w[1]);
+            assert!(
+                dup.is_none(),
+                "{} 的示意布局把两站摞在同一格: {:?}(画布 {}x{})",
+                c.name,
+                dup,
+                bw as i64,
+                bh as i64
+            );
+            // 布局空间里"最近的邻居有多远"的中位数:衡量站是不是挤在一起
+            let mut nn: Vec<f64> = (0..sc.pos.len())
+                .map(|i| {
+                    (0..sc.pos.len())
+                        .filter(|&j| j != i)
+                        .map(|j| {
+                            let (dx, dy) = (sc.pos[i].0 - sc.pos[j].0, sc.pos[i].1 - sc.pos[j].1);
+                            (dx * dx + dy * dy).sqrt()
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .collect();
+            nn.sort_by(f64::total_cmp);
+            println!(
+                "  {} 布局耗时 {:?},画布 {}x{},最近邻中位 {:.1} 格",
+                c.name,
+                t0.elapsed(),
+                bw as i64,
+                bh as i64,
+                nn[nn.len() / 2]
+            );
+        }
+    }
+
+    /// V:聚焦当前站的线路,再按一次取消
+    #[test]
+    fn 聚焦当前站的线路() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let mut view = View::default();
+        // 武林广场 是 1/3 号线换乘站
+        view.cursor = m.names.iter().position(|n| n == "武林广场").unwrap();
+        let want = m.station_lines[view.cursor].clone();
+        assert!(want.len() >= 2, "挑个换乘站来测");
+        focus_lines_of(&m, &mut view);
+        assert_eq!(view.focus, want, "该聚焦这一站的每条线");
+        assert!(!view.hits.is_empty(), "命中列表该填上,好让 n 用");
+        assert!(
+            view.hits.iter().all(|&i| m
+                .station_lines[i]
+                .iter()
+                .any(|l| want.contains(l))),
+            "命中列表里不该有别的线的站"
+        );
+        assert!(
+            view.hits.contains(&view.cursor),
+            "当前站自己当然在里面"
+        );
+        // 单线站:只聚焦那一条
+        let mut v2 = View::default();
+        v2.cursor = m.names.iter().position(|n| n == "湘湖").unwrap();
+        focus_lines_of(&m, &mut v2);
+        assert_eq!(v2.focus.len(), 1, "湘湖 只在 1 号线上");
+        // 再按一次取消
+        focus_lines_of(&m, &mut v2);
+        assert!(v2.focus.is_empty(), "同一站再按该取消");
+        assert!(v2.hits.is_empty());
+        // 聚焦里已经包含这一站的线(比如搜了别的线之后挪过来)也算取消
+        let mut v3 = View::default();
+        v3.cursor = m.names.iter().position(|n| n == "湘湖").unwrap(); // 1 号线
+        v3.focus = vec![
+            m.lines.iter().position(|l| l.label == "1号线").unwrap(),
+            m.lines.iter().position(|l| l.label == "3号线").unwrap(),
+        ];
+        focus_lines_of(&m, &mut v3);
+        assert!(v3.focus.is_empty(), "1 号线已经在聚焦里,这一下该是取消");
+    }
+
+    /// --city 指定城市;不认识的 slug 要报清楚
+    #[test]
+    fn 指定城市() {
+        let args = parse_args(&["--city".to_string(), "shanghai".to_string()]).unwrap();
+        assert_eq!(args.city.as_deref(), Some("shanghai"));
+        assert_eq!(city::by_slug("shanghai").unwrap().name, "上海");
+        assert!(city::by_slug("beijing").is_err());
+        assert_eq!(city::CITIES.len(), 4);
+    }
+
+    #[test]
     fn hjkl_方向对得上() {
         // (列方向, 行方向):h 西、l 东、k 北、j 南;方向键一样
         assert_eq!(dir_of(KeyCode::Char('h')), Some(((-1, 0), false)));
@@ -525,3 +809,6 @@ mod tests {
         assert_eq!(dir_of(KeyCode::Char('x')), None);
     }
 }
+
+
+
