@@ -13,3 +13,6 @@
 [submodule "refs/sts-textual-py"]
 	path = refs/sts-textual-py
 	url = git@github.com:q107580018/Slay-the-Spire.git
+[submodule "graph"]
+	path = graph
+	url = git@github.com:mixsoulgithub/metro-tui.git
