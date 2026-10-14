@@ -83,15 +83,22 @@ options:
 keys:
   h j k l / 方向键  朝那个方向挑屏幕上最近的一站(眼睛看到哪个近就哪个,
                     换终端尺寸/切视图都可能不一样);聚焦某条线时这条线上的站优先
-  H J K L          强制走图上相邻的那一站(这条线的下一站,按真实经纬度判方向);
-                    线路拐弯画出锥形也认;那个方向没有相邻站就不动
+  H K / J L        沿线走一站:**H K 是上一站,J L 是下一站** —— 只看线路自己的站序,
+                    和真实方位、屏幕方向都无关(换乘站上按 H 就是这条线的上一站)
+                    站上有好几条线都能走时弹列表,数字或 j k 选、回车走、esc 取消
   + -              放大 / 缩小
   0                复位成整幅图
   空格             把光标那一站挪到画面正中
                    (聚焦某条线时,方向键优先走那条线)
+  5l / 3j           数字前缀:一次性挪好几站
+  Ctrl-d / Ctrl-u   半屏往下 / 往上跳一站(远距离旅行)
+  Ctrl-o / Ctrl-i   回到上一个 / 下一个跳过的站(Tab 就是 Ctrl-i)
+  f                 把聚焦的线路(没聚焦就是当前站那条)整条铺满画面
+  z                 和空格一样,把当前站挪到画面正中
+  ?                 键位速查(任意键关掉)
   b                开关站名标注
   /                搜站名或拼音(首字母也行);输入纯数字则聚焦那条线
-  n                跳到下一个命中的站
+  n / N            下一个 / 上一个命中的站
   V                聚焦当前站所在的线路(换乘站会一次聚焦几条),再按一次取消;
                    效果和搜这条线的线路号一样,之后按 n 能一站站看过去
   r                在示意图与真实地理之间切换
@@ -168,19 +175,23 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 }
 
 /// vim 方向键:返回 (列方向, 行方向),h 往西、l 往东、k 往北、j 往南
-/// 方向键的映射:(方向, 是否"只走图上相邻的一站").
-/// 小写 h j k l 和方向键只是朝那个方向按真实经纬度挑最近的一站;
-/// 大写 H J K L 则强制走图上和当前站相邻的那一站(这条线的下一站),没有就不动.
-fn dir_of(code: KeyCode) -> Option<((i32, i32), bool)> {
+/// 小写/方向键:朝那个方向在屏幕上挑最近的一站
+fn dir_of(code: KeyCode) -> Option<(i32, i32)> {
     match code {
-        KeyCode::Char('h') | KeyCode::Left => Some(((-1, 0), false)),
-        KeyCode::Char('l') | KeyCode::Right => Some(((1, 0), false)),
-        KeyCode::Char('k') | KeyCode::Up => Some(((0, -1), false)),
-        KeyCode::Char('j') | KeyCode::Down => Some(((0, 1), false)),
-        KeyCode::Char('H') => Some(((-1, 0), true)),
-        KeyCode::Char('L') => Some(((1, 0), true)),
-        KeyCode::Char('K') => Some(((0, -1), true)),
-        KeyCode::Char('J') => Some(((0, 1), true)),
+        KeyCode::Char('h') | KeyCode::Left => Some((-1, 0)),
+        KeyCode::Char('l') | KeyCode::Right => Some((1, 0)),
+        KeyCode::Char('k') | KeyCode::Up => Some((0, -1)),
+        KeyCode::Char('j') | KeyCode::Down => Some((0, 1)),
+        _ => None,
+    }
+}
+
+/// 大写:沿线走一站,只认线路自己的站序(和真实方位、屏幕方向都无关).
+/// H K 是上一站,J L 是下一站;上面那条线有好几条就弹列表让用户挑
+fn topo_of(code: KeyCode) -> Option<bool> {
+    match code {
+        KeyCode::Char('H') | KeyCode::Char('K') => Some(false),
+        KeyCode::Char('J') | KeyCode::Char('L') => Some(true),
         _ => None,
     }
 }
@@ -222,6 +233,89 @@ fn dump(buf: &ratatui::buffer::Buffer) {
     }
     print!("{out}");
     let _ = io::stdout().flush();
+}
+
+/// 光标跑出视野就把视图平滑挪过去
+fn follow_cursor(view: &mut View, map: &Map, sc: &Scene) {
+    let Ok((w, h)) = crossterm::terminal::size() else {
+        return;
+    };
+    let lay = ui::layout(map, sc, ratatui::layout::Rect::new(0, 0, w, h), view);
+    let c = lay.proj.cell(sc.pos[view.cursor]);
+    let inside = c.0 >= lay.area.x as i32
+        && c.0 < (lay.area.x + lay.area.width) as i32
+        && c.1 >= lay.area.y as i32
+        && c.1 < (lay.area.y + lay.area.height) as i32;
+    if !inside {
+        let old = view.center.unwrap_or_else(|| sc.center());
+        let p = sc.pos[view.cursor];
+        let want = (old.0 + (p.0 - old.0) * 0.85, old.1 + (p.1 - old.1) * 0.85);
+        pan_to(view, sc, want);
+    }
+}
+
+/// 数字前缀:5l = 连挪 5 站.返回 true 表示这个键被当成计数吃了
+fn count_digit(pending: &mut Option<u32>, c: char) -> bool {
+    let Some(d) = c.to_digit(10) else { return false };
+    if d == 0 && pending.is_none() {
+        return false; // 没前缀时 0 还是"复位"
+    }
+    *pending = Some((pending.unwrap_or(0) * 10 + d).min(999));
+    true
+}
+
+/// 把"现在这里"记进跳转历史(Ctrl-o / Ctrl-i 前后翻)
+fn note_here(view: &mut View) {
+    if view.history.last() == Some(&view.cursor) {
+        view.hist_at = view.history.len() - 1;
+        return;
+    }
+    view.history.truncate(view.hist_at + 1); // 从历史中间跳走,后面那段丢掉
+    view.history.push(view.cursor);
+    if view.history.len() > 64 {
+        view.history.remove(0);
+    }
+    view.hist_at = view.history.len() - 1;
+}
+
+/// 回到历史里的上一个 / 下一个跳过的站.返回 false 表示到头了
+fn jump_history(view: &mut View, back: bool) -> bool {
+    if view.history.is_empty() {
+        return false;
+    }
+    if back {
+        if view.hist_at == 0 {
+            return false;
+        }
+        view.hist_at -= 1;
+    } else {
+        if view.hist_at + 1 >= view.history.len() {
+            return false;
+        }
+        view.hist_at += 1;
+    }
+    view.cursor = view.history[view.hist_at];
+    true
+}
+
+/// 半屏跳:从当前站往 dir 方向挪半屏高,落到离那个点最近的一站.
+/// 落点会夹在地图区里,再远也不会挑到图例或状态行上
+fn leap(
+    scene: &Scene,
+    lay: &ui::Layout,
+    cursor: usize,
+    dir: (i32, i32),
+    rows: i32,
+) -> usize {
+    let c = lay.proj.cell(scene.pos[cursor]);
+    let dx = dir.0 * (lay.area.width as i32 / 2).max(1);
+    let dy = dir.1 * rows.max(1);
+    let (ax, ay) = (lay.area.x as i32, lay.area.y as i32);
+    let x_max = ax + lay.area.width as i32 - 1;
+    let y_max = ay + lay.area.height as i32 - 1;
+    let x = (c.0 + dx).clamp(ax, x_max.max(ax));
+    let y = (c.1 + dy).clamp(ay, y_max.max(ay));
+    ui::station_at(scene, lay, lay.area, x as u16, y as u16).unwrap_or(cursor)
 }
 
 /// 把当前站所在的线路聚焦起来(换乘站会有好几条),再按一次取消.
@@ -502,6 +596,11 @@ fn event_loop(
     schematic: &Scene,
 ) -> io::Result<()> {
     let mut search_from = view.cursor;
+    // 数字前缀(5l = 连挪 5 站)
+    let mut pending: Option<u32> = None;
+    // 上一站/下一站有多个候选时,挂着等用户挑:(候选, 当前选中, 是不是下一站)
+    let mut choice: Option<(Vec<(usize, usize)>, usize, bool)> = None;
+    note_here(view);
     // 当前站闪烁一个来回的时长:0.8 秒,差不多是心跳的频率(约 75 下/分)
     const BEAT: f64 = 0.8;
     let started = std::time::Instant::now();
@@ -517,6 +616,9 @@ fn event_loop(
         term.draw(|f| {
             let area = f.area();
             ui::render(f.buffer_mut(), area, map, scene_of(view, real, schematic), view);
+            if let Some((cands, at, next)) = choice.as_ref() {
+                ui::render_choice(f.buffer_mut(), area, map, cands, *at, *next);
+            }
         })?;
         let wait = if moving {
             Duration::from_millis(16)
@@ -536,7 +638,10 @@ fn event_loop(
                 let sc = scene_of(view, real, schematic);
                 let lay = ui::layout(map, sc, term.size()?.into(), view);
                 if let Some(i) = ui::station_at(sc, &lay, lay.area, me.column, me.row) {
-                    view.cursor = i;
+                    if i != view.cursor {
+                        note_here(view);
+                        view.cursor = i;
+                    }
                 }
             }
             continue;
@@ -549,6 +654,40 @@ fn event_loop(
         };
         if modifiers.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('c')) {
             return Ok(());
+        }
+        // 速查浮层:任意键关掉
+        if view.help {
+            view.help = false;
+            continue;
+        }
+        // 选上一站/下一站:数字直选、j k 挪、回车走、esc 取消
+        if let Some((cands, at, next)) = choice.clone() {
+            let mut go = None;
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') => choice = None,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    choice = Some((cands.clone(), (at + 1) % cands.len(), next))
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    choice = Some((cands.clone(), (at + cands.len() - 1) % cands.len(), next))
+                }
+                KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => go = Some(at),
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    let i = (c as u8 - b'1') as usize;
+                    if i < cands.len() {
+                        go = Some(i);
+                    }
+                }
+                _ => {}
+            }
+            if let Some(i) = go {
+                note_here(view);
+                view.cursor = cands[i].0;
+                choice = None;
+                let sc = scene_of(view, real, schematic);
+                follow_cursor(view, map, sc);
+            }
+            continue;
         }
         let _ = &search_from;
         // 搜索态:所有按键都归输入行
@@ -580,9 +719,72 @@ fn event_loop(
             continue;
         }
         let mut moved = None;
+        let mut topo = None;
+        let mut steps: u32 = 1;
         match code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-            _ if dir_of(code).is_some() => moved = dir_of(code),
+            // ?:键位速查;z:和空格一样把当前站居中
+            KeyCode::Char('?') => view.help = true,
+            KeyCode::Char('z') => {
+                let sc = scene_of(view, real, schematic);
+                let p = sc.pos[view.cursor.min(sc.pos.len() - 1)];
+                pan_to(view, sc, p);
+            }
+            // f:把聚焦的线路(没聚焦就是当前站那条)整条铺满画面
+            KeyCode::Char('f') => {
+                let sc = scene_of(view, real, schematic);
+                let area: ratatui::layout::Rect = term.size()?.into();
+                let lay = ui::layout(map, sc, area, view);
+                let lines = if view.focus.is_empty() {
+                    map.station_lines[view.cursor].clone()
+                } else {
+                    view.focus.clone()
+                };
+                let pts: Vec<(f64, f64)> = (0..map.names.len())
+                    .filter(|&i| map.station_lines[i].iter().any(|l| lines.contains(l)))
+                    .map(|i| sc.pos[i])
+                    .collect();
+                if let Some((z, c)) = ui::fit_to(sc, area, lay.area, pts.into_iter()) {
+                    view.zoom = z;
+                    view.center = Some(c);
+                    view.target = None;
+                }
+            }
+            // 半屏跳:远距离旅行用
+            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+                let sc = scene_of(view, real, schematic);
+                let lay = ui::layout(map, sc, term.size()?.into(), view);
+                let rows = lay.area.height as i32 / 2;
+                let next = leap(sc, &lay, view.cursor, (0, 1), rows);
+                if next != view.cursor {
+                    note_here(view);
+                    view.cursor = next;
+                }
+            }
+            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                let sc = scene_of(view, real, schematic);
+                let lay = ui::layout(map, sc, term.size()?.into(), view);
+                let rows = lay.area.height as i32 / 2;
+                let next = leap(sc, &lay, view.cursor, (0, -1), rows);
+                if next != view.cursor {
+                    note_here(view);
+                    view.cursor = next;
+                }
+            }
+            // 跳转历史:Tab 就是 Ctrl-i
+            KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
+                jump_history(view, true);
+            }
+            KeyCode::Tab | KeyCode::Char('i') if modifiers.contains(KeyModifiers::CONTROL) => {
+                jump_history(view, false);
+            }
+            _ if dir_of(code).is_some() => {
+                moved = dir_of(code);
+                steps = pending.take().unwrap_or(1);
+            }
+            _ if topo_of(code).is_some() => {
+                topo = topo_of(code);
+            }
             KeyCode::Char('+') | KeyCode::Char('=') => view.zoom = (view.zoom * 1.4).min(64.0),
             KeyCode::Char('-') | KeyCode::Char('_') => view.zoom = (view.zoom / 1.4).max(1.0),
             // 空格:把光标那一站挪到画面正中(看局部的时候好使)
@@ -607,7 +809,13 @@ fn event_loop(
             }
             // n:跳到下一个命中的站(搜完一串站就靠它挨个看)
             KeyCode::Char('n') if !view.hits.is_empty() => {
+                note_here(view);
                 view.hit_at = (view.hit_at + 1) % view.hits.len();
+                view.cursor = view.hits[view.hit_at];
+            }
+            KeyCode::Char('N') if !view.hits.is_empty() => {
+                note_here(view);
+                view.hit_at = (view.hit_at + view.hits.len() - 1) % view.hits.len();
                 view.cursor = view.hits[view.hit_at];
             }
             KeyCode::Char('r') => {
@@ -619,24 +827,39 @@ fn event_loop(
                 view.center = None;
                 view.target = None;
             }
-            _ => {}
+            KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                // 数字当计数前缀(5l);不是数字就把计数清掉
+                if !count_digit(&mut pending, c) {
+                    pending = None;
+                }
+            }
+            _ => pending = None,
         }
-        if let Some((dir, force)) = moved {
+        if let Some(dir) = moved {
             let area = term.size()?;
             let sc = scene_of(view, real, schematic);
             let lay = ui::layout(map, sc, area.into(), view);
-            view.cursor = ui::step(map, sc, &lay, view.cursor, dir, &view.focus, force);
-            // 光标跑出视野就把视图挪过去
-            let c = lay.proj.cell(sc.pos[view.cursor]);
-            let inside = c.0 >= lay.area.x as i32
-                && c.0 < (lay.area.x + lay.area.width) as i32
-                && c.1 >= lay.area.y as i32
-                && c.1 < (lay.area.y + lay.area.height) as i32;
-            if !inside {
-                let old = view.center.unwrap_or_else(|| sc.center());
-                let p = sc.pos[view.cursor];
-                let want = (old.0 + (p.0 - old.0) * 0.85, old.1 + (p.1 - old.1) * 0.85);
-                pan_to(view, sc, want);
+            for _ in 0..steps {
+                let next = ui::step(map, sc, &lay, view.cursor, dir, &view.focus);
+                if next == view.cursor {
+                    break;
+                }
+                view.cursor = next;
+            }
+            follow_cursor(view, map, sc);
+        }
+        if let Some(next) = topo {
+            let cands = ui::line_step(map, view.cursor, next, &view.focus);
+            match cands.len() {
+                0 => {}
+                1 => {
+                    note_here(view);
+                    view.cursor = cands[0].0;
+                    let sc = scene_of(view, real, schematic);
+                    follow_cursor(view, map, sc);
+                }
+                // 好几条线都能走:弹个列表让用户挑
+                _ => choice = Some((cands, 0, next)),
             }
         }
     }
@@ -645,6 +868,99 @@ fn event_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 数字前缀:连着按就是多位数,0 单独按还是复位
+    #[test]
+    fn 数字前缀() {
+        let mut p: Option<u32> = None;
+        assert!(count_digit(&mut p, '5'));
+        assert_eq!(p, Some(5));
+        assert!(count_digit(&mut p, '0'));
+        assert_eq!(p, Some(50), "10l 里的 0 该接着前面");
+        assert!(count_digit(&mut p, '0'));
+        assert_eq!(p, Some(500), "还能继续接");
+        let mut q: Option<u32> = None;
+        assert!(!count_digit(&mut q, '0'), "没前缀时 0 不算计数(是复位)");
+        assert_eq!(q, None);
+        assert!(!count_digit(&mut q, 'x'), "不是数字就不算");
+    }
+
+    /// 跳转历史:Ctrl-o 回上一个跳过的站,Ctrl-i 再回去
+    #[test]
+    fn 跳转历史() {
+        let mut view = View::default();
+        view.cursor = 10;
+        note_here(&mut view);
+        assert_eq!(view.history, vec![10]);
+        view.cursor = 20;
+        note_here(&mut view);
+        view.cursor = 30;
+        note_here(&mut view);
+        assert!(jump_history(&mut view, true));
+        assert_eq!(view.cursor, 20);
+        assert!(jump_history(&mut view, true));
+        assert_eq!(view.cursor, 10);
+        assert!(!jump_history(&mut view, true), "到头了就不动");
+        assert!(jump_history(&mut view, false));
+        assert_eq!(view.cursor, 20);
+        // 从中间跳走:后面的历史丢掉
+        view.cursor = 99;
+        note_here(&mut view);
+        assert_eq!(view.history, vec![10, 20, 99]);
+    }
+
+    /// 半屏跳:往下跳一站,该落在光标下方约半屏的地方,而且不会跳出地图区
+    #[test]
+    fn 半屏跳() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let sc = Scene::schematic(&m);
+        let area = ratatui::layout::Rect::new(0, 0, 200, 50);
+        let lay = ui::layout(&m, &sc, area, &View::default());
+        let cur = m.names.iter().position(|n| n == "武林广场").unwrap();
+        let here = lay.proj.cell(sc.pos[cur]);
+        let down = leap(&sc, &lay, cur, (0, 1), lay.area.height as i32 / 2);
+        let dc = lay.proj.cell(sc.pos[down]);
+        println!("半屏往下:{} -> {}  Δy={}", m.names[cur], m.names[down], dc.1 - here.1);
+        assert_ne!(down, cur);
+        assert!(dc.1 > here.1, "该往下走");
+        assert!(dc.1 - here.1 >= lay.area.height as i32 / 4, "该跳得比一站远");
+        assert!(dc.1 < lay.area.y as i32 + lay.area.height as i32, "别跳出地图区");
+        let up = leap(&sc, &lay, cur, (0, -1), lay.area.height as i32 / 2);
+        assert!(lay.proj.cell(sc.pos[up]).1 < here.1, "往上跳该在光标上方");
+    }
+
+    /// f:把一条线铺满画面 —— 这条线的站全部落在视图里
+    #[test]
+    fn 把线路铺满画面() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let sc = Scene::schematic(&m);
+        let area = ratatui::layout::Rect::new(0, 0, 200, 50);
+        let mut view = View::default();
+        let l1 = m.lines.iter().position(|l| l.label == "1号线").unwrap();
+        let lay0 = ui::layout(&m, &sc, area, &view);
+        let pts: Vec<(f64, f64)> = (0..m.names.len())
+            .filter(|&i| m.station_lines[i].contains(&l1))
+            .map(|i| sc.pos[i])
+            .collect();
+        let (z, c) = ui::fit_to(&sc, area, lay0.area, pts.clone().into_iter()).unwrap();
+        view.zoom = z;
+        view.center = Some(c);
+        let lay = ui::layout(&m, &sc, area, &view);
+        let mut inside = 0;
+        for p in &pts {
+            let (x, y) = lay.proj.cell(*p);
+            if x >= lay.area.x as i32
+                && x < (lay.area.x + lay.area.width) as i32
+                && y >= lay.area.y as i32
+                && y < (lay.area.y + lay.area.height) as i32
+            {
+                inside += 1;
+            }
+        }
+        println!("1 号线 {} 站,铺满后落在画面里的 {}", pts.len(), inside);
+        assert_eq!(inside, pts.len(), "整条线都该在画面里");
+        assert!(z > 1.0, "该比整幅图更放大");
+    }
 
     /// 平滑移动:一帧挪一段(指数逼近),不是一步到位;方向不变,最后吸附到目标
     #[test]
@@ -793,22 +1109,23 @@ mod tests {
     #[test]
     fn hjkl_方向对得上() {
         // (列方向, 行方向):h 西、l 东、k 北、j 南;方向键一样
-        assert_eq!(dir_of(KeyCode::Char('h')), Some(((-1, 0), false)));
-        assert_eq!(dir_of(KeyCode::Char('l')), Some(((1, 0), false)));
-        assert_eq!(dir_of(KeyCode::Char('k')), Some(((0, -1), false)));
-        assert_eq!(dir_of(KeyCode::Char('j')), Some(((0, 1), false)));
-        assert_eq!(dir_of(KeyCode::Left), Some(((-1, 0), false)));
-        assert_eq!(dir_of(KeyCode::Right), Some(((1, 0), false)));
-        assert_eq!(dir_of(KeyCode::Up), Some(((0, -1), false)));
-        assert_eq!(dir_of(KeyCode::Down), Some(((0, 1), false)));
-        // 大写:强制走图上相邻的那一站
-        assert_eq!(dir_of(KeyCode::Char('H')), Some(((-1, 0), true)));
-        assert_eq!(dir_of(KeyCode::Char('L')), Some(((1, 0), true)));
-        assert_eq!(dir_of(KeyCode::Char('K')), Some(((0, -1), true)));
-        assert_eq!(dir_of(KeyCode::Char('J')), Some(((0, 1), true)));
+        assert_eq!(dir_of(KeyCode::Char('h')), Some((-1, 0)));
+        assert_eq!(dir_of(KeyCode::Char('l')), Some((1, 0)));
+        assert_eq!(dir_of(KeyCode::Char('k')), Some((0, -1)));
+        assert_eq!(dir_of(KeyCode::Char('j')), Some((0, 1)));
+        assert_eq!(dir_of(KeyCode::Left), Some((-1, 0)));
+        assert_eq!(dir_of(KeyCode::Right), Some((1, 0)));
+        assert_eq!(dir_of(KeyCode::Up), Some((0, -1)));
+        assert_eq!(dir_of(KeyCode::Down), Some((0, 1)));
+        // 大写:沿线走一站,只认上下一条(和屏幕方位无关)
+        assert_eq!(topo_of(KeyCode::Char('H')), Some(false));
+        assert_eq!(topo_of(KeyCode::Char('K')), Some(false));
+        assert_eq!(topo_of(KeyCode::Char('J')), Some(true));
+        assert_eq!(topo_of(KeyCode::Char('L')), Some(true));
         assert_eq!(dir_of(KeyCode::Char('x')), None);
     }
 }
+
 
 
 

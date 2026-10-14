@@ -42,6 +42,11 @@ pub struct View {
     pub labels: bool,
     /// 光标站"呼吸"的相位:0 = 本站原色,1 = 纯红(主循环按时间算出来)
     pub pulse: f64,
+    /// 跳过的站(搜到的、鼠标点的、半屏跳的),Ctrl-o / Ctrl-i 前后翻
+    pub history: Vec<usize>,
+    pub hist_at: usize,
+    /// 是否显示键位速查
+    pub help: bool,
 }
 
 impl Default for View {
@@ -58,6 +63,9 @@ impl Default for View {
             cursor: 0,
             labels: false,
             pulse: 0.0,
+            history: Vec::new(),
+            hist_at: 0,
+            help: false,
         }
     }
 }
@@ -136,6 +144,24 @@ fn arrive_hor(a: (i32, i32), b: (i32, i32), c: (i32, i32)) -> Option<bool> {
 
 /// 压暗用的灰
 const DIM_COLOR: Color = Color::Rgb(66, 74, 96);
+
+/// 键位速查(docs/README 里那份的口头版)
+pub const HELP_KEYS: &[(&str, &str)] = &[
+    ("h j k l / 方向键", "往那个方向挑最近、最正的那一站(5l = 连挪 5 站)"),
+    ("H J K L", "只走图上相邻的那一站(这条线的下一站)"),
+    ("Ctrl-d / Ctrl-u", "半屏往下 / 往上跳一站(远距离旅行)"),
+    ("Ctrl-o / Ctrl-i", "回到上一个 / 下一个跳过的站"),
+    ("n / N", "下一个 / 上一个搜索命中"),
+    ("/", "搜站名、拼音、首字母;纯数字 = 聚焦那条线"),
+    ("V", "聚焦当前站的线路(再按一次取消)"),
+    ("f", "把聚焦的线路(没聚焦就是当前站的线)铺满画面"),
+    ("z / 空格", "把当前站挪到画面正中"),
+    ("+ - / 0", "放大 / 缩小 / 复位"),
+    ("b", "开关站名标注"),
+    ("r", "示意图 / 真实地理"),
+    ("鼠标左键", "点哪站就跳到哪站"),
+    ("q / esc", "退出"),
+];
 
 /// 当前那一站画成实心的,一眼就能认出"我在这儿"
 const GLYPH_STATION_CURSOR: char = '●';
@@ -218,6 +244,8 @@ struct Canvas {
     lines_here: Vec<u64>,
     /// 作为站点,这一站属于哪几条线(穿过这一格的别的线不算)
     station_lines: Vec<u64>,
+    /// 所有站点的格子:画线时先避开它们,别从站身上穿过去
+    station_cells: std::collections::HashSet<(i32, i32)>,
     /// 聚焦的线路(位掩码;0 = 不聚焦).没聚焦时所有线都正常画
     focus: u64,
     /// 光标所在站的那几条线:颜色冲突时它们说了算
@@ -240,6 +268,7 @@ impl Canvas {
             station: vec![0; (w * h) as usize],
             lines_here: vec![0; (w * h) as usize],
             station_lines: vec![0; (w * h) as usize],
+            station_cells: std::collections::HashSet::new(),
             focus,
             priority,
         }
@@ -324,16 +353,90 @@ impl Canvas {
         out
     }
 
+    /// 从 from 出发、只走这条线已经画过的格子,能不能走到 to
+    fn joined(&self, line: usize, from: (i32, i32), to: (i32, i32)) -> bool {
+        let bit = 1u64 << line;
+        let has = |p: (i32, i32)| {
+            self.idx(p.0, p.1)
+                .map(|i| self.lines_here[i] & bit != 0)
+                .unwrap_or(false)
+        };
+        if !has(from) || !has(to) {
+            return false;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![from];
+        seen.insert(from);
+        while let Some(p) = stack.pop() {
+            if p == to {
+                return true;
+            }
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let q = (p.0 + dx, p.1 + dy);
+                if has(q) && seen.insert(q) {
+                    stack.push(q);
+                }
+            }
+        }
+        false
+    }
+
     /// 这条折线会踩到多少**别的线**已经画过的格子(复用自己的走廊不算代价,
     /// 否则"下去再上来"会因为想省格子而绕到旁边去,围出一个方框)
     fn cost(&self, a: (i32, i32), corner: (i32, i32), b: (i32, i32), line: usize) -> i32 {
         let bit = 1u64 << line;
         let mut n = 0;
+        // 这一笔里有没有"这条线还没占过"的格子
+        let fresh = self
+            .span(a, corner)
+            .into_iter()
+            .chain(self.span(corner, b))
+            .any(|p| {
+                self.idx(p.0, p.1)
+                    .map(|i| self.lines_here[i] & bit == 0)
+                    .unwrap_or(false)
+            });
+        // 两端在这条线已经画过的地方是通的,而这一笔又要踩新格子:
+        // 那就等于把自己绕成一个环(图上一个封闭的圈),尽量别这么拐
+        if fresh && (self.joined(line, a, corner) || self.joined(line, corner, b)) {
+            n += 1000;
+        }
+        // 再把"封口"也算进去:这一笔落下之后,如果某一格的四条边都成了这条线的笔画,
+        // 那一格就被自己围住了(视觉上就是个方框),这种拐法也要尽量躲开
+        let path: std::collections::HashSet<(i32, i32)> =
+            self.span(a, corner).into_iter().chain(self.span(corner, b)).collect();
+        let mine = |p: (i32, i32)| {
+            path.contains(&p)
+                || self
+                    .idx(p.0, p.1)
+                    .map(|i| self.lines_here[i] & bit != 0)
+                    .unwrap_or(false)
+        };
+        let mut encloses = false;
+        'outer: for &(x, y) in &path {
+            for (dx, dy) in [(-1i32, -1i32), (-1, 0), (0, -1), (0, 0)] {
+                let c = (x + dx, y + dy);
+                if mine(c) && mine((c.0 + 1, c.1)) && mine((c.0, c.1 + 1)) && mine((c.0 + 1, c.1 + 1)) {
+                    encloses = true;
+                    break 'outer;
+                }
+            }
+        }
+        if encloses {
+            n += 1000;
+        }
         for p in self.span(a, corner).into_iter().chain(self.span(corner, b)) {
+            if p == a || p == b {
+                continue; // 两个端点本来就是站
+            }
             if let Some(i) = self.idx(p.0, p.1) {
                 if self.lines_here[i] != 0 && self.lines_here[i] & bit == 0 {
                     n += 1;
                 }
+            }
+            // 从站身上穿过去很难看:线会画进那个 ○ 里,还容易和别的段围出方框
+            if self.station_cells.contains(&p) {
+                n += 100;
             }
         }
         n
@@ -471,7 +574,6 @@ fn blit(
 /// 唯一的例外是聚焦某条线时(见下面 focus):那条线上的站容忍 2 倍距离优先,
 /// 于是 /1 之后方向键基本就是沿着 1 号线走.
 ///
-/// 大写 `H J K L`:`force_adjacent` 为真,强制走图上和当前站相邻的那一站(这条线的下一站),
 /// 方向和距离都用**真实经纬坐标**(米)算 —— 线路怎么拐都认,不看屏幕;
 /// 多条线的相邻站都在这个方向时,取真实距离最近的;那个方向上没有相邻站就原地不动.
 pub fn step(
@@ -481,11 +583,7 @@ pub fn step(
     cursor: usize,
     dir: (i32, i32),
     focus: &[usize],
-    force_adjacent: bool,
 ) -> usize {
-    if force_adjacent {
-        return forced_step(map, cursor, dir);
-    }
     let cur = lay.proj.cell(scene.pos[cursor]);
     let (dc, dr) = (dir.0 as f64, dir.1 as f64);
     // 两档各自的最优:0 聚焦线 / 1 其它
@@ -531,25 +629,110 @@ pub fn step(
     cursor
 }
 
-/// 大写 H J K L:只看图上相邻的站,方向和距离都用真实经纬度(米)
-fn forced_step(map: &Map, cursor: usize, dir: (i32, i32)) -> usize {
-    let cur = map.pos[cursor];
-    // h j k l 是(列, 行),行往下;地理坐标 y 向北,所以行的分量要取反
-    let (dc, dr) = (dir.0 as f64, -(dir.1 as f64));
-    let mut best: Option<(f64, usize)> = None;
-    for &(n, _) in &map.adj[cursor] {
-        let (dx, dy) = (map.pos[n].0 - cur.0, map.pos[n].1 - cur.1);
-        if dx * dc + dy * dr <= 0.0 {
-            continue; // 反方向上的相邻站不走
+/// 沿线走一站:返回候选 (站点, 线路).
+///
+/// `next` 为真取下一站、为假取上一站;顺序是**线路自己的站序**(路径里的先后),
+/// 和真实地理位置、屏幕方向都无关.聚焦了某几条线时只算这几条;
+/// 同一个站在多条线/多条支路上都出现时只留一个候选,并记住是哪条线带过去的.
+pub fn line_step(map: &Map, cursor: usize, next: bool, focus: &[usize]) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (line, path) in map.line_paths().iter() {
+        if !focus.is_empty() && !focus.contains(line) {
+            continue;
         }
-        let d = (dx * dx + dy * dy).sqrt();
-        if best.map(|(x, _)| d < x).unwrap_or(true) {
-            best = Some((d, n));
+        let Some(i) = path.iter().position(|&s| s == cursor) else {
+            continue;
+        };
+        let j = if next {
+            i + 1
+        } else if i == 0 {
+            continue;
+        } else {
+            i - 1
+        };
+        if j >= path.len() {
+            continue;
         }
+        let st = path[j];
+        if st == cursor || out.iter().any(|&(s, _)| s == st) {
+            continue;
+        }
+        out.push((st, *line));
     }
-    best.map(|(_, n)| n).unwrap_or(cursor)
+    out
 }
 
+/// 上一次/下一站的候选列表浮层(H K 是上一站,J L 是下一站;有好几个就让用户挑)
+pub fn render_choice(
+    buf: &mut Buffer,
+    area: Rect,
+    map: &Map,
+    cands: &[(usize, usize)],
+    at: usize,
+    next: bool,
+) {
+    let title = if next { "下一站走哪条线?" } else { "上一站走哪条线?" };
+    let hint = "数字 / j k 选,回车走,esc 取消";
+    let texts: Vec<String> = cands
+        .iter()
+        .enumerate()
+        .map(|(i, &(st, _line))| {
+            let mark = if i == at { ">" } else { " " };
+            format!("{mark} {} {}", i + 1, map.names[st])
+        })
+        .collect();
+    let w = texts
+        .iter()
+        .map(|t| width(t))
+        .chain([
+            width(title),
+            width(hint),
+            cands
+                .iter()
+                .map(|&(_, l)| width(&map.lines[l].label) + 8)
+                .max()
+                .unwrap_or(0),
+        ])
+        .max()
+        .unwrap_or(20) as u16;
+    let h = texts.len() as u16 + 4;
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    for yy in y..(y + h).min(area.y + area.height) {
+        for xx in x..(x + w).min(area.x + area.width) {
+            buf[(xx, yy)]
+                .set_char(' ')
+                .set_style(Style::default().bg(Color::Rgb(24, 28, 44)));
+        }
+    }
+    let bright = Style::default()
+        .fg(Color::Rgb(246, 248, 252))
+        .bg(Color::Rgb(24, 28, 44))
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default()
+        .fg(Color::Rgb(170, 178, 200))
+        .bg(Color::Rgb(24, 28, 44));
+    buf.set_string(x + 2, y + 1, truncate_to(title, w as usize - 4), bright);
+    for (i, t) in texts.iter().enumerate() {
+        let yy = y + 2 + i as u16;
+        let style = if i == at { bright } else { dim };
+        buf.set_string(x + 2, yy, truncate_to(t, w as usize - 4), style);
+        // 右边标一下是哪条线带过来的
+        let label = &map.lines[cands[i].1].label;
+        let lx = x + w - 2 - width(label) as u16;
+        if lx > x + width(t) as u16 {
+            buf.set_string(lx, yy, label, dim);
+        }
+    }
+    buf.set_string(
+        x + 2,
+        y + h - 2,
+        truncate_to(hint, w as usize - 4),
+        Style::default()
+            .fg(DIM_COLOR)
+            .bg(Color::Rgb(24, 28, 44)),
+    );
+}
 
 /// 计算布局(交互时移动光标也要用)
 pub struct Layout {
@@ -588,8 +771,84 @@ pub fn layout(map: &Map, scene: &Scene, area: Rect, view: &View) -> Layout {
     }
 }
 
+/// 把这几个站的包围盒铺满地图区:返回 (zoom, center).
+/// 和 layout() 里那套缩放用同一份公式,所以结果直接塞回 view 就行
+pub fn fit_to(
+    scene: &Scene,
+    area: Rect,
+    map_area: Rect,
+    pts: impl Iterator<Item = (f64, f64)>,
+) -> Option<(f64, (f64, f64))> {
+    let mut b: Option<(f64, f64, f64, f64)> = None;
+    for p in pts {
+        b = Some(match b {
+            None => (p.0, p.1, p.0, p.1),
+            Some((x0, y0, x1, y1)) => (x0.min(p.0), y0.min(p.1), x1.max(p.0), y1.max(p.1)),
+        });
+    }
+    let (x0, y0, x1, y1) = b?;
+    let (bw, bh) = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
+    let cols = (map_area.width as f64 - 4.0).max(8.0);
+    let rows = (map_area.height as f64 - 2.0).max(4.0) * scene.aspect;
+    let want = (bw / cols).max(bh / rows);
+    let full = fit_scale(scene, map_area.width, map_area.height);
+    let _ = area;
+    Some((
+        (full / want).clamp(0.2, 64.0),
+        ((x0 + x1) / 2.0, (y0 + y1) / 2.0),
+    ))
+}
+
+/// 键位速查浮层
+pub fn render_help(buf: &mut Buffer, area: Rect, lines: &[(&str, &str)]) {
+    let title = "键位速查";
+    let w = lines
+        .iter()
+        .map(|(k, v)| width(k) + width(v) + 4)
+        .chain([width(title) as usize + 6])
+        .max()
+        .unwrap_or(30)
+        .min(area.width as usize) as u16;
+    let h = (lines.len() as u16 + 4).min(area.height);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    // 铺底:把这块刷成面板色,免得和地图糊在一起
+    for yy in y..(y + h).min(area.y + area.height) {
+        for xx in x..(x + w).min(area.x + area.width) {
+            buf[(xx, yy)]
+                .set_char(' ')
+                .set_style(Style::default().bg(Color::Rgb(24, 28, 44)));
+        }
+    }
+    let bright = Style::default()
+        .fg(Color::Rgb(246, 248, 252))
+        .bg(Color::Rgb(24, 28, 44))
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default()
+        .fg(Color::Rgb(170, 178, 200))
+        .bg(Color::Rgb(24, 28, 44));
+    let mut put_panel = |xx: u16, yy: u16, text: &str, style: Style| {
+        if yy >= area.y + area.height || xx >= area.x + area.width {
+            return;
+        }
+        let s = truncate_to(text, (area.x + area.width - xx) as usize);
+        buf.set_string(xx, yy, &s, style);
+    };
+    put_panel(x + 2, y + 1, title, bright);
+    for (i, (k, v)) in lines.iter().enumerate() {
+        let yy = y + 2 + i as u16;
+        put_panel(x + 2, yy, k, bright);
+        put_panel(x + 2 + width(k).max(6) as u16 + 2, yy, v, dim);
+    }
+    put_panel(x + 2, y + h - 2, "任意键关掉", dim);
+}
+
 pub fn render(buf: &mut Buffer, area: Rect, map: &Map, scene: &Scene, view: &View) -> Layout {
     let lay = layout(map, scene, area, view);
+    if view.help {
+        render_help(buf, area, HELP_KEYS);
+        return lay;
+    }
     let map_area = lay.area;
     // 颜色冲突时谁说了算:聚焦了某条线就一直归它(光标挪到别的线上也不变),
     // 没聚焦时才是光标所在站的那几条线
@@ -611,6 +870,13 @@ pub fn render(buf: &mut Buffer, area: Rect, map: &Map, scene: &Scene, view: &Vie
         .filter(|l| **l < 64)
         .fold(0u64, |m, l| m | (1 << l));
     let mut cv = Canvas::new(map_area, priority, focus);
+    // 先记下所有站点的格子:画线时要避开,免得从站身上穿过去
+    for p in scene.pos.iter() {
+        let c = lay.proj.cell(*p);
+        if cv.idx(c.0, c.1).is_some() {
+            cv.station_cells.insert(c);
+        }
+    }
     // 1. 连线:按线路一条条走,拐弯由方向位合成 ╭╮╯╰
     for (line, path) in map.line_paths().iter() {
         let cells: Vec<(i32, i32)> = path.iter().map(|&s| lay.proj.cell(scene.pos[s])).collect();
@@ -1105,17 +1371,17 @@ mod tests {
         let at = |name: &str| m.names.iter().position(|n| n == name).unwrap();
         let from = at("甲");
         // h/l/k/j 是 (列, 行):往西、往东、往北、往南(真实坐标里 y 向北,函数内部已经翻过)
-        assert_eq!(step(&m, &sc, &lay, from, (-1, 0), &[], false), at("丁"), "h 该往西");
-        assert_eq!(step(&m, &sc, &lay, from, (0, -1), &[], false), at("丙"), "k 该往北");
-        assert_eq!(step(&m, &sc, &lay, from, (0, 1), &[], false), at("戊"), "j 该往南");
+        assert_eq!(step(&m, &sc, &lay, from, (-1, 0), &[]), at("丁"), "h 该往西");
+        assert_eq!(step(&m, &sc, &lay, from, (0, -1), &[]), at("丙"), "k 该往北");
+        assert_eq!(step(&m, &sc, &lay, from, (0, 1), &[]), at("戊"), "j 该往南");
         // 往东:庚(900)比同线的 乙(1000)近,挑最近的那个
         assert_eq!(
-            step(&m, &sc, &lay, from, (1, 0), &[], false),
+            step(&m, &sc, &lay, from, (1, 0), &[]),
             at("庚"),
             "l 该往东,挑那个方向上最近的一站"
         );
         // 东南那站(己)偏出去超过 45 度,不算"东",不该被选走
-        assert_ne!(step(&m, &sc, &lay, from, (1, 0), &[], false), at("己"));
+        assert_ne!(step(&m, &sc, &lay, from, (1, 0), &[]), at("己"));
     }
 
     /// 选城市界面:城市都列出来,选中的那行带标记,底下有提示
@@ -1202,6 +1468,95 @@ mod tests {
         assert_eq!(chooser_row_at(area, &rows, 1, 1), None, "标题那行不算");
         let last_y = rects.last().unwrap().y;
         assert_eq!(chooser_row_at(area, &rows, 2, last_y + 3), None, "提示那行不算");
+    }
+
+    /// 大写 H K / J L:沿线走一站,顺序是线路自己的站序,和方位无关
+    #[test]
+    fn 大写沿线走上一站下一站() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let at = |n: &str| m.names.iter().position(|x| x == n).unwrap();
+        let l1 = m.lines.iter().position(|l| l.label == "1号线").unwrap();
+        let l2 = m.lines.iter().position(|l| l.label == "2号线").unwrap();
+        let cur = at("凤起路");
+        // 1 号线上 龙翔桥 -> 凤起路 -> 武林广场
+        let prev = line_step(&m, cur, false, &[l1]);
+        let next = line_step(&m, cur, true, &[l1]);
+        assert_eq!(prev.len(), 1);
+        assert_eq!(next.len(), 1);
+        assert_eq!(m.names[prev[0].0], "龙翔桥", "H/K 该是这条线的上一站");
+        assert_eq!(m.names[next[0].0], "武林广场", "J/L 该是这条线的下一站");
+        assert_eq!(prev[0].1, l1);
+        // 聚焦 2 号线:站序是 中河北路 -> 凤起路 -> 武林门
+        assert_eq!(m.names[line_step(&m, cur, false, &[l2])[0].0], "中河北路");
+        assert_eq!(m.names[line_step(&m, cur, true, &[l2])[0].0], "武林门");
+        // 没聚焦:两条线都能走 -> 两个候选,交给用户挑
+        let all = line_step(&m, cur, false, &[]);
+        let names: Vec<&str> = all.iter().map(|&(s, _)| m.names[s].as_str()).collect();
+        println!("凤起路 没聚焦时的上一站候选: {names:?}");
+        assert_eq!(all.len(), 2, "1/2 号线各给一个候选");
+        assert!(names.contains(&"龙翔桥") && names.contains(&"中河北路"));
+        // 端点:1 号线第一站没有上一站
+        let first = at("湘湖");
+        assert!(line_step(&m, first, false, &[l1]).is_empty());
+        assert!(!line_step(&m, first, true, &[l1]).is_empty());
+    }
+
+    /// 候选列表浮层:把站名和它属于哪条线都画出来
+    #[test]
+    fn 选择浮层列出候选() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let at = |n: &str| m.names.iter().position(|x| x == n).unwrap();
+        let l1 = m.lines.iter().position(|l| l.label == "1号线").unwrap();
+        let cands = vec![(at("龙翔桥"), l1), (at("武林门"), m.lines.iter().position(|l| l.label == "2号线").unwrap())];
+        let area = Rect::new(0, 0, 60, 20);
+        let mut buf = Buffer::empty(area);
+        render_choice(&mut buf, area, &m, &cands, 1, false);
+        let text: String = (0..area.height)
+            .map(|y| {
+                let mut line = String::new();
+                let mut x = 0;
+                while x < area.width {
+                    let sym = buf[(x, y)].symbol();
+                    line.push_str(sym);
+                    x += unicode_width::UnicodeWidthStr::width(sym).max(1) as u16;
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("上一站"), "标题该说明是上一站还是下一站");
+        assert!(text.contains("龙翔桥") && text.contains("武林门"), "候选站名都要在");
+        assert!(text.contains("1号线") && text.contains("2号线"), "候选来自哪条线也要标");
+        assert!(text.contains("> 2 武林门"), "选中的那行要有标记");
+    }
+
+    /// ? 浮层:画的是键位速查,不是地图
+    #[test]
+    fn 帮助浮层() {
+        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
+        let sc = Scene::schematic(&m);
+        let area = Rect::new(0, 0, 90, 30);
+        let mut view = View::default();
+        view.help = true;
+        let mut buf = Buffer::empty(area);
+        render(&mut buf, area, &m, &sc, &view);
+        let text: String = (0..area.height)
+            .map(|y| {
+                let mut line = String::new();
+                let mut x = 0;
+                while x < area.width {
+                    let sym = buf[(x, y)].symbol();
+                    line.push_str(sym);
+                    x += unicode_width::UnicodeWidthStr::width(sym).max(1) as u16;
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("键位速查"), "该有标题");
+        assert!(text.contains("半屏往下"), "该列出半屏跳");
+        assert!(text.contains("任意键关掉"), "该提示怎么关");
+        assert!(!text.contains("○○"), "浮层打开时不该还在画地图");
     }
 
     /// 当前站画成实心,并按正弦在亮白和红之间闪
@@ -1362,7 +1717,7 @@ mod real_map {
     fn 北大桥往南该是下一站翠柏路() {
         let (m, sc, lay, _) = render_at("北大桥");
         let cur = m.names.iter().position(|n| n == "北大桥").unwrap();
-        let pick = step(&m, &sc, &lay, cur, (0, 1), &[], false);
+        let pick = step(&m, &sc, &lay, cur, (0, 1), &[]);
         assert_eq!(m.names[pick], "翠柏路", "往南该是同线的下一站,不能跳过它");
     }
 
@@ -1374,7 +1729,7 @@ mod real_map {
         let sc = Scene::schematic(&m);
         let lay = layout(&m, &sc, Rect::new(0, 0, 200, 50), &View::default());
         let at = |n: &str| m.names.iter().position(|x| x == n).unwrap();
-        let pick = |cur: &str, dir| m.names[step(&m, &sc, &lay, at(cur), dir, &[], false)].clone();
+        let pick = |cur: &str, dir| m.names[step(&m, &sc, &lay, at(cur), dir, &[])].clone();
         // 200x50 的示意图里,文海南路 被画在 文泽路 的右下方(竖的比横的还多),
         // 屏幕上 云水 反而更近 —— 小写就看这个;要按线路走下一站请用大写 L
         assert_eq!(pick("文泽路", (1, 0)), "云水");
@@ -1385,8 +1740,8 @@ mod real_map {
         let mut changed = Vec::new();
         for cur in 0..m.pos.len() {
             for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let a = step(&m, &sc, &lay, cur, dir, &[], false);
-                let b = step(&m, &sc, &big, cur, dir, &[], false);
+                let a = step(&m, &sc, &lay, cur, dir, &[]);
+                let b = step(&m, &sc, &big, cur, dir, &[]);
                 if a != b && changed.len() < 3 {
                     changed.push(format!(
                         "{} {:?}: 200x50 是 {},420x100 是 {}",
@@ -1402,59 +1757,6 @@ mod real_map {
     }
 
     /// 大写 H J K L:强制走图上相邻的那一站(这条线的下一站),不看屏幕也不看锥形
-    #[test]
-    fn 大写强制走图上相邻的那一站() {
-        let m = Map::from_dot(include_str!("../docs/hangzhou-subway.dot")).unwrap();
-        let sc = Scene::schematic(&m);
-        let lay = layout(&m, &sc, Rect::new(0, 0, 200, 50), &View::default());
-        let at = |n: &str| m.names.iter().position(|x| x == n).unwrap();
-        // 文海南路 往东:云水 在图上就是下一站(真实经纬度上偏出 45 度也认)
-        assert_eq!(
-            m.names[step(&m, &sc, &lay, at("文海南路"), (1, 0), &[], true)],
-            "云水",
-            "强制时该走本线的下一站,不管屏幕/锥形"
-        );
-        // 每条线怎么排都认:换一套画布,大写的结果必须一模一样
-        let sc2 = Scene::real(&m);
-        let lay2 = layout(&m, &sc2, Rect::new(0, 0, 400, 100), &View::default());
-        for cur in 0..m.pos.len() {
-            for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let forced = step(&m, &sc, &lay, cur, dir, &[], true);
-                assert_eq!(
-                    forced,
-                    step(&m, &sc2, &lay2, cur, dir, &[], true),
-                    "大写不该受画布影响"
-                );
-                // 强制走到的站一定和当前站图上有边
-                if forced != cur {
-                    assert!(
-                        m.adj[cur].iter().any(|&(n, _)| n == forced),
-                        "{} 强制走一站却走到了不相邻的 {}",
-                        m.names[cur],
-                        m.names[forced]
-                    );
-                }
-            }
-        }
-        // 小写只看屏幕,所以两者必然有不一致的地方
-        let mut diff = Vec::new();
-        for cur in 0..m.pos.len() {
-            for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let plain = step(&m, &sc, &lay, cur, dir, &[], false);
-                let forced = step(&m, &sc, &lay, cur, dir, &[], true);
-                if plain != forced && diff.len() < 5 {
-                    diff.push(format!(
-                        "{} --{:?}--> 小写:{},大写:{}",
-                        m.names[cur], dir, m.names[plain], m.names[forced]
-                    ));
-                }
-            }
-        }
-        for d in &diff {
-            println!("{d}");
-        }
-        assert!(!diff.is_empty(), "小写和大写该有不一样的地方");
-    }
 
     /// 聚焦期间颜色优先级一直归聚焦那条线:光标挪到别的线上,画面也不变色
     #[test]
@@ -1499,8 +1801,8 @@ mod real_map {
         let mut diff = Vec::new();
         for cur in 0..m.pos.len() {
             for dir in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                let plain = step(&m, &sc, &lay, cur, dir, &[], false);
-                let focused = step(&m, &sc, &lay, cur, dir, &[l1], false);
+                let plain = step(&m, &sc, &lay, cur, dir, &[]);
+                let focused = step(&m, &sc, &lay, cur, dir, &[l1]);
                 if plain != focused {
                     assert!(
                         m.station_lines[focused].contains(&l1),
@@ -1541,7 +1843,7 @@ mod real_map {
             .filter(|(_, (dx, dy, _))| *dy > 0.0 && dx.abs() <= *dy)
             .min_by(|a, b| a.1 .2.total_cmp(&b.1 .2))
             .expect("南边应该有人");
-        let pick = step(&m, &sc, &lay, cur, (0, 1), &[], false);
+        let pick = step(&m, &sc, &lay, cur, (0, 1), &[]);
         let picked = dist(pick).2;
         println!(
             "往南: 选了 {} ({picked:.1} 格), 最近的候选 {} ({:.1} 格)",
@@ -1712,3 +2014,106 @@ mod spur {
 
 
 
+
+#[cfg(test)]
+mod drawn_cycles {
+    use super::*;
+
+    /// 一条线不该用自己的笔画围出空格(视觉上就是一个"环"/方框):
+    /// 按格子算圈数 = 边 - 点 + 连通块,大于 0 就说明围住了至少一格
+    #[test]
+    fn 每条线自己画出来不该围成环() {
+        for (name, dot) in [
+            ("杭州", include_str!("../docs/hangzhou-subway.dot")),
+            ("上海", include_str!("../docs/shanghai-subway.dot")),
+            ("成都", include_str!("../docs/chengdu-subway.dot")),
+            ("深圳", include_str!("../docs/shenzhen-subway.dot")),
+        ] {
+            let m = Map::from_dot(dot).unwrap();
+            let sc = Scene::schematic(&m);
+            let area = Rect::new(0, 0, 200, 50);
+            let view = View::default();
+            let mut buf = Buffer::empty(area);
+            let lay = render(&mut buf, area, &m, &sc, &view);
+            let mut cv = Canvas::new(lay.area, vec![false; m.lines.len()], 0);
+            for p in sc.pos.iter() {
+                let c = lay.proj.cell(*p);
+                if cv.idx(c.0, c.1).is_some() {
+                    cv.station_cells.insert(c);
+                }
+            }
+            for (line, path) in m.line_paths().iter() {
+                let cells: Vec<(i32, i32)> =
+                    path.iter().map(|&s| lay.proj.cell(sc.pos[s])).collect();
+                for k in 0..cells.len() - 1 {
+                    let arrive = if k + 2 < cells.len() {
+                        arrive_hor(cells[k], cells[k + 1], cells[k + 2])
+                    } else {
+                        None
+                    };
+                    cv.edge(cells[k], cells[k + 1], *line, m.line_color(*line), arrive);
+                }
+            }
+            let mut worst = Vec::new();
+            for l in 0..m.lines.len() {
+                let bit = 1u64 << l;
+                let cells: Vec<(i32, i32)> = (lay.area.y as i32
+                    ..(lay.area.y + lay.area.height) as i32)
+                    .flat_map(|y| {
+                        (lay.area.x as i32..(lay.area.x + lay.area.width) as i32)
+                            .map(move |x| (x, y))
+                    })
+                    .filter(|&(x, y)| {
+                        cv.idx(x, y)
+                            .map(|i| cv.lines_here[i] & bit != 0)
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                let set: std::collections::HashSet<(i32, i32)> = cells.iter().copied().collect();
+                let mut e = 0;
+                for &(x, y) in &cells {
+                    for (dx, dy) in [(1, 0), (0, 1)] {
+                        if set.contains(&(x + dx, y + dy)) {
+                            e += 1;
+                        }
+                    }
+                }
+                let mut comp = 0;
+                let mut seen = std::collections::HashSet::new();
+                for &c in &cells {
+                    if !seen.insert(c) {
+                        continue;
+                    }
+                    comp += 1;
+                    let mut stack = vec![c];
+                    while let Some(p) = stack.pop() {
+                        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                            let q = (p.0 + dx, p.1 + dy);
+                            if set.contains(&q) && seen.insert(q) {
+                                stack.push(q);
+                            }
+                        }
+                    }
+                }
+                let ring = e as i32 - cells.len() as i32 + comp as i32;
+                if ring > 0 {
+                    worst.push(format!("{} {} 围出 {ring} 格", m.lines[l].label, cells.len()));
+                }
+            }
+            println!(
+                "{name}: 围成环的线条 {}",
+                if worst.is_empty() { "无".into() } else { worst.join(",") }
+            );
+            // 杭州 1 号线这一处是报过的 bug(龙翔桥/定安路 那一圈),它必须为 0;
+            // 剩下的 2 号线 1 处、9 号线 2 处是被"直线段"封口的,单段路由躲不掉(见 README 已知取舍),
+            // 所以这里守住"总数不再变多"
+            if name == "杭州" {
+                assert!(
+                    worst.iter().all(|w| !w.starts_with("1号线 ")),
+                    "1 号线不该围成环: {worst:?}"
+                );
+                assert!(worst.len() <= 2, "围成环的线条变多了: {worst:?}");
+            }
+        }
+    }
+}
