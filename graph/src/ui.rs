@@ -1160,32 +1160,18 @@ fn draw(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style) -> u16 {
     w
 }
 
-/// 选城市界面里每一行的矩形(画和"鼠标点哪一行"都用它,免得两处各算一套)
-pub fn chooser_rows(area: Rect, rows: &[(&str, &str)]) -> Vec<Rect> {
-    let texts = chooser_texts(rows, 0); // 宽高只跟行数、文字长度有关,跟选中哪行无关
-    let w = texts
-        .iter()
-        .map(|t| width(t))
-        .chain([width(CHOOSER_TITLE), width(CHOOSER_HINT)])
-        .max()
-        .unwrap_or(0) as u16;
-    let h = texts.len() as u16 + 4;
-    let x = area.x + area.width.saturating_sub(w) / 2;
-    let y = area.y + area.height.saturating_sub(h) / 2;
-    (0..texts.len() as u16)
-        .map(|i| Rect::new(x, y + 2 + i, w, 1))
-        .collect()
+/// 选城市界面:一屏放不下时,以选中那行为中心开一个窗口.
+/// 返回 (第一行可见的行号, 可见行数)—— 画和"鼠标点第几行"都用它,免得两处各算一套
+pub fn chooser_window(area: Rect, n: usize, sel: usize) -> (usize, usize) {
+    let room = (area.height as usize).saturating_sub(6).max(1); // 标题 + 提示 + 上下各留一行
+    let count = n.min(room);
+    if count == 0 {
+        return (0, 0);
+    }
+    let half = count / 2;
+    let first = sel.saturating_sub(half).min(n.saturating_sub(count));
+    (first, count)
 }
-
-/// 鼠标点到第几行(没点到行上就是 None)
-pub fn chooser_row_at(area: Rect, rows: &[(&str, &str)], col: u16, row: u16) -> Option<usize> {
-    chooser_rows(area, rows)
-        .iter()
-        .position(|r| col >= r.x && col < r.x + r.width && row == r.y)
-}
-
-const CHOOSER_TITLE: &str = "metro - 选一个城市";
-const CHOOSER_HINT: &str = "j k / 方向键 选择,回车打开,q 退出";
 
 fn chooser_texts(rows: &[(&str, &str)], sel: usize) -> Vec<String> {
     rows.iter()
@@ -1197,35 +1183,77 @@ fn chooser_texts(rows: &[(&str, &str)], sel: usize) -> Vec<String> {
         .collect()
 }
 
-/// 启动时的选城市界面:居中一列,选中的那行亮起来,底下是操作提示
+/// 鼠标点到第几行(考虑滚动:屏幕上第 k 行对应 rows 里的 first + k)
+pub fn chooser_row_at(area: Rect, rows: &[(&str, &str)], sel: usize, col: u16, row: u16) -> Option<usize> {
+    let (first, count) = chooser_window(area, rows.len(), sel);
+    let rects = chooser_rects(area, rows, first, count);
+    rects
+        .iter()
+        .position(|r| col >= r.x && col < r.x + r.width && row == r.y)
+        .map(|k| first + k)
+}
+
+/// 屏幕上那几行的矩形
+fn chooser_rects(area: Rect, rows: &[(&str, &str)], _first: usize, count: usize) -> Vec<Rect> {
+    let texts = chooser_texts(rows, 0);
+    let w = texts
+        .iter()
+        .map(|t| width(t))
+        .chain([width(CHOOSER_TITLE), width(CHOOSER_HINT)])
+        .max()
+        .unwrap_or(0) as u16;
+    let h = count as u16 + 4;
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    (0..count)
+        .map(|k| Rect::new(x, y + 2 + k as u16, w, 1))
+        .collect()
+}
+
+pub const CHOOSER_TITLE: &str = "metro - 选一个城市";
+pub const CHOOSER_HINT: &str = "j k / 方向键 选择,回车打开,q 退出";
+
+/// 启动时的选城市界面:居中一列,选中的那行亮起来,底下是操作提示.
+/// 城市多的时候以选中那行为中心滚动,上下各提示还有几个
 pub fn render_chooser(buf: &mut Buffer, area: Rect, rows: &[(&str, &str)], sel: usize) {
     let texts = chooser_texts(rows, sel);
-    let rects = chooser_rows(area, rows);
+    let (first, count) = chooser_window(area, rows.len(), sel);
+    let rects = chooser_rects(area, rows, first, count);
     let bright = Style::default()
         .fg(Color::Rgb(246, 248, 252))
         .add_modifier(Modifier::BOLD);
-    let Some(first) = rects.first() else { return };
-    let (x, y) = (first.x, first.y.saturating_sub(2));
+    let Some(top) = rects.first() else { return };
+    let (x, y) = (top.x, top.y.saturating_sub(2));
     put(buf, x, y, CHOOSER_TITLE, bright);
-    for (i, t) in texts.iter().enumerate() {
+    for k in 0..count {
+        let i = first + k;
         let style = if i == sel {
             bright
         } else {
             Style::default().fg(Color::Rgb(150, 158, 180))
         };
-        put(buf, x, rects[i].y, t, style);
+        put(buf, x, rects[k].y, &texts[i], style);
     }
-    put(
-        buf,
-        x,
-        rects.last().map(|r| r.y + 2).unwrap_or(y),
-        CHOOSER_HINT,
-        Style::default().fg(DIM_COLOR),
-    );
+    let dim = Style::default().fg(DIM_COLOR);
+    if first > 0 {
+        put(buf, x, y + 1, &format!("  ↑ 上面还有 {first} 个"), dim);
+    }
+    let last = rects.last().map(|r| r.y).unwrap_or(y);
+    if first + count < rows.len() {
+        put(
+            buf,
+            x,
+            last + 1,
+            &format!("  ↓ 下面还有 {} 个", rows.len() - first - count),
+            dim,
+        );
+    }
+    put(buf, x, last + 2, CHOOSER_HINT, dim);
 }
 
+/// 启动时的选城市界面:居中一列,选中的那行亮起来,底下是操作提示
 /// 鼠标点在哪个站上:地图区里取离点击点最近的那一站.
-/// 不设"最大距离":点哪儿都会把光标挪过去,单击必定有反应(鼠标手感要的就是这个).
+/// 不设"最大距离":点哪儿都会把光标挪过去,单击必定有反应(鼠标手感要的就是这个)
 pub fn station_at(scene: &Scene, lay: &Layout, area: Rect, col: u16, row: u16) -> Option<usize> {
     let (c, r) = (col as i32, row as i32);
     if c < area.x as i32
@@ -1460,14 +1488,37 @@ mod tests {
     fn 选城市界面点行() {
         let rows = [("杭州", "13 条线,262 站"), ("上海", "21 条线,418 站")];
         let area = Rect::new(0, 0, 40, 12);
-        let rects = chooser_rows(area, &rows);
-        assert_eq!(rects.len(), 2);
+        // 一屏放得下时,屏幕上的第 k 行就是第 k 个城市
+        let (first, count) = chooser_window(area, rows.len(), 0);
+        assert_eq!((first, count), (0, 2));
+        let rects = chooser_rects(area, &rows, first, count);
         for (i, r) in rects.iter().enumerate() {
-            assert_eq!(chooser_row_at(area, &rows, r.x + 2, r.y), Some(i));
+            assert_eq!(chooser_row_at(area, &rows, 0, r.x + 2, r.y), Some(i));
         }
-        assert_eq!(chooser_row_at(area, &rows, 1, 1), None, "标题那行不算");
+        assert_eq!(chooser_row_at(area, &rows, 0, 1, 1), None, "标题那行不算");
         let last_y = rects.last().unwrap().y;
-        assert_eq!(chooser_row_at(area, &rows, 2, last_y + 3), None, "提示那行不算");
+        assert_eq!(chooser_row_at(area, &rows, 0, 2, last_y + 3), None, "提示那行不算");
+    }
+
+    /// 城市多了要能以选中那行为中心滚动
+    #[test]
+    fn 选城市界面会滚动() {
+        let rows: Vec<(String, String)> = (0..40)
+            .map(|i| (format!("城{}", i), format!("{} 站", i * 10)))
+            .collect();
+        let refs: Vec<(&str, &str)> = rows.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let area = Rect::new(0, 0, 60, 20);
+        let (first, count) = chooser_window(area, refs.len(), 0);
+        assert_eq!(first, 0, "选中第一行时窗口贴顶");
+        assert!(count < refs.len(), "放不下才需要滚动");
+        let (first, _) = chooser_window(area, refs.len(), 25);
+        assert!(first > 0 && first <= 25, "选中中间那行时窗口要跟着移:{first}");
+        let (first, count) = chooser_window(area, refs.len(), 39);
+        assert_eq!(first + count, 39 + 1, "选中末尾时窗口贴底");
+        // 画出来的那几行里,选中行一定可见
+        let at = 25usize;
+        let (first, count) = chooser_window(area, refs.len(), at);
+        assert!(at >= first && at < first + count);
     }
 
     /// 大写 H K / J L:沿线走一站,顺序是线路自己的站序,和方位无关

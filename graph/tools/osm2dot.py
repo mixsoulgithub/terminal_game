@@ -13,18 +13,13 @@ import argparse, json, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from metro_osm import build_refs, dedup_edges, dist_m, load_pinyin, named_stations, write_dot
 
 DOCS = os.path.join(ROOT, "docs")
 PINYIN = os.path.join(ROOT, "data", "pinyin_chars.txt")
 
-# slug -> (中文名, network 标签, 生成的 dot 文件名)
-CITIES = {
-    "hangzhou": ("杭州", "杭州地铁", "hangzhou-subway.dot"),
-    "shanghai": ("上海", "上海地铁", "shanghai-subway.dot"),
-    "chengdu": ("成都", "成都地铁", "chengdu-subway.dot"),
-    "shenzhen": ("深圳", "深圳地铁", "shenzhen-subway.dot"),
-}
+from cities import CITIES, dot_path
 
 # 线路色缺失时按顺序取(够用就行,OSM 里基本都带 colour)
 FALLBACK_COLOURS = [
@@ -51,7 +46,8 @@ def sort_key(label):
 
 
 def build(city_slug, routes_path, stations_path, out_path, min_stop_km=1000.0):
-    name, network, _ = CITIES[city_slug]
+    name = CITIES[city_slug]["name"]
+    network = CITIES[city_slug]["networks"][0]
     routes = json.load(open(routes_path, encoding="utf-8"))["elements"]
     stations = json.load(open(stations_path, encoding="utf-8"))["elements"]
     named = named_stations(stations)
@@ -190,7 +186,7 @@ def main():
     slugs = sorted(CITIES) if args.all else args.city
     if not slugs:
         print("用法: python3 tools/osm2dot.py --city shanghai [--city ...|--all]")
-        print("城市:", ", ".join("%s(%s)" % (s, CITIES[s][0]) for s in sorted(CITIES)))
+        print("城市:", ", ".join("%s(%s)" % (s, CITIES[s]["name"]) for s in sorted(CITIES)))
         return 1
     for slug in slugs:
         if slug not in CITIES:
@@ -198,7 +194,8 @@ def main():
             return 1
         routes = args.routes or os.path.join(ROOT, "data", "osm", "%s_routes.json" % slug)
         stations = args.stations or os.path.join(ROOT, "data", "osm", "%s_stations.json" % slug)
-        out = args.out or os.path.join(DOCS, CITIES[slug][2])
+        out = os.path.abspath(args.out or (dot_path(slug) if os.path.isabs(dot_path(slug)) else os.path.join(ROOT, dot_path(slug))))
+        os.makedirs(os.path.dirname(out), exist_ok=True)
         if not os.path.exists(routes) or not os.path.exists(stations):
             print("%s: 缺数据文件(%s),先跑 tools/fetch_city.py --city %s" % (slug, routes, slug),
                   file=sys.stderr)

@@ -218,7 +218,27 @@ tools/fetch_city.py --city shanghai   抓 data/osm/shanghai_*.json
 tools/osm2dot.py    --city shanghai   关系里 stop 成员的顺序就是站序 -> dot
 ```
 
-加一个新城市:脚本里的 `CITIES` 表各加一行,再在 `src/city.rs` 里加一行 `include_str!`。
+仓库里带 4 座人工校对过的城市(杭州 / 上海 / 成都 / 深圳),`metro` 启动时列在选城市界面里。
+
+**OSM**(备选,Overpass 时通时断):
+
+```
+python3 tools/build_cities.py --all
+```
+
+加新城市只改一处:`tools/cities.py` 里的表(slug / 中文名 / OSM 的 network 标签 / bbox),
+几个脚本(fetch_city、osm2dot、csv2dot)都读它。
+
+两条路:
+
+```
+python3 tools/build_cities.py --all          # 一条命令批量建:抓 OSM -> 生成 dot(断点续跑)
+python3 tools/build_cities.py --city wuhan   # 只建某几座
+```
+
+Overpass 时通时断,失败的城市重跑同一条命令就行(已抓的格子有缓存、会跳过)。
+建好的 `.dot` 放在 `docs/`,**不用重新编译**:`metro` 启动时会列出这些现成的线路图,
+`--city <slug>` 也能直接打开。想固定进二进制就在 `src/city.rs` 的 `CITIES` 里加一行 `include_str!`。
 
 拼音表是 pypinyin 的字典筛出来的(只留 `docs/*.dot` 里用到的字),落在
 `data/pinyin_chars.txt`,改了城市之后跑 `tools/fetch_pinyin.py` 重新生成。
@@ -252,8 +272,10 @@ src/ui.rs       投影与 ASCII 绘制
 tools/fetch_osm.py  杭州:从 OSM 抓数据
 tools/md2dot.py     杭州:站序文档 + OSM 坐标 -> dot
 tools/csv2dot.py    上海/成都/深圳:站序 csv -> dot
-tools/fetch_city.py 备选:从 OSM 抓数据(整城一次查,失败退到分格;Overpass 常 504)
-tools/osm2dot.py    备选:OSM 关系 -> dot
+tools/cities.py     城市表(加城市只改这里)
+tools/build_cities.py 批量建城市(抓 OSM + 生成 dot,可重跑)
+tools/fetch_city.py 从 OSM 抓数据(整城一次查,失败退到分格;Overpass 常 504)
+tools/osm2dot.py    OSM 关系 -> dot
 tools/metro_osm.py  上面两个 dot 生成脚本共用的零件
 data/           杭州的 fetch_osm.py 输出
 data/osm/       各城市的 fetch_city.py 输出

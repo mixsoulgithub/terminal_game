@@ -23,12 +23,10 @@ from metro_osm import dedup_edges, dist_m, load_pinyin, write_dot
 DOCS = os.path.join(ROOT, "docs")
 PINYIN = os.path.join(ROOT, "data", "pinyin_chars.txt")
 
-# slug -> (中文名, 表文件, 生成的 dot).杭州走 tools/md2dot.py,不在这一批里.
-CITIES = {
-    "shanghai": ("上海", "shanghai-subway.md", "shanghai-subway.dot"),
-    "chengdu": ("成都", "chengdu.md", "chengdu-subway.dot"),
-    "shenzhen": ("深圳", "shenzhen.md", "shenzhen-subway.dot"),
-}
+from cities import CITIES, csv_path, dot_path
+
+# 只处理"站序表是 csv 格式"的城市:杭州的表是老格式的 md,走 tools/md2dot.py
+MANUAL = {s: c for s, c in CITIES.items() if c["csv"] and s != "hangzhou"}
 
 PALETTE = [
     "#e4002b", "#0072bc", "#00a650", "#f6a800", "#8e44ad", "#00b5cc", "#d81b60",
@@ -174,7 +172,7 @@ def chain(label, pts, med, repairs, notes):
 
 
 def build(slug, in_path, out_path):
-    name = CITIES[slug][0]
+    name = CITIES[slug]["name"]
     blocks = read_blocks(in_path)
     colours = colours_from_osm(slug)
     pinyin = load_pinyin(PINYIN)
@@ -228,21 +226,40 @@ def main():
     ap.add_argument("--city", action="append", default=[])
     ap.add_argument("--all", action="store_true")
     args = ap.parse_args()
-    slugs = sorted(CITIES) if args.all else args.city
+    if args.all:
+        # 凡是有 csv 站序表的都能重建(杭州的表是老格式的 md,走 tools/md2dot.py,跳过)
+        slugs = [s for s in sorted(CITIES)
+                 if not CITIES[s].get("md2dot")
+                 and os.path.exists(os.path.join(ROOT, csv_path(s)))]
+    else:
+        slugs = args.city
     if not slugs:
         print("用法: python3 tools/csv2dot.py --city shanghai [--city ...|--all]")
-        print("城市:", ", ".join("%s(%s)" % (s, CITIES[s][0]) for s in sorted(CITIES)))
+        print("城市:", ", ".join("%s(%s)" % (s, CITIES[s]["name"]) for s in sorted(MANUAL)))
         return 1
+    bad = []
     for slug in slugs:
         if slug not in CITIES:
             print("没有这个城市:", slug, file=sys.stderr)
-            return 1
-        src = os.path.join(DOCS, CITIES[slug][1])
+            bad.append(slug)
+            continue
+        src = (csv_path(slug) if os.path.isabs(csv_path(slug)) else os.path.join(ROOT, csv_path(slug)))
+        if not os.path.exists(src):
+            print("%s: 缺 %s" % (slug, src), file=sys.stderr)
+            bad.append(slug)
+            continue
         if not os.path.exists(src):
             print("%s: 缺 %s" % (slug, src), file=sys.stderr)
             return 1
-        build(slug, src, os.path.join(DOCS, CITIES[slug][2]))
-    return 0
+        out = (dot_path(slug) if os.path.isabs(dot_path(slug)) else os.path.join(ROOT, dot_path(slug)))
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        try:
+            build(slug, src, out)
+        except SystemExit:
+            bad.append(slug)
+    if bad:
+        print("没建成的:%s" % " ".join(bad), file=sys.stderr)
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

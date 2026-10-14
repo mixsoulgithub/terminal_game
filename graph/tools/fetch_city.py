@@ -27,15 +27,7 @@ EPS = [
 UA = {"User-Agent": "metro-map-fetch-city/1.0 (data preparation)"}
 STEP = 0.06                         # 站点分格边长(度)
 
-# slug -> 中文名 / network 标签值列表 / bbox(s, w, n, e)
-CITIES = {
-    "shanghai": {"name": "上海", "networks": ["上海地铁"],
-                 "bbox": (30.55, 120.75, 31.62, 122.05)},
-    "chengdu": {"name": "成都", "networks": ["成都地铁"],
-                "bbox": (30.20, 103.50, 31.10, 104.60)},
-    "shenzhen": {"name": "深圳", "networks": ["深圳地铁"],
-                 "bbox": (22.30, 113.65, 22.90, 114.75)},
-}
+from cities import CITIES
 
 
 def overpass(query, tries=6, timeout=120):

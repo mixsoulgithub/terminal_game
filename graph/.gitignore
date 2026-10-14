@@ -1,3 +1,4 @@
 /target
 /.cache
 tools/__pycache__
+/data

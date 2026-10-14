@@ -340,6 +340,36 @@ fn focus_lines_of(map: &Map, view: &mut View) {
     view.hit_at = 0;
 }
 
+/// 用户数据目录:$XDG_DATA_HOME/metro(默认 ~/.local/share/metro)
+fn user_data_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+    Some(base.join("metro"))
+}
+
+/// 去哪儿找现成的线路图:当前目录、可执行文件旁边、用户数据目录
+fn data_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    let mut push = |d: std::path::PathBuf| {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    };
+    push(std::path::PathBuf::from("docs"));
+    // 用户数据目录里的线路图(不在仓库里)
+    if let Some(dir) = user_data_dir() {
+        push(dir.join("cities"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            push(dir.join("docs"));
+            push(dir.join("..").join("docs"));
+        }
+    }
+    dirs
+}
+
 /// 看哪个城市:--file > --city > 选城市界面 >(非交互时)第一个城市.
 /// 返回 None 表示用户在选城市界面里退出
 fn source_text(args: &Args) -> Result<Option<String>, String> {
@@ -349,30 +379,78 @@ fn source_text(args: &Args) -> Result<Option<String>, String> {
             .map_err(|e| format!("读不到 {path}: {e}"));
     }
     if let Some(slug) = &args.city {
-        return Ok(Some(city::by_slug(slug)?.dot.to_string()));
+        // 内嵌的没有就去 docs 里找(工具刚建出来的城市不用重新编译)
+        return city::resolve(slug, &data_dirs()).map(Some);
     }
     let interactive = !args.dump && io::stdin().is_terminal() && io::stdout().is_terminal();
     if !interactive {
         return Ok(Some(city::CITIES[0].dot.to_string()));
     }
     match choose_city() {
-        Ok(Some(c)) => Ok(Some(c.dot.to_string())),
+        Ok(Some((_, dot))) => Ok(Some(dot)),
         Ok(None) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
 }
 
-/// 启动界面:选城市(None 表示用户按 q 退出)
-fn choose_city() -> io::Result<Option<&'static city::City>> {
-    let rows: Vec<(&str, String)> = city::CITIES
+/// 选城市界面里的一行:内嵌的(带原文)或 docs 里的(带路径)
+struct Row {
+    name: String,
+    desc: String,
+    dot: Option<&'static str>,
+    path: Option<std::path::PathBuf>,
+}
+
+/// 选中一行:内嵌的直接用,docs 里的现场读出来
+fn open_row(list: &[Row], i: usize) -> Option<(String, String)> {
+    let r = list.get(i)?;
+    if let Some(dot) = r.dot {
+        return Some((r.name.clone(), dot.to_string()));
+    }
+    let path = r.path.as_ref()?;
+    match std::fs::read_to_string(path) {
+        Ok(t) => Some((r.name.clone(), t)),
+        Err(e) => {
+            eprintln!("metro: 读不到 {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// 启动界面:选城市(None 表示用户按 q 退出).
+/// 除了内嵌的那几座,还列出 docs 目录里现成的 dot(工具刚建好的城市)
+fn choose_city() -> io::Result<Option<(String, String)>> {
+    let mut list: Vec<Row> = city::CITIES
         .iter()
         .map(|c| {
             let desc = match Map::from_dot(c.dot) {
                 Ok(m) => format!("{} 条线,{} 站", m.lines.len(), m.names.len()),
                 Err(e) => format!("读不了:{e}"),
             };
-            (c.name, desc)
+            Row {
+                name: c.name.to_string(),
+                desc,
+                dot: Some(c.dot),
+                path: None,
+            }
         })
+        .collect();
+    for dir in data_dirs() {
+        for (slug, name, lines, stations, path) in city::external(&dir) {
+            if list.iter().any(|r| r.name == name) {
+                continue;
+            }
+            list.push(Row {
+                name: name.clone(),
+                desc: format!("{lines} 条线,{stations} 站  ({slug})"),
+                dot: None,
+                path: Some(path),
+            });
+        }
+    }
+    let rows: Vec<(String, String)> = list
+        .iter()
+        .map(|r| (r.name.clone(), r.desc.clone()))
         .collect();
     let mut stdout = io::stdout();
     crossterm::terminal::enable_raw_mode()?;
@@ -391,7 +469,7 @@ fn choose_city() -> io::Result<Option<&'static city::City>> {
     let picked = loop {
         term.draw(|f| {
             let area = f.area();
-            let refs: Vec<(&str, &str)> = rows.iter().map(|(n, d)| (*n, d.as_str())).collect();
+            let refs: Vec<(&str, &str)> = rows.iter().map(|(n, d)| (n.as_str(), d.as_str())).collect();
             ui::render_chooser(f.buffer_mut(), area, &refs, sel);
         })?;
         if !event::poll(Duration::from_millis(200))? {
@@ -401,12 +479,13 @@ fn choose_city() -> io::Result<Option<&'static city::City>> {
         if let Event::Mouse(me) = ev {
             // 点一行就是选它;点在已选中的那一行上就打开它
             if let MouseEventKind::Down(MouseButton::Left) = me.kind {
-                let refs: Vec<(&str, &str)> = rows.iter().map(|(n, d)| (*n, d.as_str())).collect();
+                let refs: Vec<(&str, &str)> =
+                    rows.iter().map(|(n, d)| (n.as_str(), d.as_str())).collect();
                 if let Some(i) =
-                    ui::chooser_row_at(term.size()?.into(), &refs, me.column, me.row)
+                    ui::chooser_row_at(term.size()?.into(), &refs, sel, me.column, me.row)
                 {
                     if i == sel {
-                        break Some(&city::CITIES[i]);
+                        break open_row(&list, i);
                     }
                     sel = i;
                 }
@@ -420,13 +499,11 @@ fn choose_city() -> io::Result<Option<&'static city::City>> {
             KeyCode::Char('q') | KeyCode::Esc => break None,
             KeyCode::Char('j') | KeyCode::Down => sel = (sel + 1).min(rows.len() - 1),
             KeyCode::Char('k') | KeyCode::Up => sel = sel.saturating_sub(1),
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
-                break Some(&city::CITIES[sel])
-            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => break open_row(&list, sel),
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 let i = (c as u8 - b'1') as usize;
                 if i < rows.len() {
-                    break Some(&city::CITIES[i]);
+                    break open_row(&list, i);
                 }
             }
             _ => {}
@@ -1094,6 +1171,37 @@ mod tests {
         ];
         focus_lines_of(&m, &mut v3);
         assert!(v3.focus.is_empty(), "1 号线已经在聚焦里,这一下该是取消");
+    }
+
+    /// docs 目录里现成的 dot 会被列出来(内嵌的城市要跳过),--city 也能直接打开
+    #[test]
+    fn docs_里的城市不用重新编译() {
+        let dir = std::env::temp_dir().join(format!("metro-docs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dot = "// 测试城地铁线路图:节点是站点\n\
+                   graph test_metro {\n\
+                   \"甲\" [pos=\"0,0\", pinyin=\"jia\"];\n\
+                   \"乙\" [pos=\"1000,0\", pinyin=\"yi\"];\n\
+                   \"丙\" [pos=\"2000,0\", pinyin=\"bing\"];\n\
+                   \"甲\" -- \"乙\" [color=\"#df4661\", line=\"1号线\"];\n\
+                   \"乙\" -- \"丙\" [color=\"#00ff00\", line=\"2号线\"];\n\
+                   }\n";
+        std::fs::write(dir.join("testcity-subway.dot"), dot).unwrap();
+        std::fs::write(dir.join("shanghai-subway.dot"), dot).unwrap(); // 内嵌的,该跳过
+        let found = city::external(&dir);
+        let names: Vec<&str> = found.iter().map(|(s, _, _, _, _)| s.as_str()).collect();
+        println!("扫到: {names:?}");
+        assert!(names.contains(&"testcity"), "该扫到 docs 里的城市");
+        assert!(!names.contains(&"shanghai"), "内嵌的该跳过");
+        let (_, name, lines, stations, _) = found.iter().find(|(s, _, _, _, _)| s == "testcity").unwrap();
+        assert_eq!(name, "测试城");
+        assert_eq!(*lines, 2);
+        assert_eq!(*stations, 3);
+        // --city 能从 docs 读到
+        let text = city::resolve("testcity", &[dir.clone()]).expect("该能从 docs 读到");
+        assert!(Map::from_dot(&text).is_ok());
+        assert!(city::resolve("nosuchcity", &[dir.clone()]).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// --city 指定城市;不认识的 slug 要报清楚
