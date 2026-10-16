@@ -1,0 +1,15 @@
+[package]
+name = "swatches"
+version = "0.1.0"
+edition = "2021"
+description = "色卡:在真彩终端里用 vim 键位挑颜色,把 #RRGGBB 送进剪贴板"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

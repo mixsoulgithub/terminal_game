@@ -22,6 +22,10 @@ terminal_game
 │   ├── README.md
 │   ├── src/
 │   └── tools/
+├── swatches/           # 终端色卡(vim 键位挑色,yy 复制 #RRGGBB, Rust + ratatui)
+│   ├── Cargo.toml
+│   ├── README.md
+│   └── src/
 └── refs/               # 只读参考:别人的终端爬塔实现(submodule,见 refs/README.md)
     ├── end_of_eden/    # Go,完成度最高的类尖塔控制台 roguelike
     ├── slay-rust/      # Rust + ratatui,同栈同分层
@@ -42,6 +46,18 @@ less 式分页器,底栏是一根流动的霓虹灯管,正文每个字形按视�
 cd neon
 cargo build --release
 ./target/release/neon README.md
+```
+
+### swatches
+
+终端色卡:整屏色块网格(vim 键位挪光标),`yy` 复制当前色的 `#RRGGBB`。五张色卡可选——色相/明度、色相/饱和度、传统 16 色、xterm 256 色、32 级灰阶。
+复制同时走 OSC 52 与 tmux `load-buffer` 两条路。Rust + ratatui,和 neon 同一套技术栈。
+
+```bash
+cd swatches
+cargo build --release
+./target/release/swatches          # 默认 hue/value
+./target/release/swatches ansi256  # 或 1..5 / 短名
 ```
 
 ## 游戏列表

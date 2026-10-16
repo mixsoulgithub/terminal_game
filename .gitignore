@@ -6,6 +6,7 @@
 /Unicode/rust/target
 /neon/target
 /slay-the-spire/target
+/swatches/target
 local/
 __pycache__/
 assets/
